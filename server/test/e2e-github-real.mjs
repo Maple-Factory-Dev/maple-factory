@@ -69,6 +69,10 @@ for (let i = 0; i < 30 && state !== "closed"; i++) {
 }
 if (state !== "closed") throw new Error(`#${t2.pr.number} is still ${state} on GitHub`);
 step(`cancelling ${id2} closed ${t2.pr.url}`);
+// Work that was already under way (a push, a review) mustn't bring it back.
+await new Promise((r) => setTimeout(r, 15000));
+if (tasks.get(id2).state !== "cancelled") throw new Error(`${id2} came back as ${tasks.get(id2).state} after it was cancelled`);
+step(`${id2} stayed cancelled`);
 send({ type: "goal.archive", id: goal.id, archived: true });
 await new Promise((r) => setTimeout(r, 500));
 process.exit(0);

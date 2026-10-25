@@ -830,6 +830,8 @@ export class Engine {
     if (!task) return;
     const priv = this.store.private(task.id);
     this.store.savePrivate(task.id, { ...priv, finishing: false });
+    // A push that was already under way when the task was cancelled (or merged): it stays that way.
+    if (task.state === "cancelled" || task.state === "merged") return;
     if (!msg.ok) {
       this.raise(task, "builder", "needsInput", `Pushing failed: ${msg.message ?? "no reason given"}.`);
       this.save(task);
@@ -1339,6 +1341,7 @@ export class Engine {
     if (!task || !priv?.handingOff) return;
     const who = priv.handingOff;
     this.store.savePrivate(task.id, { ...priv, handingOff: null });
+    if (task.state === "cancelled" || task.state === "merged") return;
     const nothing = !msg.ok && /nothing to carry/.test(msg.message ?? "");
     if (!msg.ok && !nothing) {
       task.liveLog = null;

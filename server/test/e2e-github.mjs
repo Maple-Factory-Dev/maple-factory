@@ -96,4 +96,8 @@ for (let i = 0; i < 20; i++) {
 }
 if (log.pulls.find((p) => p.number === t2.pr.number)?.state !== "closed") throw new Error("the cancelled task's PR is still open");
 step(`cancelling ${id2} closed pull request #${t2.pr.number} on GitHub`);
+// Work that was already under way (a push, a review) mustn't bring it back.
+await new Promise((r) => setTimeout(r, 15000));
+if (tasks.get(id2).state !== "cancelled") throw new Error(`${id2} came back as ${tasks.get(id2).state} after it was cancelled`);
+step(`${id2} stayed cancelled`);
 process.exit(0);
