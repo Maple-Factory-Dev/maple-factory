@@ -49,12 +49,20 @@ if ! command -v tmux >/dev/null 2>&1; then
   printf '\\nmaple: agents run in tmux, which isn'"'"'t installed. Install it (brew install tmux, or apt install tmux) before sessions start.\\n' >&2
 fi
 
+# Linux without systemd (containers, some WSL): no service to install, so it's run by hand.
+service=yes
+if [ "$(uname -s)" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then service=; fi
+start() {
+  if [ -n "$service" ]; then "$bin/maple-runner" install
+  else printf '\\nThere'"'"'s no systemd here, so start the runner yourself (and keep it running): %s\\n' "$bin/maple-runner"; fi
+}
+
 if [ -n "$CODE" ]; then
   "$bin/maple-runner" enroll --url "$ORIGIN" --code "$CODE"
-  "$bin/maple-runner" install
+  start
   printf '\\nThis machine is in the factory; it shows up under Machines.\\n'
 elif [ -f "$HOME/.config/maple/runner.json" ]; then
-  "$bin/maple-runner" install
+  start
 else
   printf '\\nNext: get a code from Machines → Add machine, then run\\n  %s enroll --url %s --code XXXX-XXXX && %s install\\n' "$bin/maple-runner" "$ORIGIN" "$bin/maple-runner"
 fi

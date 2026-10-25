@@ -8,8 +8,8 @@
 // The private key lives at ~/.config/maple-factory/release-key.pem (MAPLE_RELEASE_KEY to move it),
 // never in the repo; runner/src/update.rs builds in the public half. Without that key a stolen
 // Worker or bucket can't push a runner anyone will run, so keep a copy somewhere safe.
-// --local uploads to `wrangler dev`'s bucket instead of the real one. Linux targets build with
-// `cross`, which needs Docker running.
+// --local uploads to `wrangler dev`'s bucket instead of the real one. Linux targets build in Docker
+// (the official rust image), so it needs to be running.
 
 import { execFileSync } from "node:child_process";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
@@ -51,12 +51,17 @@ const uploads = [];
 for (const target of targets) {
   const linux = target.includes("linux");
   console.log(`\n▸ ${target}`);
-  if (linux) run("cross", ["build", "--release", "--target", target]);
-  else {
+  if (linux) {
+    // In the official Rust image for that platform (emulated when it isn't this Mac's), on bullseye so
+    // the binary's glibc (2.31) is old enough for most distros still in use.
+    const platform = target.startsWith("aarch64") ? "linux/arm64" : "linux/amd64";
+    run("docker", ["run", "--rm", "--platform", platform, "-v", `${join(root, "runner")}:/src`, "-v", `maple-cargo-${platform.split("/")[1]}:/usr/local/cargo/registry`,
+      "-w", "/src", "rust:1-bullseye", "cargo", "build", "--release", "--target-dir", `target/docker-${target}`]);
+  } else {
     if (target !== host) run("rustup", ["target", "add", target]);
     run("cargo", ["build", "--release", "--target", target]);
   }
-  const file = join(root, "runner/target", target, "release/maple-runner");
+  const file = linux ? join(root, "runner/target", `docker-${target}`, "release/maple-runner") : join(root, "runner/target", target, "release/maple-runner");
   // macOS kills unsigned binaries on Apple silicon; sign with the Developer ID when there is one.
   if (!linux) run("codesign", ["--force", "--options", "runtime", "--sign", process.env.SIGN_IDENTITY ?? "-", file]);
   const bytes = readFileSync(file);
