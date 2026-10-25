@@ -39,7 +39,6 @@ struct FactorySidebar: View {
                                 Image(systemName: "square.grid.2x2").font(.system(size: 11)).frame(width: 16)
                                 Text("All goals")
                                 Spacer()
-                                Text("\(FactoryData.activeGoals.count)").font(.system(size: 11).monospacedDigit())
                             }
                             .foregroundStyle(Theme.textMuted)
                             .onTapGesture { state.destination = .allGoals }
