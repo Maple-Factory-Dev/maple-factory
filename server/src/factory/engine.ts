@@ -298,6 +298,74 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.split": {
+        if (task.state !== "awaitingApproval" && task.state !== "building") fail("Only a planned task that isn't finished can be split.");
+        const steps = task.plan;
+        const parts = Math.max(2, Math.min(msg.parts, steps.length));
+        if (steps.length < 2) fail("It needs at least two steps to split.");
+        // Building keeps everything up to the step it's on; otherwise it keeps an even share.
+        const reached = steps.reduce((last, s, i) => (s.progress ? i : last), -1);
+        const keep = Math.min(steps.length - parts + 1, Math.max(task.state === "building" ? reached + 1 : Math.ceil(steps.length / parts), 1));
+        const rest = steps.slice(keep);
+        const per = Math.ceil(rest.length / (parts - 1));
+        const created: Task[] = [];
+        for (let i = 0; i < rest.length; i += per) {
+          const chunk = rest.slice(i, i + per);
+          const t = now();
+          const part: Task = {
+            ...structuredClone(task),
+            id: this.store.nextId(this.store.goal(task.goal)?.prefix ?? task.id.split("-")[0]),
+            title: chunk.length > 1 ? `${chunk[0].text} (+${chunk.length - 1} more)` : chunk[0].text,
+            state: "drafting",
+            brief: `Split from ${task.id} (${task.title}) to stay inside the PR budget. This task does these steps of its plan:\n\n${chunk.map((s) => `- ${s.text}${s.file ? ` (${s.file})` : ""}`).join("\n")}\n\n## ${task.id}'s brief\n\n${task.brief}`,
+            createdAt: t,
+            updatedAt: t,
+            plan: [],
+            planVersion: 0,
+            doneWhen: [],
+            approvals: [],
+            reviews: [],
+            comments: [],
+            changes: [],
+            events: [{ who, text: `split it off ${task.id}`, at: t }],
+            mockups: [],
+            question: null,
+            hand: null,
+            worker: null,
+            liveLog: null,
+            waiting: null,
+            pr: null,
+            diff: null,
+            footprint: null,
+            risk: null,
+            autoReview: null,
+            branch: null,
+            machine: null,
+            intake: null,
+            splitFrom: task.id,
+          };
+          this.save(part);
+          created.push(part);
+        }
+        const moved = created.map((p) => p.id).join(", ");
+        task.plan = steps.slice(0, keep);
+        this.event(task, who, `split it into ${created.length + 1} tasks: ${[task.id, ...created.map((p) => p.id)].join(", ")}`);
+        await audit(this.env, who, "task.split", task.id, { into: created.map((p) => p.id) });
+        if (task.state === "awaitingApproval") {
+          // The plan isn't approved: the planner rescopes it (and its checks) to what's left.
+          task.changes.push({ id: `C${task.changes.length + 1}`, author: who, text: `Split: keep only the first ${keep} step${keep === 1 ? "" : "s"}; the rest moved to ${moved}. Rescope the plan, its checks and mockups to match.`, at: now(), anchor: null, status: "queued", timing: null });
+          task.approvals = [];
+          this.save(task);
+          await this.startPlanning(task, who, true);
+        } else {
+          const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text: `Stop after step ${keep}: steps ${keep + 1}–${steps.length} moved to ${moved}. Leave them out of this change.`, at: now(), anchor: null, status: "queued", timing: null };
+          task.changes.push(change);
+          if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${change.text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) change.status = "applying";
+          this.save(task);
+        }
+        for (const part of created) await this.startPlanning(part, who);
+        return;
+      }
       case "task.checkedIt": {
         const item = task.doneWhen[msg.item] ?? fail("There's no such Done when item.");
         item.status = "proven";

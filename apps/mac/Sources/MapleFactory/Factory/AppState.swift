@@ -782,6 +782,11 @@ final class AppState {
     /// Splits an over-budget task into `parts`: the original keeps everything up to its current step,
     /// and the remaining steps become new tasks queued for planning.
     func split(_ id: String, into parts: Int) {
+        if let client, isLive {
+            client.send(.taskSplit(.init(id: id, parts: UInt32(parts))))
+            showToast("Splitting \(id) into \(parts) tasks; the new ones go to planning", icon: "square.split.2x1")
+            return
+        }
         let original = task(id)
         let steps = original.plan
         guard parts > 1, steps.count >= parts else { return }

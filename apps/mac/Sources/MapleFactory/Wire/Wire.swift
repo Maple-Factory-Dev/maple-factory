@@ -1067,8 +1067,10 @@ public enum Wire {
         public var branch: String?
         /// Where its worktree lives once building started.
         public var machine: String?
+        /// The task it was split off from to stay inside the PR budget.
+        public var splitFrom: String?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -1105,6 +1107,7 @@ public enum Wire {
             self.agent = agent
             self.branch = branch
             self.machine = machine
+            self.splitFrom = splitFrom
         }
 
         public init(from decoder: Decoder) throws {
@@ -1145,6 +1148,7 @@ public enum Wire {
             agent = try c.decode(String.self, forKey: .agent)
             branch = try c.decodeIfPresent(String.self, forKey: .branch)
             machine = try c.decodeIfPresent(String.self, forKey: .machine)
+            splitFrom = try c.decodeIfPresent(String.self, forKey: .splitFrom)
         }
     }
 
@@ -2371,6 +2375,17 @@ public enum Wire {
         }
     }
 
+    /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
+    public struct ClientMessageTaskSplit: Codable, Hashable, Sendable {
+        public var id: String
+        public var parts: UInt32
+
+        public init(id: String, parts: UInt32) {
+            self.id = id
+            self.parts = parts
+        }
+    }
+
     /// Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.
     public struct ClientMessageTaskMove: Codable, Hashable, Sendable {
         public var id: String
@@ -2435,6 +2450,7 @@ public enum Wire {
         case taskMerge(ClientMessageTaskMerge)
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
+        case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
         case taskCheckedIt(ClientMessageTaskCheckedIt)
         case taskMockupChange(ClientMessageTaskMockupChange)
@@ -2474,6 +2490,7 @@ public enum Wire {
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
+            case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
             case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
@@ -2566,6 +2583,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRetry(let body):
                 try c.encode("task.retry", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskSplit(let body):
+                try c.encode("task.split", forKey: .type)
                 try body.encode(to: encoder)
             case .taskMove(let body):
                 try c.encode("task.move", forKey: .type)

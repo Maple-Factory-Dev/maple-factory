@@ -67,6 +67,7 @@ enum LiveAdapter {
         task.machine = t.machine
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
+        task.splitFrom = t.splitFrom
         task.brief = t.brief
         task.spec = t.brief
         task.progress = t.state == .building && !t.plan.isEmpty ? max(0.04, Double(done) / Double(t.plan.count)) : nil

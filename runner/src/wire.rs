@@ -817,6 +817,9 @@ pub struct Task {
     /// Where its worktree lives once building started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<String>,
+    /// The task it was split off from to stay inside the PR budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_from: Option<String>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1432,6 +1435,12 @@ pub enum ClientMessage {
     #[serde(rename = "task.retry")]
     TaskRetry {
         id: String,
+    },
+    /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
+    #[serde(rename = "task.split")]
+    TaskSplit {
+        id: String,
+        parts: u32,
     },
     /// Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.
     #[serde(rename = "task.move")]

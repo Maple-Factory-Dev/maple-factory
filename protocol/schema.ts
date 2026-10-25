@@ -357,8 +357,10 @@ export const structs: Record<string, Struct> = {
       agent: "string",
       branch: "string?",
       machine: "string?",
+      splitFrom: "string?",
     },
     fieldDocs: {
+      splitFrom: "The task it was split off from to stay inside the PR budget.",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
@@ -620,6 +622,10 @@ export const unions: Record<string, Union> = {
       "task.merge": { fields: { id: "string" } },
       "task.cancel": { fields: { id: "string" } },
       "task.retry": { fields: { id: "string" } },
+      "task.split": {
+        doc: "Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.",
+        fields: { id: "string", parts: "u32" },
+      },
       "task.move": {
         doc: "Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.",
         fields: { id: "string" },
