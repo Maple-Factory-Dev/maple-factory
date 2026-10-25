@@ -264,6 +264,9 @@ export class Engine {
         if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
         await this.closeWorker(task, "cancelled");
         task.state = "cancelled";
+        // Nothing's reviewing it or going to merge it now.
+        if (task.pr && (task.pr.state === "open" || task.pr.state === "draft")) task.pr.state = "closed";
+        if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
         task.waiting = null;
         task.question = null;
         task.hand = null;

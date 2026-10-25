@@ -7,7 +7,7 @@ Successor to `~/Projects/agent-orchestrator`, keeping what worked (easy runners,
 web and phone access, Tailscale) and fixing what didn't (sessions dying for no clear reason, no multiplayer).
 
 ```
-apps/mac/     SwiftUI app: live Machines + terminals (SwiftTerm) against a factory, mockup elsewhere
+apps/mac/     SwiftUI app: the factory (goals, tasks, review, machines, requests, usage), live against a server; the design mockup when signed out
 runner/       maple-runner (Rust): sessions in tmux, dials out to the server. From ao-runner 0.23.0
 server/       Cloudflare Worker: OrgHub + MachineHub Durable Objects, D1, R2
 protocol/     schema.ts → generated Rust, TypeScript and Swift types (npm run gen)
@@ -24,12 +24,13 @@ npm install
 npm run gen                 # after editing protocol/schema.ts (gen:check fails when stale)
 scripts/dev-stack.sh up     # server on :8788 (signed in as DEV_LOGIN) + a throwaway runner `dev-mac` in /tmp/mfh
 cd apps/mac && swift run    # then Connect to Another Factory… → localhost:8788 → Continue as @you
+apps/mac/scripts/bundle.sh  # → apps/mac/build/Maple Factory.app (registers maplefactory:// task links; SIGN_IDENTITY to sign)
 scripts/dev-stack.sh down
 ```
 
-The Mac app talks to a real factory for Machines (live health, sessions, terminals through the relay,
-why sessions ended) and keeps the design mockup for everything else until the task pipeline exists.
-Signed out, it's all mockup. Launch flags for screenshots: `-onboardingURL localhost:8788
+Signed in, the Mac app is the live factory: tasks run through planning, approval, building, review and
+merge on enrolled machines, with terminals through the relay. Signed out, it's the design mockup.
+End-to-end tests for each piece are in server/test (each says what it needs at the top). Launch flags for screenshots: `-onboardingURL localhost:8788
 -onboardingContinue YES` plays the real sign-in; `-destination machines -liveSession first` opens a terminal.
 
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).

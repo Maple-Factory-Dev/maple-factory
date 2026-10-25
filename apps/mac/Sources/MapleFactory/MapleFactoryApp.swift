@@ -27,6 +27,8 @@ struct MapleFactoryApp: App {
             ContentView()
                 .environment(state)
                 .environment(client)
+                // A maplefactory:// link opens in the window that's there rather than a new one.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .task { client.connect() }
                 .frame(minWidth: 720, minHeight: 620)
         }
@@ -104,8 +106,11 @@ struct ContentView: View {
                 .onOpenURL { url in
                     // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it).
                     guard url.scheme == "maplefactory", url.host() == "task", let id = url.pathComponents.dropFirst().first else { return }
-                    state.destination = .goal(state.task(id).goal)
-                    state.openFocus(id)
+                    let goal = Destination.goal(state.task(id).goal)
+                    if state.destination != goal { state.destination = goal }
+                    state.isComposing = false
+                    state.selectedTask = id
+                    state.focusedTask = id
                 }
                 .onChange(of: client.factoryGoals.map(\.name), initial: true) { _, names in
                     // The mock's starting goal isn't one of the workspace's: open the focused task's goal, or the first.

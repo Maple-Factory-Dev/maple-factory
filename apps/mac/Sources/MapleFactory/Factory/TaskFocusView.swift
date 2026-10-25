@@ -174,7 +174,7 @@ struct TaskFocusView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textMuted)
                 Text("·").foregroundStyle(Theme.textFaint)
-                Text("Updated \(task.updated) ago")
+                Text(task.updated == "now" ? "Updated just now" : "Updated \(task.updated) ago")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
             }
@@ -271,7 +271,7 @@ struct TaskFocusView: View {
             if task.liveLog != nil, liveStranded == nil, task.state == .planning || task.state == .building { LiveStrip(task: task) }
             if let question = task.question, task.hand == nil { QuestionBlock(task: task, question: question) }
             if let hand = task.hand { HandRaiseCard(task: task, hand: hand, showsTask: false) }
-            if let review = task.autoReview { AutoReviewSection(task: task, review: review) }
+            if let review = task.autoReview, !(task.state == .cancelled && review.rounds.isEmpty) { AutoReviewSection(task: task, review: review) }
 
             if !task.brief.isEmpty, task.spec == nil {
                 TaskSection(title: "Brief") {
@@ -514,18 +514,15 @@ struct StageTrack: View {
                             .font(.system(size: 11))
                             .foregroundStyle(stage.color)
                             .lineLimit(1)
+                    } else if task.state == .cancelled && stage == .merged {
+                        Text("Cancelled before merge")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.State.cancelled)
+                            .lineLimit(1)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, index < TaskState.pipeline.count - 1 ? 6 : 0)
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if task.state == .cancelled {
-                Text("Cancelled before merge")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Theme.State.cancelled)
-                    .offset(y: 14)
             }
         }
     }
