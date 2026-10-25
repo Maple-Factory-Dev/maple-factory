@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maple Factory — ship only the good stuff</title>
+  <meta name="description" content="Maple Factory turns your team's Claude Code and Codex sessions into a production line: a plan you approve, a build on your own machines, an independent review and green CI before anything reaches main.">
+  <meta name="theme-color" content="#faf5ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b0e1f" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="Maple Factory">
+  <meta property="og:description" content="Your agents write plenty. Maple Factory makes sure only the good stuff ships.">
+  <meta property="og:image" content="https://maplefactory.dev/img/icon-512.jpg">
+  <meta property="og:url" content="https://maplefactory.dev/">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+  <link rel="preload" href="/fonts/AtlasSerif-VF.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/AtlasSans-VF.woff2" as="font" type="font/woff2" crossorigin>
+  <script>
+    // Set the theme before first paint so there's no flash.
+    try { var t = localStorage.getItem('mf-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Maple Factory home">
+        <picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="30" height="30"></picture>
+        <span>Maple Factory</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#process">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>
+          <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+        </button>
+        <a class="btn btn-sm btn-primary" href="#access">Early access</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="glow" aria-hidden="true"></div>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow reveal"><span class="dot"></span>A software factory for teams</p>
+          <h1 class="reveal">Your agents write plenty.<br><em>Ship only the good stuff.</em></h1>
+          <p class="lede reveal">Maple Factory turns your team’s agent sessions into a production line. Every task gets a plan you approve, a build on one of your machines, an independent review and green CI before it touches <code>main</code>. You steer from a native Mac app, or your phone.</p>
+          <div class="cta-row reveal">
+            <a class="btn btn-primary" href="#access">Request early access</a>
+            <a class="btn btn-ghost" href="#process">See how it works <span aria-hidden="true">→</span></a>
+          </div>
+          <p class="fine reveal">Runs in your Cloudflare account, on your Macs, on the subscriptions you already pay for.</p>
+        </div>
+
+        <div class="hero-visual reveal" aria-label="A task moving through the factory">
+          <article class="task-card" id="task-card">
+            <header class="task-head">
+              <span class="task-id">MF-142</span>
+              <span class="task-repo">acme/billing</span>
+              <span class="status" data-status="planning"><i></i><b>Planning</b></span>
+            </header>
+            <h3 class="task-title">Add CSV export to usage reports</h3>
+            <ol class="stages" aria-hidden="true">
+              <li data-stage="planning">Plan</li>
+              <li data-stage="awaiting">Approve</li>
+              <li data-stage="building">Build</li>
+              <li data-stage="reviewing">Review</li>
+              <li data-stage="merged">Merge</li>
+            </ol>
+            <div class="task-log" aria-live="polite">
+              <p class="log-line"><span class="who">planner</span><span class="what">Reading the repo…</span></p>
+            </div>
+            <footer class="task-foot">
+              <span class="machine"><i></i>studio-mac</span>
+              <span class="avatars" aria-hidden="true"><span>AF</span><span>JM</span><span>RK</span></span>
+            </footer>
+          </article>
+          <div class="pour" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ratio -->
+    <section class="ratio" aria-labelledby="ratio-title">
+      <div class="wrap ratio-grid">
+        <div class="ratio-num reveal" aria-hidden="true">40<span>:</span>1</div>
+        <div class="ratio-copy reveal">
+          <h2 id="ratio-title">It takes forty gallons of sap to make one of syrup.</h2>
+          <p>Agents are the same. They’ll draft, retry and rewrite all afternoon. Getting more out of them was never the hard part. Boiling it down is: a plan someone agreed to, a diff someone else checked, tests that pass and proof that it works. Maple Factory does the boiling, so your team gets the one gallon, not the forty.</p>
+        </div>
+      </div>
+      <div class="wrap">
+        <div class="grades reveal" role="img" aria-label="Maple syrup grades from golden to very dark">
+          <div class="grade g1"><span>Golden</span><small>Delicate</small></div>
+          <div class="grade g2"><span>Amber</span><small>Rich</small></div>
+          <div class="grade g3"><span>Dark</span><small>Robust</small></div>
+          <div class="grade g4"><span>Very dark</span><small>Strong</small></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Process -->
+    <section class="process" id="process" aria-labelledby="process-title">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <p class="kicker">How it works</p>
+          <h2 id="process-title">Four steps. You only show up for two.</h2>
+          <p>Approve the plan before any code is written. Approve the merge once it’s proven. Everything in between runs without you.</p>
+        </div>
+
+        <ol class="steps">
+          <li class="step reveal">
+            <div class="step-num">01</div>
+            <p class="step-tag" style="--c: var(--planning)">Tap · Plan</p>
+            <h3>Agree on the plan first.</h3>
+            <p>A planner reads the repo and writes up what it’ll change, with mockups for anything visual. Approve it, question it or send it back. No code until you say so.</p>
+            <pre class="snip"><span class="c">## Plan · MF-142</span>
+1. <span class="k">exportCSV()</span> on reports
+2. Stream rows, no buffer
+3. Toolbar button
+4. Test 100k rows</pre>
+          </li>
+          <li class="step reveal">
+            <div class="step-num">02</div>
+            <p class="step-tag" style="--c: var(--building)">Boil · Build</p>
+            <h3>Built on a machine you own.</h3>
+            <p>A runner on one of your team’s Macs picks it up, in a session that survives sleep, network blips and updates. It runs on the owner’s Claude Code or Codex plan, inside the limits they set.</p>
+            <pre class="snip"><span class="c">studio-mac</span> · session 3
+<span class="ok">✓</span> 12 files changed
+<span class="ok">✓</span> tests 214 passed
+<span class="k">→</span> pushed mf-142</pre>
+          </li>
+          <li class="step reveal">
+            <div class="step-num">03</div>
+            <p class="step-tag" style="--c: var(--reviewing)">Grade · Review</p>
+            <h3>Checked by someone who didn’t write it.</h3>
+            <p>A separate reviewer reads the diff while CI runs and the task gathers proof: screenshots, recordings, test output. It all lands on one page.</p>
+            <pre class="snip"><span class="c">review</span> · 2 notes, fixed
+<span class="c">checks</span> · <span class="ok">14 / 14</span>
+<span class="c">proof</span>  · export.mov</pre>
+          </li>
+          <li class="step reveal">
+            <div class="step-num">04</div>
+            <p class="step-tag" style="--c: var(--merged)">Bottle · Merge</p>
+            <h3>Merged when you say.</h3>
+            <p>Approve from your desk or your phone. Maple Factory opens the pull request, waits for green checks and squash-merges it.</p>
+            <pre class="snip"><span class="ok">●</span> Merged #388
+  into main
+  approved by AF</pre>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- App -->
+    <section class="app-section" aria-labelledby="app-title">
+      <div class="wrap">
+        <div class="section-head center reveal">
+          <p class="kicker">The Mac app</p>
+          <h2 id="app-title">Every task, every machine, one window.</h2>
+          <p>See what’s planning, what’s waiting on you and what’s building where. Open any running session’s terminal to watch it work, or take the wheel.</p>
+        </div>
+
+        <div class="window reveal" aria-hidden="true">
+          <div class="win-bar"><i></i><i></i><i></i><span>Maple Factory — Acme</span></div>
+          <div class="win-body">
+            <aside class="win-side">
+              <p class="side-h">Factory</p>
+              <a>Inbox <b>3</b></a>
+              <a>Goals</a>
+              <a class="on">Tasks</a>
+              <a>Review <b>2</b></a>
+              <a>Machines</a>
+              <a>Requests</a>
+              <a>Usage</a>
+              <p class="side-h">Machines</p>
+              <a><i class="m on"></i>studio-mac</a>
+              <a><i class="m on"></i>andrea-mbp</a>
+              <a><i class="m"></i>jm-mini</a>
+            </aside>
+            <div class="win-main">
+              <div class="rows">
+                <div class="row"><span class="status sm" data-status="reviewing"><i></i><b>Reviewing</b></span><span class="r-t">Add CSV export to usage reports</span><span class="r-m">studio-mac</span></div>
+                <div class="row"><span class="status sm" data-status="awaiting"><i></i><b>Awaiting you</b></span><span class="r-t">Rate-limit the webhook endpoint</span><span class="r-m">—</span></div>
+                <div class="row"><span class="status sm" data-status="building"><i></i><b>Building</b></span><span class="r-t">Dark mode for the billing portal</span><span class="r-m">andrea-mbp</span></div>
+                <div class="row"><span class="status sm" data-status="planning"><i></i><b>Planning</b></span><span class="r-t">Migrate invoices to D1</span><span class="r-m">studio-mac</span></div>
+                <div class="row"><span class="status sm" data-status="merged"><i></i><b>Merged</b></span><span class="r-t">Fix timezone drift in reports</span><span class="r-m">#384</span></div>
+              </div>
+              <div class="term">
+                <p><span class="p">studio-mac</span> <span class="d">~/acme/billing</span></p>
+                <p>› Reviewer: the stream never closes when the client disconnects.</p>
+                <p>› Fixing: close the writer on <span class="k">abort</span>, add a test.</p>
+                <p><span class="ok">✓</span> 215 passed <span class="d">(3.1s)</span></p>
+                <p class="cursor">› </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <p class="kicker">The details</p>
+          <h2 id="features-title">The parts that usually break, handled.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature reveal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2.2"/></svg>
+            <h3>Sessions don’t vanish</h3>
+            <p>When a session ends, you’ll know why. Sleep, a dropped connection or an update picks up from the last checkpoint. A crash, an expired login or a usage limit stops and asks for help, with the last screen attached.</p>
+          </article>
+          <article class="feature reveal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3"/><circle cx="16.5" cy="10" r="2.5"/><path d="M3 19c.6-3 2.6-4.6 5-4.6s4.4 1.6 5 4.6M13.5 18.5c.5-2.2 1.8-3.4 3.3-3.4 1.6 0 2.9 1.2 3.4 3.4"/></svg>
+            <h3>Built for a team, not a laptop</h3>
+            <p>Sign in with your GitHub org, and its teams decide who can do what. Share machines, hand off tasks, and pause your own runner without stranding someone else’s work.</p>
+          </article>
+          <article class="feature reveal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10.5a3.5 3.5 0 0 0 .4-7A5.5 5.5 0 0 0 7.3 9.6 4.2 4.2 0 0 0 7 18Z"/></svg>
+            <h3>Lives in your Cloudflare account</h3>
+            <p>One deploy per org, in your account: Workers, Durable Objects, D1 and R2. Your code, sessions and terminals stay in your account.</p>
+          </article>
+          <article class="feature reveal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M10 17.5h4"/></svg>
+            <h3>Review from your phone</h3>
+            <p>Plans, mockups, diffs, reviews and checks, all in the browser. Approve, push back, merge or answer an agent’s question from wherever you are.</p>
+          </article>
+          <article class="feature reveal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="1.6"/><circle cx="12" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/><circle cx="12" cy="18" r="1.6"/></svg>
+            <h3>Tailscale, built in</h3>
+            <p>Open a branch’s running app, share a port or send a teammate a preview link, all over your own tailnet.</p>
+          </article>
+          <article class="feature reveal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M5 12H3M21 12h-2"/><circle cx="12" cy="12" r="5"/><path d="M12 9.5V12l1.6 1.2"/></svg>
+            <h3>No new AI bill</h3>
+            <p>Everyone uses the Claude Code or Codex login they already have. Planners and reviewers do too, so the whole factory follows your team’s model choices.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Install -->
+    <section class="install" id="install" aria-labelledby="install-title">
+      <div class="wrap install-grid">
+        <div class="install-copy reveal">
+          <p class="kicker">Install</p>
+          <h2 id="install-title">Up and running in one command.</h2>
+          <p><code>maple install</code> sets up everything in your Cloudflare account, signs you in with GitHub and enrolls the Mac you’re on. Add your teammates’ machines whenever you’re ready.</p>
+          <ul class="checks">
+            <li>Nothing to host or patch</li>
+            <li>Runners connect out, so there’s no firewall to open</li>
+            <li>Signed updates on a stable or beta channel</li>
+          </ul>
+        </div>
+        <div class="console reveal" aria-label="Example install session">
+          <div class="win-bar"><i></i><i></i><i></i><span>zsh</span></div>
+          <pre id="console"><span class="p">$</span> maple install
+<span class="d">Cloudflare token</span>  ••••••••••••   <span class="ok">ok</span>
+<span class="d">Provisioning</span>      workers · durable objects · d1 · r2   <span class="ok">ok</span>
+<span class="d">Migrations</span>        14 applied   <span class="ok">ok</span>
+<span class="d">GitHub org</span>        acme · 3 teams   <span class="ok">ok</span>
+<span class="d">This machine</span>      studio-mac enrolled   <span class="ok">ok</span>
+
+<span class="a">Your factory is ready → factory.acme.dev</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="access" id="access" aria-labelledby="access-title">
+      <div class="wrap access-inner reveal">
+        <picture class="access-icon"><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="The Maple Factory icon: a glowing maple leaf rising from a bowl" width="512" height="512" loading="lazy"></picture>
+        <h2 id="access-title">Make something worth pouring.</h2>
+        <p>Maple Factory is in early access. Leave your email and we’ll be in touch when there’s room for your team.</p>
+        <form class="access-form" action="/api/waitlist" method="post">
+          <label class="sr" for="email">Work email</label>
+          <input id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" required>
+          <button class="btn btn-primary" type="submit">Request access</button>
+        </form>
+        <p class="form-note" role="status" hidden></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <p class="foot-brand"><picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="22" height="22" loading="lazy"></picture> Maple Factory</p>
+      <p class="foot-note">Set in <a href="https://afomera.dev/fonts">Atlas</a>. Boiled down in small batches.</p>
+      <p class="foot-copy">© <span id="year">2026</span> Maple Factory</p>
+    </div>
+  </footer>
+</body>
+</html>
