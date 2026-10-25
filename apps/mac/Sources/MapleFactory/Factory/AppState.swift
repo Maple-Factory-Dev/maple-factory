@@ -38,7 +38,11 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
-    var showInspector = true
+    /// Starts as it was left (in a full-width window), so a closed task panel stays closed.
+    var showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true {
+        // A narrow window hides and floats it on its own; only choices in a full-width one stick.
+        didSet { if !isCompact { UserDefaults.standard.set(showInspector, forKey: "taskPanel") } }
+    }
     var selectedTask = "ATL-147" {
         didSet { if isCompact, focusedTask == nil { showInspector = true } }
     }
@@ -125,6 +129,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
+                showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true
             }
         }
     }
