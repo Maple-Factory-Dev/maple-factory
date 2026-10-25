@@ -72,7 +72,7 @@ struct AutoReviewSection: View {
     private var roundLine: String {
         guard let current = review.current else { return "Not started" }
         let when = current.when == "now" ? "reviewing now" : "\(current.when) ago"
-        return "Round \(current.number) of \(review.maxRounds) · \(when) · reviews the PR independently of \(task.agent?.name ?? "the builder")"
+        return "Round \(current.number) of \(review.maxRounds) · \(when) · reviews the PR independently of \(task.authorName ?? "the builder")"
     }
 
     private func checkColumn(_ title: String, checks: [ReviewCheck]) -> some View {
@@ -600,5 +600,13 @@ struct InspectorHandCallout: View {
                 .fill(hand.reason.color.opacity(0.07))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(hand.reason.color.opacity(0.25)))
         )
+    }
+}
+
+extension FactoryTask {
+    /// The agent that planned or built it. Live, `agent` is whoever works on it now, which in
+    /// review is the reviewer: then there's no name to give.
+    var authorName: String? {
+        agent.flatMap { $0.name == FactoryData.reviewer.name ? nil : $0.name }
     }
 }

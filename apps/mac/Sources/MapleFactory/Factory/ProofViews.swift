@@ -20,7 +20,7 @@ struct DoneWhenSection: View {
             }
 
             if !collecting {
-                Text("\(task.agent?.name ?? "The builder") has to attach proof for each check before this can merge.")
+                Text("\(task.authorName ?? "The builder") has to attach proof for each check before this can merge.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)

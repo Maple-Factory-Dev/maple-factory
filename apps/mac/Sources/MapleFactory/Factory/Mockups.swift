@@ -297,7 +297,7 @@ struct MockupsSection: View {
             HStack(spacing: 10) {
                 HStack(spacing: 5) {
                     Circle().fill(mockup.status.color).frame(width: 6, height: 6)
-                    Text("\(mockup.status.title) · v\(mockup.version) by \(task.agent?.name ?? "the planner")")
+                    Text("\(mockup.status.title) · v\(mockup.version) by \(task.authorName ?? "the planner")")
                 }
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textMuted)
