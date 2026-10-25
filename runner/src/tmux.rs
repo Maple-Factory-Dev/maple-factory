@@ -411,10 +411,12 @@ fn find_tmux() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("MAPLE_TMUX") {
         return Some(PathBuf::from(path));
     }
-    // launchd gives a minimal PATH, so check the usual install locations first.
+    // The one the Mac app installs next to the runner, then the usual install locations (launchd
+    // gives a minimal PATH), then PATH.
+    let beside = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("tmux")));
     let candidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"].map(PathBuf::from);
     let from_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|dir| dir.join("tmux"));
-    candidates.into_iter().chain(from_path).find(|p| p.is_file())
+    beside.into_iter().chain(candidates).chain(from_path).find(|p| p.is_file())
 }
 
 /// `#{pane_dead_signal}`: a number in older tmux, a name ("kill", "segv") from 3.5 on.

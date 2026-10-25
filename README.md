@@ -51,6 +51,11 @@ node scripts/release-runner.mjs --new-key       # once; the key lives in ~/.conf
 node scripts/release-runner.mjs [--local]       # build, sign and upload every target (Linux needs Docker for cross)
 ```
 
+On a Mac it's one click instead: Add machine → Add this Mac runs the same steps with the runner and
+tmux the app carries (`Contents/Helpers`, universal; tmux is built without Homebrew by
+`apps/mac/scripts/build-tmux.sh`). `apps/mac/scripts/dmg.sh` makes the download, signed and notarized
+when `SIGN_IDENTITY` and `NOTARY_PROFILE` are set.
+
 Set `PUBLIC_URL=http://localhost:8788` in `.dev.vars` locally: `wrangler dev` hides the port from the Worker.
 
 ## GitHub App

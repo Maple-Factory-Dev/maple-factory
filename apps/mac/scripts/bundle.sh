@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds Maple Factory.app from the Swift package: the binary, its resource bundles, the icon, and an
-# Info.plist that registers maplefactory:// (task links from the factory's /t/<id> pages open the app).
+# Builds Maple Factory.app from the Swift package: the binary, its resource bundles, the icon, an
+# Info.plist that registers maplefactory:// (task links from the factory's /t/<id> pages open the app),
+# and in Contents/Helpers the runner and tmux, universal, which "Add this Mac" installs.
 #   apps/mac/scripts/bundle.sh [debug|release]      → apps/mac/build/Maple Factory.app
 # Signs ad hoc unless SIGN_IDENTITY names a Developer ID ("Developer ID Application: …").
 set -eu
@@ -20,6 +21,16 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/MapleFactory" "$app/Contents/MacOS/MapleFactory"
 for bundle in "$bin"/*.bundle; do cp -R "$bundle" "$app/Contents/Resources/"; done
+
+# The runner for both architectures, and a tmux that needs nothing from Homebrew.
+mkdir -p "$app/Contents/Helpers"
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  rustup target list --installed | grep -qx "$target" || rustup target add "$target"
+  (cd "$root/runner" && cargo build --release --target "$target" --quiet)
+done
+lipo -create -output "$app/Contents/Helpers/maple-runner" \
+  "$root/runner/target/aarch64-apple-darwin/release/maple-runner" "$root/runner/target/x86_64-apple-darwin/release/maple-runner"
+cp "$("$here/scripts/build-tmux.sh")" "$app/Contents/Helpers/tmux"
 
 # The icon: every size iconutil wants, from the 1254px source.
 iconset="$(mktemp -d)/AppIcon.iconset"
@@ -56,7 +67,11 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign "${SIGN_IDENTITY:--}" ${SIGN_IDENTITY:+--options runtime --timestamp} "$app"
+# Inside out: the helpers, then the app.
+for helper in "$app/Contents/Helpers/"*; do
+  codesign --force --sign "${SIGN_IDENTITY:--}" ${SIGN_IDENTITY:+--options runtime --timestamp} "$helper"
+done
+codesign --force --sign "${SIGN_IDENTITY:--}" ${SIGN_IDENTITY:+--options runtime --timestamp} "$app"
 # Tell Launch Services about it, so maplefactory:// links open this copy.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
 echo "$app"

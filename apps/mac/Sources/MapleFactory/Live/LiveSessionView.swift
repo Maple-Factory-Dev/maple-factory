@@ -210,18 +210,29 @@ struct AddMachineSheet: View {
     @State private var enrollment: FactoryClient.Enrollment?
     @State private var error: String?
     @State private var copied: Int?
+    /// "Add this Mac": what it's doing now, or that it's done.
+    @State private var thisMac: String?
+    @State private var addingThisMac = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Add a machine")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                Text("Run this on the Mac or Linux machine you're adding: it installs the runner and joins the machine as yours. The code works once, for 15 minutes.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textMuted)
+            Text("Add a machine")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            thisMacRow
+            if let error, enrollment != nil {
+                Text(error)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.State.cancelled)
+                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Text("Or run this on the Mac or Linux machine you're adding: it installs the runner and joins the machine as yours. The code works once, for 15 minutes.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let enrollment {
                 VStack(alignment: .leading, spacing: 8) {
@@ -283,6 +294,65 @@ struct AddMachineSheet: View {
         .frame(width: 560)
         .task {
             do { enrollment = try await client.enrollment() } catch { self.error = FactoryClient.describe(error) }
+        }
+    }
+
+    /// This Mac: already in the factory, or one click to add it with the runner and tmux the app carries.
+    @ViewBuilder private var thisMacRow: some View {
+        let enrolled = client.server.map(LocalRunner.isEnrolled) ?? false
+        HStack(spacing: 12) {
+            Image(systemName: "laptopcomputer")
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 36, height: 36)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.accent.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(enrolled ? "This Mac is in the factory" : "This Mac")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text(thisMac ?? (enrolled ? "As \(LocalRunner.enrolled?.runnerId ?? "this Mac"). Its runner starts at login." : LocalRunner.helpers == nil ? "Run the app built by bundle.sh to add it from here." : "Runs agents here, starting at login. No Homebrew needed."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if !enrolled && LocalRunner.helpers != nil {
+                Button {
+                    addThisMac()
+                } label: {
+                    HStack(spacing: 6) {
+                        if addingThisMac { ProgressView().controlSize(.mini) }
+                        Text("Add this Mac")
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.accent))
+                }
+                .buttonStyle(.plain)
+                .disabled(addingThisMac || enrollment == nil)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
+    }
+
+    private func addThisMac() {
+        guard let server = client.server, let code = enrollment?.code else { return }
+        addingThisMac = true
+        error = nil
+        Task {
+            do {
+                try await LocalRunner.addThisMac(server: server, code: code) { thisMac = "\($0)…" }
+                thisMac = "Added. It shows up under Machines in a moment."
+            } catch {
+                thisMac = nil
+                self.error = FactoryClient.describe(error)
+            }
+            addingThisMac = false
+            // The code is used now; another machine needs a fresh one.
+            enrollment = try? await client.enrollment()
         }
     }
 }
