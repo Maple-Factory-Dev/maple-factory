@@ -16,6 +16,7 @@ import { builderPrompt, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { Intake } from "./intake.ts";
+import { checks, closePullRequest, createPullRequest, GitHubError, githubApp, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -257,6 +258,8 @@ export class Engine {
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
+        if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
+        if (task.pr!.checks.some((c) => c.status !== "passed")) fail("CI is still running.");
         await this.startMerge(task, who);
         return;
       }
@@ -265,7 +268,14 @@ export class Engine {
         await this.closeWorker(task, "cancelled");
         task.state = "cancelled";
         // Nothing's reviewing it or going to merge it now.
-        if (task.pr && (task.pr.state === "open" || task.pr.state === "draft")) task.pr.state = "closed";
+        if (task.pr && (task.pr.state === "open" || task.pr.state === "draft")) {
+          task.pr.state = "closed";
+          const app = githubApp(this.env);
+          const gh = this.store.private(task.id).gh;
+          if (app && gh && task.pr.url) {
+            this.hooks.waitUntil(closePullRequest(app, gh.owner, gh.repo, task.pr.number, `${who} cancelled ${task.id} in Maple Factory.`).catch(() => {}));
+          }
+        }
         if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
         task.waiting = null;
         task.question = null;
@@ -301,6 +311,19 @@ export class Engine {
         if (from?.online && (await this.handOff(task, who))) return;
         this.relocate(task, who, from?.name ?? task.machine ?? "its machine", null);
         await this.pump();
+        return;
+      }
+      case "task.rerunChecks": {
+        const app = githubApp(this.env);
+        const priv = this.store.private(task.id);
+        if (!app || !priv.gh || !task.pr) fail("Its checks aren't on GitHub.");
+        const failed = (priv.checks ?? []).filter((c) => c.status === "failed");
+        if (!failed.length) fail("No checks have failed.");
+        const asked = await rerunFailed(app!, priv.gh!.owner, priv.gh!.repo, failed).catch((e) => fail((e as Error).message));
+        for (const c of task.pr!.checks) if (c.status === "failed") c.status = "queued";
+        this.event(task, who, `ran ${failed.map((c) => c.name).join(", ")} again`);
+        this.save(task);
+        await audit(this.env, who, "task.rerunChecks", task.id, { asked });
         return;
       }
       case "task.split": {
@@ -646,10 +669,25 @@ export class Engine {
         return null;
       }
       case "task.merged": return this.merged(msg), null;
-      case "task.token_request":
-        // No GitHub App yet: local repos fetch and push with the machine's own credentials.
-        await this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token: null, error: "The factory has no GitHub App installed.", code: "not_installed" });
+      case "task.token_request": {
+        // A token for the task's repo, only for the machine it's on; without the app the runner
+        // fetches and pushes with the machine's own credentials.
+        const reply = (token: string | null, error: string | null, code: string | null) =>
+          this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
+        const app = githubApp(this.env);
+        if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
+        const task = this.store.task(msg.taskId);
+        const goal = task && this.store.goal(task.goal);
+        if (!task || task.machine !== machine) return await reply(null, "That task isn't running on this machine.", "api"), null;
+        if (goal?.repo && goal.repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${goal.repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
+        try {
+          const { token } = await repoToken(app, msg.owner, msg.repo, msg.purpose === "fetch" ? PERMISSIONS.fetch : PERMISSIONS.push);
+          await reply(token, null, null);
+        } catch (e) {
+          await reply(null, (e as Error).message, e instanceof GitHubError ? e.code : "api");
+        }
         return null;
+      }
       default:
         return null;
     }
@@ -726,7 +764,76 @@ export class Engine {
     this.event(task, "builder", `pushed ${msg.commit?.slice(0, 7) ?? msg.branch}${msg.pushed === "fallback" ? " with the machine's credentials" : ""}`);
     this.save(task);
     if (task.machine && priv.worktree) this.hooks.waitUntil(this.toRunner(task.machine, { type: "task.diff", taskId: task.id, cwd: priv.worktree, base }));
+    if (msg.pushed === "app" && msg.owner && msg.repo) this.hooks.waitUntil(this.openPull(task.id, msg.owner, msg.repo));
     this.hooks.waitUntil(this.pump());
+  }
+
+  // ---------------------------------------------------------------------------
+  // GitHub: the pull request and its CI, when the app pushed the branch
+
+  /** Opens the task's pull request on GitHub (or finds it, pushed again), then reads its CI. */
+  private async openPull(id: string, owner: string, repo: string) {
+    const app = githubApp(this.env);
+    let task = this.store.task(id);
+    if (!app || !task?.pr) return;
+    try {
+      if (!task.pr.url) {
+        const pr = await createPullRequest(app, owner, repo, { title: `${task.id}: ${task.title}`, head: task.pr.branch, base: task.pr.base, body: pullBody(task) });
+        task = this.store.task(id);
+        if (!task?.pr) return;
+        task.pr.number = pr.number;
+        task.pr.url = pr.url;
+        this.event(task, "factory", `opened pull request #${pr.number} on ${owner}/${repo}`);
+      }
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), gh: { owner, repo } });
+      this.save(task);
+      await this.refreshChecks(task.id);
+    } catch (e) {
+      const t = this.store.task(id);
+      if (!t) return;
+      this.event(t, "factory", `couldn't open a pull request on ${owner}/${repo}: ${(e as Error).message}`);
+      this.save(t);
+    }
+  }
+
+  /** Reads the task's CI from GitHub; all passed may let it merge. */
+  async refreshChecks(id: string) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.head || !gh) return;
+    const found = await checks(app, gh.owner, gh.repo, task.pr.head).catch(() => null);
+    const now_ = this.store.task(id);
+    if (!found || !now_?.pr) return;
+    const before = now_.pr.checks.map((c) => `${c.name}:${c.status}`).join();
+    now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true }));
+    this.store.savePrivate(id, { ...this.store.private(id), checks: found });
+    if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) return;
+    const failed = found.filter((c) => c.status === "failed");
+    if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
+    else if (found.length && found.every((c) => c.status === "passed")) this.event(now_, "factory", "CI passed");
+    this.save(now_);
+    await this.autoMerge(now_);
+  }
+
+  /** A GitHub webhook about a repo's checks or pull requests: the tasks it's about read their CI again. */
+  async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean }) {
+    const repo = `${event.owner}/${event.repo}`.toLowerCase();
+    for (const task of this.store.tasks()) {
+      const gh = this.store.private(task.id).gh;
+      if (!gh || `${gh.owner}/${gh.repo}`.toLowerCase() !== repo || !task.pr) continue;
+      if (!(event.sha && task.pr.head === event.sha) && !(event.number && task.pr.number === event.number)) continue;
+      if (event.closed && task.state !== "merged" && task.state !== "cancelled") {
+        if (event.merged) this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: null, message: null });
+        else {
+          task.pr.state = "closed";
+          this.event(task, "factory", `pull request #${task.pr.number} was closed on GitHub`);
+          this.save(task);
+        }
+        continue;
+      }
+      await this.refreshChecks(task.id);
+    }
   }
 
   private merged(msg: Extract<RunnerMessage, { type: "task.merged" }>) {
@@ -1027,6 +1134,7 @@ export class Engine {
   private async autoMerge(task: Task) {
     if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return;
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return;
+    if (task.pr.checks.some((c) => c.status !== "passed")) return; // CI first
     const a = this.assessment(task);
     if (!a.autoMerge || this.store.private(task.id).merging) return;
     await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {});
@@ -1034,6 +1142,22 @@ export class Engine {
 
   private async startMerge(task: Task, who: string, text = "merged it") {
     const priv = this.store.private(task.id);
+    const app = githubApp(this.env);
+    if (app && priv.gh && task.pr?.url) {
+      // On GitHub: squash-merge the pull request, pinned to the head that was reviewed.
+      this.store.savePrivate(task.id, { ...priv, merging: true });
+      this.event(task, who, text);
+      task.liveLog = "Merging…";
+      this.save(task);
+      await audit(this.env, who, "task.merged", task.id);
+      const pr = task.pr;
+      this.hooks.waitUntil(
+        mergePullRequest(app, priv.gh.owner, priv.gh.repo, pr.number, { sha: pr.head ?? null, title: `${task.id}: ${task.title}` })
+          .then((m) => this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: m.sha, message: null }))
+          .catch((e) => this.merged({ type: "task.merged", taskId: task.id, ok: false, commit: null, message: (e as Error).message })),
+      );
+      return;
+    }
     if (!task.machine || !priv.worktree || !task.pr) fail("Its worktree isn't known; it can't be merged from here.");
     const sent = await this.toRunner(task.machine!, {
       type: "task.merge",
@@ -1212,3 +1336,13 @@ const num = (v: unknown): number => {
 };
 const str = (v: unknown, name: string): string => (typeof v === "string" && v.trim() ? v.trim() : fail(`${name} is required.`));
 const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "terminal", "tests"].includes(v as string) ? (v as Evidence["kind"]) : "terminal");
+
+/** The pull request's description: the brief, the plan, and what proves it's done. */
+function pullBody(task: Task): string {
+  const steps = task.plan.map((s, i) => `${i + 1}. ${s.text}${s.file ? ` (\`${s.file}\`)` : ""}`).join("\n");
+  const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
+  return [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, task.brief.trim(), steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 60_000);
+}

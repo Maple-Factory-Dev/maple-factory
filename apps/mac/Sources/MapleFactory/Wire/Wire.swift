@@ -2375,6 +2375,15 @@ public enum Wire {
         }
     }
 
+    /// Run the pull request's failed CI checks again.
+    public struct ClientMessageTaskRerunChecks: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     public struct ClientMessageTaskSplit: Codable, Hashable, Sendable {
         public var id: String
@@ -2450,6 +2459,7 @@ public enum Wire {
         case taskMerge(ClientMessageTaskMerge)
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
+        case taskRerunChecks(ClientMessageTaskRerunChecks)
         case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
         case taskCheckedIt(ClientMessageTaskCheckedIt)
@@ -2490,6 +2500,7 @@ public enum Wire {
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
+            case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
@@ -2583,6 +2594,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRetry(let body):
                 try c.encode("task.retry", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRerunChecks(let body):
+                try c.encode("task.rerunChecks", forKey: .type)
                 try body.encode(to: encoder)
             case .taskSplit(let body):
                 try c.encode("task.split", forKey: .type)

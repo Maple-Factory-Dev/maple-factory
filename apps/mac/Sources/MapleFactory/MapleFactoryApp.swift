@@ -32,6 +32,8 @@ struct MapleFactoryApp: App {
                 .task { client.connect() }
                 .frame(minWidth: 720, minHeight: 620)
         }
+        // Links never make a window of their own; the one there (or the one launch opens) takes them.
+        .handlesExternalEvents(matching: [])
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: launchWidth, height: 1000)
         .commands {

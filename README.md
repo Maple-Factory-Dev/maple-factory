@@ -36,6 +36,23 @@ End-to-end tests for each piece are in server/test (each says what it needs at t
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
 Runner tests: `cd runner && cargo test`.
 
+## GitHub App
+
+With an app, runners fetch and push tasks' branches with short-lived, single-repo installation tokens,
+and the factory opens each task's pull request, waits for its CI (failed checks can be run again from
+the app), squash-merges it, and closes it if the task is cancelled. Without one, tasks push with the
+machine's own credentials and merge locally. Set on the server:
+
+```sh
+GITHUB_APP_ID=…              # or the app's Client ID
+GITHUB_APP_PRIVATE_KEY=…     # the PEM GitHub gives you (literal \n is fine)
+GITHUB_WEBHOOK_SECRET=…      # webhook URL: https://<factory>/integrations/github
+```
+
+The app needs Contents, Pull requests, Checks and Actions (read & write) and Commit statuses (read), and
+webhook events Check run, Check suite, Status and Pull request. `server/test/e2e-github.mjs` runs the
+whole path against `server/test/fake-github.mjs`.
+
 ## How sessions end
 
 Every end carries a cause (`EndCause` in protocol/schema.ts) and the last 30 lines of screen, stored in

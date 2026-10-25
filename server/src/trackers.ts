@@ -6,6 +6,7 @@
 import type { Env } from "./env.ts";
 import type { TicketLink } from "./wire.ts";
 import { orgHub, text } from "./util.ts";
+import { verifyWebhook } from "./github.ts";
 
 /** Starts every comment the bot writes, so the webhook for it isn't taken as the requester talking. */
 const BOT = "Maple · ";
@@ -156,4 +157,27 @@ export async function deliver(env: Env, replyUrl: string, said: string): Promise
     return;
   }
   await fetch(replyUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: said, response_type: "in_channel" }) });
+}
+
+// ---- GitHub ----
+
+/** POST /integrations/github: the GitHub App's webhook (signed with GITHUB_WEBHOOK_SECRET). */
+export async function githubWebhook(request: Request, env: Env): Promise<Response> {
+  if (!env.GITHUB_WEBHOOK_SECRET) return text("GitHub webhooks aren't set up for this factory.", 404);
+  const raw = await request.arrayBuffer();
+  if (!(await verifyWebhook(env.GITHUB_WEBHOOK_SECRET, raw, request.headers.get("x-hub-signature-256")))) return text("Bad signature.", 401);
+  const kind = request.headers.get("x-github-event") ?? "";
+  const e = JSON.parse(new TextDecoder().decode(raw)) as any;
+  const owner = e.repository?.owner?.login;
+  const repo = e.repository?.name;
+  if (typeof owner !== "string" || typeof repo !== "string") return new Response(null, { status: 204 });
+  const event =
+    kind === "check_run" ? { sha: e.check_run?.head_sha }
+    : kind === "check_suite" ? { sha: e.check_suite?.head_sha }
+    : kind === "status" ? { sha: e.sha }
+    : kind === "pull_request" ? { number: e.number, sha: e.pull_request?.head?.sha, closed: e.action === "closed", merged: e.pull_request?.merged === true }
+    : null;
+  if (!event) return new Response(null, { status: 204 });
+  await orgHub(env).fetch("https://org/github", { method: "POST", body: JSON.stringify({ owner, repo, ...event }) });
+  return new Response(null, { status: 204 });
 }

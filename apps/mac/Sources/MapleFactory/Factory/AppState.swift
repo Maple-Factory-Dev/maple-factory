@@ -747,6 +747,11 @@ final class AppState {
     }
 
     func rerunFailedChecks(_ id: String) {
+        if let client, isLive {
+            client.send(.taskRerunChecks(.init(id: id)))
+            showToast("Running \(id)'s failed checks again", icon: "arrow.clockwise")
+            return
+        }
         withAnimation(.snappy(duration: 0.25)) {
             update(id) { task in
                 guard var pr = task.pr else { return }

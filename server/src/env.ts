@@ -5,6 +5,13 @@ export interface Env {
   RELEASES: R2Bucket;
   GITHUB_ORG: string;
   GITHUB_CLIENT_ID?: string;
+  /** The GitHub App that pushes tasks' branches and opens, merges and closes their pull requests. */
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  /** Verifies the app's webhooks (check runs, statuses, pull requests) at /integrations/github. */
+  GITHUB_WEBHOOK_SECRET?: string;
+  /** For tests: a fake GitHub API on localhost. */
+  GITHUB_API_URL?: string;
   GITHUB_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
   DEV_LOGIN?: string;

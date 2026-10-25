@@ -622,6 +622,7 @@ export const unions: Record<string, Union> = {
       "task.merge": { fields: { id: "string" } },
       "task.cancel": { fields: { id: "string" } },
       "task.retry": { fields: { id: "string" } },
+      "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
       "task.split": {
         doc: "Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.",
         fields: { id: "string", parts: "u32" },

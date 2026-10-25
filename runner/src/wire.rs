@@ -1436,6 +1436,11 @@ pub enum ClientMessage {
     TaskRetry {
         id: String,
     },
+    /// Run the pull request's failed CI checks again.
+    #[serde(rename = "task.rerunChecks")]
+    TaskRerunChecks {
+        id: String,
+    },
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     #[serde(rename = "task.split")]
     TaskSplit {

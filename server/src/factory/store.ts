@@ -25,6 +25,9 @@ export interface TaskPrivate {
   handingOff?: string | null;
   /// Where it was moved from, and the commit it carries on from, until its next session starts.
   movedFrom?: { machine: string; commit: string | null } | null;
+  /** The repo its pull request is on, once the GitHub App pushed it, and its CI as GitHub reported it. */
+  gh?: { owner: string; repo: string } | null;
+  checks?: import("../github.ts").Check[];
 }
 
 export interface TaskSession {

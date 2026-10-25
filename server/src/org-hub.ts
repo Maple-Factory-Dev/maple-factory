@@ -99,6 +99,10 @@ export class OrgHub extends DurableObject<Env> {
         const updated = replyUrl ? this.intake.replyFrom(replyUrl, author, text) : this.intake.reply(id ?? "", author, text);
         return updated ? Response.json(updated) : new Response("No such request.", { status: 404 });
       }
+      case "/github": {
+        await this.engine.fromGitHub(await request.json());
+        return new Response(null, { status: 204 });
+      }
       case "/usage/goals": {
         // Agent time per goal over the last week: which goals the machines' plans went on.
         const rows = this.store.sessionTime(Date.now() - 7 * 86_400_000);
