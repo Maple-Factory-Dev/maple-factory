@@ -293,7 +293,10 @@ struct LiveMachineCard: View {
         Menu {
             Button("Factory Settings…") { editing = true }
             if let settings = machine.settings {
-                Button(settings.paused ? "Resume Factory Work" : "Pause Factory Work") {
+                let teammates = client.factoryTasks.contains { $0.worker?.machine == machine.id && $0.owner.github != machine.owner }
+                Button(settings.paused ? "Resume Factory Work" : teammates ? "Pause Factory Work…" : "Pause Factory Work") {
+                    // Teammates' tasks are running here: pausing asks whether to hand them off.
+                    if !settings.paused && teammates { editing = true; return }
                     var changed = settings
                     changed.paused.toggle()
                     changed.pausedUntil = nil
