@@ -67,6 +67,12 @@ export async function audit(env: Env, actor: string, action: string, target?: st
   }
 }
 
+/** The origin people reach this server at: PUBLIC_URL when set (`wrangler dev` hands the Worker
+ *  "http://localhost", port dropped), else the request's. */
+export function publicOrigin(request: Request, env: Env) {
+  return env.PUBLIC_URL ? env.PUBLIC_URL.replace(/\/+$/, "") : new URL(request.url).origin;
+}
+
 export function isLocal(request: Request) {
   const host = new URL(request.url).hostname;
   return host === "localhost" || host === "127.0.0.1";

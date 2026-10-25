@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use crate::config;
 
 /// The release signing key: a raw 32-byte Ed25519 public key, base64url without padding.
-pub const RELEASE_PUBLIC_KEY: &str = "Fe3Vg8zLwK9pzkUGMZBVeOQAj0UNmQoYo8NmQWBLEdg";
+pub const RELEASE_PUBLIC_KEY: &str = "-GzUbxnqGXRDK-1jtr3R8x1RIWORNkg_0CSC2BOG6zQ";
 
 /// The exit status of a runner that has just replaced its own binary. Any non-zero status
 /// makes launchd (`KeepAlive.SuccessfulExit = false`) and systemd (`Restart=on-failure`)

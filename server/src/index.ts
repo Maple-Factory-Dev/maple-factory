@@ -3,9 +3,10 @@
 import type { Env } from "./env.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
+import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
-import { isLocal, machineHub, orgHub, text } from "./util.ts";
+import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
 import { PROTOCOL_VERSION } from "./wire.ts";
 import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
 
@@ -35,6 +36,7 @@ export default {
       forward.headers.set("x-machine-id", id);
       return machineHub(env, id).fetch(new Request("https://hub/runner", forward));
     }
+    if (path === "/install.sh") return installScript(publicOrigin(request, env));
     if (path.startsWith("/releases/")) {
       const object = await env.RELEASES.get(path.slice("/releases/".length));
       if (!object) return text("Not found.", 404);

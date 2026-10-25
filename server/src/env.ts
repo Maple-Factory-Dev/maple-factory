@@ -12,6 +12,8 @@ export interface Env {
   GITHUB_WEBHOOK_SECRET?: string;
   /** For tests: a fake GitHub API on localhost. */
   GITHUB_API_URL?: string;
+  /** Where people reach this server, when the request URL can't say (local dev: http://localhost:8788). */
+  PUBLIC_URL?: string;
   GITHUB_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
   DEV_LOGIN?: string;

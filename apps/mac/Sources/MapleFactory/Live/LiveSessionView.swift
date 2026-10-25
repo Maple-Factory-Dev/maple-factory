@@ -217,7 +217,7 @@ struct AddMachineSheet: View {
                 Text("Add a machine")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(Theme.text)
-                Text("Run these on the Mac or Linux machine you're adding. It joins as yours; the code works once, for 15 minutes.")
+                Text("Run this on the Mac or Linux machine you're adding: it installs the runner and joins the machine as yours. The code works once, for 15 minutes.")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)

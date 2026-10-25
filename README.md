@@ -39,6 +39,20 @@ End-to-end tests for each piece are in server/test (each says what it needs at t
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
 Runner tests: `cd runner && cargo test`.
 
+## Runner releases and install
+
+Adding a machine is one line from Machines → Add machine: `curl -fsSL https://<factory>/install.sh | sh -s -- CODE`.
+The script picks the build for the machine (macOS or Linux, arm64 or x86_64), checks it against the
+release manifest's sha256, enrolls the machine and starts the runner at login (launchd or systemd).
+Runners then update themselves, trusting only manifests signed with the release key.
+
+```sh
+node scripts/release-runner.mjs --new-key       # once; the key lives in ~/.config/maple-factory/, back it up
+node scripts/release-runner.mjs [--local]       # build, sign and upload every target (Linux needs Docker for cross)
+```
+
+Set `PUBLIC_URL=http://localhost:8788` in `.dev.vars` locally: `wrangler dev` hides the port from the Worker.
+
 ## GitHub App
 
 With an app, runners fetch and push tasks' branches with short-lived, single-repo installation tokens,

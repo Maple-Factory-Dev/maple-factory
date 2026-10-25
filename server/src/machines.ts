@@ -2,7 +2,7 @@
 
 import type { Env } from "./env.ts";
 import type { Machine, Member } from "./wire.ts";
-import { audit, machineHub, orgHub, randomCode, randomToken, sha256, text } from "./util.ts";
+import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sha256, text } from "./util.ts";
 
 export const MACHINE_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CODE_TTL = 15 * 60 * 1000;
@@ -52,11 +52,11 @@ export async function createEnrollment(request: Request, env: Env, me: Member): 
   await env.DB.prepare("INSERT INTO enroll_codes (code_hash, owner, created_at, expires_at) VALUES (?, ?, ?, ?)")
     .bind(await sha256(code), me.login, now, now + CODE_TTL).run();
   await audit(env, me.login, "machine.enrollment_created");
-  const origin = new URL(request.url).origin;
+  const origin = publicOrigin(request, env);
   return Response.json({
     code,
     expiresAt: now + CODE_TTL,
-    commands: [`curl -fsSL ${origin}/install.sh | sh`, `maple-runner enroll --url ${origin} --code ${code}`, "maple-runner install"],
+    commands: [`curl -fsSL ${origin}/install.sh | sh -s -- ${code}`],
   });
 }
 
