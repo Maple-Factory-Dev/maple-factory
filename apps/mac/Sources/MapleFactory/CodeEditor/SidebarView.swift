@@ -130,12 +130,14 @@ struct SidebarView: View {
 }
 
 struct WorkspaceSwitcher: View {
+    @Environment(FactoryClient.self) private var client
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Theme.accent)
-            Text("Studio Workspace")
+            Text(client.workspaceName)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.text)
             Spacer()

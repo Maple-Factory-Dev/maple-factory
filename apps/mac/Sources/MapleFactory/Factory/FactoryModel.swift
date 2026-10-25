@@ -182,6 +182,8 @@ struct FactoryTask: Identifiable {
     var footprint: (files: Int, lines: Int, estimated: Bool)? = nil
     /// Names of sensitive areas (see `RiskPolicy`) the change touches.
     var areas: [String] = []
+    /// The risk the planner (or the factory's assessment) gave it, before areas and size.
+    var plannedRisk: RiskLevel = .low
     /// Teammates who signed off on the finished change.
     var reviews: [Person] = []
     var pr: PullRequest? = nil

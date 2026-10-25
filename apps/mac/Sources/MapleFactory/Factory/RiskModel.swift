@@ -60,7 +60,7 @@ struct RiskPolicy {
         let overLines = footprint.lines > maxLines
         let areaLevel = areas.map(\.level).max() ?? .low
         let sizeLevel: RiskLevel = overFiles || overLines ? .medium : .low
-        let level = max(areaLevel, sizeLevel)
+        let level = max(areaLevel, sizeLevel, task.plannedRisk)
         // A goal that has accepted risk up to this level lets the factory merge without human review.
         let accepted = acceptance.map { level <= $0.autoMergeUpTo } ?? false
 

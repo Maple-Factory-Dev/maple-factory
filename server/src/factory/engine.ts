@@ -14,6 +14,7 @@ import { audit, machineHub } from "../util.ts";
 import { Store, type TaskSession } from "./store.ts";
 import { builderPrompt, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { allowed, toolsFor } from "./tools.ts";
+import { assess, validPolicy } from "./policy.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -59,6 +60,22 @@ export class Engine {
         this.store.saveGoal(goal);
         this.hooks.broadcast({ type: "goal.updated", goal });
         return;
+      }
+      case "policy.save": {
+        if (member.role !== "admin") fail("Only admins can change the risk policy.");
+        const problem = validPolicy(msg.policy);
+        if (problem) fail(problem);
+        this.store.savePolicy(msg.policy);
+        await audit(this.env, who, "policy.saved", null, msg.policy);
+        return this.policyChanged();
+      }
+      case "goal.acceptRisk": {
+        const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
+        if (member.role !== "admin" && goal.lead !== who) fail(`Only admins or ${goal.lead}, its lead, can accept risk for ${goal.name}.`);
+        const rest = this.store.acceptances().filter((a) => a.goal !== goal.id);
+        this.store.saveAcceptances(msg.upTo ? [...rest, { goal: goal.id, upTo: msg.upTo, by: who, at: now(), note: msg.note ?? null }] : rest);
+        await audit(this.env, who, msg.upTo ? "risk.accepted" : "risk.withdrawn", goal.id, { upTo: msg.upTo, note: msg.note });
+        return this.policyChanged();
       }
       case "task.create": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
@@ -177,26 +194,14 @@ export class Engine {
         task.reviews.push(who);
         this.event(task, who, "approved the changes");
         this.save(task);
+        await this.autoMerge(task);
         return;
       }
       case "task.merge": {
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
+        if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
-        const priv = this.store.private(task.id);
-        if (!task.machine || !priv.worktree) fail("Its worktree isn't known; it can't be merged from here.");
-        const sent = await this.toRunner(task.machine!, {
-          type: "task.merge",
-          taskId: task.id,
-          cwd: priv.worktree!,
-          branch: task.pr!.branch,
-          base: task.pr!.base,
-          title: `Merge ${task.id}: ${task.title}`,
-        });
-        if (!sent) fail(`${task.machine} is offline; it merges when it's back.`);
-        this.event(task, who, "merged it");
-        task.liveLog = "Merging…";
-        this.save(task);
-        await audit(this.env, who, "task.merged", task.id);
+        await this.startMerge(task, who);
         return;
       }
       case "task.cancel": {
@@ -506,6 +511,7 @@ export class Engine {
     const task = this.store.task(msg.taskId);
     if (!task || !task.pr) return;
     task.liveLog = null;
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false });
     if (!msg.ok) {
       this.event(task, "factory", `couldn't merge: ${msg.message ?? "no reason given"}`);
       this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge: ${msg.message ?? "no reason given"}`, taskId: task.id });
@@ -553,6 +559,7 @@ export class Engine {
     try {
       const out = this.run(task, s, name, args);
       this.save(task);
+      if (name === "submit_review") await this.autoMerge(task);
       return { result: out };
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
@@ -611,7 +618,7 @@ export class Engine {
             differences: [],
           } satisfies Mockup;
         });
-        task.approvalsNeeded = level === "high" ? 2 : 1;
+        this.applyPolicy(task);
         task.approvals = [];
         for (const c of task.changes) if (c.status !== "applied") c.status = "applied";
         task.state = "awaitingApproval";
@@ -756,6 +763,67 @@ export class Engine {
       }
     }
     return fail(`Unknown tool ${name}.`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Policy and merging
+
+  private assessment(task: Task) {
+    return assess(task, this.store.policy(), this.store.acceptances().find((a) => a.goal === task.goal));
+  }
+
+  /** The risk level, approvals and reviews the policy gives this task now. */
+  private applyPolicy(task: Task) {
+    const a = this.assessment(task);
+    task.risk = { level: a.level, reasons: task.risk?.reasons ?? [], areas: task.risk?.areas ?? [] };
+    task.approvalsNeeded = a.approvals;
+    task.reviewsNeeded = a.reviews;
+  }
+
+  private async policyChanged() {
+    this.hooks.broadcast({ type: "policy.updated", policy: this.store.policy(), acceptances: this.store.acceptances() });
+    for (const task of this.store.tasks()) {
+      if (task.state === "merged" || task.state === "cancelled" || !task.risk) continue;
+      const before = `${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}`;
+      this.applyPolicy(task);
+      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` === before) continue;
+      this.save(task, false);
+      if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
+        task.state = "building";
+        this.event(task, "factory", "queued it for building (the policy needs fewer approvals now)");
+        this.save(task);
+      }
+      await this.autoMerge(task);
+    }
+    await this.pump();
+  }
+
+  /** Merges on the factory's own say-so when the policy (or the goal's accepted risk) allows it. */
+  private async autoMerge(task: Task) {
+    if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return;
+    if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return;
+    const a = this.assessment(task);
+    if (!a.autoMerge || this.store.private(task.id).merging) return;
+    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {});
+  }
+
+  private async startMerge(task: Task, who: string, text = "merged it") {
+    const priv = this.store.private(task.id);
+    if (!task.machine || !priv.worktree || !task.pr) fail("Its worktree isn't known; it can't be merged from here.");
+    const sent = await this.toRunner(task.machine!, {
+      type: "task.merge",
+      taskId: task.id,
+      cwd: priv.worktree!,
+      branch: task.pr!.branch,
+      base: task.pr!.base,
+      title: `Merge ${task.id}: ${task.title}`,
+    });
+    if (!sent) fail(`${task.machine} is offline; it merges when it's back.`);
+    this.store.savePrivate(task.id, { ...priv, merging: true });
+    this.event(task, who, text);
+    task.liveLog = "Merging…";
+    this.save(task);
+    await audit(this.env, who, "task.merged", task.id);
   }
 
   // ---------------------------------------------------------------------------

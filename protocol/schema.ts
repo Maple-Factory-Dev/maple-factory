@@ -319,6 +319,29 @@ export const structs: Record<string, Struct> = {
       machine: "Where its worktree lives once building started.",
     },
   },
+  SensitiveArea: {
+    doc: "Code that raises a change's risk when touched.",
+    fields: { name: "string", paths: "string[]", level: "RiskLevel", enabled: "bool" },
+  },
+  RiskPolicy: {
+    doc: "The org's rules for how much sign-off a change needs, by its risk.",
+    fields: {
+      maxFiles: "u32",
+      maxLines: "u32",
+      areas: "SensitiveArea[]",
+      planApprovals: "map<u32>",
+      finalReviews: "map<u32>",
+      autoMerge: "map<bool>",
+    },
+    fieldDocs: {
+      maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
+      planApprovals: "By risk level (low, medium, high).",
+    },
+  },
+  RiskAcceptance: {
+    doc: "A goal letting the factory merge without human review, up to a risk level, on the record.",
+    fields: { goal: "string", upTo: "RiskLevel", by: "string", at: "u64", note: "string?" },
+  },
   WorktreeSpec: {
     doc: "A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.",
     fields: { name: "string", base: "string?", existing: "bool" },
@@ -464,6 +487,11 @@ export const unions: Record<string, Union> = {
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
+      "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
+      "goal.acceptRisk": {
+        doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",
+        fields: { goal: "string", upTo: "RiskLevel?", note: "string?" },
+      },
       "task.create": {
         fields: { goal: "string", title: "string", brief: "string", shareable: "bool", plan: "bool", tickets: "TicketLink[]", agent: "string?" },
         fieldDocs: { plan: "Send it to planning now; otherwise it stays a draft." },
@@ -495,6 +523,8 @@ export const unions: Record<string, Union> = {
           ended: "EndedSession[]",
           goals: "Goal[]",
           tasks: "Task[]",
+          policy: "RiskPolicy",
+          acceptances: "RiskAcceptance[]",
           protocolVersion: "u32",
         },
         fieldDocs: { ended: "The most recent session ends (last 7 days, newest first)." },
@@ -504,6 +534,7 @@ export const unions: Record<string, Union> = {
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
       "goal.updated": { fields: { goal: "Goal" } },
+      "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       error: { fields: { message: "string", requestId: "string?" } },

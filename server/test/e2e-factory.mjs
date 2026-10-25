@@ -74,9 +74,13 @@ t = await wait("review round 2", () => tasks.get(id)?.autoReview?.rounds[1]?.ver
 step(`round 2 passed; findings open: ${t.autoReview.findings.filter((f) => f.status === "open").length}`);
 if (t.doneWhen.some((d) => d.status !== "proven")) throw new Error("not every item is proven");
 
-send({ type: "task.approveChanges", id });
-await wait("review", () => tasks.get(id)?.reviews.length === 1);
-send({ type: "task.merge", id });
+if (t.reviewsNeeded > 0) {
+  send({ type: "task.approveChanges", id });
+  await wait("review", () => tasks.get(id)?.reviews.length === 1);
+  send({ type: "task.merge", id });
+} else {
+  step(`${t.risk.level} risk needs no human review: the factory merges it`);
+}
 t = await wait("merge", () => tasks.get(id)?.state === "merged" && tasks.get(id), 30000);
 step(`merged: ${t.events.at(-1).text}`);
 

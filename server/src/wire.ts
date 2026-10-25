@@ -402,6 +402,35 @@ export interface Task {
   machine?: string | null;
 }
 
+/** Code that raises a change's risk when touched. */
+export interface SensitiveArea {
+  name: string;
+  paths: string[];
+  level: RiskLevel;
+  enabled: boolean;
+}
+
+/** The org's rules for how much sign-off a change needs, by its risk. */
+export interface RiskPolicy {
+  /** Over this (or maxLines), a change is at least medium risk and should be split. */
+  maxFiles: number;
+  maxLines: number;
+  areas: SensitiveArea[];
+  /** By risk level (low, medium, high). */
+  planApprovals: Record<string, number>;
+  finalReviews: Record<string, number>;
+  autoMerge: Record<string, boolean>;
+}
+
+/** A goal letting the factory merge without human review, up to a risk level, on the record. */
+export interface RiskAcceptance {
+  goal: string;
+  upTo: RiskLevel;
+  by: string;
+  at: number;
+  note?: string | null;
+}
+
 /** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
 export interface WorktreeSpec {
   name: string;
@@ -699,6 +728,20 @@ export interface ClientMessage_GoalSave {
   goal: Goal;
 }
 
+/** Admins only. */
+export interface ClientMessage_PolicySave {
+  type: "policy.save";
+  policy: RiskPolicy;
+}
+
+/** Let the factory auto-merge a goal's work up to `upTo`; none takes it back. */
+export interface ClientMessage_GoalAcceptRisk {
+  type: "goal.acceptRisk";
+  goal: string;
+  upTo?: RiskLevel | null;
+  note?: string | null;
+}
+
 export interface ClientMessage_TaskCreate {
   type: "task.create";
   goal: string;
@@ -795,8 +838,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -808,6 +851,8 @@ export interface ServerToClient_Snapshot {
   ended: EndedSession[];
   goals: Goal[];
   tasks: Task[];
+  policy: RiskPolicy;
+  acceptances: RiskAcceptance[];
   protocolVersion: number;
 }
 
@@ -836,6 +881,12 @@ export interface ServerToClient_GoalUpdated {
   goal: Goal;
 }
 
+export interface ServerToClient_PolicyUpdated {
+  type: "policy.updated";
+  policy: RiskPolicy;
+  acceptances: RiskAcceptance[];
+}
+
 /** Something worth a passing line in the app. */
 export interface ServerToClient_Toast {
   type: "toast";
@@ -856,5 +907,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","policy.updated","toast","session.ended","error"] as const;

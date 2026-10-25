@@ -2,7 +2,8 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, Role, Task } from "../wire.ts";
+import type { Goal, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import { DEFAULT_POLICY } from "./policy.ts";
 
 /// What the server knows about a task that the apps don't need.
 export interface TaskPrivate {
@@ -13,6 +14,8 @@ export interface TaskPrivate {
   base: string | null;
   /// The builder said it's done; finishing (commit and push) is under way.
   finishing: boolean;
+  /// A merge was sent and hasn't been answered.
+  merging?: boolean;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.
   restarts: number;
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
@@ -150,6 +153,25 @@ export class Store {
       "INSERT INTO machine_settings (id, doc) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET doc = excluded.doc",
       machine, JSON.stringify(settings),
     );
+  }
+
+  // Policy
+
+  policy(): RiskPolicy {
+    const saved = this.get("policy");
+    return saved ? { ...DEFAULT_POLICY, ...JSON.parse(saved) } : DEFAULT_POLICY;
+  }
+
+  savePolicy(policy: RiskPolicy) {
+    this.set("policy", JSON.stringify(policy));
+  }
+
+  acceptances(): RiskAcceptance[] {
+    return JSON.parse(this.get("acceptances") ?? "[]");
+  }
+
+  saveAcceptances(list: RiskAcceptance[]) {
+    this.set("acceptances", JSON.stringify(list));
   }
 
   get(key: string): string | null {

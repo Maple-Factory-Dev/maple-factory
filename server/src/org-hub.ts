@@ -133,6 +133,8 @@ export class OrgHub extends DurableObject<Env> {
           ended: await this.recentEnds(),
           goals: this.store.goals(),
           tasks: this.store.tasks(),
+          policy: this.store.policy(),
+          acceptances: this.store.acceptances(),
           protocolVersion: PROTOCOL_VERSION,
         });
         return;

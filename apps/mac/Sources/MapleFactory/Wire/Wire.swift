@@ -1043,6 +1043,77 @@ public enum Wire {
         }
     }
 
+    /// Code that raises a change's risk when touched.
+    public struct SensitiveArea: Codable, Hashable, Sendable {
+        public var name: String
+        public var paths: [String]
+        public var level: RiskLevel
+        public var enabled: Bool
+
+        public init(name: String, paths: [String] = [], level: RiskLevel, enabled: Bool) {
+            self.name = name
+            self.paths = paths
+            self.level = level
+            self.enabled = enabled
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            paths = try c.decodeIfPresent([String].self, forKey: .paths) ?? []
+            level = try c.decode(RiskLevel.self, forKey: .level)
+            enabled = try c.decode(Bool.self, forKey: .enabled)
+        }
+    }
+
+    /// The org's rules for how much sign-off a change needs, by its risk.
+    public struct RiskPolicy: Codable, Hashable, Sendable {
+        /// Over this (or maxLines), a change is at least medium risk and should be split.
+        public var maxFiles: UInt32
+        public var maxLines: UInt32
+        public var areas: [SensitiveArea]
+        /// By risk level (low, medium, high).
+        public var planApprovals: [String: UInt32]
+        public var finalReviews: [String: UInt32]
+        public var autoMerge: [String: Bool]
+
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:]) {
+            self.maxFiles = maxFiles
+            self.maxLines = maxLines
+            self.areas = areas
+            self.planApprovals = planApprovals
+            self.finalReviews = finalReviews
+            self.autoMerge = autoMerge
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            maxFiles = try c.decode(UInt32.self, forKey: .maxFiles)
+            maxLines = try c.decode(UInt32.self, forKey: .maxLines)
+            areas = try c.decodeIfPresent([SensitiveArea].self, forKey: .areas) ?? []
+            planApprovals = try c.decodeIfPresent([String: UInt32].self, forKey: .planApprovals) ?? [:]
+            finalReviews = try c.decodeIfPresent([String: UInt32].self, forKey: .finalReviews) ?? [:]
+            autoMerge = try c.decodeIfPresent([String: Bool].self, forKey: .autoMerge) ?? [:]
+        }
+    }
+
+    /// A goal letting the factory merge without human review, up to a risk level, on the record.
+    public struct RiskAcceptance: Codable, Hashable, Sendable {
+        public var goal: String
+        public var upTo: RiskLevel
+        public var by: String
+        public var at: UInt64
+        public var note: String?
+
+        public init(goal: String, upTo: RiskLevel, by: String, at: UInt64, note: String? = nil) {
+            self.goal = goal
+            self.upTo = upTo
+            self.by = by
+            self.at = at
+            self.note = note
+        }
+    }
+
     /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
     public struct WorktreeSpec: Codable, Hashable, Sendable {
         public var name: String
@@ -1719,6 +1790,28 @@ public enum Wire {
         }
     }
 
+    /// Admins only.
+    public struct ClientMessagePolicySave: Codable, Hashable, Sendable {
+        public var policy: RiskPolicy
+
+        public init(policy: RiskPolicy) {
+            self.policy = policy
+        }
+    }
+
+    /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
+    public struct ClientMessageGoalAcceptRisk: Codable, Hashable, Sendable {
+        public var goal: String
+        public var upTo: RiskLevel?
+        public var note: String?
+
+        public init(goal: String, upTo: RiskLevel? = nil, note: String? = nil) {
+            self.goal = goal
+            self.upTo = upTo
+            self.note = note
+        }
+    }
+
     public struct ClientMessageTaskCreate: Codable, Hashable, Sendable {
         public var goal: String
         public var title: String
@@ -1896,6 +1989,8 @@ public enum Wire {
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
         case goalSave(ClientMessageGoalSave)
+        case policySave(ClientMessagePolicySave)
+        case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
         case taskEdit(ClientMessageTaskEdit)
         case taskPlan(ClientMessageTaskPlan)
@@ -1925,6 +2020,8 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
+            case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
+            case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
@@ -1965,6 +2062,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalSave(let body):
                 try c.encode("goal.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .policySave(let body):
+                try c.encode("policy.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .goalAcceptRisk(let body):
+                try c.encode("goal.acceptRisk", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCreate(let body):
                 try c.encode("task.create", forKey: .type)
@@ -2023,9 +2126,11 @@ public enum Wire {
         public var ended: [EndedSession]
         public var goals: [Goal]
         public var tasks: [Task]
+        public var policy: RiskPolicy
+        public var acceptances: [RiskAcceptance]
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2033,6 +2138,8 @@ public enum Wire {
             self.ended = ended
             self.goals = goals
             self.tasks = tasks
+            self.policy = policy
+            self.acceptances = acceptances
             self.protocolVersion = protocolVersion
         }
 
@@ -2045,6 +2152,8 @@ public enum Wire {
             ended = try c.decodeIfPresent([EndedSession].self, forKey: .ended) ?? []
             goals = try c.decodeIfPresent([Goal].self, forKey: .goals) ?? []
             tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
+            policy = try c.decode(RiskPolicy.self, forKey: .policy)
+            acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -2089,6 +2198,22 @@ public enum Wire {
         }
     }
 
+    public struct ServerToClientPolicyUpdated: Codable, Hashable, Sendable {
+        public var policy: RiskPolicy
+        public var acceptances: [RiskAcceptance]
+
+        public init(policy: RiskPolicy, acceptances: [RiskAcceptance] = []) {
+            self.policy = policy
+            self.acceptances = acceptances
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            policy = try c.decode(RiskPolicy.self, forKey: .policy)
+            acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
+        }
+    }
+
     /// Something worth a passing line in the app.
     public struct ServerToClientToast: Codable, Hashable, Sendable {
         public var text: String
@@ -2128,6 +2253,7 @@ public enum Wire {
         case taskUpdated(ServerToClientTaskUpdated)
         case taskRemoved(ServerToClientTaskRemoved)
         case goalUpdated(ServerToClientGoalUpdated)
+        case policyUpdated(ServerToClientPolicyUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case error(ServerToClientError)
@@ -2145,6 +2271,7 @@ public enum Wire {
             case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
+            case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
@@ -2172,6 +2299,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalUpdated(let body):
                 try c.encode("goal.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .policyUpdated(let body):
+                try c.encode("policy.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .toast(let body):
                 try c.encode("toast", forKey: .type)

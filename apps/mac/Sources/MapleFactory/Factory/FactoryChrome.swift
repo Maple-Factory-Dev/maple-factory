@@ -232,6 +232,9 @@ struct FactoryStatusBar: View {
                 Text("\(state.inbox(.review, mine: true).count)\(state.isCompact ? "" : " ready for review")")
             }
             Spacer()
+            if state.isLive {
+                Text(client.status == .live ? "Live" : client.status == .connecting ? "Connecting…" : "Reconnecting…")
+            } else {
             HStack(spacing: 5) {
                 ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
                 Text(state.isCompact ? "34% · 41%" : "34% session · 41% week")
@@ -239,7 +242,8 @@ struct FactoryStatusBar: View {
             .contentShape(Rectangle())
             .onTapGesture { state.destination = .usage; state.focusedTask = nil }
             .help("Usage across all accounts")
-            if !state.isCompact {
+            }
+            if !state.isCompact && !state.isLive {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.triangle.branch")
                     Text("atlas-platform · main")

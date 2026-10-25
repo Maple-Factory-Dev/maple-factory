@@ -31,6 +31,11 @@ import Security
     /// The tasks and goals as the views' models, rebuilt when they change.
     private(set) var factoryTasks: [FactoryTask] = []
     private(set) var factoryGoals: [Goal] = []
+    private(set) var policy: Wire.RiskPolicy?
+    private(set) var acceptances: [Wire.RiskAcceptance] = []
+    /// The policy and acceptances as the views' models.
+    private(set) var riskPolicy: RiskPolicy?
+    private(set) var riskAcceptances: [String: RiskAcceptance] = [:]
     /// A passing line from the factory ("ATL-3 merged"), for the app's toast.
     private(set) var toast: (text: String, taskID: String?, at: Date)?
     private(set) var status: Status = .signedOut
@@ -43,6 +48,12 @@ import Security
     private var attempt = 0
 
     var isSignedIn: Bool { server != nil && token != nil }
+
+    /// The org's name, or the mockup's workspace when not signed in.
+    var workspaceName: String {
+        guard isSignedIn else { return "Studio Workspace" }
+        return org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
+    }
 
     init() {
         if let saved = UserDefaults.standard.string(forKey: "factoryURL"), let url = URL(string: saved),
@@ -152,6 +163,8 @@ import Security
             goals = snapshot.goals
             tasks = snapshot.tasks
             FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
+            policy = snapshot.policy
+            acceptances = snapshot.acceptances
             rebuild()
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
@@ -182,6 +195,10 @@ import Security
                 goals.append(update.goal)
             }
             rebuild()
+        case .policyUpdated(let update):
+            policy = update.policy
+            acceptances = update.acceptances
+            rebuild()
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
@@ -199,6 +216,23 @@ import Security
         factoryGoals = goals.map { LiveAdapter.goal($0, members: members) }
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
         factoryTasks = tasks.map(adapt)
+        riskPolicy = policy.map(LiveAdapter.policy)
+        riskAcceptances = Dictionary(acceptances.compactMap { a in
+            goals.first { $0.id == a.goal }.map { goal in
+                (goal.name, RiskAcceptance(autoMergeUpTo: LiveAdapter.riskLevel(a.upTo), acceptedBy: LiveAdapter.person(a.by, members: members),
+                                           when: LiveAdapter.ago(a.at), note: a.note))
+            }
+        }, uniquingKeysWith: { a, _ in a })
+    }
+
+    func save(policy: RiskPolicy) {
+        riskPolicy = policy
+        send(.policySave(.init(policy: LiveAdapter.wire(policy))))
+    }
+
+    func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
+        guard let goal = goal(named: name) else { return }
+        send(.goalAcceptRisk(.init(goal: goal.id, upTo: upTo.map(LiveAdapter.wireLevel), note: note)))
     }
 
     /// The goal a view knows by name.

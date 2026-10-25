@@ -742,6 +742,47 @@ pub struct Task {
     pub machine: Option<String>,
 }
 
+/// Code that raises a change's risk when touched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SensitiveArea {
+    pub name: String,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    pub level: RiskLevel,
+    pub enabled: bool,
+}
+
+/// The org's rules for how much sign-off a change needs, by its risk.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskPolicy {
+    /// Over this (or maxLines), a change is at least medium risk and should be split.
+    pub max_files: u32,
+    pub max_lines: u32,
+    #[serde(default)]
+    pub areas: Vec<SensitiveArea>,
+    /// By risk level (low, medium, high).
+    #[serde(default)]
+    pub plan_approvals: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub final_reviews: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub auto_merge: BTreeMap<String, bool>,
+}
+
+/// A goal letting the factory merge without human review, up to a risk level, on the record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskAcceptance {
+    pub goal: String,
+    pub up_to: RiskLevel,
+    pub by: String,
+    pub at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1057,6 +1098,20 @@ pub enum ClientMessage {
     GoalSave {
         goal: Goal,
     },
+    /// Admins only.
+    #[serde(rename = "policy.save")]
+    PolicySave {
+        policy: RiskPolicy,
+    },
+    /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
+    #[serde(rename = "goal.acceptRisk")]
+    GoalAcceptRisk {
+        goal: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        up_to: Option<RiskLevel>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
     #[serde(rename = "task.create")]
     TaskCreate {
         goal: String,
@@ -1168,6 +1223,9 @@ pub enum ServerToClient {
         goals: Vec<Goal>,
         #[serde(default)]
         tasks: Vec<Task>,
+        policy: RiskPolicy,
+        #[serde(default)]
+        acceptances: Vec<RiskAcceptance>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -1189,6 +1247,12 @@ pub enum ServerToClient {
     #[serde(rename = "goal.updated")]
     GoalUpdated {
         goal: Goal,
+    },
+    #[serde(rename = "policy.updated")]
+    PolicyUpdated {
+        policy: RiskPolicy,
+        #[serde(default)]
+        acceptances: Vec<RiskAcceptance>,
     },
     /// Something worth a passing line in the app.
     #[serde(rename = "toast")]

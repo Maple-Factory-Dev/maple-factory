@@ -161,12 +161,30 @@ final class AppState {
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
     var postedComments: [String: [Comment]] = [:]
-    var policy = RiskPolicy() {
-        didSet { sweepForAutoMerge() }
+    /// The risk policy and goals' accepted risk: the factory's when signed in (edits go to it).
+    var policy: RiskPolicy {
+        get { isLive ? client?.riskPolicy ?? RiskPolicy() : mockPolicy }
+        set {
+            if let client, isLive { client.save(policy: newValue) } else { mockPolicy = newValue }
+            sweepForAutoMerge()
+        }
     }
-    var acceptances: [String: RiskAcceptance] = FactoryData.seedAcceptances {
-        didSet { sweepForAutoMerge() }
+    var acceptances: [String: RiskAcceptance] {
+        get { isLive ? client?.riskAcceptances ?? [:] : mockAcceptances }
+        set {
+            if let client, isLive {
+                let old = acceptances
+                for goal in Set(old.keys).union(newValue.keys) where old[goal]?.autoMergeUpTo != newValue[goal]?.autoMergeUpTo {
+                    client.acceptRisk(goal: goal, upTo: newValue[goal]?.autoMergeUpTo, note: newValue[goal]?.note)
+                }
+            } else {
+                mockAcceptances = newValue
+            }
+            sweepForAutoMerge()
+        }
     }
+    private var mockPolicy = RiskPolicy()
+    private var mockAcceptances: [String: RiskAcceptance] = FactoryData.seedAcceptances
     /// Over-budget tasks someone chose to keep as a single PR.
     var keptWhole: Set<String> = []
     /// Tasks the factory has picked up for auto-merge and is about to land.
@@ -226,7 +244,8 @@ final class AppState {
 
     /// Derived from live task state, so acting on a task clears its inbox item on its own.
     var inbox: [InboxItem] {
-        FactoryData.seedInbox.filter { item in
+        if isLive { return liveInbox }
+        return FactoryData.seedInbox.filter { item in
             let task = task(item.taskID)
             switch item.kind {
             case .mention: return !dismissedMentions.contains(item.id)
@@ -236,6 +255,35 @@ final class AppState {
             case .review: return task.state == .reviewing && !task.reviews.contains { $0.id == FactoryData.me.id }
             }
         }
+    }
+
+    /// What needs people, from the factory's tasks: plans to approve, agents' questions, changes to
+    /// review, failing checks and @mentions of you.
+    private var liveInbox: [InboxItem] {
+        let me = FactoryData.me
+        var items: [InboxItem] = []
+        for task in tasks {
+            let mine = task.owner.id == me.id
+            if task.state == .awaitingApproval && !task.approvals.contains(where: { $0.id == me.id }) {
+                items.append(InboxItem(kind: .approval, taskID: task.id, assignee: me, message: "Plan v\(task.planVersion) is ready for your approval", when: task.updated))
+            }
+            if let question = task.question {
+                items.append(InboxItem(kind: .question, taskID: task.id, assignee: task.owner, message: question, when: task.updated))
+            }
+            if task.state == .reviewing, task.autoReview?.current?.verdict == .passed, !task.reviews.contains(where: { $0.id == me.id }) {
+                items.append(InboxItem(kind: .review, taskID: task.id, assignee: mine ? me : task.owner, message: "Passed automatic review; ready for yours", when: task.updated))
+            }
+            if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
+                items.append(InboxItem(kind: .failing, taskID: task.id, assignee: task.owner, message: "Checks are failing", when: task.updated))
+            }
+            if let handle = me.github {
+                for comment in task.comments where comment.text.contains("@\(handle)") && comment.author.id != me.id {
+                    let item = InboxItem(kind: .mention, taskID: task.id, assignee: me, message: "\(comment.author.firstName): \(comment.text)", when: comment.when)
+                    if !dismissedMentions.contains(item.id) { items.append(item) }
+                }
+            }
+        }
+        return items
     }
 
     /// Tasks whose agent has stopped and asked for a human, longest-waiting first.

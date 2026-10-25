@@ -92,6 +92,7 @@ enum LiveAdapter {
         task.liveLog = t.waiting ?? t.liveLog
         task.footprint = t.diff.map { ($0.files.count, ($0.added + $0.removed).int, false) } ?? t.footprint.map { ($0.files.int, $0.lines.int, $0.estimated) }
         task.areas = t.risk?.areas ?? []
+        task.plannedRisk = t.risk.map { riskLevel($0.level) } ?? .low
         task.pr = t.pr.map { pr in
             var request = PullRequest(number: pr.number.int, state: prState(pr.state), checks: pr.checks.map(check))
             request.link = pr.url.flatMap(URL.init(string:))
@@ -150,6 +151,46 @@ enum LiveAdapter {
         case .merged: .merged
         case .cancelled: .cancelled
         }
+    }
+
+    static func riskLevel(_ level: Wire.RiskLevel) -> RiskLevel {
+        switch level {
+        case .low: .low
+        case .medium: .medium
+        case .high: .high
+        }
+    }
+
+    static func wireLevel(_ level: RiskLevel) -> Wire.RiskLevel {
+        switch level {
+        case .low: .low
+        case .medium: .medium
+        case .high: .high
+        }
+    }
+
+    static func policy(_ p: Wire.RiskPolicy) -> RiskPolicy {
+        var policy = RiskPolicy()
+        policy.maxFiles = Int(p.maxFiles)
+        policy.maxLines = Int(p.maxLines)
+        policy.sensitiveAreas = p.areas.map { SensitiveArea(name: $0.name, paths: $0.paths, level: riskLevel($0.level), enabled: $0.enabled) }
+        for level in RiskLevel.allCases {
+            let key = wireLevel(level).rawValue
+            policy.planApprovals[level] = p.planApprovals[key].map(Int.init) ?? policy.planApprovals[level]
+            policy.finalReviews[level] = p.finalReviews[key].map(Int.init) ?? policy.finalReviews[level]
+            policy.autoMerge[level] = p.autoMerge[key] ?? policy.autoMerge[level]
+        }
+        return policy
+    }
+
+    static func wire(_ policy: RiskPolicy) -> Wire.RiskPolicy {
+        let keyed = { (values: [RiskLevel: Int]) in Dictionary(uniqueKeysWithValues: values.map { (wireLevel($0.key).rawValue, UInt32($0.value)) }) }
+        return Wire.RiskPolicy(
+            maxFiles: UInt32(policy.maxFiles), maxLines: UInt32(policy.maxLines),
+            areas: policy.sensitiveAreas.map { Wire.SensitiveArea(name: $0.name, paths: $0.paths, level: wireLevel($0.level), enabled: $0.enabled) },
+            planApprovals: keyed(policy.planApprovals), finalReviews: keyed(policy.finalReviews),
+            autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) })
+        )
     }
 
     private static func progress(_ p: Wire.StepProgress) -> PlanStep.Progress {
