@@ -346,6 +346,49 @@ pub struct Health {
     pub agents: Vec<AgentInstall>,
 }
 
+/// One plan limit window as last read: the 5-hour session, the week, a model's own weekly limit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageReading {
+    /// "5h", "7d", or another length; "spend" for a spend limit.
+    pub label: String,
+    pub used_percent: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_minutes: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<u64>,
+    /// What a scoped limit covers, e.g. a model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Who an agent is signed in as on a machine (no email: that stays on the machine).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageAccountRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// An agent's plan usage on one machine, from its status line or session files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUsage {
+    pub agent: String,
+    #[serde(default)]
+    pub windows: Vec<UsageReading>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    pub observed_at: u64,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_credits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<UsageAccountRef>,
+}
+
 /// How much factory work a machine takes, set by its owner.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -363,6 +406,12 @@ pub struct MachineSettings {
     /// When a pause ends on its own; none: until resumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_until: Option<u64>,
+    /// Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_cap: Option<f64>,
+    /// The same for its weekly window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly_cap: Option<f64>,
 }
 
 /// A machine as the apps see it.
@@ -389,6 +438,8 @@ pub struct Machine {
     /// Factory sessions it takes now, settings and cores considered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capacity: Option<u32>,
+    #[serde(default)]
+    pub usage: Vec<AgentUsage>,
 }
 
 /// A session end with the machine it was on, for lists.
@@ -937,6 +988,12 @@ pub enum RunnerMessage {
         version: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+    },
+    /// Plan usage readings that changed (all of them again on reconnect).
+    #[serde(rename = "usage")]
+    Usage {
+        #[serde(default)]
+        agents: Vec<AgentUsage>,
     },
     /// A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).
     #[serde(rename = "mcp.request")]

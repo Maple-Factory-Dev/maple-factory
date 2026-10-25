@@ -32,6 +32,7 @@ export function offlineMachine(row: MachineRow): Machine {
     os: row.os,
     health: null,
     sessions: [],
+    usage: [],
   };
 }
 

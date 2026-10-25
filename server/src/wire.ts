@@ -126,6 +126,34 @@ export interface Health {
   agents: AgentInstall[];
 }
 
+/** One plan limit window as last read: the 5-hour session, the week, a model's own weekly limit. */
+export interface UsageReading {
+  /** "5h", "7d", or another length; "spend" for a spend limit. */
+  label: string;
+  usedPercent: number;
+  windowMinutes?: number | null;
+  resetsAt?: number | null;
+  /** What a scoped limit covers, e.g. a model. */
+  name?: string | null;
+}
+
+/** Who an agent is signed in as on a machine (no email: that stays on the machine). */
+export interface UsageAccountRef {
+  id?: string | null;
+  name?: string | null;
+}
+
+/** An agent's plan usage on one machine, from its status line or session files. */
+export interface AgentUsage {
+  agent: string;
+  windows: UsageReading[];
+  plan?: string | null;
+  observedAt: number;
+  source: string;
+  resetCredits?: number | null;
+  account?: UsageAccountRef | null;
+}
+
 /** How much factory work a machine takes, set by its owner. */
 export interface MachineSettings {
   /** Factory sessions at once; none: worked out from its cores. */
@@ -139,6 +167,10 @@ export interface MachineSettings {
   paused: boolean;
   /** When a pause ends on its own; none: until resumed. */
   pausedUntil?: number | null;
+  /** Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap. */
+  sessionCap?: number | null;
+  /** The same for its weekly window. */
+  weeklyCap?: number | null;
 }
 
 /** A machine as the apps see it. */
@@ -156,6 +188,7 @@ export interface Machine {
   settings?: MachineSettings | null;
   /** Factory sessions it takes now, settings and cores considered. */
   capacity?: number | null;
+  usage: AgentUsage[];
 }
 
 /** A session end with the machine it was on, for lists. */
@@ -558,6 +591,12 @@ export interface RunnerMessage_UpdateStatus {
   message?: string | null;
 }
 
+/** Plan usage readings that changed (all of them again on reconnect). */
+export interface RunnerMessage_Usage {
+  type: "usage";
+  agents: AgentUsage[];
+}
+
 /** A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools). */
 export interface RunnerMessage_McpRequest {
   type: "mcp.request";
@@ -630,8 +669,8 @@ export interface RunnerMessage_TaskTokenRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","mcp.request","task.started","task.finished","task.diff","task.merged","task.cleaned","task.token_request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","mcp.request","task.started","task.finished","task.diff","task.merged","task.cleaned","task.token_request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";

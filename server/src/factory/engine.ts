@@ -325,9 +325,11 @@ export class Engine {
       if (!machine) return `${task.machine} was removed; retry it to start over elsewhere.`;
       if (!machine.online) return `Waiting for ${machine.name} to come back online.`;
       if (this.store.settings(machine.id).paused) return `${machine.name} is paused.`;
+      const capped = this.overCap(machine, task.agent);
+      if (capped) return capped;
       kind = machine.owner === task.owner ? "personal" : "team";
     } else {
-      const usable = machines.filter((m) => m.online && !this.store.settings(m.id).paused && this.hasAgent(m, task.agent));
+      const usable = machines.filter((m) => m.online && !this.store.settings(m.id).paused && this.hasAgent(m, task.agent) && !this.overCap(m, task.agent));
       const own = usable.filter((m) => m.owner === task.owner && busy(m.id) < this.capacity(m));
       machine = own.sort((a, b) => busy(a.id) - busy(b.id))[0];
       if (!machine && task.shareable) {
@@ -351,6 +353,8 @@ export class Engine {
           return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused.`;
         }
         if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of your online machines has ${task.agent} installed.`;
+        const capped = running.map((m) => this.overCap(m, task.agent)).find(Boolean);
+        if (capped && !running.some((m) => this.hasAgent(m, task.agent) && !this.overCap(m, task.agent))) return capped;
         return task.shareable ? "Waiting for a free slot on your machines or the team's." : "Waiting for a free slot on your machines.";
       }
     }
@@ -382,6 +386,21 @@ export class Engine {
     task.liveLog = role === "planner" ? "Reading the code…" : role === "builder" ? "Starting…" : "Reading the change…";
     this.event(task, role, `started on ${machine.name}${kind === "team" ? ` (a team slot from ${machine.owner})` : ""}`);
     this.save(task);
+    return null;
+  }
+
+  /** Why a machine's usage cap stops new work for `agent` there, if it does. */
+  private overCap(machine: Machine, agent: string): string | null {
+    const s = this.store.settings(machine.id);
+    const usage = machine.usage?.find((u) => u.agent === agent);
+    if (!usage) return null;
+    for (const w of usage.windows) {
+      const cap = w.label === "5h" ? s.sessionCap : w.label === "7d" && !w.name ? s.weeklyCap : null;
+      if (cap != null && w.usedPercent >= cap * 100) {
+        const window = w.label === "5h" ? "5-hour session" : "week";
+        return `${machine.name}'s ${agent} account has used ${Math.round(w.usedPercent)}% of its ${window} (the cap is ${Math.round(cap * 100)}%).`;
+      }
+    }
     return null;
   }
 

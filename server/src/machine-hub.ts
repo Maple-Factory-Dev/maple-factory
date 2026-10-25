@@ -157,10 +157,10 @@ export class MachineHub extends DurableObject<Env> {
 
   private async machine(): Promise<Machine> {
     const stored = await this.ctx.storage.get<Machine>("machine");
-    if (stored) return stored;
+    if (stored) return { ...stored, usage: stored.usage ?? [] };
     const id = (await this.ctx.storage.get<string>("id")) ?? "";
     const row = await machineRow(this.env, id);
-    return row ? offlineMachine(row) : { id, name: id, owner: "", online: false, sessions: [] };
+    return row ? offlineMachine(row) : { id, name: id, owner: "", online: false, sessions: [], usage: [] };
   }
 
   private async publish(machine: Machine) {
@@ -204,6 +204,13 @@ export class MachineHub extends DurableObject<Env> {
           sessions: machine.sessions.map((s) => (s.session.id === msg.id ? { ...s, activity: msg.activity } : s)),
         });
         if (machine.sessions.find((s) => s.session.id === msg.id)?.session.taskId) await this.toFactory(machine.id, msg);
+        return;
+      }
+      case "usage": {
+        // Readings replace the agent's last one. Only what the apps show: no account emails.
+        const fresh = msg.agents.map((u) => ({ ...u, account: u.account ? { id: u.account.id ?? null, name: u.account.name ?? null } : null }));
+        const kept = machine.usage.filter((u) => !fresh.some((f) => f.agent === u.agent));
+        await this.publish({ ...machine, usage: [...kept, ...fresh] });
         return;
       }
       case "mcp.request": {

@@ -12,6 +12,8 @@ struct MachineSettingsSheet: View {
     @State private var lendIdle: Bool
     @State private var loadCap: Double
     @State private var paused: Bool
+    @State private var sessionCap: Double?
+    @State private var weeklyCap: Double?
     @State private var pauseFor: PauseLength = .untilResumed
 
     enum PauseLength: String, CaseIterable {
@@ -38,6 +40,8 @@ struct MachineSettingsSheet: View {
         _lendIdle = State(initialValue: s?.lendIdle ?? false)
         _loadCap = State(initialValue: s?.loadCap ?? 0.85)
         _paused = State(initialValue: s?.paused ?? false)
+        _sessionCap = State(initialValue: s?.sessionCap)
+        _weeklyCap = State(initialValue: s?.weeklyCap)
     }
 
     var body: some View {
@@ -69,6 +73,15 @@ struct MachineSettingsSheet: View {
                     row("Don't start teammates' work above", "\(Int(loadCap * 100))% CPU")
                     Slider(value: $loadCap, in: 0.3...1, step: 0.05)
                 }
+            }
+
+            group("Plan limits") {
+                cap("Stop at this much of the 5-hour session", $sessionCap)
+                cap("Stop at this much of the week", $weeklyCap)
+                Text("Applies to every agent account signed in here. Running sessions finish; new factory work waits or goes elsewhere.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             group("Pause") {
@@ -104,7 +117,9 @@ struct MachineSettingsSheet: View {
             lendIdle: lendIdle,
             loadCap: loadCap,
             paused: paused,
-            pausedUntil: paused ? (wasPaused ? machine.settings?.pausedUntil : pauseFor.until) : nil
+            pausedUntil: paused ? (wasPaused ? machine.settings?.pausedUntil : pauseFor.until) : nil,
+            sessionCap: sessionCap,
+            weeklyCap: weeklyCap
         )
         client.send(.machineSettings(.init(machine: machine.id, settings: settings)))
         dismiss()
@@ -119,6 +134,18 @@ struct MachineSettingsSheet: View {
         }
         .font(.system(size: 12.5))
         .foregroundStyle(Theme.text)
+    }
+
+    private func cap(_ label: String, _ value: Binding<Double?>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(get: { value.wrappedValue != nil }, set: { value.wrappedValue = $0 ? 0.8 : nil })) {
+                row(label, value.wrappedValue.map { "\(Int($0 * 100))%" } ?? "No cap")
+            }
+            .toggleStyle(.switch).controlSize(.small)
+            if let current = value.wrappedValue {
+                Slider(value: Binding(get: { current }, set: { value.wrappedValue = $0 }), in: 0.3...1, step: 0.05)
+            }
+        }
     }
 
     private func row(_ label: String, _ value: String) -> some View {

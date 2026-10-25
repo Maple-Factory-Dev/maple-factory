@@ -120,6 +120,9 @@ struct UsageView: View {
     @State private var keepReserve = true
 
     @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+
+    private var live: [UsageAccount] { LiveAdapter.usageAccounts(machines: client.machines, members: client.members) }
 
     private var narrow: Bool { state.contentWidth < 920 }
     private var columns: [GridItem] {
@@ -140,6 +143,9 @@ struct UsageView: View {
                         .frame(maxWidth: 720, alignment: .leading)
                 }
 
+                if state.isLive {
+                    liveAccounts
+                } else {
                 forecastBanner
 
                 LazyVGrid(columns: columns, spacing: 18) {
@@ -152,6 +158,7 @@ struct UsageView: View {
                     byGoal
                     routing
                 }
+                }
             }
             .padding(.horizontal, narrow ? 24 : 40)
             .padding(.vertical, 30)
@@ -159,6 +166,30 @@ struct UsageView: View {
             .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(.top)
+    }
+
+    @ViewBuilder private var liveAccounts: some View {
+        if live.isEmpty {
+            UsageCard {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No readings yet")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text("Machines report each account's limits from the status line of Claude Code sessions and from Codex's own reports, once an agent has run there.")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            LazyVGrid(columns: columns, spacing: 18) {
+                ForEach(live) { account in UsageAccountCard(account: .constant(account)) }
+            }
+        }
+        Label("Cap how much of an account the factory may use per machine: Machines → ⋯ → Factory Settings.", systemImage: "gauge.with.dots.needle.33percent")
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
     }
 
     @ViewBuilder private var forecastBanner: some View {

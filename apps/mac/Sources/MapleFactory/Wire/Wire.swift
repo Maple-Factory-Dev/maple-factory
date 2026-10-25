@@ -388,6 +388,68 @@ public enum Wire {
         }
     }
 
+    /// One plan limit window as last read: the 5-hour session, the week, a model's own weekly limit.
+    public struct UsageReading: Codable, Hashable, Sendable {
+        /// "5h", "7d", or another length; "spend" for a spend limit.
+        public var label: String
+        public var usedPercent: Double
+        public var windowMinutes: UInt32?
+        public var resetsAt: UInt64?
+        /// What a scoped limit covers, e.g. a model.
+        public var name: String?
+
+        public init(label: String, usedPercent: Double, windowMinutes: UInt32? = nil, resetsAt: UInt64? = nil, name: String? = nil) {
+            self.label = label
+            self.usedPercent = usedPercent
+            self.windowMinutes = windowMinutes
+            self.resetsAt = resetsAt
+            self.name = name
+        }
+    }
+
+    /// Who an agent is signed in as on a machine (no email: that stays on the machine).
+    public struct UsageAccountRef: Codable, Hashable, Sendable {
+        public var id: String?
+        public var name: String?
+
+        public init(id: String? = nil, name: String? = nil) {
+            self.id = id
+            self.name = name
+        }
+    }
+
+    /// An agent's plan usage on one machine, from its status line or session files.
+    public struct AgentUsage: Codable, Hashable, Sendable {
+        public var agent: String
+        public var windows: [UsageReading]
+        public var plan: String?
+        public var observedAt: UInt64
+        public var source: String
+        public var resetCredits: UInt32?
+        public var account: UsageAccountRef?
+
+        public init(agent: String, windows: [UsageReading] = [], plan: String? = nil, observedAt: UInt64, source: String, resetCredits: UInt32? = nil, account: UsageAccountRef? = nil) {
+            self.agent = agent
+            self.windows = windows
+            self.plan = plan
+            self.observedAt = observedAt
+            self.source = source
+            self.resetCredits = resetCredits
+            self.account = account
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            agent = try c.decode(String.self, forKey: .agent)
+            windows = try c.decodeIfPresent([UsageReading].self, forKey: .windows) ?? []
+            plan = try c.decodeIfPresent(String.self, forKey: .plan)
+            observedAt = try c.decode(UInt64.self, forKey: .observedAt)
+            source = try c.decode(String.self, forKey: .source)
+            resetCredits = try c.decodeIfPresent(UInt32.self, forKey: .resetCredits)
+            account = try c.decodeIfPresent(UsageAccountRef.self, forKey: .account)
+        }
+    }
+
     /// How much factory work a machine takes, set by its owner.
     public struct MachineSettings: Codable, Hashable, Sendable {
         /// Factory sessions at once; none: worked out from its cores.
@@ -401,14 +463,20 @@ public enum Wire {
         public var paused: Bool
         /// When a pause ends on its own; none: until resumed.
         public var pausedUntil: UInt64?
+        /// Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.
+        public var sessionCap: Double?
+        /// The same for its weekly window.
+        public var weeklyCap: Double?
 
-        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil) {
+        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil) {
             self.capacity = capacity
             self.teamSlots = teamSlots
             self.lendIdle = lendIdle
             self.loadCap = loadCap
             self.paused = paused
             self.pausedUntil = pausedUntil
+            self.sessionCap = sessionCap
+            self.weeklyCap = weeklyCap
         }
     }
 
@@ -427,8 +495,9 @@ public enum Wire {
         public var settings: MachineSettings?
         /// Factory sessions it takes now, settings and cores considered.
         public var capacity: UInt32?
+        public var usage: [AgentUsage]
 
-        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil) {
+        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = []) {
             self.id = id
             self.name = name
             self.owner = owner
@@ -440,6 +509,7 @@ public enum Wire {
             self.sessions = sessions
             self.settings = settings
             self.capacity = capacity
+            self.usage = usage
         }
 
         public init(from decoder: Decoder) throws {
@@ -455,6 +525,7 @@ public enum Wire {
             sessions = try c.decodeIfPresent([LiveSession].self, forKey: .sessions) ?? []
             settings = try c.decodeIfPresent(MachineSettings.self, forKey: .settings)
             capacity = try c.decodeIfPresent(UInt32.self, forKey: .capacity)
+            usage = try c.decodeIfPresent([AgentUsage].self, forKey: .usage) ?? []
         }
     }
 
@@ -1361,6 +1432,20 @@ public enum Wire {
         }
     }
 
+    /// Plan usage readings that changed (all of them again on reconnect).
+    public struct RunnerMessageUsage: Codable, Hashable, Sendable {
+        public var agents: [AgentUsage]
+
+        public init(agents: [AgentUsage] = []) {
+            self.agents = agents
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            agents = try c.decodeIfPresent([AgentUsage].self, forKey: .agents) ?? []
+        }
+    }
+
     /// A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).
     public struct RunnerMessageMcpRequest: Codable, Hashable, Sendable {
         public var reqId: String
@@ -1504,6 +1589,7 @@ public enum Wire {
         case sessionActivity(RunnerMessageSessionActivity)
         case sessionReplay(RunnerMessageSessionReplay)
         case updateStatus(RunnerMessageUpdateStatus)
+        case usage(RunnerMessageUsage)
         case mcpRequest(RunnerMessageMcpRequest)
         case taskStarted(RunnerMessageTaskStarted)
         case taskFinished(RunnerMessageTaskFinished)
@@ -1527,6 +1613,7 @@ public enum Wire {
             case "session.activity": self = .sessionActivity(try RunnerMessageSessionActivity(from: decoder))
             case "session.replay": self = .sessionReplay(try RunnerMessageSessionReplay(from: decoder))
             case "update.status": self = .updateStatus(try RunnerMessageUpdateStatus(from: decoder))
+            case "usage": self = .usage(try RunnerMessageUsage(from: decoder))
             case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
             case "task.started": self = .taskStarted(try RunnerMessageTaskStarted(from: decoder))
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
@@ -1564,6 +1651,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .updateStatus(let body):
                 try c.encode("update.status", forKey: .type)
+                try body.encode(to: encoder)
+            case .usage(let body):
+                try c.encode("usage", forKey: .type)
                 try body.encode(to: encoder)
             case .mcpRequest(let body):
                 try c.encode("mcp.request", forKey: .type)

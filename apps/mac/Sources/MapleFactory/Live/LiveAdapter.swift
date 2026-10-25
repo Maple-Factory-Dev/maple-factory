@@ -406,3 +406,69 @@ struct FlowLayout: Layout {
         return rows
     }
 }
+
+extension LiveAdapter {
+    /// One card per plan account the machines report, newest reading first: machines signed in to
+    /// the same account share its limits.
+    static func usageAccounts(machines: [Wire.Machine], members: [Wire.Member]) -> [UsageAccount] {
+        var byAccount: [String: (reading: Wire.AgentUsage, machine: Wire.Machine, machines: [String])] = [:]
+        for machine in machines {
+            for reading in machine.usage {
+                let key = "\(reading.agent)-\(reading.account?.id ?? machine.id)"
+                if let seen = byAccount[key] {
+                    let newer = reading.observedAt > seen.reading.observedAt
+                    byAccount[key] = (newer ? reading : seen.reading, newer ? machine : seen.machine, seen.machines + [machine.name])
+                } else {
+                    byAccount[key] = (reading, machine, [machine.name])
+                }
+            }
+        }
+        return byAccount.map { key, entry in
+            let r = entry.reading
+            return UsageAccount(
+                id: key,
+                product: r.agent == "codex" ? .codex : .claudeCode,
+                plan: r.plan ?? "plan",
+                owner: person(entry.machine.owner, members: members),
+                accountName: r.account?.name,
+                machines: entry.machines,
+                windows: r.windows.map(window),
+                agents: [],
+                updated: ago(r.observedAt),
+                updatedFrom: entry.machine.name,
+                source: r.source == "statusline" ? "From the status line of Claude Code sessions." : "From Codex's own usage reports.",
+                freeResets: r.resetCredits.map(Int.init)
+            )
+        }
+        .sorted { ($0.product == .claudeCode ? 0 : 1, $0.id) < ($1.product == .claudeCode ? 0 : 1, $1.id) }
+    }
+
+    private static func window(_ w: Wire.UsageReading) -> UsageWindow {
+        let now = Date()
+        let resets = w.resetsAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        let minutes = Double(w.windowMinutes ?? (w.label == "5h" ? 300 : w.label == "7d" ? 10080 : 0))
+        let left = resets.map { max(0, $0.timeIntervalSince(now)) } ?? 0
+        let elapsed = minutes > 0 ? min(1, max(0, 1 - left / (minutes * 60))) : 0
+        let label = switch w.label {
+        case "5h": "Current session"
+        case "7d": w.name.map { "This week · \($0)" } ?? "This week"
+        case "spend": "Spend"
+        default: w.label
+        }
+        let resetsIn: String = {
+            let h = Int(left) / 3600, m = Int(left) % 3600 / 60
+            return h >= 24 ? "\(h / 24)d \(h % 24)h" : h > 0 ? "\(h)h \(m)m" : "\(m)m"
+        }()
+        let resetsAt = resets.map {
+            Calendar.current.isDateInToday($0) ? $0.formatted(date: .omitted, time: .shortened) : $0.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        } ?? ""
+        let used = w.usedPercent / 100
+        // At this pace, when it runs dry, if before it resets.
+        let runsOut: String? = {
+            guard elapsed > 0.05, used / elapsed > 1, minutes > 0, let resets else { return nil }
+            let dry = now.addingTimeInterval((1 - used) / (used / (elapsed * minutes * 60)))
+            return dry < resets ? dry.formatted(date: .omitted, time: .shortened) : nil
+        }()
+        return UsageWindow(label: label, span: w.label, used: used, resetsIn: resetsIn, resetsAt: resetsAt, elapsed: elapsed, runsOutAt: runsOut)
+    }
+}
