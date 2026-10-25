@@ -37,9 +37,24 @@ struct AllGoalsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("All goals")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(Theme.text)
+                HStack {
+                    Text("All goals")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Spacer()
+                    Button { state.goalSheet = .new } label: {
+                        Label("New goal", systemImage: "plus")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.onAccent)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.accent))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!client.isSignedIn)
+                    .opacity(client.isSignedIn ? 1 : 0.5)
+                    .help(client.isSignedIn ? "New goal (⇧⌘N)" : "Connect to a factory to make goals")
+                }
                 Text("Every goal in the org. Follow one to keep it in your sidebar; you already follow the ones you lead, work in, or are on the team for.")
                     .font(.system(size: 13.5))
                     .foregroundStyle(Theme.textMuted)

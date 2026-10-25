@@ -167,12 +167,12 @@ fn parse_pmset(out: &str) -> Option<Battery> {
 /// Which agents are installed, their versions and (where cheap to tell) whether they're logged in.
 async fn agents() -> std::collections::BTreeMap<String, AgentState> {
     let mut map = std::collections::BTreeMap::new();
-    if let Some(version) = login_shell("claude --version").await.and_then(|v| first_version(&v)) {
-        let logged_in = login_shell("claude auth status").await.map(|s| !s.to_lowercase().contains("not logged in"));
+    if let Some(version) = shell("claude --version").await.and_then(|v| first_version(&v)) {
+        let logged_in = shell("claude auth status").await.map(|s| !s.to_lowercase().contains("not logged in"));
         map.insert("claude".into(), AgentState { version: Some(version), logged_in });
     }
-    if let Some(version) = login_shell("codex --version").await.and_then(|v| first_version(&v)) {
-        let logged_in = login_shell("codex login status").await.map(|s| s.to_lowercase().contains("logged in") && !s.to_lowercase().contains("not logged in"));
+    if let Some(version) = shell("codex --version").await.and_then(|v| first_version(&v)) {
+        let logged_in = shell("codex login status").await.map(|s| s.to_lowercase().contains("logged in") && !s.to_lowercase().contains("not logged in"));
         map.insert("codex".into(), AgentState { version: Some(version), logged_in });
     }
     map
@@ -185,9 +185,11 @@ fn first_version(text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Runs a command through the login shell (for the same PATH as a terminal), with a timeout.
-async fn login_shell(command: &str) -> Option<String> {
-    run(&crate::agents::login_shell(), &["-l", "-c", command]).await
+/// Runs a command through the login shell, interactive like a session's (see `agents::argv`), so
+/// it finds what a terminal would: version managers like fnm and nvm are often set up in .zshrc,
+/// which zsh reads only for interactive shells. With a timeout.
+async fn shell(command: &str) -> Option<String> {
+    run(&crate::agents::login_shell(), &["-l", "-i", "-c", command]).await
 }
 
 async fn run(program: &str, args: &[&str]) -> Option<String> {

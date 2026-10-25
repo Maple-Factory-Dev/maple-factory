@@ -411,13 +411,14 @@ pub fn parse_codex(tail: &str) -> Option<AgentUsage> {
 }
 
 /// Codex's live limits from its app server: `initialize`, then `account/rateLimits/read`.
-/// Started through the login shell (Codex is often installed by a Node version manager), with
+/// Started through an interactive login shell (Codex is often installed by a Node version manager
+/// set up in .zshrc), with
 /// the command from agents.toml. None if Codex isn't installed, isn't signed in, or is too old.
 async fn ask_codex() -> Option<AgentUsage> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let command = crate::agent_config::load().into_iter().find(|a| a.id == "codex")?.command;
     let mut child = tokio::process::Command::new(crate::agents::login_shell())
-        .args(["-l", "-c", &format!("exec {command} app-server")])
+        .args(["-l", "-i", "-c", &format!("exec {command} app-server")])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -512,7 +513,7 @@ async fn claude_usage() -> Option<AgentUsage> {
     let command = crate::agent_config::load().into_iter().find(|a| a.id == "claude")?.command;
     let args = "-p /usage --model claude-haiku-5-5 --output-format stream-json --verbose --no-session-persistence --strict-mcp-config --setting-sources user";
     let mut cmd = tokio::process::Command::new(crate::agents::login_shell());
-    cmd.args(["-l", "-c", &format!("exec {command} {args}")]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+    cmd.args(["-l", "-i", "-c", &format!("exec {command} {args}")]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     if let Ok(dir) = crate::config::dir() {
         cmd.current_dir(dir);
     }
@@ -567,13 +568,13 @@ pub fn parse_iso(s: &str) -> Option<u64> {
 }
 
 /// `claude auth status` (JSON): `email`, `orgId`, `orgName` and `subscriptionType` ("max", "pro").
-/// Through the login shell with the command from agents.toml, like Codex.
+/// Through an interactive login shell with the command from agents.toml, like Codex.
 async fn claude_account() -> Option<(Account, Option<String>)> {
     let command = crate::agent_config::load().into_iter().find(|a| a.id == "claude")?.command;
     let out = tokio::time::timeout(
         ASK_TIMEOUT,
         tokio::process::Command::new(crate::agents::login_shell())
-            .args(["-l", "-c", &format!("exec {command} auth status")])
+            .args(["-l", "-i", "-c", &format!("exec {command} auth status")])
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
