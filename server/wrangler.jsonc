@@ -1,0 +1,33 @@
+{
+  // The development config. `maple install` writes a deployment's own config (account, D1 id,
+  // domain, org) from this one; nothing here is specific to an org.
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "maple-factory",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "dev": { "host": "localhost" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ORG", "class_name": "OrgHub" },
+      { "name": "MACHINE", "class_name": "MachineHub" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrgHub", "MachineHub"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "maple",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Runner releases, mirrored from maplefactory.dev by the installer and served at /releases/.
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "maple-releases" }],
+  "vars": {
+    // The GitHub organization whose members may sign in (its login, e.g. "atlas-co").
+    "GITHUB_ORG": "",
+    // Local dev only: requests to localhost are this GitHub login, as an admin, without signing in.
+    "DEV_LOGIN": ""
+  }
+  // Secrets (wrangler secret put, or `maple install`): GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, SESSION_SECRET.
+}
