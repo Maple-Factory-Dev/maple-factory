@@ -3,11 +3,40 @@
 //! (as its owner chose) the runner answers for those and only those: it marks the worktree trusted
 //! in Claude Code's config (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`) just before the
 //! task's session starts there. Nothing else in that file changes, and a missing or unreadable file
-//! is left alone; then the prompt shows, and `sessions` raises a hand about it.
+//! is left alone. If the prompt shows anyway, `watch` sees it and the hub raises a hand about it.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::{Map, Value};
+use uuid::Uuid;
+
+use crate::hooks::Activity;
+use crate::sessions::Sessions;
+
+/// What a task session says while Claude Code waits on its trust prompt; the hub raises a hand on it.
+pub const PROMPT_WAITING: &str = "Claude Code is asking whether to trust this folder";
+
+/// Whether a screen shows Claude Code's folder-trust prompt (its wording across versions).
+pub fn is_trust_prompt(screen: &str) -> bool {
+    let s = screen.to_lowercase();
+    ["trust the files in this folder", "yes, i trust this folder", "a project you created or one you trust"].iter().any(|p| s.contains(p))
+}
+
+/// Watches a new task session's screen for a while: if Claude Code stops at the trust prompt (when
+/// marking the worktree trusted didn't take), it says so, so the hub can ask a person.
+pub fn watch(sessions: Sessions, id: Uuid) {
+    tokio::spawn(async move {
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let Ok(screen) = sessions.capture(id, 40).await else { return };
+            if is_trust_prompt(&screen) {
+                sessions.set_activity(id, Activity::Waiting(Some(PROMPT_WAITING.into())), None, None);
+                return;
+            }
+        }
+    });
+}
 
 fn config_file() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
@@ -69,6 +98,13 @@ mod tests {
         assert_eq!(v["numStartups"], 3);
         assert_eq!(v["projects"]["/elsewhere"], serde_json::json!({"hasTrustDialogAccepted": false, "x": 1}));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn knows_the_prompt() {
+        assert!(is_trust_prompt(" Do you trust the files in this folder?\n\n ❯ 1. Yes, proceed"));
+        assert!(is_trust_prompt("Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder"));
+        assert!(!is_trust_prompt("> Write a real README\n⏺ Reading README.md"));
     }
 
     #[test]

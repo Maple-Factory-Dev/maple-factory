@@ -42,6 +42,10 @@ type Hooks = {
   wakeIn(ms: number): void;
 };
 
+/** What a runner says while Claude Code waits on its folder-trust prompt (runner/src/trust.rs). */
+const TRUST_PROMPT = "Claude Code is asking whether to trust this folder";
+const TRUST_HAND = "Claude Code is asking whether to trust its folder";
+
 /** How often CI is read again while a pull request's checks are still running. */
 const CI_POLL_MS = 30_000;
 /** How long a pull request with no checks yet waits for some to show up. */
@@ -729,6 +733,20 @@ export class Engine {
         const s = this.store.session(msg.id);
         const task = s && this.store.task(s.task);
         if (!task || task.worker?.session !== msg.id) return null;
+        const trusting = msg.activity.state === "waiting" && msg.activity.message === TRUST_PROMPT;
+        if (trusting && !task.hand) {
+          const where = (await this.hooks.machines()).find((m) => m.id === s.machine)?.name ?? s.machine;
+          this.raise(task, s.role, "needsInput", `${TRUST_HAND} on ${where}. Approve it in the Session tab (or on ${where}) and it carries on.`);
+          // Answering this hand would type into the prompt: approving it in the session is the way.
+          task.hand!.options = [];
+          this.save(task);
+          return null;
+        }
+        if (!trusting && task.hand?.summary.startsWith(TRUST_HAND)) {
+          task.hand = null;
+          this.event(task, s.role, "carried on once its folder was trusted");
+          this.save(task);
+        }
         const line = msg.activity.state === "waiting" ? `Waiting: ${msg.activity.message ?? "a permission prompt"}` : (msg.activity.step ?? msg.activity.message);
         if (line && line !== task.liveLog) {
           task.liveLog = line;

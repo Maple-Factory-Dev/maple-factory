@@ -659,6 +659,9 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
                             task_id: None,
                         });
                         sessions.emit(Outbound::Wire(wire::RunnerMessage::SessionOpened { session }));
+                        if task.is_some() && agent == "claude" {
+                            trust::watch(sessions.clone(), id);
+                        }
                     }
                     Err(e) => {
                         warn!("could not open {agent} in {cwd}: {e:#}");
