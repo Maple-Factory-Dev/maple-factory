@@ -15,6 +15,7 @@ import { Store, type TaskSession } from "./store.ts";
 import { builderPrompt, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
+import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { Intake } from "./intake.ts";
 import { checks, closePullRequest, createPullRequest, GitHubError, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
@@ -34,6 +35,8 @@ type Ctx = { member: Member };
 type Reply = { result?: { summary: string; data?: unknown }; error?: string };
 type Hooks = {
   broadcast(message: ServerToClient): void;
+  /** To one person's apps only. */
+  sendTo(login: string, message: ServerToClient): void;
   machines(): Promise<Machine[]>;
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
@@ -60,7 +63,17 @@ const fail = (message: string): never => {
 };
 
 export class Engine {
-  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake) {}
+  private drafts: Drafts;
+
+  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake) {
+    this.drafts = new Drafts(store, {
+      sendTo: (login, message) => hooks.sendTo(login, message),
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      toRunner: (machine, command) => this.toRunner(machine, command),
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // Apps
@@ -69,6 +82,17 @@ export class Engine {
   async command(msg: ClientMessage, { member }: Ctx): Promise<void> {
     const who = member.login;
     switch (msg.type) {
+      case "draft.start":
+      case "draft.goal":
+      case "draft.cancel":
+        try {
+          if (msg.type === "draft.start") await this.drafts.start(who, msg.id, msg.idea, msg.goal ?? null, msg.agent ?? null);
+          else if (msg.type === "draft.goal") await this.drafts.pickGoal(who, msg.id, msg.goal);
+          else await this.drafts.cancel(who, msg.id);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
       case "goal.save": {
         const goal = { ...msg.goal, prefix: msg.goal.prefix.trim().toUpperCase() };
         if (!/^[A-Z][A-Z0-9]{0,5}$/.test(goal.prefix)) fail("A goal's prefix is 1–6 letters or digits, starting with a letter.");
@@ -705,6 +729,12 @@ export class Engine {
   async fromRunner(machine: string, msg: RunnerMessage): Promise<Reply | null> {
     switch (msg.type) {
       case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
+      case "draft.progress":
+        this.drafts.progress(msg.id, machine, msg.text);
+        return null;
+      case "draft.done":
+        await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        return null;
       case "session.opened": {
         const s = msg.session.taskId ? this.store.session(msg.session.id) : null;
         if (!s) return null;
@@ -787,6 +817,18 @@ export class Engine {
           this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
+        if (this.drafts.forRun(msg.taskId, machine)) {
+          // Draft with AI reads its goal's code: a fetch of one of that goal's repos, nothing more.
+          if (msg.purpose !== "fetch" || !this.drafts.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`)) {
+            return await reply(null, "A draft can only fetch its goal's repos.", "api"), null;
+          }
+          try {
+            await reply((await repoToken(app, msg.owner, msg.repo, PERMISSIONS.fetch)).token, null, null);
+          } catch (e) {
+            await reply(null, (e as Error).message, e instanceof GitHubError ? e.code : "api");
+          }
+          return null;
+        }
         const task = this.store.task(msg.taskId);
         const goal = task && this.store.goal(task.goal);
         if (!task || task.machine !== machine) return await reply(null, "That task isn't running on this machine.", "api"), null;

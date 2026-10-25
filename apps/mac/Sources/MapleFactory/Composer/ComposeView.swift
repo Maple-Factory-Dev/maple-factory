@@ -38,6 +38,8 @@ struct ComposeView: View {
 
                         templates
 
+                        if state.aiDraftID != nil { AIDraftCard() }
+
                         MarkdownEditor(
                             text: $state.draft.body,
                             placeholder: "Describe the outcome, context and constraints.\n\nAdd a “## Done when” checklist: each item becomes a check the builder has to prove.",
@@ -63,9 +65,17 @@ struct ComposeView: View {
 
     private var templates: some View {
         HStack(spacing: 6) {
-            Text("Start from")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textMuted)
+            if state.isLive {
+                aiButton
+                Text("or start from")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.leading, 4)
+            } else {
+                Text("Start from")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+            }
             ForEach(FactoryData.templates, id: \.name) { template in
                 chip(template.name, icon: template.icon) { state.draft.body = template.body }
             }
@@ -74,6 +84,26 @@ struct ComposeView: View {
                 state.draft.body = FactoryData.sampleBrief
             }
         }
+    }
+
+    /// Draft with AI: write the rough idea in the title or brief, and an agent fills the rest in.
+    private var aiButton: some View {
+        let busy = state.aiDraft.map { $0.state == .choosing || $0.state == .reading } ?? (state.aiDraftID != nil)
+        return Button(action: state.draftWithAI) {
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles").font(.system(size: 10.5, weight: .semibold))
+                Text("Draft with AI")
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(Capsule().fill(Theme.State.planning.opacity(busy ? 0.5 : 1)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .help("Write the idea in a line or two; an agent on your machine picks the goal, reads its code and fills in the title, brief and Done when. It can't change anything.")
     }
 
     private func chip(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -169,7 +199,7 @@ struct FactoryReadingPanel: View {
             card {
                 VStack(alignment: .leading, spacing: 10) {
                     row("Goal") {
-                        Picker("", selection: $state.draft.goal) {
+                        Picker("", selection: Binding(get: { state.draft.goal }, set: { state.draft.goal = $0; state.draft.goalChosen = true })) {
                             ForEach(FactoryData.activeGoals) { goal in Text(goal.name).tag(goal.name) }
                         }
                         .labelsHidden()
@@ -365,6 +395,152 @@ struct FactoryReadingPanel: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.text.opacity(0.9))
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// Where the composer's Draft with AI is: what the agent is doing, the goal it suggests making, or
+/// how it went.
+struct AIDraftCard: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+
+    var body: some View {
+        let draft = state.aiDraft
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.State.planning)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 6) {
+                switch draft?.state {
+                case nil, .choosing?, .reading?: working(draft)
+                case .needsGoal?: newGoal(draft!)
+                case .ready?: ready(draft!)
+                case .failed?: failed(draft!)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 12.5))
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.State.planning.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.planning.opacity(0.25)))
+        )
+        .onChange(of: "\(draft?.state.rawValue ?? "")|\(draft?.goal ?? "")", initial: true) { state.applyAIDraft() }
+        // A goal it suggested, once made in the goal sheet: carry on with it.
+        .onChange(of: client.goals.map(\.name)) {
+            guard let idea = draft?.newGoal, draft?.state == .needsGoal,
+                  let made = client.goals.first(where: { $0.name.caseInsensitiveCompare(idea.name) == .orderedSame }) else { return }
+            state.goalPrefill = nil
+            state.continueAIDraft(goal: made.name)
+        }
+    }
+
+    private func agentName(_ draft: Wire.Draft?) -> String {
+        switch draft?.agent ?? "claude" {
+        case "claude": "Claude Code"
+        case "codex": "Codex"
+        case let other: other
+        }
+    }
+
+    @ViewBuilder private func working(_ draft: Wire.Draft?) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(draft?.state == .reading ? "\(agentName(draft)) is reading the code" : "\(agentName(draft)) is picking a goal")
+                .fontWeight(.medium)
+                .foregroundStyle(Theme.text)
+            if let machine = draft?.machine { Text("on \(client.machineName(machine))").foregroundStyle(Theme.textMuted) }
+            Spacer()
+            Button("Cancel") { state.cancelAIDraft() }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textMuted)
+        }
+        if let progress = draft?.progress {
+            Text(progress)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.textMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        if let why = draft?.why, draft?.state == .reading {
+            Text(why).foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    @ViewBuilder private func newGoal(_ draft: Wire.Draft) -> some View {
+        let idea = draft.newGoal!
+        Text("None of your goals fits this. \(agentName(draft)) suggests a new one:")
+            .foregroundStyle(Theme.text)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(idea.name).fontWeight(.semibold).foregroundStyle(Theme.text)
+            if !idea.summary.isEmpty { Text(idea.summary).foregroundStyle(Theme.textMuted) }
+            if !idea.repos.isEmpty {
+                Text(idea.repos.joined(separator: ", "))
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.textFaint)
+            }
+        }
+        HStack(spacing: 10) {
+            Button("Create goal…") {
+                state.goalPrefill = idea
+                state.goalSheet = .new
+            }
+            Menu("Use another goal") {
+                ForEach(FactoryData.activeGoals) { goal in
+                    Button(goal.name) { state.continueAIDraft(goal: goal.name) }
+                }
+            }
+            .fixedSize()
+            Spacer()
+            Button("Dismiss") { state.cancelAIDraft() }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textMuted)
+        }
+        .controlSize(.small)
+    }
+
+    @ViewBuilder private func ready(_ draft: Wire.Draft) -> some View {
+        HStack(spacing: 6) {
+            Text("Drafted by \(agentName(draft)) from the code. Read it over before you send it.")
+                .foregroundStyle(Theme.text)
+            Spacer()
+            Button("Redraft") { state.draftWithAI() }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.State.planning)
+            Button("Done") { state.aiDraftID = nil }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textMuted)
+        }
+        let also = draft.also.compactMap { id in client.goals.first { $0.id == id }?.name }
+        if !also.isEmpty {
+            HStack(spacing: 6) {
+                Text("Also fits").foregroundStyle(Theme.textMuted)
+                ForEach(also, id: \.self) { name in
+                    Button(name) { state.continueAIDraft(goal: name) }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(Capsule().strokeBorder(Theme.stroke))
+                        .help("Draft it again for \(name)")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func failed(_ draft: Wire.Draft) -> some View {
+        HStack(spacing: 6) {
+            Text(draft.error ?? "It didn't work.").foregroundStyle(Theme.text)
+            Spacer()
+            Button("Try again") { state.draftWithAI() }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.State.planning)
+            Button("Dismiss") { state.aiDraftID = nil }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textMuted)
         }
     }
 }

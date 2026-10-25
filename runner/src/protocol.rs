@@ -212,6 +212,12 @@ pub enum Outbound {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// What a Draft with AI run is doing (see `draft`).
+    #[serde(rename = "draft.progress")]
+    DraftProgress { id: String, text: String },
+    /// A Draft with AI run finished: the agent's last message, or why it couldn't.
+    #[serde(rename = "draft.done")]
+    DraftDone { id: String, output: Option<String>, error: Option<String> },
     /// How `task.cleanup` went: the worktree (and branch) removed, or why not.
     #[serde(rename = "task.cleaned")]
     TaskCleaned { task_id: String, ok: bool, branch_deleted: bool, message: Option<String> },
@@ -565,6 +571,11 @@ pub enum Inbound {
     /// Run a task's checks before it's finished (see `proof`).
     #[serde(rename = "task.prove")]
     TaskProve(crate::proof::Prove),
+    /// Run Draft with AI's agent once, read-only (see `draft`).
+    #[serde(rename = "draft.run")]
+    DraftRun(crate::draft::Run),
+    #[serde(rename = "draft.cancel")]
+    DraftCancel { id: String },
     /// Remove a merged or closed task's worktree and local branch (see `worktrees::remove_task`).
     #[serde(rename = "task.cleanup")]
     TaskCleanup(crate::tasks::Cleanup),

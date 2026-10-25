@@ -24,8 +24,16 @@ struct GoalSheet: View {
         ("Green", "#2EA043"), ("Blue", "#3B82F6"), ("Violet", "#8B5CF6"), ("Amber", "#F59E0B"), ("Pink", "#EC4899"), ("Teal", "#14B8A6"),
     ]
 
-    init(editing: Wire.Goal? = nil) {
+    init(editing: Wire.Goal? = nil, prefill: Wire.NewGoalIdea? = nil) {
         self.editing = editing
+        if editing == nil, let idea = prefill {
+            // A goal Draft with AI suggested.
+            _name = State(initialValue: idea.name)
+            _prefix = State(initialValue: Self.prefix(for: idea.name))
+            _summary = State(initialValue: idea.summary)
+            _source = State(initialValue: idea.repos.isEmpty ? .folder : .repo)
+            _repo = State(initialValue: idea.repos.joined(separator: ", "))
+        }
         guard let goal = editing else { return }
         _name = State(initialValue: goal.name)
         _prefix = State(initialValue: goal.prefix)

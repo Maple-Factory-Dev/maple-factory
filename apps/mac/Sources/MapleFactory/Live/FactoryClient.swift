@@ -37,6 +37,8 @@ import Security
     private(set) var intake: [IntakeRequest] = []
     /// Your Scratchpad, as the views' notes, newest first.
     private(set) var notes: [Note] = []
+    /// Your Draft with AI runs, by id.
+    private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
@@ -249,6 +251,8 @@ import Security
             let note = LiveAdapter.note(update.note)
             guard unsaved[note.id] == nil else { break }
             if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
+        case .draftUpdated(let update):
+            drafts[update.draft.id] = update.draft
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()

@@ -436,7 +436,10 @@ final class AppState {
             if case let .goal(name) = destination, FactoryData.activeGoals.contains(where: { $0.name == name }) { return name }
             return (FactoryData.activeGoals.first(where: isFollowing) ?? FactoryData.activeGoals.first)?.name ?? ""
         }()
-        draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote)
+        var chosen = false
+        if goal != nil { chosen = true } else if case .goal = destination { chosen = true }
+        draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
+        cancelAIDraft()
         withAnimation(.snappy(duration: 0.3)) {
             focusedTask = nil
             isComposing = true
@@ -444,7 +447,64 @@ final class AppState {
     }
 
     func cancelCompose() {
+        cancelAIDraft()
         withAnimation(.snappy(duration: 0.3)) { isComposing = false }
+    }
+
+    // MARK: Draft with AI
+
+    /// The composer's Draft with AI run, if one was started.
+    var aiDraftID: String? = nil
+    /// The draft whose result is already in the composer.
+    private var appliedAIDraft: String? = nil
+    /// A goal Draft with AI suggested, for the goal sheet to start from.
+    var goalPrefill: Wire.NewGoalIdea? = nil
+
+    var aiDraft: Wire.Draft? { aiDraftID.flatMap { client?.drafts[$0] } }
+
+    /// Has an agent read the code (or pick a goal first) and fill in the title, brief and Done when.
+    func draftWithAI() {
+        guard let client, isLive else { return }
+        let idea = [draft.title, draft.body].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        guard !idea.isEmpty else {
+            showToast("Write a line or two about what you want first", icon: "sparkles", color: Theme.State.planning)
+            return
+        }
+        cancelAIDraft()
+        let id = UUID().uuidString.lowercased()
+        aiDraftID = id
+        let goal = draft.goalChosen ? client.goal(named: draft.goal)?.id : nil
+        client.send(.draftStart(.init(id: id, idea: idea, goal: goal, agent: draft.agent)))
+    }
+
+    func cancelAIDraft() {
+        if let id = aiDraftID, let draft = aiDraft, draft.state == .choosing || draft.state == .reading {
+            client?.send(.draftCancel(.init(id: id)))
+        }
+        aiDraftID = nil
+    }
+
+    /// Carries on with a goal: one it suggested making (once made), or another the person picked.
+    func continueAIDraft(goal name: String) {
+        guard let client, let id = aiDraftID, let goal = client.goal(named: name) else { return }
+        draft.goal = name
+        draft.goalChosen = true
+        appliedAIDraft = nil
+        client.send(.draftGoal(.init(id: id, goal: goal.id)))
+    }
+
+    /// Puts what the draft knows into the composer: its goal as soon as it has one, the rest once ready.
+    func applyAIDraft() {
+        guard let draft = aiDraft, let client else { return }
+        if let id = draft.goal, let goal = client.goals.first(where: { $0.id == id }) {
+            self.draft.goal = goal.name
+        }
+        guard draft.state == .ready, appliedAIDraft != draft.id, let title = draft.title, let brief = draft.brief else { return }
+        appliedAIDraft = draft.id
+        self.draft.goalChosen = true
+        self.draft.title = title
+        let checks = draft.doneWhen.map { "- [ ] \($0)" }.joined(separator: "\n")
+        self.draft.body = checks.isEmpty ? brief : "\(brief)\n\n## Done when\n\(checks)"
     }
 
     /// The agent that would pick up a new task: the chosen one, or whoever has the least in flight.

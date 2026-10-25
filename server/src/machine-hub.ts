@@ -231,6 +231,8 @@ export class MachineHub extends DurableObject<Env> {
         this.toRunner({ type: "mcp.response", reqId: msg.reqId, result: reply?.result ?? null, error: reply?.error ?? (reply?.result ? null : "The factory didn't answer.") });
         return;
       }
+      case "draft.progress":
+      case "draft.done":
       case "task.started":
       case "task.diff":
       case "task.finished":

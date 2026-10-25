@@ -386,6 +386,8 @@ struct ComposeDraft {
     var shareable = false
     var tickets: [TicketLink] = []
     var intakeID: String? = nil
+    /// Picked by the person (or the page they started from), so Draft with AI keeps it.
+    var goalChosen = false
 }
 
 enum GoalLayout: String, CaseIterable {

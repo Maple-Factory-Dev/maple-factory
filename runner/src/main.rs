@@ -22,6 +22,7 @@ mod statusline;
 mod tasks;
 mod thumbs;
 mod tmux;
+mod draft;
 mod trust;
 mod update;
 mod usage;
@@ -808,6 +809,11 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
             info!("merging task {} into {}", m.task_id, m.base);
             tokio::spawn(tasks::run_merge(sessions.clone(), m));
         }
+        Inbound::DraftRun(r) => {
+            info!("drafting {} with {}", r.id, r.agent);
+            tokio::spawn(draft::run(sessions.clone(), r));
+        }
+        Inbound::DraftCancel { id } => draft::cancel(&id),
         Inbound::TaskCleanup(c) => {
             info!("cleaning up task {} in {}", c.task_id, c.cwd);
             tokio::spawn(tasks::run_cleanup(sessions.clone(), c));

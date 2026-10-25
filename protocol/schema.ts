@@ -52,6 +52,16 @@ export const enums: Record<string, Enum> = {
   StepProgress: { values: { done: "Finished.", active: "Being worked on.", pending: "Not started." } },
   ProofKind: { values: { screenshot: "An image.", video: "A recording.", terminal: "A command and its output.", tests: "A test run." } },
   ProofStatus: { values: { pending: "No evidence yet.", proving: "Being proven.", proven: "Proven.", failed: "The proof failed." } },
+  DraftState: {
+    doc: "Where Draft with AI is.",
+    values: {
+      choosing: "Picking the goal it belongs to.",
+      reading: "Reading the goal's code to write the task.",
+      needsGoal: "It thinks this needs a new goal; waiting for the person to make one or pick another.",
+      ready: "Title, brief and Done when are filled in.",
+      failed: "It couldn't; `error` says why.",
+    },
+  },
   UnfinishedTasks: {
     doc: "What archiving a goal does with its tasks that haven't merged or been cancelled.",
     values: {
@@ -481,6 +491,35 @@ export const structs: Record<string, Struct> = {
     doc: "Someone with the app open, and the task they're looking at.",
     fields: { login: "string", viewing: "string?", since: "u64" },
   },
+  NewGoalIdea: {
+    doc: "A goal Draft with AI suggests making.",
+    fields: { name: "string", summary: "string", repos: "string[]" },
+  },
+  Draft: {
+    doc: "Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.",
+    fields: {
+      id: "string",
+      idea: "string",
+      agent: "string",
+      state: "DraftState",
+      machine: "string?",
+      goal: "string?",
+      also: "string[]",
+      newGoal: "NewGoalIdea?",
+      why: "string?",
+      title: "string?",
+      brief: "string?",
+      doneWhen: "string[]",
+      progress: "string?",
+      error: "string?",
+    },
+    fieldDocs: {
+      goal: "The goal it's for: picked by the person, else suggested.",
+      also: "Other goals it could belong to.",
+      why: "Why that goal (or a new one).",
+      progress: "What it's doing now: \"Reading lib/session.ts\".",
+    },
+  },
   GoalFollow: {
     doc: "Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.",
     fields: { goal: "string", following: "bool" },
@@ -551,6 +590,8 @@ export const unions: Record<string, Union> = {
         doc: "How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.",
         fields: { taskId: "string", ok: "bool", pushed: "string?", commit: "string?", message: "string?" },
       },
+      "draft.progress": { doc: "What a draft's agent is doing.", fields: { id: "string", text: "string" } },
+      "draft.done": { doc: "A draft's agent finished: its last message, or why it couldn't.", fields: { id: "string", output: "string?", error: "string?" } },
       "task.cleaned": { fields: { taskId: "string", ok: "bool", branchDeleted: "bool", message: "string?" } },
       "task.token_request": {
         doc: "A GitHub token to fetch or push a task's repo.",
@@ -608,6 +649,11 @@ export const unions: Record<string, Union> = {
         doc: "The task is moving to another machine: commit what its worktree has (as WIP) and push its branch.",
         fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool" },
       },
+      "draft.run": {
+        doc: "Run Draft with AI's agent once, unable to change anything: with `repo` or `folder`, in a throwaway worktree of it made from GitHub's copy of `base` (then removed); else in an empty folder with no tools.",
+        fields: { id: "string", agent: "string", prompt: "string", repo: "string?", folder: "string?", base: "string?" },
+      },
+      "draft.cancel": { fields: { id: "string" } },
       "task.cleanup": {
         doc: "Remove a finished task's worktree and local branch if nothing would be lost.",
         fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]" },
@@ -639,6 +685,12 @@ export const unions: Record<string, Union> = {
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
+      "draft.start": {
+        doc: "Draft with AI: turn `idea` into a task. `id` is the app's own (a UUID), for its `draft.updated`s.",
+        fields: { id: "string", idea: "string", goal: "string?", agent: "string?" },
+      },
+      "draft.goal": { doc: "Carry on a draft with this goal (one it suggested making, or another).", fields: { id: "string", goal: "string" } },
+      "draft.cancel": { fields: { id: "string" } },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -722,6 +774,7 @@ export const unions: Record<string, Union> = {
       "note.updated": { fields: { note: "Note" } },
       "intake.updated": { fields: { request: "IntakeRequest" } },
       "note.removed": { fields: { id: "uuid" } },
+      "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },

@@ -36,6 +36,7 @@ export class OrgHub extends DurableObject<Env> {
     });
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
+      sendTo: (login, message) => this.sendTo(login, message),
       machines: () => this.machines(),
       machineChanged: async (id) => {
         const machine = (await this.machines()).find((m) => m.id === id);

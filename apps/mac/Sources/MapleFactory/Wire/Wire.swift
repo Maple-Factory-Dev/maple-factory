@@ -115,6 +115,20 @@ public enum Wire {
         case failed
     }
 
+    /// Where Draft with AI is.
+    public enum DraftState: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Picking the goal it belongs to.
+        case choosing
+        /// Reading the goal's code to write the task.
+        case reading
+        /// It thinks this needs a new goal; waiting for the person to make one or pick another.
+        case needsGoal
+        /// Title, brief and Done when are filled in.
+        case ready
+        /// It couldn't; `error` says why.
+        case failed
+    }
+
     /// What archiving a goal does with its tasks that haven't merged or been cancelled.
     public enum UnfinishedTasks: String, Codable, Hashable, Sendable, CaseIterable {
         /// Cancel them (ending sessions, closing pull requests) and remove their worktrees where nothing would be lost.
@@ -1489,6 +1503,83 @@ public enum Wire {
         }
     }
 
+    /// A goal Draft with AI suggests making.
+    public struct NewGoalIdea: Codable, Hashable, Sendable {
+        public var name: String
+        public var summary: String
+        public var repos: [String]
+
+        public init(name: String, summary: String, repos: [String] = []) {
+            self.name = name
+            self.summary = summary
+            self.repos = repos
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            summary = try c.decode(String.self, forKey: .summary)
+            repos = try c.decodeIfPresent([String].self, forKey: .repos) ?? []
+        }
+    }
+
+    /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
+    public struct Draft: Codable, Hashable, Sendable {
+        public var id: String
+        public var idea: String
+        public var agent: String
+        public var state: DraftState
+        public var machine: String?
+        /// The goal it's for: picked by the person, else suggested.
+        public var goal: String?
+        /// Other goals it could belong to.
+        public var also: [String]
+        public var newGoal: NewGoalIdea?
+        /// Why that goal (or a new one).
+        public var why: String?
+        public var title: String?
+        public var brief: String?
+        public var doneWhen: [String]
+        /// What it's doing now: "Reading lib/session.ts".
+        public var progress: String?
+        public var error: String?
+
+        public init(id: String, idea: String, agent: String, state: DraftState, machine: String? = nil, goal: String? = nil, also: [String] = [], newGoal: NewGoalIdea? = nil, why: String? = nil, title: String? = nil, brief: String? = nil, doneWhen: [String] = [], progress: String? = nil, error: String? = nil) {
+            self.id = id
+            self.idea = idea
+            self.agent = agent
+            self.state = state
+            self.machine = machine
+            self.goal = goal
+            self.also = also
+            self.newGoal = newGoal
+            self.why = why
+            self.title = title
+            self.brief = brief
+            self.doneWhen = doneWhen
+            self.progress = progress
+            self.error = error
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            idea = try c.decode(String.self, forKey: .idea)
+            agent = try c.decode(String.self, forKey: .agent)
+            state = try c.decode(DraftState.self, forKey: .state)
+            machine = try c.decodeIfPresent(String.self, forKey: .machine)
+            goal = try c.decodeIfPresent(String.self, forKey: .goal)
+            also = try c.decodeIfPresent([String].self, forKey: .also) ?? []
+            newGoal = try c.decodeIfPresent(NewGoalIdea.self, forKey: .newGoal)
+            why = try c.decodeIfPresent(String.self, forKey: .why)
+            title = try c.decodeIfPresent(String.self, forKey: .title)
+            brief = try c.decodeIfPresent(String.self, forKey: .brief)
+            doneWhen = try c.decodeIfPresent([String].self, forKey: .doneWhen) ?? []
+            progress = try c.decodeIfPresent(String.self, forKey: .progress)
+            error = try c.decodeIfPresent(String.self, forKey: .error)
+        }
+    }
+
     /// Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.
     public struct GoalFollow: Codable, Hashable, Sendable {
         public var goal: String
@@ -1761,6 +1852,30 @@ public enum Wire {
         }
     }
 
+    /// What a draft's agent is doing.
+    public struct RunnerMessageDraftProgress: Codable, Hashable, Sendable {
+        public var id: String
+        public var text: String
+
+        public init(id: String, text: String) {
+            self.id = id
+            self.text = text
+        }
+    }
+
+    /// A draft's agent finished: its last message, or why it couldn't.
+    public struct RunnerMessageDraftDone: Codable, Hashable, Sendable {
+        public var id: String
+        public var output: String?
+        public var error: String?
+
+        public init(id: String, output: String? = nil, error: String? = nil) {
+            self.id = id
+            self.output = output
+            self.error = error
+        }
+    }
+
     public struct RunnerMessageTaskCleaned: Codable, Hashable, Sendable {
         public var taskId: String
         public var ok: Bool
@@ -1809,6 +1924,8 @@ public enum Wire {
         case taskDiff(RunnerMessageTaskDiff)
         case taskMerged(RunnerMessageTaskMerged)
         case taskHandedOff(RunnerMessageTaskHandedOff)
+        case draftProgress(RunnerMessageDraftProgress)
+        case draftDone(RunnerMessageDraftDone)
         case taskCleaned(RunnerMessageTaskCleaned)
         case taskTokenRequest(RunnerMessageTaskTokenRequest)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -1834,6 +1951,8 @@ public enum Wire {
             case "task.diff": self = .taskDiff(try RunnerMessageTaskDiff(from: decoder))
             case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
             case "task.handed_off": self = .taskHandedOff(try RunnerMessageTaskHandedOff(from: decoder))
+            case "draft.progress": self = .draftProgress(try RunnerMessageDraftProgress(from: decoder))
+            case "draft.done": self = .draftDone(try RunnerMessageDraftDone(from: decoder))
             case "task.cleaned": self = .taskCleaned(try RunnerMessageTaskCleaned(from: decoder))
             case "task.token_request": self = .taskTokenRequest(try RunnerMessageTaskTokenRequest(from: decoder))
             default: self = .unknown(type)
@@ -1887,6 +2006,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskHandedOff(let body):
                 try c.encode("task.handed_off", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftProgress(let body):
+                try c.encode("draft.progress", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftDone(let body):
+                try c.encode("draft.done", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCleaned(let body):
                 try c.encode("task.cleaned", forKey: .type)
@@ -2049,6 +2174,33 @@ public enum Wire {
         }
     }
 
+    /// Run Draft with AI's agent once, unable to change anything: with `repo` or `folder`, in a throwaway worktree of it made from GitHub's copy of `base` (then removed); else in an empty folder with no tools.
+    public struct ServerToRunnerDraftRun: Codable, Hashable, Sendable {
+        public var id: String
+        public var agent: String
+        public var prompt: String
+        public var repo: String?
+        public var folder: String?
+        public var base: String?
+
+        public init(id: String, agent: String, prompt: String, repo: String? = nil, folder: String? = nil, base: String? = nil) {
+            self.id = id
+            self.agent = agent
+            self.prompt = prompt
+            self.repo = repo
+            self.folder = folder
+            self.base = base
+        }
+    }
+
+    public struct ServerToRunnerDraftCancel: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Remove a finished task's worktree and local branch if nothing would be lost.
     public struct ServerToRunnerTaskCleanup: Codable, Hashable, Sendable {
         public var taskId: String
@@ -2106,6 +2258,8 @@ public enum Wire {
         case taskDiff(ServerToRunnerTaskDiff)
         case taskMerge(ServerToRunnerTaskMerge)
         case taskHandoff(ServerToRunnerTaskHandoff)
+        case draftRun(ServerToRunnerDraftRun)
+        case draftCancel(ServerToRunnerDraftCancel)
         case taskCleanup(ServerToRunnerTaskCleanup)
         case taskToken(ServerToRunnerTaskToken)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -2127,6 +2281,8 @@ public enum Wire {
             case "task.diff": self = .taskDiff(try ServerToRunnerTaskDiff(from: decoder))
             case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
             case "task.handoff": self = .taskHandoff(try ServerToRunnerTaskHandoff(from: decoder))
+            case "draft.run": self = .draftRun(try ServerToRunnerDraftRun(from: decoder))
+            case "draft.cancel": self = .draftCancel(try ServerToRunnerDraftCancel(from: decoder))
             case "task.cleanup": self = .taskCleanup(try ServerToRunnerTaskCleanup(from: decoder))
             case "task.token": self = .taskToken(try ServerToRunnerTaskToken(from: decoder))
             default: self = .unknown(type)
@@ -2166,6 +2322,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskHandoff(let body):
                 try c.encode("task.handoff", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftRun(let body):
+                try c.encode("draft.run", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftCancel(let body):
+                try c.encode("draft.cancel", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCleanup(let body):
                 try c.encode("task.cleanup", forKey: .type)
@@ -2306,6 +2468,40 @@ public enum Wire {
 
         public init(goal: Goal) {
             self.goal = goal
+        }
+    }
+
+    /// Draft with AI: turn `idea` into a task. `id` is the app's own (a UUID), for its `draft.updated`s.
+    public struct ClientMessageDraftStart: Codable, Hashable, Sendable {
+        public var id: String
+        public var idea: String
+        public var goal: String?
+        public var agent: String?
+
+        public init(id: String, idea: String, goal: String? = nil, agent: String? = nil) {
+            self.id = id
+            self.idea = idea
+            self.goal = goal
+            self.agent = agent
+        }
+    }
+
+    /// Carry on a draft with this goal (one it suggested making, or another).
+    public struct ClientMessageDraftGoal: Codable, Hashable, Sendable {
+        public var id: String
+        public var goal: String
+
+        public init(id: String, goal: String) {
+            self.id = id
+            self.goal = goal
+        }
+    }
+
+    public struct ClientMessageDraftCancel: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
         }
     }
 
@@ -2631,6 +2827,9 @@ public enum Wire {
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
         case goalSave(ClientMessageGoalSave)
+        case draftStart(ClientMessageDraftStart)
+        case draftGoal(ClientMessageDraftGoal)
+        case draftCancel(ClientMessageDraftCancel)
         case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
@@ -2679,6 +2878,9 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
+            case "draft.start": self = .draftStart(try ClientMessageDraftStart(from: decoder))
+            case "draft.goal": self = .draftGoal(try ClientMessageDraftGoal(from: decoder))
+            case "draft.cancel": self = .draftCancel(try ClientMessageDraftCancel(from: decoder))
             case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
@@ -2750,6 +2952,15 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalSave(let body):
                 try c.encode("goal.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftStart(let body):
+                try c.encode("draft.start", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftGoal(let body):
+                try c.encode("draft.goal", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftCancel(let body):
+                try c.encode("draft.cancel", forKey: .type)
                 try body.encode(to: encoder)
             case .goalFollow(let body):
                 try c.encode("goal.follow", forKey: .type)
@@ -2961,6 +3172,15 @@ public enum Wire {
         }
     }
 
+    /// Your draft, to your apps only.
+    public struct ServerToClientDraftUpdated: Codable, Hashable, Sendable {
+        public var draft: Draft
+
+        public init(draft: Draft) {
+            self.draft = draft
+        }
+    }
+
     /// Your goal follows, to your apps only.
     public struct ServerToClientFollowsUpdated: Codable, Hashable, Sendable {
         public var follows: [GoalFollow]
@@ -3060,6 +3280,7 @@ public enum Wire {
         case noteUpdated(ServerToClientNoteUpdated)
         case intakeUpdated(ServerToClientIntakeUpdated)
         case noteRemoved(ServerToClientNoteRemoved)
+        case draftUpdated(ServerToClientDraftUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
@@ -3084,6 +3305,7 @@ public enum Wire {
             case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
             case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
+            case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
@@ -3124,6 +3346,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .noteRemoved(let body):
                 try c.encode("note.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .draftUpdated(let body):
+                try c.encode("draft.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .followsUpdated(let body):
                 try c.encode("follows.updated", forKey: .type)

@@ -104,6 +104,22 @@ pub enum ProofStatus {
     Failed,
 }
 
+/// Where Draft with AI is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DraftState {
+    /// Picking the goal it belongs to.
+    Choosing,
+    /// Reading the goal's code to write the task.
+    Reading,
+    /// It thinks this needs a new goal; waiting for the person to make one or pick another.
+    NeedsGoal,
+    /// Title, brief and Done when are filled in.
+    Ready,
+    /// It couldn't; `error` says why.
+    Failed,
+}
+
 /// What archiving a goal does with its tasks that haven't merged or been cancelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1048,6 +1064,50 @@ pub struct Presence {
     pub since: u64,
 }
 
+/// A goal Draft with AI suggests making.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewGoalIdea {
+    pub name: String,
+    pub summary: String,
+    #[serde(default)]
+    pub repos: Vec<String>,
+}
+
+/// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Draft {
+    pub id: String,
+    pub idea: String,
+    pub agent: String,
+    pub state: DraftState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// The goal it's for: picked by the person, else suggested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    /// Other goals it could belong to.
+    #[serde(default)]
+    pub also: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_goal: Option<NewGoalIdea>,
+    /// Why that goal (or a new one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
+    #[serde(default)]
+    pub done_when: Vec<String>,
+    /// What it's doing now: "Reading lib/session.ts".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1204,6 +1264,21 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// What a draft's agent is doing.
+    #[serde(rename = "draft.progress")]
+    DraftProgress {
+        id: String,
+        text: String,
+    },
+    /// A draft's agent finished: its last message, or why it couldn't.
+    #[serde(rename = "draft.done")]
+    DraftDone {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     #[serde(rename = "task.cleaned")]
     TaskCleaned {
         task_id: String,
@@ -1321,6 +1396,23 @@ pub enum ServerToRunner {
         title: String,
         fallback: bool,
     },
+    /// Run Draft with AI's agent once, unable to change anything: with `repo` or `folder`, in a throwaway worktree of it made from GitHub's copy of `base` (then removed); else in an empty folder with no tools.
+    #[serde(rename = "draft.run")]
+    DraftRun {
+        id: String,
+        agent: String,
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        folder: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+    },
+    #[serde(rename = "draft.cancel")]
+    DraftCancel {
+        id: String,
+    },
     /// Remove a finished task's worktree and local branch if nothing would be lost.
     #[serde(rename = "task.cleanup")]
     TaskCleanup {
@@ -1421,6 +1513,26 @@ pub enum ClientMessage {
     #[serde(rename = "goal.save")]
     GoalSave {
         goal: Goal,
+    },
+    /// Draft with AI: turn `idea` into a task. `id` is the app's own (a UUID), for its `draft.updated`s.
+    #[serde(rename = "draft.start")]
+    DraftStart {
+        id: String,
+        idea: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+    },
+    /// Carry on a draft with this goal (one it suggested making, or another).
+    #[serde(rename = "draft.goal")]
+    DraftGoal {
+        id: String,
+        goal: String,
+    },
+    #[serde(rename = "draft.cancel")]
+    DraftCancel {
+        id: String,
     },
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
@@ -1668,6 +1780,11 @@ pub enum ServerToClient {
     #[serde(rename = "note.removed")]
     NoteRemoved {
         id: Uuid,
+    },
+    /// Your draft, to your apps only.
+    #[serde(rename = "draft.updated")]
+    DraftUpdated {
+        draft: Draft,
     },
     /// Your goal follows, to your apps only.
     #[serde(rename = "follows.updated")]

@@ -23,6 +23,10 @@ export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","term
 export type ProofStatus = "pending" | "proving" | "proven" | "failed";
 export const ProofStatusValues: readonly ProofStatus[] = ["pending","proving","proven","failed"];
 
+/** Where Draft with AI is. */
+export type DraftState = "choosing" | "reading" | "needsGoal" | "ready" | "failed";
+export const DraftStateValues: readonly DraftState[] = ["choosing","reading","needsGoal","ready","failed"];
+
 /** What archiving a goal does with its tasks that haven't merged or been cancelled. */
 export type UnfinishedTasks = "cleanup" | "cancel" | "finish";
 export const UnfinishedTasksValues: readonly UnfinishedTasks[] = ["cleanup","cancel","finish"];
@@ -609,6 +613,35 @@ export interface Presence {
   since: number;
 }
 
+/** A goal Draft with AI suggests making. */
+export interface NewGoalIdea {
+  name: string;
+  summary: string;
+  repos: string[];
+}
+
+/** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
+export interface Draft {
+  id: string;
+  idea: string;
+  agent: string;
+  state: DraftState;
+  machine?: string | null;
+  /** The goal it's for: picked by the person, else suggested. */
+  goal?: string | null;
+  /** Other goals it could belong to. */
+  also: string[];
+  newGoal?: NewGoalIdea | null;
+  /** Why that goal (or a new one). */
+  why?: string | null;
+  title?: string | null;
+  brief?: string | null;
+  doneWhen: string[];
+  /** What it's doing now: "Reading lib/session.ts". */
+  progress?: string | null;
+  error?: string | null;
+}
+
 /** Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams. */
 export interface GoalFollow {
   goal: string;
@@ -748,6 +781,21 @@ export interface RunnerMessage_TaskHandedOff {
   message?: string | null;
 }
 
+/** What a draft's agent is doing. */
+export interface RunnerMessage_DraftProgress {
+  type: "draft.progress";
+  id: string;
+  text: string;
+}
+
+/** A draft's agent finished: its last message, or why it couldn't. */
+export interface RunnerMessage_DraftDone {
+  type: "draft.done";
+  id: string;
+  output?: string | null;
+  error?: string | null;
+}
+
 export interface RunnerMessage_TaskCleaned {
   type: "task.cleaned";
   taskId: string;
@@ -767,8 +815,8 @@ export interface RunnerMessage_TaskTokenRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","task.cleaned","task.token_request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.cleaned","task.token_request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -866,6 +914,22 @@ export interface ServerToRunner_TaskHandoff {
   fallback: boolean;
 }
 
+/** Run Draft with AI's agent once, unable to change anything: with `repo` or `folder`, in a throwaway worktree of it made from GitHub's copy of `base` (then removed); else in an empty folder with no tools. */
+export interface ServerToRunner_DraftRun {
+  type: "draft.run";
+  id: string;
+  agent: string;
+  prompt: string;
+  repo?: string | null;
+  folder?: string | null;
+  base?: string | null;
+}
+
+export interface ServerToRunner_DraftCancel {
+  type: "draft.cancel";
+  id: string;
+}
+
 /** Remove a finished task's worktree and local branch if nothing would be lost. */
 export interface ServerToRunner_TaskCleanup {
   type: "task.cleanup";
@@ -887,8 +951,8 @@ export interface ServerToRunner_TaskToken {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","task.cleanup","task.token"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -972,6 +1036,27 @@ export interface ClientMessage_SessionKill {
 export interface ClientMessage_GoalSave {
   type: "goal.save";
   goal: Goal;
+}
+
+/** Draft with AI: turn `idea` into a task. `id` is the app's own (a UUID), for its `draft.updated`s. */
+export interface ClientMessage_DraftStart {
+  type: "draft.start";
+  id: string;
+  idea: string;
+  goal?: string | null;
+  agent?: string | null;
+}
+
+/** Carry on a draft with this goal (one it suggested making, or another). */
+export interface ClientMessage_DraftGoal {
+  type: "draft.goal";
+  id: string;
+  goal: string;
+}
+
+export interface ClientMessage_DraftCancel {
+  type: "draft.cancel";
+  id: string;
 }
 
 /** Follow a goal (it's in your sidebar) or stop following it. */
@@ -1162,8 +1247,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1227,6 +1312,12 @@ export interface ServerToClient_NoteRemoved {
   id: string;
 }
 
+/** Your draft, to your apps only. */
+export interface ServerToClient_DraftUpdated {
+  type: "draft.updated";
+  draft: Draft;
+}
+
 /** Your goal follows, to your apps only. */
 export interface ServerToClient_FollowsUpdated {
   type: "follows.updated";
@@ -1270,5 +1361,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","follows.updated","presence","policy.updated","repos.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","repos.updated","toast","session.ended","error"] as const;
