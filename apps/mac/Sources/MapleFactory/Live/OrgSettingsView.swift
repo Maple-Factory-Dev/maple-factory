@@ -22,6 +22,7 @@ struct RepositoriesSettings: View {
     @Environment(FactoryClient.self) private var client
     @State private var adding = ""
     @State private var refreshing = false
+    @State private var filter = ""
 
     private var isAdmin: Bool { client.me?.role == "admin" }
 
@@ -54,7 +55,9 @@ struct RepositoriesSettings: View {
                 ContentUnavailableView("No repositories yet", systemImage: "shippingbox",
                                        description: Text(isAdmin ? "Install the GitHub App on your org, or add one below." : "An admin installs the GitHub App on the org, or adds them here."))
             } else {
-                List(client.repos, id: \.name) { repo in
+                TextField("Filter \(client.repos.count) repositories", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                List(client.repos.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter.trimmingCharacters(in: .whitespaces)) }, id: \.name) { repo in
                     HStack(spacing: 10) {
                         Image(systemName: repo.isPrivate ? "lock" : "globe")
                             .foregroundStyle(Theme.textMuted)

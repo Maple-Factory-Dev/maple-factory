@@ -15,6 +15,7 @@ struct GoalSheet: View {
     @State private var base = ""
     @State private var color = 0
     @State private var prefixEdited = false
+    @State private var repoFilter = ""
 
     enum Source: String, CaseIterable { case folder = "A folder on my machines", repo = "A GitHub repo" }
 
@@ -46,9 +47,17 @@ struct GoalSheet: View {
 
     /// The org's repos (Settings → Repositories), ticked for this goal; the first ticked is the default.
     private var repoPicker: some View {
+        // Picked ones first, then whatever matches the filter: an org can have hundreds.
+        let query = repoFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        let picked = client.repos.filter { r in repos.contains { $0.caseInsensitiveCompare(r.name) == .orderedSame } }
+        let rest = client.repos.filter { r in !picked.contains { $0.name == r.name } && (query.isEmpty || r.name.lowercased().contains(query)) }
+        let shown = picked + rest
+        return VStack(spacing: 6) {
+        TextField("Filter \(client.repos.count) repositories", text: $repoFilter)
+            .textFieldStyle(.roundedBorder)
         ScrollView {
             VStack(spacing: 0) {
-                ForEach(client.repos, id: \.name) { org in
+                ForEach(shown, id: \.name) { org in
                     let picked = repos.contains { $0.caseInsensitiveCompare(org.name) == .orderedSame }
                     HStack(spacing: 8) {
                         Image(systemName: picked ? "checkmark.square.fill" : "square")
@@ -75,8 +84,9 @@ struct GoalSheet: View {
                 }
             }
         }
-        .frame(height: min(CGFloat(client.repos.count) * 28, 140))
+        .frame(height: min(CGFloat(max(shown.count, 1)) * 28, 168))
         .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+        }
     }
 
     var body: some View {
