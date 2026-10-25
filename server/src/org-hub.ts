@@ -72,6 +72,10 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
+      case "/diff": {
+        const patch = this.store.get(`patch:${url.searchParams.get("task")}`);
+        return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });
+      }
     }
     return new Response("Not found.", { status: 404 });
   }

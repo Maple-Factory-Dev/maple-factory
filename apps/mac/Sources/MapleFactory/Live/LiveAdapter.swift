@@ -67,6 +67,7 @@ enum LiveAdapter {
         task.spec = t.brief
         task.progress = t.state == .building && !t.plan.isEmpty ? max(0.04, Double(done) / Double(t.plan.count)) : nil
         task.diff = t.diff.map { ($0.added.int, $0.removed.int) }
+        task.diffKey = t.diff.map { "\(t.pr?.head ?? "")+\($0.added)-\($0.removed)" }
         task.plan = t.plan.map { step in
             PlanStep(text: step.text, file: step.file,
                      change: step.added ? .added : step.from.map { .modified(from: $0) },
@@ -96,6 +97,8 @@ enum LiveAdapter {
         task.pr = t.pr.map { pr in
             var request = PullRequest(number: pr.number.int, state: prState(pr.state), checks: pr.checks.map(check))
             request.link = pr.url.flatMap(URL.init(string:))
+            request.branch = pr.branch
+            request.base = pr.base
             return request
         }
         task.autoReview = t.autoReview.map(review)

@@ -783,6 +783,14 @@ pub struct RiskAcceptance {
     pub note: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffStat {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
 /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -922,6 +930,18 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// What a task's branch changes against its base: line counts per file and the unified patch.
+    #[serde(rename = "task.diff")]
+    TaskDiff {
+        task_id: String,
+        ok: bool,
+        #[serde(default)]
+        files: Vec<DiffStat>,
+        patch: String,
+        truncated: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     #[serde(rename = "task.merged")]
     TaskMerged {
         task_id: String,
@@ -1019,6 +1039,13 @@ pub enum ServerToRunner {
         title: String,
         /// Push with the machine's own credentials (no GitHub App).
         fallback: bool,
+    },
+    /// Report a task's diff against its base (answered with `task.diff`).
+    #[serde(rename = "task.diff")]
+    TaskDiff {
+        task_id: String,
+        cwd: String,
+        base: String,
     },
     /// Merge a task's branch into its base on origin, for repos with no GitHub App.
     #[serde(rename = "task.merge")]

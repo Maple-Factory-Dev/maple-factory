@@ -1114,6 +1114,18 @@ public enum Wire {
         }
     }
 
+    public struct DiffStat: Codable, Hashable, Sendable {
+        public var path: String
+        public var added: UInt32
+        public var removed: UInt32
+
+        public init(path: String, added: UInt32, removed: UInt32) {
+            self.path = path
+            self.added = added
+            self.removed = removed
+        }
+    }
+
     /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
     public struct WorktreeSpec: Codable, Hashable, Sendable {
         public var name: String
@@ -1344,6 +1356,35 @@ public enum Wire {
         }
     }
 
+    /// What a task's branch changes against its base: line counts per file and the unified patch.
+    public struct RunnerMessageTaskDiff: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var ok: Bool
+        public var files: [DiffStat]
+        public var patch: String
+        public var truncated: Bool
+        public var message: String?
+
+        public init(taskId: String, ok: Bool, files: [DiffStat] = [], patch: String, truncated: Bool, message: String? = nil) {
+            self.taskId = taskId
+            self.ok = ok
+            self.files = files
+            self.patch = patch
+            self.truncated = truncated
+            self.message = message
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            taskId = try c.decode(String.self, forKey: .taskId)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            files = try c.decodeIfPresent([DiffStat].self, forKey: .files) ?? []
+            patch = try c.decode(String.self, forKey: .patch)
+            truncated = try c.decode(Bool.self, forKey: .truncated)
+            message = try c.decodeIfPresent(String.self, forKey: .message)
+        }
+    }
+
     public struct RunnerMessageTaskMerged: Codable, Hashable, Sendable {
         public var taskId: String
         public var ok: Bool
@@ -1402,6 +1443,7 @@ public enum Wire {
         case mcpRequest(RunnerMessageMcpRequest)
         case taskStarted(RunnerMessageTaskStarted)
         case taskFinished(RunnerMessageTaskFinished)
+        case taskDiff(RunnerMessageTaskDiff)
         case taskMerged(RunnerMessageTaskMerged)
         case taskCleaned(RunnerMessageTaskCleaned)
         case taskTokenRequest(RunnerMessageTaskTokenRequest)
@@ -1424,6 +1466,7 @@ public enum Wire {
             case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
             case "task.started": self = .taskStarted(try RunnerMessageTaskStarted(from: decoder))
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
+            case "task.diff": self = .taskDiff(try RunnerMessageTaskDiff(from: decoder))
             case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
             case "task.cleaned": self = .taskCleaned(try RunnerMessageTaskCleaned(from: decoder))
             case "task.token_request": self = .taskTokenRequest(try RunnerMessageTaskTokenRequest(from: decoder))
@@ -1466,6 +1509,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskFinished(let body):
                 try c.encode("task.finished", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskDiff(let body):
+                try c.encode("task.diff", forKey: .type)
                 try body.encode(to: encoder)
             case .taskMerged(let body):
                 try c.encode("task.merged", forKey: .type)
@@ -1580,6 +1626,19 @@ public enum Wire {
         }
     }
 
+    /// Report a task's diff against its base (answered with `task.diff`).
+    public struct ServerToRunnerTaskDiff: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var cwd: String
+        public var base: String
+
+        public init(taskId: String, cwd: String, base: String) {
+            self.taskId = taskId
+            self.cwd = cwd
+            self.base = base
+        }
+    }
+
     /// Merge a task's branch into its base on origin, for repos with no GitHub App.
     public struct ServerToRunnerTaskMerge: Codable, Hashable, Sendable {
         public var taskId: String
@@ -1651,6 +1710,7 @@ public enum Wire {
         case runnerRestart
         case mcpResponse(ServerToRunnerMcpResponse)
         case taskFinish(ServerToRunnerTaskFinish)
+        case taskDiff(ServerToRunnerTaskDiff)
         case taskMerge(ServerToRunnerTaskMerge)
         case taskCleanup(ServerToRunnerTaskCleanup)
         case taskToken(ServerToRunnerTaskToken)
@@ -1670,6 +1730,7 @@ public enum Wire {
             case "runner.restart": self = .runnerRestart
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
             case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
+            case "task.diff": self = .taskDiff(try ServerToRunnerTaskDiff(from: decoder))
             case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
             case "task.cleanup": self = .taskCleanup(try ServerToRunnerTaskCleanup(from: decoder))
             case "task.token": self = .taskToken(try ServerToRunnerTaskToken(from: decoder))
@@ -1701,6 +1762,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskFinish(let body):
                 try c.encode("task.finish", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskDiff(let body):
+                try c.encode("task.diff", forKey: .type)
                 try body.encode(to: encoder)
             case .taskMerge(let body):
                 try c.encode("task.merge", forKey: .type)

@@ -342,6 +342,7 @@ export const structs: Record<string, Struct> = {
     doc: "A goal letting the factory merge without human review, up to a risk level, on the record.",
     fields: { goal: "string", upTo: "RiskLevel", by: "string", at: "u64", note: "string?" },
   },
+  DiffStat: { fields: { path: "string", added: "u32", removed: "u32" } },
   WorktreeSpec: {
     doc: "A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.",
     fields: { name: "string", base: "string?", existing: "bool" },
@@ -412,6 +413,10 @@ export const unions: Record<string, Union> = {
         },
         fieldDocs: { pushed: "app (a GitHub App token) or fallback (the machine's credentials)." },
       },
+      "task.diff": {
+        doc: "What a task's branch changes against its base: line counts per file and the unified patch.",
+        fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?" },
+      },
       "task.merged": { fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?" } },
       "task.cleaned": { fields: { taskId: "string", ok: "bool", branchDeleted: "bool", message: "string?" } },
       "task.token_request": {
@@ -457,6 +462,10 @@ export const unions: Record<string, Union> = {
         doc: "Commit what's left in a task's worktree and push its branch.",
         fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool" },
         fieldDocs: { fallback: "Push with the machine's own credentials (no GitHub App)." },
+      },
+      "task.diff": {
+        doc: "Report a task's diff against its base (answered with `task.diff`).",
+        fields: { taskId: "string", cwd: "string", base: "string" },
       },
       "task.merge": {
         doc: "Merge a task's branch into its base on origin, for repos with no GitHub App.",

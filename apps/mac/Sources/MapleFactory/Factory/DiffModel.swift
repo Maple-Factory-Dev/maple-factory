@@ -204,3 +204,51 @@ extension FactoryData {
         """)]
     }
 }
+
+extension DiffFile {
+    /// The files in a unified diff (`git diff` output), with their hunks.
+    static func parse(_ patch: String) -> [DiffFile] {
+        var files: [DiffFile] = []
+        var path: String?
+        var added = 0, removed = 0
+        var hunks: [DiffHunk] = []
+        var hunk: (old: Int, new: Int, context: String, lines: [String])?
+
+        func closeHunk() {
+            if let h = hunk { hunks.append(DiffHunk(oldStart: h.old, newStart: h.new, context: h.context, step: nil, h.lines.joined(separator: "\n"))) }
+            hunk = nil
+        }
+        func closeFile() {
+            closeHunk()
+            if let path { files.append(DiffFile(path: path, added: added, removed: removed, hunks: hunks)) }
+            path = nil
+            added = 0
+            removed = 0
+            hunks = []
+        }
+
+        for line in patch.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.hasPrefix("diff --git ") {
+                closeFile()
+                // "diff --git a/x b/x": the b side, until +++ says better.
+                path = line.components(separatedBy: " b/").last
+            } else if hunk == nil, line.hasPrefix("+++ ") {
+                if line != "+++ /dev/null" { path = String(line.dropFirst(4)).replacingOccurrences(of: "b/", with: "", options: .anchored) }
+            } else if hunk == nil, line.hasPrefix("--- ") || line.hasPrefix("index ") || line.hasPrefix("new file") || line.hasPrefix("deleted file") || line.hasPrefix("Binary files") {
+                continue
+            } else if line.hasPrefix("@@") {
+                closeHunk()
+                // @@ -12,7 +12,9 @@ context
+                let parts = line.split(separator: " ", maxSplits: 4)
+                let start = { (s: Substring) in Int(s.dropFirst().split(separator: ",").first ?? "") ?? 1 }
+                let context = line.components(separatedBy: "@@").dropFirst(2).joined(separator: "@@").trimmingCharacters(in: .whitespaces)
+                hunk = (parts.count > 1 ? start(parts[1]) : 1, parts.count > 2 ? start(parts[2]) : 1, context, [])
+            } else if hunk != nil, let first = line.first, "+- ".contains(first) {
+                if first == "+" { added += 1 } else if first == "-" { removed += 1 }
+                hunk?.lines.append(line)
+            }
+        }
+        closeFile()
+        return files
+    }
+}

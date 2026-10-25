@@ -81,6 +81,65 @@ pub struct Cleanup {
     pub heads: Vec<String>,
 }
 
+/// `task.diff` from the hub: what a task's branch changes against its base, for the apps' Diff tab.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffRequest {
+    pub task_id: String,
+    /// The worktree, `~`-abbreviated.
+    pub cwd: String,
+    pub base: String,
+}
+
+/// The longest patch sent; the server keeps it in a SQLite row.
+const MAX_PATCH: usize = 1024 * 1024;
+
+/// Answers with `task.diff`: per-file line counts and the unified patch (cut at `MAX_PATCH`).
+pub async fn run_diff(sessions: Sessions, d: DiffRequest) {
+    let dir = expand_home(&d.cwd);
+    let range = format!("origin/{}...HEAD", d.base);
+    let report = async {
+        let numstat = git(&dir, &["diff", "--numstat", "--no-renames", &range], None).await?;
+        let files = numstat
+            .lines()
+            .filter_map(|l| {
+                let mut parts = l.splitn(3, '\t');
+                let (added, removed, path) = (parts.next()?, parts.next()?, parts.next()?);
+                // Binary files count as "-": no lines.
+                Some(crate::wire::DiffStat { path: path.to_string(), added: added.parse().unwrap_or(0), removed: removed.parse().unwrap_or(0) })
+            })
+            .collect::<Vec<_>>();
+        let mut patch = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--no-renames", &range], None).await?;
+        let truncated = patch.len() > MAX_PATCH;
+        if truncated {
+            let mut cut = MAX_PATCH;
+            while !patch.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            patch.truncate(cut);
+        }
+        anyhow::Ok((files, patch, truncated))
+    };
+    sessions.emit(match report.await {
+        Ok((files, patch, truncated)) => Outbound::Wire(crate::wire::RunnerMessage::TaskDiff {
+            task_id: d.task_id,
+            ok: true,
+            files,
+            patch,
+            truncated,
+            message: None,
+        }),
+        Err(e) => Outbound::Wire(crate::wire::RunnerMessage::TaskDiff {
+            task_id: d.task_id,
+            ok: false,
+            files: vec![],
+            patch: String::new(),
+            truncated: false,
+            message: Some(format!("{e:#}")),
+        }),
+    });
+}
+
 /// `task.merge` from the hub, for a repo with no GitHub App to merge its pull request: merge the
 /// task's branch into its base on origin, with the machine's own credentials, as a merge commit.
 #[derive(Debug, Clone, Deserialize)]

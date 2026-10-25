@@ -69,6 +69,8 @@ export default {
 
     if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local" });
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
+    const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
+    if (diff && request.method === "GET") return orgHub(env).fetch(`https://org/diff?task=${diff[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);
     const removing = /^\/api\/machines\/([a-z0-9-]+)$/.exec(path);
     if (removing && request.method === "DELETE") return removeMachine(env, me, removing[1]);

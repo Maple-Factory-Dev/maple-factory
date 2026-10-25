@@ -212,6 +212,7 @@ export class MachineHub extends DurableObject<Env> {
         return;
       }
       case "task.started":
+      case "task.diff":
       case "task.finished":
       case "task.merged":
       case "task.cleaned":

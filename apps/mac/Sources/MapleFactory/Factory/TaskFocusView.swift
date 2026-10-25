@@ -4,6 +4,7 @@ import SwiftUI
 /// conversation, with a right rail for the decision at hand and the task's details.
 struct TaskFocusView: View {
     @Environment(AppState.self) private var appState
+    @Environment(FactoryClient.self) private var client
     let task: FactoryTask
     @State private var mode: ComposerMode
     @State private var tab: Tab = .overview
@@ -29,7 +30,7 @@ struct TaskFocusView: View {
     private var requests: [ChangeRequest] { appState.changeRequests(for: task) }
     private var comments: [Comment] { task.comments + appState.postedComments[task.id, default: []] }
     private var goal: Goal { FactoryData.goal(named: task.goal) }
-    private var diffFiles: [DiffFile] { FactoryData.diff(for: task.id) }
+    private var diffFiles: [DiffFile] { appState.isLive ? client.diffs[task.id]?.files ?? [] : FactoryData.diff(for: task.id) }
     private var risk: RiskAssessment? { appState.risk(for: task) }
 
     private var hasSession: Bool { appState.session(for: task.id) != nil }
@@ -37,6 +38,9 @@ struct TaskFocusView: View {
     var body: some View {
         Group {
             if tab == .session, hasSession { sessionLayout } else { documentLayout }
+        }
+        .task(id: task.diffKey) {
+            if let key = task.diffKey { await client.loadDiff(task: task.id, key: key) }
         }
         .onAppear {
             if appState.pendingTab == "session", hasSession { tab = .session }

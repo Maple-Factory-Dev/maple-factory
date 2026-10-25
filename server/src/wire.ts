@@ -431,6 +431,12 @@ export interface RiskAcceptance {
   note?: string | null;
 }
 
+export interface DiffStat {
+  path: string;
+  added: number;
+  removed: number;
+}
+
 /** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
 export interface WorktreeSpec {
   name: string;
@@ -550,6 +556,17 @@ export interface RunnerMessage_TaskFinished {
   message?: string | null;
 }
 
+/** What a task's branch changes against its base: line counts per file and the unified patch. */
+export interface RunnerMessage_TaskDiff {
+  type: "task.diff";
+  taskId: string;
+  ok: boolean;
+  files: DiffStat[];
+  patch: string;
+  truncated: boolean;
+  message?: string | null;
+}
+
 export interface RunnerMessage_TaskMerged {
   type: "task.merged";
   taskId: string;
@@ -577,8 +594,8 @@ export interface RunnerMessage_TaskTokenRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskMerged | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","mcp.request","task.started","task.finished","task.merged","task.cleaned","task.token_request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","mcp.request","task.started","task.finished","task.diff","task.merged","task.cleaned","task.token_request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -646,6 +663,14 @@ export interface ServerToRunner_TaskFinish {
   fallback: boolean;
 }
 
+/** Report a task's diff against its base (answered with `task.diff`). */
+export interface ServerToRunner_TaskDiff {
+  type: "task.diff";
+  taskId: string;
+  cwd: string;
+  base: string;
+}
+
 /** Merge a task's branch into its base on origin, for repos with no GitHub App. */
 export interface ServerToRunner_TaskMerge {
   type: "task.merge";
@@ -677,8 +702,8 @@ export interface ServerToRunner_TaskToken {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskMerge | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.merge","task.cleanup","task.token"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.cleanup","task.token"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {

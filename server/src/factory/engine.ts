@@ -424,6 +424,21 @@ export class Engine {
         return null;
       }
       case "task.finished": return this.finished(msg), null;
+      case "task.diff": {
+        const task = this.store.task(msg.taskId);
+        if (!task || !msg.ok) return null;
+        this.store.set(`patch:${task.id}`, msg.patch);
+        task.diff = {
+          added: msg.files.reduce((n, f) => n + f.added, 0),
+          removed: msg.files.reduce((n, f) => n + f.removed, 0),
+          files: msg.files.map((f) => f.path),
+        };
+        // Measured now, not estimated: the size can change its risk.
+        this.applyPolicy(task);
+        this.save(task, false);
+        await this.autoMerge(task);
+        return null;
+      }
       case "task.merged": return this.merged(msg), null;
       case "task.token_request":
         // No GitHub App yet: local repos fetch and push with the machine's own credentials.
@@ -504,6 +519,7 @@ export class Engine {
     task.autoReview = review;
     this.event(task, "builder", `pushed ${msg.commit?.slice(0, 7) ?? msg.branch}${msg.pushed === "fallback" ? " with the machine's credentials" : ""}`);
     this.save(task);
+    if (task.machine && priv.worktree) this.hooks.waitUntil(this.toRunner(task.machine, { type: "task.diff", taskId: task.id, cwd: priv.worktree, base }));
     this.hooks.waitUntil(this.pump());
   }
 

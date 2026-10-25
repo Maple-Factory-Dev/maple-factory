@@ -15,50 +15,64 @@ struct PullRequestCard: View {
                 SectionLabel(title: "Pull request")
                 prStateChip
                 Spacer()
-                Link(destination: pr.url) {
-                    HStack(spacing: 4) {
-                        Text("#\(pr.number)").monospacedDigit()
-                        Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .semibold))
+                if pr.isLocal {
+                    Text("#\(pr.number)").monospacedDigit()
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                        .help("A local repo: the branch is on its origin, with no pull request page")
+                } else {
+                    Link(destination: pr.url) {
+                        HStack(spacing: 4) {
+                            Text("#\(pr.number)").monospacedDigit()
+                            Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .semibold))
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.text)
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.text)
+                    .help(pr.url.absoluteString)
                 }
-                .help(pr.url.absoluteString)
             }
 
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 10.5))
-                Text(branch).lineLimit(1).truncationMode(.middle)
+                Text(pr.branch ?? branch).lineLimit(1).truncationMode(.middle)
                 Image(systemName: "arrow.right").font(.system(size: 8.5, weight: .semibold))
-                Text("main")
+                Text(pr.base ?? "main")
             }
             .font(.system(size: 11.5, design: .monospaced))
             .foregroundStyle(Theme.textMuted)
 
-            VStack(spacing: 0) {
-                ForEach(Array(pr.checks.enumerated()), id: \.element.id) { index, check in
-                    checkRow(check)
-                    if index < pr.checks.count - 1 { Hairline().padding(.leading, 26) }
+            if pr.checks.isEmpty {
+                Text(pr.isLocal ? "No CI: a local repo's change is checked by its proofs and review." : "No checks reported yet.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(pr.checks.enumerated()), id: \.element.id) { index, check in
+                        checkRow(check)
+                        if index < pr.checks.count - 1 { Hairline().padding(.leading, 26) }
+                    }
                 }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Theme.fillSubtle)
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
-            )
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Theme.fillSubtle)
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+                )
 
-            HStack(spacing: 8) {
-                Text("\(passed) of \(pr.checks.count) checks passed")
-                    .font(.system(size: 11.5).monospacedDigit())
-                    .foregroundStyle(failed.isEmpty ? Theme.textMuted : Theme.State.cancelled)
-                Spacer()
-                if !failed.isEmpty, pr.state != .merged {
-                    smallButton("Re-run failed", icon: "arrow.clockwise") { state.rerunFailedChecks(task.id) }
-                }
-                Link(destination: pr.url.appending(path: "checks")) {
-                    Text("All checks")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textMuted)
+                HStack(spacing: 8) {
+                    Text("\(passed) of \(pr.checks.count) checks passed")
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(failed.isEmpty ? Theme.textMuted : Theme.State.cancelled)
+                    Spacer()
+                    if !failed.isEmpty, pr.state != .merged {
+                        smallButton("Re-run failed", icon: "arrow.clockwise") { state.rerunFailedChecks(task.id) }
+                    }
+                    Link(destination: pr.url.appending(path: "checks")) {
+                        Text("All checks")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textMuted)
+                    }
                 }
             }
         }

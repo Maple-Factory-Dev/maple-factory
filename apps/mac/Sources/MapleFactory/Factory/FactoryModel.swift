@@ -182,6 +182,8 @@ struct FactoryTask: Identifiable {
     var footprint: (files: Int, lines: Int, estimated: Bool)? = nil
     /// Names of sensitive areas (see `RiskPolicy`) the change touches.
     var areas: [String] = []
+    /// Changes whenever the task's pushed change does, so its diff is fetched again (live only).
+    var diffKey: String? = nil
     /// The risk the planner (or the factory's assessment) gave it, before areas and size.
     var plannedRisk: RiskLevel = .low
     /// Teammates who signed off on the finished change.
@@ -218,6 +220,11 @@ struct PullRequest {
     var checks: [CICheck]
     /// Where it is on GitHub; none for a local repo's change.
     var link: URL? = nil
+    /// Live only: the real branches (the mockup makes them up).
+    var branch: String? = nil
+    var base: String? = nil
+    /// A change to a repo with no GitHub: pushed and merged on origin, with no PR page or CI.
+    var isLocal: Bool { branch != nil && link == nil }
 
     var url: URL { link ?? URL(string: "https://github.com/\(FactoryData.repo)/pull/\(number)")! }
     var requiredChecksPassing: Bool { checks.filter(\.required).allSatisfy { $0.status == .passed } }

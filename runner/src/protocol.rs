@@ -579,6 +579,9 @@ pub enum Inbound {
         #[serde(default)]
         files: Vec<String>,
     },
+    /// Report a task's diff against its base (see `tasks::run_diff`).
+    #[serde(rename = "task.diff")]
+    TaskDiff(crate::tasks::DiffRequest),
     /// Merge a task's branch into its base on origin (see `tasks::run_merge`).
     #[serde(rename = "task.merge")]
     TaskMerge(crate::tasks::Merge),

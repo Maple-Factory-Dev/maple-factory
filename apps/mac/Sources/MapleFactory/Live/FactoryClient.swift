@@ -282,6 +282,19 @@ import Security
         return request
     }
 
+    /// Each task's diff as last fetched, and the change it was fetched for.
+    private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
+
+    /// Fetches a task's diff unless the one held is for the same change (`key`).
+    func loadDiff(task id: String, key: String) async {
+        guard diffs[id]?.key != key, let server, let token else { return }
+        var request = URLRequest(url: server.appending(path: "/api/tasks/\(id)/diff"))
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+        diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+    }
+
     private func api<T: Decodable>(_ path: String, method: String = "GET") async throws -> T {
         guard let server, let token else { throw ClientError.message("Not signed in.") }
         var request = URLRequest(url: server.appending(path: path))

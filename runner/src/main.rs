@@ -797,6 +797,9 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
             info!("checking task {} in {}", p.task_id, p.cwd);
             tokio::spawn(proof::run_prove(sessions.clone(), p));
         }
+        Inbound::TaskDiff(d) => {
+            tokio::spawn(tasks::run_diff(sessions.clone(), d));
+        }
         Inbound::TaskMerge(m) => {
             info!("merging task {} into {}", m.task_id, m.base);
             tokio::spawn(tasks::run_merge(sessions.clone(), m));

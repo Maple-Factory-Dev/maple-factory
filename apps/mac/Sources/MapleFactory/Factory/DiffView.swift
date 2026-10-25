@@ -16,7 +16,8 @@ struct DiffView: View {
         _selected = State(initialValue: files.first { !$0.hunks.isEmpty }?.path ?? files.first?.path ?? "")
     }
 
-    private var current: DiffFile? { files.first { $0.path == selected } }
+    /// The picked file, else the first with hunks (files can arrive after the view does).
+    private var current: DiffFile? { files.first { $0.path == selected } ?? files.first { !$0.hunks.isEmpty } ?? files.first }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -44,7 +45,7 @@ struct DiffView: View {
     }
 
     private func fileRow(_ file: DiffFile) -> some View {
-        let active = file.path == selected
+        let active = file.path == current?.path
         let name = (file.path as NSString).lastPathComponent
         let folder = (file.path as NSString).deletingLastPathComponent
 
