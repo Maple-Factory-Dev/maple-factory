@@ -288,6 +288,11 @@ struct Goal: Identifiable {
     let summary: String
     /// Done with: out of the sidebar and the composer, its tasks kept.
     var archived = false
+    var prefix = ""
+    /// The GitHub team it's for; its members follow it.
+    var team: String? = nil
+    /// In your sidebar: you lead it, work in it, are on its team, or chose to follow it.
+    var following = true
     var id: String { name }
 }
 
@@ -355,7 +360,7 @@ struct InboxItem: Identifiable {
 }
 
 enum Destination: Hashable {
-    case inbox, myTasks, activity, scratchpad, usage, needsHand, machines, intake
+    case inbox, myTasks, activity, scratchpad, usage, needsHand, machines, intake, allGoals
     case goal(String)
 }
 

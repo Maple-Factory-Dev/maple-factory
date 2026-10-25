@@ -265,6 +265,7 @@ export class OrgHub extends DurableObject<Env> {
           acceptances: this.store.acceptances(),
           online: this.online(),
           notes: this.store.notes(client.member.login),
+          follows: this.store.follows(client.member.login),
           intake: this.intake.list(),
           repos: this.store.repos(),
           runnerLatest: await this.runnerLatest(),
@@ -335,6 +336,12 @@ export class OrgHub extends DurableObject<Env> {
         const note = { ...msg.note, owner: client.member.login, updatedAt: Date.now() };
         this.store.saveNote(note);
         this.sendTo(client.member.login, { type: "note.updated", note });
+        return;
+      }
+      case "goal.follow": {
+        if (!this.store.goal(msg.id)) return this.send(ws, { type: "error", message: "That goal isn't there any more.", requestId: null });
+        this.store.setFollow(client.member.login, msg.id, msg.following);
+        this.sendTo(client.member.login, { type: "follows.updated", follows: this.store.follows(client.member.login) });
         return;
       }
       case "note.delete": {

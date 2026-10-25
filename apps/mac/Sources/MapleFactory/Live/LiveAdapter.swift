@@ -47,10 +47,11 @@ enum LiveAdapter {
         return Calendar.current.dateComponents([.day], from: FactoryData.timelineStart, to: date).day ?? FactoryData.todayOffset
     }
 
-    static func goal(_ goal: Wire.Goal, members: [Wire.Member]) -> Goal {
+    static func goal(_ goal: Wire.Goal, members: [Wire.Member], following: Bool) -> Goal {
         let due = goal.due.map(day) ?? (FactoryData.todayOffset + 21)
         return Goal(name: goal.name, color: Color(hexString: goal.color) ?? Theme.State.building, dueOffset: due,
-                    lead: person(goal.lead, members: members), summary: goal.summary, archived: goal.archived ?? false)
+                    lead: person(goal.lead, members: members), summary: goal.summary, archived: goal.archived ?? false,
+                    prefix: goal.prefix, team: goal.team, following: following)
     }
 
     static func task(_ t: Wire.Task, goals: [Wire.Goal], members: [Wire.Member], me: String?) -> FactoryTask {

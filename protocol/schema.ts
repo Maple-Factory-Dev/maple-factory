@@ -221,9 +221,11 @@ export const structs: Record<string, Struct> = {
       folder: "string?",
       base: "string?",
       archived: "bool?",
+      team: "string?",
     },
     fieldDocs: {
       prefix: "Task ids start with it: ATL-12.",
+      team: "The GitHub team (slug) it's for: its members follow it unless they unfollow.",
       color: "#RRGGBB.",
       repo: "GitHub owner/name its tasks change unless they pick another of `repos`.",
       repos: "Every repo the goal's work spans (its `repo` first); each task changes one of them.",
@@ -471,6 +473,10 @@ export const structs: Record<string, Struct> = {
     doc: "Someone with the app open, and the task they're looking at.",
     fields: { login: "string", viewing: "string?", since: "u64" },
   },
+  GoalFollow: {
+    doc: "Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.",
+    fields: { goal: "string", following: "bool" },
+  },
   Member: {
     fields: { login: "string", name: "string?", avatarUrl: "string?", role: "string", teams: "string[]" },
   },
@@ -625,6 +631,7 @@ export const unions: Record<string, Union> = {
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
+      "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": { doc: "Its lead or an admin; only with nothing of it running.", fields: { id: "string", archived: "bool" } },
       "machine.settings": {
         doc: "Its owner or an admin.",
@@ -688,6 +695,7 @@ export const unions: Record<string, Union> = {
           acceptances: "RiskAcceptance[]",
           online: "Presence[]",
           notes: "Note[]",
+          follows: "GoalFollow[]",
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
           runnerLatest: "string?",
@@ -703,6 +711,7 @@ export const unions: Record<string, Union> = {
       "note.updated": { fields: { note: "Note" } },
       "intake.updated": { fields: { request: "IntakeRequest" } },
       "note.removed": { fields: { id: "uuid" } },
+      "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "repos.updated": { fields: { repos: "OrgRepo[]" } },

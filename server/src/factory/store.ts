@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, IntakeRequest, MachineSettings, Note, OrgRepo, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -66,6 +66,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, updated INTEGER NOT NULL, doc TEXT NOT NULL, reply_url TEXT);
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
+      CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
     `);
   }
 
@@ -221,6 +222,20 @@ export class Store {
 
   deleteNote(id: string) {
     this.sql.exec("DELETE FROM notes WHERE id = ?", id);
+  }
+
+  // Follows: only what people chose; the apps work out the rest (goals they lead, work in, or are on the team for).
+
+  follows(login: string): GoalFollow[] {
+    return this.sql.exec<{ goal: string; following: number }>("SELECT goal, following FROM goal_follows WHERE login = ?", login).toArray()
+      .map((r) => ({ goal: r.goal, following: r.following === 1 }));
+  }
+
+  setFollow(login: string, goal: string, following: boolean) {
+    this.sql.exec(
+      "INSERT INTO goal_follows (login, goal, following) VALUES (?, ?, ?) ON CONFLICT (login, goal) DO UPDATE SET following = excluded.following",
+      login, goal, following ? 1 : 0,
+    );
   }
 
   // Policy

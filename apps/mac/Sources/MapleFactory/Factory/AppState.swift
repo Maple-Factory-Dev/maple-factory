@@ -209,6 +209,22 @@ final class AppState {
         set { if let client, isLive { client.update(notes: newValue) } else { mockNotes = newValue } }
     }
     private var mockNotes: [Note] = FactoryData.seedNotes
+
+    // MARK: Following goals
+
+    /// The mockup's follows, by goal name; the live ones are the server's.
+    private var mockFollows: [String: Bool] = [:]
+
+    func isFollowing(_ goal: Goal) -> Bool { isLive ? goal.following : mockFollows[goal.name] ?? goal.following }
+
+    /// The sidebar's goals: the ones you follow, plus the one you're looking at.
+    var sidebarGoals: [Goal] {
+        FactoryData.activeGoals.filter { isFollowing($0) || destination == .goal($0.name) }
+    }
+
+    func setFollowing(_ goal: Goal, _ following: Bool) {
+        if let client, isLive { client.follow(goal: goal.name, following) } else { mockFollows[goal.name] = following }
+    }
     var selectedNote: UUID? = FactoryData.seedNotes.first?.id
 
     // MARK: Seen state
@@ -351,7 +367,7 @@ final class AppState {
     func startCompose(goal: String? = nil, title: String = "", body: String = "", fromNote: UUID? = nil) {
         let currentGoal: String = {
             if case let .goal(name) = destination, FactoryData.activeGoals.contains(where: { $0.name == name }) { return name }
-            return FactoryData.activeGoals.first?.name ?? ""
+            return (FactoryData.activeGoals.first(where: isFollowing) ?? FactoryData.activeGoals.first)?.name ?? ""
         }()
         draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote)
         withAnimation(.snappy(duration: 0.3)) {
@@ -932,6 +948,7 @@ final class AppState {
         case "activity": destination = .activity
         case "machines": destination = .machines
         case "requests": destination = .intake
+        case "goals": destination = .allGoals
         case let goal?: destination = .goal(goal)
         case nil: break
         }

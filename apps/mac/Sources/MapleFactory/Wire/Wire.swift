@@ -587,8 +587,10 @@ public enum Wire {
         public var base: String?
         /// Done with: out of the sidebar and the composer, its tasks kept.
         public var archived: Bool?
+        /// The GitHub team (slug) it's for: its members follow it unless they unfollow.
+        public var team: String?
 
-        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil, archived: Bool? = nil) {
+        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil, archived: Bool? = nil, team: String? = nil) {
             self.id = id
             self.name = name
             self.prefix = prefix
@@ -601,6 +603,7 @@ public enum Wire {
             self.folder = folder
             self.base = base
             self.archived = archived
+            self.team = team
         }
 
         public init(from decoder: Decoder) throws {
@@ -617,6 +620,7 @@ public enum Wire {
             folder = try c.decodeIfPresent(String.self, forKey: .folder)
             base = try c.decodeIfPresent(String.self, forKey: .base)
             archived = try c.decodeIfPresent(Bool.self, forKey: .archived)
+            team = try c.decodeIfPresent(String.self, forKey: .team)
         }
     }
 
@@ -1475,6 +1479,17 @@ public enum Wire {
         }
     }
 
+    /// Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.
+    public struct GoalFollow: Codable, Hashable, Sendable {
+        public var goal: String
+        public var following: Bool
+
+        public init(goal: String, following: Bool) {
+            self.goal = goal
+            self.following = following
+        }
+    }
+
     public struct Member: Codable, Hashable, Sendable {
         public var login: String
         public var name: String?
@@ -2284,6 +2299,17 @@ public enum Wire {
         }
     }
 
+    /// Follow a goal (it's in your sidebar) or stop following it.
+    public struct ClientMessageGoalFollow: Codable, Hashable, Sendable {
+        public var id: String
+        public var following: Bool
+
+        public init(id: String, following: Bool) {
+            self.id = id
+            self.following = following
+        }
+    }
+
     /// Its lead or an admin; only with nothing of it running.
     public struct ClientMessageGoalArchive: Codable, Hashable, Sendable {
         public var id: String
@@ -2593,6 +2619,7 @@ public enum Wire {
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
         case goalSave(ClientMessageGoalSave)
+        case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
         case machineRename(ClientMessageMachineRename)
@@ -2640,6 +2667,7 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
+            case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "machine.rename": self = .machineRename(try ClientMessageMachineRename(from: decoder))
@@ -2710,6 +2738,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalSave(let body):
                 try c.encode("goal.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .goalFollow(let body):
+                try c.encode("goal.follow", forKey: .type)
                 try body.encode(to: encoder)
             case .goalArchive(let body):
                 try c.encode("goal.archive", forKey: .type)
@@ -2807,13 +2838,14 @@ public enum Wire {
         public var acceptances: [RiskAcceptance]
         public var online: [Presence]
         public var notes: [Note]
+        public var follows: [GoalFollow]
         public var intake: [IntakeRequest]
         public var repos: [OrgRepo]
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2825,6 +2857,7 @@ public enum Wire {
             self.acceptances = acceptances
             self.online = online
             self.notes = notes
+            self.follows = follows
             self.intake = intake
             self.repos = repos
             self.runnerLatest = runnerLatest
@@ -2844,6 +2877,7 @@ public enum Wire {
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
+            follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
@@ -2912,6 +2946,20 @@ public enum Wire {
 
         public init(id: String) {
             self.id = id
+        }
+    }
+
+    /// Your goal follows, to your apps only.
+    public struct ServerToClientFollowsUpdated: Codable, Hashable, Sendable {
+        public var follows: [GoalFollow]
+
+        public init(follows: [GoalFollow] = []) {
+            self.follows = follows
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
         }
     }
 
@@ -3000,6 +3048,7 @@ public enum Wire {
         case noteUpdated(ServerToClientNoteUpdated)
         case intakeUpdated(ServerToClientIntakeUpdated)
         case noteRemoved(ServerToClientNoteRemoved)
+        case followsUpdated(ServerToClientFollowsUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case reposUpdated(ServerToClientReposUpdated)
@@ -3023,6 +3072,7 @@ public enum Wire {
             case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
             case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
+            case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
@@ -3062,6 +3112,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .noteRemoved(let body):
                 try c.encode("note.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .followsUpdated(let body):
+                try c.encode("follows.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)

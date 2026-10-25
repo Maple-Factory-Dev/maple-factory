@@ -505,6 +505,9 @@ pub struct Goal {
     /// Done with: out of the sidebar and the composer, its tasks kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
+    /// The GitHub team (slug) it's for: its members follow it unless they unfollow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1033,6 +1036,14 @@ pub struct Presence {
     pub since: u64,
 }
 
+/// Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalFollow {
+    pub goal: String,
+    pub following: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
@@ -1399,6 +1410,12 @@ pub enum ClientMessage {
     GoalSave {
         goal: Goal,
     },
+    /// Follow a goal (it's in your sidebar) or stop following it.
+    #[serde(rename = "goal.follow")]
+    GoalFollow {
+        id: String,
+        following: bool,
+    },
     /// Its lead or an admin; only with nothing of it running.
     #[serde(rename = "goal.archive")]
     GoalArchive {
@@ -1596,6 +1613,8 @@ pub enum ServerToClient {
         #[serde(default)]
         notes: Vec<Note>,
         #[serde(default)]
+        follows: Vec<GoalFollow>,
+        #[serde(default)]
         intake: Vec<IntakeRequest>,
         #[serde(default)]
         repos: Vec<OrgRepo>,
@@ -1635,6 +1654,12 @@ pub enum ServerToClient {
     #[serde(rename = "note.removed")]
     NoteRemoved {
         id: Uuid,
+    },
+    /// Your goal follows, to your apps only.
+    #[serde(rename = "follows.updated")]
+    FollowsUpdated {
+        #[serde(default)]
+        follows: Vec<GoalFollow>,
     },
     /// Who's online and what they're looking at, whenever it changes.
     #[serde(rename = "presence")]

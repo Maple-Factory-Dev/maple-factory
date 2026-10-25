@@ -74,6 +74,10 @@ export class Engine {
         if (!/^[A-Z][A-Z0-9]{0,5}$/.test(goal.prefix)) fail("A goal's prefix is 1–6 letters or digits, starting with a letter.");
         if (!goal.name.trim()) fail("A goal needs a name.");
         if (!goal.id) goal.id = crypto.randomUUID();
+        // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.
+        if (!goal.lead?.trim()) goal.lead = who;
+        goal.team = goal.team?.trim().replace(/^@/, "").toLowerCase() || null;
+        if (goal.team && !/^[a-z0-9][a-z0-9_.-]*$/.test(goal.team)) fail(`${goal.team} isn't a GitHub team's name.`);
         goal.repos = goalRepos({ ...goal, repo: goal.repo?.trim() || null, repos: (goal.repos ?? []).map((r) => r.trim()).filter(Boolean) });
         for (const r of goal.repos) if (!REPO.test(r)) fail(`${r} isn't a GitHub owner/name.`);
         goal.repo = goal.repos[0] ?? null;

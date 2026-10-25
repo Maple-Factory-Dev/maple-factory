@@ -34,6 +34,10 @@ struct GoalView: View {
                 Text("Goal")
                 Text("·")
                 Text("Due \(FactoryData.dueLabel(goal))")
+                if let team = goal.team {
+                    Text("·")
+                    Text("@\(team)").foregroundStyle(Theme.text)
+                }
                 if !goal.lead.name.isEmpty {
                     Text("·")
                     Text("Lead")
@@ -50,6 +54,8 @@ struct GoalView: View {
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(Theme.text)
                 Spacer()
+                FollowButton(following: state.isFollowing(goal)) { state.setFollowing(goal, !state.isFollowing(goal)) }
+                    .padding(.trailing, 6)
                 RiskPolicyButton()
                     .padding(.trailing, 10)
                 if state.isLive, let live = client.goal(named: goal.name) {

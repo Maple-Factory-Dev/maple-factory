@@ -3,7 +3,6 @@ import SwiftUI
 struct FactorySidebar: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
-    @State private var showArchived = false
     @Environment(\.openSettings) private var openSettings
     @AppStorage("settingsTab") private var settingsTab = "repos"
 
@@ -31,18 +30,19 @@ struct FactorySidebar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     sectionHeader("Goals") { if client.isSignedIn { state.goalSheet = .new } }
                     VStack(spacing: 2) {
-                        ForEach(FactoryData.activeGoals) { goal in goalRow(goal) }
-                        let archived = FactoryData.goals.filter(\.archived)
-                        if !archived.isEmpty {
-                            row(selected: false) {
-                                Image(systemName: showArchived ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 16)
-                                Text("Archived")
+                        // Only the goals you follow; the rest (and archived ones) are a click away in All goals.
+                        ForEach(state.sidebarGoals) { goal in
+                            goalRow(goal).opacity(state.isFollowing(goal) ? 1 : 0.6)
+                        }
+                        if !FactoryData.goals.isEmpty {
+                            row(selected: state.destination == .allGoals) {
+                                Image(systemName: "square.grid.2x2").font(.system(size: 11)).frame(width: 16)
+                                Text("All goals")
                                 Spacer()
-                                Text("\(archived.count)").font(.system(size: 11).monospacedDigit())
+                                Text("\(FactoryData.activeGoals.count)").font(.system(size: 11).monospacedDigit())
                             }
                             .foregroundStyle(Theme.textMuted)
-                            .onTapGesture { withAnimation(.snappy(duration: 0.2)) { showArchived.toggle() } }
-                            if showArchived { ForEach(archived) { goal in goalRow(goal).opacity(0.7) } }
+                            .onTapGesture { state.destination = .allGoals }
                         }
                         if client.isSignedIn && client.goals.isEmpty {
                             row(selected: false) {
@@ -147,6 +147,10 @@ struct FactorySidebar: View {
                 .foregroundStyle(Theme.textMuted)
         }
         .onTapGesture { state.destination = .goal(goal.name) }
+        .contextMenu {
+            let following = state.isFollowing(goal)
+            Button(following ? "Unfollow" : "Follow") { state.setFollowing(goal, !following) }
+        }
     }
 
     private func personRow(_ person: Person, viewing: String?, online: Bool = true) -> some View {

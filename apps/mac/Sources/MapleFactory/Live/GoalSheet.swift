@@ -16,6 +16,7 @@ struct GoalSheet: View {
     @State private var color = 0
     @State private var prefixEdited = false
     @State private var repoFilter = ""
+    @State private var team = ""
 
     enum Source: String, CaseIterable { case folder = "A folder on my machines", repo = "A GitHub repo" }
 
@@ -34,6 +35,7 @@ struct GoalSheet: View {
         _folder = State(initialValue: goal.folder ?? "")
         _repo = State(initialValue: (goal.repos.isEmpty ? [goal.repo].compactMap { $0 } : goal.repos).joined(separator: ", "))
         _base = State(initialValue: goal.base ?? "")
+        _team = State(initialValue: goal.team ?? "")
         _color = State(initialValue: Self.colors.firstIndex { $0.hex.caseInsensitiveCompare(goal.color) == .orderedSame } ?? 0)
     }
 
@@ -113,6 +115,27 @@ struct GoalSheet: View {
             field("What it's for") {
                 TextField("Move every surface to passkeys ahead of the security review.", text: $summary, axis: .vertical)
                     .lineLimit(2...3)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Team").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+                HStack(spacing: 10) {
+                    if client.teams.isEmpty {
+                        input { TextField("GitHub team, e.g. platform", text: $team) }.frame(width: 220)
+                    } else {
+                        Menu {
+                            Button("No team") { team = "" }
+                            Divider()
+                            ForEach(client.teams, id: \.self) { slug in Button("@\(slug)") { team = slug } }
+                        } label: {
+                            Text(team.isEmpty ? "No team" : "@\(team)")
+                        }
+                        .fixedSize()
+                    }
+                    Text("Its members follow it, so it's in their sidebars. Anyone can still find it in All goals.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textFaint)
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -196,7 +219,8 @@ struct GoalSheet: View {
             repos: source == .repo ? repos : [],
             folder: source == .folder ? folder.trimmed : nil,
             base: base.trimmed.isEmpty ? nil : base.trimmed,
-            archived: editing?.archived
+            archived: editing?.archived,
+            team: team.trimmed.isEmpty ? nil : team.trimmed
         )
         client.send(.goalSave(.init(goal: goal)))
         dismiss()

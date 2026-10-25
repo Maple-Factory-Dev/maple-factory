@@ -37,6 +37,8 @@ import Security
     private(set) var intake: [IntakeRequest] = []
     /// Your Scratchpad, as the views' notes, newest first.
     private(set) var notes: [Note] = []
+    /// Goals you chose to follow (true) or stop following (false), by id.
+    private(set) var follows: [String: Bool] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
@@ -197,6 +199,7 @@ import Security
             acceptances = snapshot.acceptances
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
+            follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             intakeRequests = snapshot.intake
             repos = snapshot.repos
             runnerLatest = snapshot.runnerLatest
@@ -222,6 +225,8 @@ import Security
             } else {
                 tasks.insert(update.task, at: 0)
                 factoryTasks.insert(adapt(update.task), at: 0)
+                // A new task of yours puts its goal in your sidebar.
+                if update.task.owner == me?.login { rebuildGoals() }
             }
         case .taskRemoved(let removed):
             tasks.removeAll { $0.id == removed.id }
@@ -244,6 +249,9 @@ import Security
             let note = LiveAdapter.note(update.note)
             guard unsaved[note.id] == nil else { break }
             if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
+        case .followsUpdated(let update):
+            follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
+            rebuildGoals()
         case .noteRemoved(let removed):
             notes.removeAll { $0.id.uuidString.lowercased() == removed.id.lowercased() }
         case .presence(let update):
@@ -270,9 +278,33 @@ import Security
         return adapted
     }
 
-    private func rebuild() {
-        factoryGoals = goals.map { LiveAdapter.goal($0, members: members) }
+    /// Whether a goal is in your sidebar: what you chose, else whether you lead it, are on its team,
+    /// or own or reviewed a task in it.
+    func isFollowing(_ goal: Wire.Goal) -> Bool {
+        if let chosen = follows[goal.id] { return chosen }
+        guard let me else { return true }
+        if goal.lead == me.login { return true }
+        if let team = goal.team, me.teams.contains(where: { $0.caseInsensitiveCompare(team) == .orderedSame }) { return true }
+        return tasks.contains { $0.goal == goal.id && ($0.owner == me.login || $0.reviews.contains(me.login)) }
+    }
+
+    func follow(goal name: String, _ following: Bool) {
+        guard let goal = goal(named: name) else { return }
+        follows[goal.id] = following
+        rebuildGoals()
+        send(.goalFollow(.init(id: goal.id, following: following)))
+    }
+
+    /// Every GitHub team someone in the org is on, for a goal's team.
+    var teams: [String] { Array(Set(members.flatMap(\.teams) + (me?.teams ?? []))).sorted() }
+
+    private func rebuildGoals() {
+        factoryGoals = goals.map { LiveAdapter.goal($0, members: members, following: isFollowing($0)) }
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
+    }
+
+    private func rebuild() {
+        rebuildGoals()
         FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) }
         factoryTasks = tasks.map(adapt)
         applyPresence()
