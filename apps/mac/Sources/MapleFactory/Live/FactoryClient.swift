@@ -356,6 +356,19 @@ import Security
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
 
     /// Fetches a task's diff unless the one held is for the same change (`key`).
+    /// Agent time per goal over the last week (`GET /api/usage/goals`).
+    struct GoalTime: Decodable {
+        struct TaskTime: Decodable { let id: String; let ms: Double }
+        let goal: String
+        let name: String
+        let ms: Double
+        let tasks: [TaskTime]
+    }
+
+    func goalTime() async -> [GoalTime] {
+        (try? await api("/api/usage/goals")) ?? []
+    }
+
     func loadDiff(task id: String, key: String) async {
         guard diffs[id]?.key != key, let server, let token else { return }
         var request = URLRequest(url: server.appending(path: "/api/tasks/\(id)/diff"))

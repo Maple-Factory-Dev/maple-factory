@@ -99,6 +99,20 @@ export class OrgHub extends DurableObject<Env> {
         const updated = replyUrl ? this.intake.replyFrom(replyUrl, author, text) : this.intake.reply(id ?? "", author, text);
         return updated ? Response.json(updated) : new Response("No such request.", { status: 404 });
       }
+      case "/usage/goals": {
+        // Agent time per goal over the last week: which goals the machines' plans went on.
+        const rows = this.store.sessionTime(Date.now() - 7 * 86_400_000);
+        const goals = new Map<string, { goal: string; name: string; ms: number; tasks: { id: string; ms: number }[] }>();
+        for (const r of rows) {
+          const g = goals.get(r.goal) ?? { goal: r.goal, name: this.store.goal(r.goal)?.name ?? "No goal", ms: 0, tasks: [] };
+          g.ms += r.ms;
+          g.tasks.push({ id: r.task, ms: r.ms });
+          goals.set(r.goal, g);
+        }
+        const list = [...goals.values()].sort((a, b) => b.ms - a.ms);
+        for (const g of list) g.tasks.sort((a, b) => b.ms - a.ms);
+        return Response.json(list);
+      }
       case "/diff": {
         const patch = this.store.get(`patch:${url.searchParams.get("task")}`);
         return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });

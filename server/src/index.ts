@@ -81,6 +81,7 @@ export default {
     if (intake) return intake;
     if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local" });
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
+    if (path === "/api/usage/goals" && request.method === "GET") return orgHub(env).fetch("https://org/usage/goals");
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
     if (diff && request.method === "GET") return orgHub(env).fetch(`https://org/diff?task=${diff[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);

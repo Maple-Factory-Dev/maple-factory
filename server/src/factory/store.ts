@@ -133,6 +133,17 @@ export class Store {
     this.sql.exec("UPDATE sessions SET ended = ?, cause = ? WHERE id = ? AND ended IS NULL", Date.now(), cause, id);
   }
 
+  /** Agent time per task since `since` (ms), with each task's goal: what "where it went" adds up. */
+  sessionTime(since: number): { goal: string; task: string; ms: number }[] {
+    const now = Date.now();
+    return this.sql.exec<{ goal: string; task: string; ms: number }>(
+      `SELECT t.goal AS goal, s.task AS task, SUM(MIN(COALESCE(s.ended, ?), ?) - MAX(s.started, ?)) AS ms
+       FROM sessions s JOIN tasks t ON t.id = s.task
+       WHERE COALESCE(s.ended, ?) > ? GROUP BY t.goal, s.task`,
+      now, now, since, now, since,
+    ).toArray();
+  }
+
   liveSessions(): TaskSession[] {
     return this.sql.exec("SELECT * FROM sessions WHERE ended IS NULL").toArray() as unknown as TaskSession[];
   }

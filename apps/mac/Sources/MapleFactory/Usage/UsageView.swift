@@ -118,6 +118,7 @@ struct UsageView: View {
     @State private var pauseWhenLow = true
     @State private var rebalance = true
     @State private var keepReserve = true
+    @State private var goalTime: [FactoryClient.GoalTime] = []
 
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
@@ -145,6 +146,7 @@ struct UsageView: View {
 
                 if state.isLive {
                     liveAccounts
+                        .task { goalTime = await client.goalTime() }
                 } else {
                 forecastBanner
 
@@ -190,6 +192,18 @@ struct UsageView: View {
         Label("Cap how much of an account the factory may use per machine: Machines → ⋯ → Factory Settings.", systemImage: "gauge.with.dots.needle.33percent")
             .font(.system(size: 12))
             .foregroundStyle(Theme.textMuted)
+        if !goalTime.isEmpty {
+            let total = max(1, goalTime.reduce(0) { $0 + $1.ms })
+            byGoal(goalTime.prefix(6).map { g in
+                (goal: g.name, share: g.ms / total, tasks: g.tasks.prefix(3).map(\.id).joined(separator: ", "), amount: hours(g.ms))
+            }, title: "Agent time this week", note: "all machines")
+            .frame(maxWidth: narrow ? .infinity : 540, alignment: .leading)
+        }
+    }
+
+    private func hours(_ ms: Double) -> String {
+        let minutes = ms / 60_000
+        return minutes < 60 ? "\(max(1, Int(minutes.rounded())))m" : String(format: "%.1fh", minutes / 60)
     }
 
     @ViewBuilder private var forecastBanner: some View {
@@ -216,18 +230,24 @@ struct UsageView: View {
     }
 
     private var byGoal: some View {
-        UsageCard {
+        byGoal(FactoryData.usageByGoal.map { (goal: $0.goal, share: $0.share, tasks: $0.tasks, amount: "\(Int($0.share * 100))%") },
+               title: "Where it went this week", note: "all accounts")
+    }
+
+    private func byGoal(_ entries: [(goal: String, share: Double, tasks: String, amount: String)], title: String, note: String) -> some View {
+        let top = max(0.01, entries.map(\.share).max() ?? 1)
+        return UsageCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Where it went this week")
+                    Text(title)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Theme.text)
                     Spacer()
-                    Text("all accounts")
+                    Text(note)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textFaint)
                 }
-                ForEach(FactoryData.usageByGoal, id: \.goal) { entry in
+                ForEach(entries, id: \.goal) { entry in
                     let goal = FactoryData.goal(named: entry.goal)
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 7) {
@@ -238,12 +258,12 @@ struct UsageView: View {
                                 .foregroundStyle(Theme.textFaint)
                                 .lineLimit(1)
                             Spacer()
-                            Text("\(Int(entry.share * 100))%")
+                            Text(entry.amount)
                                 .font(.system(size: 12.5, design: .monospaced))
                                 .foregroundStyle(Theme.text)
                         }
                         .font(.system(size: 12.5))
-                        UsageBar(value: entry.share / 0.4, color: goal.color)
+                        UsageBar(value: entry.share / top, color: goal.color)
                     }
                 }
             }
