@@ -24,47 +24,52 @@ struct FactorySidebar: View {
                 navRow("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage)
             }
 
-            sectionHeader("Goals") { if client.isSignedIn { newGoal = true } }
-            VStack(spacing: 2) {
-                ForEach(FactoryData.goals) { goal in goalRow(goal) }
-                if client.isSignedIn && client.goals.isEmpty {
-                    row(selected: false) {
-                        Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
-                        Text("New goal")
-                        Spacer()
+            // Goals, people and machines grow with the org; they scroll so the window never has to.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    sectionHeader("Goals") { if client.isSignedIn { newGoal = true } }
+                    VStack(spacing: 2) {
+                        ForEach(FactoryData.goals) { goal in goalRow(goal) }
+                        if client.isSignedIn && client.goals.isEmpty {
+                            row(selected: false) {
+                                Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
+                                Text("New goal")
+                                Spacer()
+                            }
+                            .foregroundStyle(Theme.textMuted)
+                            .onTapGesture { newGoal = true }
+                        }
                     }
-                    .foregroundStyle(Theme.textMuted)
-                    .onTapGesture { newGoal = true }
-                }
-            }
 
-            sectionHeader("People")
-            VStack(spacing: 2) {
-                if client.isSignedIn {
-                    ForEach(client.members, id: \.login) { member in
-                        let presence = client.online.first { $0.login == member.login }
-                        personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil)
+                    sectionHeader("People")
+                    VStack(spacing: 2) {
+                        if client.isSignedIn {
+                            ForEach(client.members, id: \.login) { member in
+                                let presence = client.online.first { $0.login == member.login }
+                                personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil)
+                            }
+                        } else {
+                            ForEach(FactoryData.presence, id: \.person.id) { entry in
+                                personRow(entry.person, viewing: entry.viewing)
+                            }
+                        }
                     }
-                } else {
-                    ForEach(FactoryData.presence, id: \.person.id) { entry in
-                        personRow(entry.person, viewing: entry.viewing)
+
+                    if client.isSignedIn {
+                        sectionHeader("Machines") { state.closeFocus(); state.destination = .machines }
+                        VStack(spacing: 2) {
+                            ForEach(client.machines, id: \.id) { machine in liveMachineRow(machine) }
+                        }
+                    } else {
+                        sectionHeader("Machines") { state.machineSheet = .new }
+                        VStack(spacing: 2) {
+                            ForEach(state.machines) { machine in machineRow(machine) }
+                        }
                     }
                 }
+                .padding(.bottom, 12)
             }
-
-            if client.isSignedIn {
-                sectionHeader("Machines") { state.closeFocus(); state.destination = .machines }
-                VStack(spacing: 2) {
-                    ForEach(client.machines, id: \.id) { machine in liveMachineRow(machine) }
-                }
-            } else {
-                sectionHeader("Machines") { state.machineSheet = .new }
-                VStack(spacing: 2) {
-                    ForEach(state.machines) { machine in machineRow(machine) }
-                }
-            }
-
-            Spacer()
+            .scrollIndicators(.never)
         }
         .padding(.horizontal, 12)
         .sheet(isPresented: $newGoal) { GoalSheet() }

@@ -32,63 +32,67 @@ struct SidebarRail: View {
 
             divider
 
-            ForEach(FactoryData.goals) { goal in
-                let stats = state.stats(for: goal)
-                let selected = state.destination == .goal(goal.name)
-                item(goal.name, detail: "\(stats.merged) of \(stats.total) merged", selected: selected) {
-                    ProgressRing(progress: Double(stats.merged) / Double(max(stats.total, 1)), color: goal.color, size: 16)
-                }
-                .onTapGesture { state.destination = .goal(goal.name) }
-            }
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(FactoryData.goals) { goal in
+                        let stats = state.stats(for: goal)
+                        let selected = state.destination == .goal(goal.name)
+                        item(goal.name, detail: "\(stats.merged) of \(stats.total) merged", selected: selected) {
+                            ProgressRing(progress: Double(stats.merged) / Double(max(stats.total, 1)), color: goal.color, size: 16)
+                        }
+                        .onTapGesture { state.destination = .goal(goal.name) }
+                    }
 
-            divider
+                    divider
 
-            ForEach(FactoryData.presence, id: \.person.id) { entry in
-                let isMe = entry.person.id == FactoryData.me.id
-                item(isMe ? "\(entry.person.firstName) (you)" : entry.person.firstName,
-                     detail: entry.viewing.map { "Viewing \($0)" } ?? "Online") {
-                    AgentAvatar(agent: entry.person, size: 22, online: true)
-                }
-                .onTapGesture {
-                    if let viewing = entry.viewing { state.selectedTask = viewing; state.showInspector = true }
-                }
-            }
-
-            divider
-
-            if client.isSignedIn {
-                ForEach(client.machines, id: \.id) { machine in
-                    item(machine.name,
-                         detail: "\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")",
-                         selected: state.destination == .machines && state.focusedTask == nil,
-                         dot: machine.online ? nil : Theme.State.cancelled) {
-                        VStack(spacing: 4) {
-                            Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
-                                .font(.system(size: 14))
-                                .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.textFaint)
-                            LivePips(machine: machine, size: 4)
+                    ForEach(FactoryData.presence, id: \.person.id) { entry in
+                        let isMe = entry.person.id == FactoryData.me.id
+                        item(isMe ? "\(entry.person.firstName) (you)" : entry.person.firstName,
+                             detail: entry.viewing.map { "Viewing \($0)" } ?? "Online") {
+                            AgentAvatar(agent: entry.person, size: 22, online: true)
+                        }
+                        .onTapGesture {
+                            if let viewing = entry.viewing { state.selectedTask = viewing; state.showInspector = true }
                         }
                     }
-                    .onTapGesture { state.closeFocus(); state.destination = .machines }
-                }
-            } else {
-            ForEach(state.machines) { machine in
-                item(machine.id,
-                     detail: "\(machine.isMine ? "Yours" : "\(machine.owner.firstName)'s") · \(machine.status.isOffline ? machine.status.title : "\(machine.sessions.count)/\(machine.capacity) busy")",
-                     selected: state.destination == .machines && state.focusedTask == nil,
-                     dot: machine.status.isOffline ? Theme.State.cancelled : machine.pause != nil ? Theme.State.awaitingApproval : nil) {
-                    VStack(spacing: 4) {
-                        Image(systemName: machine.kind.icon)
-                            .font(.system(size: 14))
-                            .foregroundStyle(machine.status == .sleeping ? Theme.textFaint : Theme.text.opacity(0.75))
-                        SlotPips(machine: machine, size: 4)
+
+                    divider
+
+                    if client.isSignedIn {
+                        ForEach(client.machines, id: \.id) { machine in
+                            item(machine.name,
+                                 detail: "\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")",
+                                 selected: state.destination == .machines && state.focusedTask == nil,
+                                 dot: machine.online ? nil : Theme.State.cancelled) {
+                                VStack(spacing: 4) {
+                                    Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.textFaint)
+                                    LivePips(machine: machine, size: 4)
+                                }
+                            }
+                            .onTapGesture { state.closeFocus(); state.destination = .machines }
+                        }
+                    } else {
+                    ForEach(state.machines) { machine in
+                        item(machine.id,
+                             detail: "\(machine.isMine ? "Yours" : "\(machine.owner.firstName)'s") · \(machine.status.isOffline ? machine.status.title : "\(machine.sessions.count)/\(machine.capacity) busy")",
+                             selected: state.destination == .machines && state.focusedTask == nil,
+                             dot: machine.status.isOffline ? Theme.State.cancelled : machine.pause != nil ? Theme.State.awaitingApproval : nil) {
+                            VStack(spacing: 4) {
+                                Image(systemName: machine.kind.icon)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(machine.status == .sleeping ? Theme.textFaint : Theme.text.opacity(0.75))
+                                SlotPips(machine: machine, size: 4)
+                            }
+                        }
+                        .onTapGesture { state.closeFocus(); state.destination = .machines }
+                    }
                     }
                 }
-                .onTapGesture { state.closeFocus(); state.destination = .machines }
             }
-            }
-
-            Spacer()
+            .scrollIndicators(.never)
+            .frame(maxHeight: .infinity, alignment: .top)
 
             item("Expand sidebar", detail: "⌃⌘S") {
                 Image(systemName: "sidebar.left")
