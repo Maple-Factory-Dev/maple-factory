@@ -42,6 +42,8 @@ import Security
     private(set) var policy: Wire.RiskPolicy?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
+    /// The newest released runner, when the factory has a release to offer.
+    private(set) var runnerLatest: String?
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
@@ -197,6 +199,7 @@ import Security
             notes = snapshot.notes.map(LiveAdapter.note)
             intakeRequests = snapshot.intake
             repos = snapshot.repos
+            runnerLatest = snapshot.runnerLatest
             rebuild()
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
@@ -580,5 +583,19 @@ enum Keychain {
         }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
         SecItemDelete(query as CFDictionary)
+    }
+}
+
+extension FactoryClient {
+    /// Whether the machine's runner is older than the latest release ("0.2.0" < "0.10.1").
+    func runnerOutdated(_ machine: Wire.Machine) -> Bool {
+        guard let version = machine.version, let latest = runnerLatest else { return false }
+        let parts = { (v: String) in v.split(separator: "-")[0].split(separator: ".").map { Int($0) ?? 0 } }
+        let (a, b) = (parts(version), parts(latest))
+        for i in 0..<max(a.count, b.count) {
+            let (x, y) = (i < a.count ? a[i] : 0, i < b.count ? b[i] : 0)
+            if x != y { return x < y }
+        }
+        return false
     }
 }

@@ -240,6 +240,16 @@ struct LiveMachineCard: View {
                     Text(isMine ? "Yours" : machine.owner)
                     if let os = machine.os { Text("·"); Text(os == "macos" ? "macOS" : os.capitalized) }
                     if let version = machine.version { Text("·"); Text("runner \(version)") }
+                    if client.runnerOutdated(machine), let latest = client.runnerLatest {
+                        Text("·")
+                        if machine.online && (isMine || client.me?.role == "admin") {
+                            Button("Update to \(latest)") { client.send(.machineUpdate(.init(machine: machine.id))) }
+                                .buttonStyle(.link)
+                                .help("Download, verify and restart into runner \(latest). Sessions in tmux keep running.")
+                        } else {
+                            Text("\(latest) available").foregroundStyle(Theme.State.awaitingApproval)
+                        }
+                    }
                 }
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textMuted)
@@ -303,6 +313,10 @@ struct LiveMachineCard: View {
                     client.send(.machineSettings(.init(machine: machine.id, settings: changed)))
                 }
             }
+            Button(client.runnerOutdated(machine) ? "Update Runner to \(client.runnerLatest ?? "")" : "Check for Runner Update") {
+                client.send(.machineUpdate(.init(machine: machine.id)))
+            }
+            .disabled(!machine.online)
             Divider()
             Button("Copy Machine ID") {
                 NSPasteboard.general.clearContents()

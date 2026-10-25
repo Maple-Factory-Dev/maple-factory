@@ -2290,6 +2290,15 @@ public enum Wire {
         }
     }
 
+    /// Its owner or an admin: update its runner to the latest release now.
+    public struct ClientMessageMachineUpdate: Codable, Hashable, Sendable {
+        public var machine: String
+
+        public init(machine: String) {
+            self.machine = machine
+        }
+    }
+
     /// Admins only.
     public struct ClientMessagePolicySave: Codable, Hashable, Sendable {
         public var policy: RiskPolicy
@@ -2556,6 +2565,7 @@ public enum Wire {
         case goalSave(ClientMessageGoalSave)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
+        case machineUpdate(ClientMessageMachineUpdate)
         case policySave(ClientMessagePolicySave)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
@@ -2601,6 +2611,7 @@ public enum Wire {
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
+            case "machine.update": self = .machineUpdate(try ClientMessageMachineUpdate(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
@@ -2673,6 +2684,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .machineSettings(let body):
                 try c.encode("machine.settings", forKey: .type)
+                try body.encode(to: encoder)
+            case .machineUpdate(let body):
+                try c.encode("machine.update", forKey: .type)
                 try body.encode(to: encoder)
             case .policySave(let body):
                 try c.encode("policy.save", forKey: .type)
@@ -2760,9 +2774,11 @@ public enum Wire {
         public var notes: [Note]
         public var intake: [IntakeRequest]
         public var repos: [OrgRepo]
+        /// The newest released runner version, when there's a release.
+        public var runnerLatest: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2776,6 +2792,7 @@ public enum Wire {
             self.notes = notes
             self.intake = intake
             self.repos = repos
+            self.runnerLatest = runnerLatest
             self.protocolVersion = protocolVersion
         }
 
@@ -2794,6 +2811,7 @@ public enum Wire {
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
+            runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }

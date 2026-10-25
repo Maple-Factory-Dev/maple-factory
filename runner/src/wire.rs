@@ -1397,6 +1397,11 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hand_off: Option<bool>,
     },
+    /// Its owner or an admin: update its runner to the latest release now.
+    #[serde(rename = "machine.update")]
+    MachineUpdate {
+        machine: String,
+    },
     /// Admins only.
     #[serde(rename = "policy.save")]
     PolicySave {
@@ -1571,6 +1576,9 @@ pub enum ServerToClient {
         intake: Vec<IntakeRequest>,
         #[serde(default)]
         repos: Vec<OrgRepo>,
+        /// The newest released runner version, when there's a release.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runner_latest: Option<String>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]

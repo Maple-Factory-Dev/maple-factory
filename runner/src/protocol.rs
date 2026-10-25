@@ -224,7 +224,7 @@ pub enum Outbound {
     /// How an update the hub asked for (`runner.update`) is going. `version` is the latest
     /// release's, once known. `updating` is sent just before the runner exits to restart
     /// into the new build.
-    #[serde(rename = "runner.update_status")]
+    #[serde(rename = "update.status")]
     RunnerUpdateStatus { state: UpdateState, version: Option<String>, message: Option<String> },
     /// Machine vitals, every 10s.
     /// Git state of session directories, sent when it changes.
@@ -673,9 +673,9 @@ mod tests {
         };
         assert_eq!(
             out(UpdateState::Updating, Some("0.2.0"), Some("installed 0.2.0; restarting")),
-            serde_json::json!({"type":"runner.update_status","state":"updating","version":"0.2.0","message":"installed 0.2.0; restarting"})
+            serde_json::json!({"type":"update.status","state":"updating","version":"0.2.0","message":"installed 0.2.0; restarting"})
         );
-        assert_eq!(out(UpdateState::Checking, None, None), serde_json::json!({"type":"runner.update_status","state":"checking","version":null,"message":null}));
+        assert_eq!(out(UpdateState::Checking, None, None), serde_json::json!({"type":"update.status","state":"checking","version":null,"message":null}));
         assert_eq!(out(UpdateState::UpToDate, Some("0.1.0"), None)["state"], "up_to_date");
         assert_eq!(out(UpdateState::Failed, None, Some("x"))["state"], "failed");
     }

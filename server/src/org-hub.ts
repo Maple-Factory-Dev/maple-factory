@@ -78,8 +78,18 @@ export class OrgHub extends DurableObject<Env> {
         return Response.json(await this.engine.fromRunner(machine, msg));
       }
       case "/notice": {
-        const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null } };
+        const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null; state?: string; version?: string | null } };
         if (msg.type === "session.error" && msg.message) this.broadcast({ type: "error", message: `${machine}: ${msg.message}`, requestId: null });
+        if (msg.type === "update.status") {
+          const { state = "", version } = msg;
+          const name = (await this.machines()).find((m) => m.id === machine)?.name ?? machine;
+          const text = {
+            up_to_date: `${name}'s runner is up to date${version ? ` (${version})` : ""}.`,
+            updating: `${name} is restarting into runner ${version ?? "the latest release"}.`,
+            failed: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`,
+          }[state];
+          if (text) this.broadcast({ type: "toast", text, taskId: null });
+        }
         return new Response(null, { status: 204 });
       }
       case "/removed": {
@@ -130,6 +140,20 @@ export class OrgHub extends DurableObject<Env> {
   }
 
   /** Every enrolled machine, live where its hub has reported. */
+  private latest: { version: string | null; at: number } | null = null;
+
+  /** The newest released runner, from the releases bucket's manifest; read again every ten minutes. */
+  private async runnerLatest(): Promise<string | null> {
+    if (this.latest && Date.now() - this.latest.at < 600_000) return this.latest.version;
+    let version: string | null = null;
+    try {
+      const manifest = await this.env.RELEASES.get("maple-runner/latest.json");
+      version = manifest ? ((await manifest.json()) as { version?: string }).version ?? null : null;
+    } catch {}
+    this.latest = { version, at: Date.now() };
+    return version;
+  }
+
   private async machines(): Promise<Machine[]> {
     const live = await this.ctx.storage.list<Machine>({ prefix: "m:" });
     const rows = await machineRows(this.env);
@@ -233,6 +257,7 @@ export class OrgHub extends DurableObject<Env> {
           notes: this.store.notes(client.member.login),
           intake: this.intake.list(),
           repos: this.store.repos(),
+          runnerLatest: await this.runnerLatest(),
           protocolVersion: PROTOCOL_VERSION,
         });
         // The app's repos change on GitHub's side; read them again when they're an hour old.
@@ -263,6 +288,21 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        return;
+      }
+      case "machine.update": {
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (machine.owner !== client.member.login && client.member.role !== "admin") {
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} or an admin can update ${machine.name}.`, requestId: null });
+        }
+        const res = await machineHub(this.env, msg.machine).fetch("https://hub/command", {
+          method: "POST",
+          body: JSON.stringify({ type: "runner.update" }),
+          headers: { "x-by": client.member.login },
+        });
+        if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        await audit(this.env, client.member.login, "runner.update", msg.machine);
         return;
       }
       case "note.save": {
