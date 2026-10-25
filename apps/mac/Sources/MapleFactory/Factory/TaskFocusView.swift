@@ -33,7 +33,7 @@ struct TaskFocusView: View {
     private var diffFiles: [DiffFile] { appState.isLive ? client.diffs[task.id]?.files ?? [] : FactoryData.diff(for: task.id) }
     private var risk: RiskAssessment? { appState.risk(for: task) }
 
-    private var hasSession: Bool { appState.session(for: task.id) != nil }
+    private var hasSession: Bool { appState.isLive ? task.worker != nil : appState.session(for: task.id) != nil }
 
     var body: some View {
         Group {
@@ -63,8 +63,14 @@ struct TaskFocusView: View {
                 Spacer()
             }
             tabBar
-            SessionTerminal(task: task)
-                .frame(maxHeight: .infinity)
+            Group {
+                if appState.isLive, let worker = task.worker {
+                    TaskLiveTerminal(task: task, worker: worker)
+                } else {
+                    SessionTerminal(task: task)
+                }
+            }
+            .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, compact ? 24 : 40)
         .padding(.top, 22)
@@ -205,7 +211,12 @@ struct TaskFocusView: View {
                 }
             }
             tabButton("Session", tab: .session, enabled: hasSession) {
-                if let placement = appState.session(for: task.id) {
+                if appState.isLive, let worker = task.worker {
+                    HStack(spacing: 4) {
+                        Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
+                        Text("\(worker.role) live on \(worker.machine)").foregroundStyle(Theme.textMuted)
+                    }
+                } else if let placement = appState.session(for: task.id) {
                     HStack(spacing: 4) {
                         Circle().fill(placement.machine.status.isOffline ? Theme.State.cancelled : Theme.State.merged).frame(width: 6, height: 6)
                         Text(placement.machine.status.isOffline ? "offline" : "live on \(placement.machine.id)")
@@ -362,7 +373,15 @@ struct TaskFocusView: View {
                     }
                 }
             }
-            if let found = appState.session(for: task.id) {
+            if appState.isLive {
+                if let worker = task.worker {
+                    detailRow("Runs on") {
+                        Text(worker.machine).font(.system(size: 12, design: .monospaced))
+                    }
+                } else if let waiting = task.liveLog, task.state != .merged, task.state != .cancelled {
+                    detailRow("Runs on") { Text(waiting).foregroundStyle(Theme.State.awaitingApproval).lineLimit(2) }
+                }
+            } else if let found = appState.session(for: task.id) {
                 detailRow("Runs on") {
                     HStack(spacing: 6) {
                         Image(systemName: found.machine.kind.icon).font(.system(size: 11))

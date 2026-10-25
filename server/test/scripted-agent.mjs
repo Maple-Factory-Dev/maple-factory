@@ -112,6 +112,14 @@ async function reviewer() {
   say(review.summary);
 }
 
+// "[slow]" in a brief keeps each session busy for a while first, so it can be watched live.
+if (prompt.includes("[slow]")) {
+  for (let i = 1; i <= 45; i++) {
+    say(`thinking (${i})…`);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 try {
   if (/You are the planner/.test(prompt)) await planner();
   else if (/You are the builder/.test(prompt)) await builder();

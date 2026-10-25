@@ -182,6 +182,14 @@ struct FactoryTask: Identifiable {
     var footprint: (files: Int, lines: Int, estimated: Bool)? = nil
     /// Names of sensitive areas (see `RiskPolicy`) the change touches.
     var areas: [String] = []
+    /// The session working on it right now (live only).
+    struct Worker: Equatable {
+        let role: String
+        let agent: String
+        let machine: String
+        let session: String
+    }
+    var worker: Worker? = nil
     /// Changes whenever the task's pushed change does, so its diff is fetched again (live only).
     var diffKey: String? = nil
     /// The risk the planner (or the factory's assessment) gave it, before areas and size.

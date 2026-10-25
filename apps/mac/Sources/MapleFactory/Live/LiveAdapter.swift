@@ -62,6 +62,7 @@ enum LiveAdapter {
         var task = FactoryTask(id: t.id, goal: goalName, title: t.title, state: state(t.state),
                                detail: detail(t), span: start...max(start + 1, day(t.updatedAt) + 1), updated: ago(t.updatedAt))
         task.agent = t.worker.map { role($0.role.rawValue) }
+        task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
         task.owner = who(t.owner)
         task.brief = t.brief
         task.spec = t.brief
