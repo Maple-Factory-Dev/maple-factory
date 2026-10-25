@@ -36,10 +36,10 @@ const wait = async (what, test, ms = 60000) => {
   }
 };
 const step = (text) => console.log(`✓ ${text}`);
-/** Finishes the PR's CI the way the fake's CI would, passing. */
-const passCI = async (t) => {
+/** Finishes the PR's CI the way the fake's CI would, passing; `quiet` sends no webhook. */
+const passCI = async (t, quiet = false) => {
   const [owner, repo] = t.pr.url.split("/").slice(3, 5);
-  await fetch(`${gh}/_checks`, { method: "POST", body: JSON.stringify({ owner, repo, sha: t.pr.head, runs: [{ name: "test", conclusion: "success" }] }) });
+  await fetch(`${gh}/_checks`, { method: "POST", body: JSON.stringify({ owner, repo, sha: t.pr.head, runs: [{ name: "test", conclusion: "success" }], quiet }) });
 };
 const passed = (t) => t?.state === "reviewing" && t.autoReview?.rounds.at(-1)?.verdict === "passed" && t.pr?.head;
 
@@ -82,9 +82,10 @@ step(`${api} merged (${t.pr.url})`);
 
 t = await wait(`${web} review`, () => passed(tasks.get(web)) && tasks.get(web), 180000);
 if (!t.pr.url.includes("/acme/web/")) throw new Error(`${web}'s PR is ${t.pr.url}`);
-await passCI(t);
-await wait(`${web} merged`, () => tasks.get(web)?.state === "merged", 30000);
+// No webhook this time, as for a server GitHub can't reach: the factory reads CI again on its own.
+await passCI(t, true);
+await wait(`${web} merged`, () => tasks.get(web)?.state === "merged", 90000);
 const hello = execFileSync("git", ["--git-dir", "/tmp/mfgh/remotes/acme/web.git", "show", "main:hello.txt"], { encoding: "utf8" });
 if (!hello.includes(web)) throw new Error(`acme/web main has ${JSON.stringify(hello)}`);
-step(`then ${web} built and merged in acme/web (${t.pr.url}); its main has ${JSON.stringify(hello.trim().split("\n")[0])}`);
+step(`then ${web} built in acme/web, CI passed with no webhook, and it merged (${t.pr.url}); its main has ${JSON.stringify(hello.trim().split("\n")[0])}`);
 process.exit(0);

@@ -28,6 +28,8 @@ export interface TaskPrivate {
   /** The repo its pull request is on, once the GitHub App pushed it, and its CI as GitHub reported it. */
   gh?: { owner: string; repo: string } | null;
   checks?: import("../github.ts").Check[];
+  /** When its pull request was opened or found, so CI that never shows up stops being waited for. */
+  prOpenedAt?: number;
 }
 
 export interface TaskSession {

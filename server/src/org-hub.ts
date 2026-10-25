@@ -42,7 +42,17 @@ export class OrgHub extends DurableObject<Env> {
         if (machine) this.broadcast({ type: "machine.updated", machine });
       },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
+      wakeIn: (ms) => ctx.waitUntil((async () => {
+        const at = Date.now() + ms;
+        const set = await ctx.storage.getAlarm();
+        if (set == null || set > at) await ctx.storage.setAlarm(at);
+      })()),
     }, this.intake);
+  }
+
+  /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again. */
+  async alarm() {
+    await this.engine.pollCI();
   }
 
   async fetch(request: Request): Promise<Response> {

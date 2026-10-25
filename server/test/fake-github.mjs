@@ -19,7 +19,8 @@
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
 //
 // and, for the test driver: GET /_log, and POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
-// which finishes checks the way CI would and delivers the signed check_run webhook.
+// which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
+// like a server webhooks can't reach).
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -128,7 +129,7 @@ createServer((req, res) => {
       for (const r of body.runs) {
         const run = list.find((x) => x.name === r.name);
         Object.assign(run, { status: "completed", conclusion: r.conclusion });
-        await deliver("check_run", { action: "completed", check_run: { head_sha: body.sha, name: run.name, conclusion: r.conclusion }, repository: repository(body.owner, body.repo) });
+        if (!body.quiet) await deliver("check_run", { action: "completed", check_run: { head_sha: body.sha, name: run.name, conclusion: r.conclusion }, repository: repository(body.owner, body.repo) });
       }
       return send(res, 200, { runs: list });
     }

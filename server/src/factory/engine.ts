@@ -38,7 +38,14 @@ type Hooks = {
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
+  /** Call `pollCI` again in about `ms`, for CI that webhooks may never report (a local server). */
+  wakeIn(ms: number): void;
 };
+
+/** How often CI is read again while a pull request's checks are still running. */
+const CI_POLL_MS = 30_000;
+/** How long a pull request with no checks yet waits for some to show up. */
+const CI_APPEAR_MS = 10 * 60_000;
 
 export class FactoryError extends Error {}
 
@@ -876,7 +883,7 @@ export class Engine {
         task.pr.url = pr.url;
         this.event(task, "factory", `opened pull request #${pr.number} on ${owner}/${repo}`);
       }
-      this.store.savePrivate(task.id, { ...this.store.private(task.id), gh: { owner, repo } });
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), gh: { owner, repo }, prOpenedAt: now() });
       this.save(task);
       await this.refreshChecks(task.id);
     } catch (e) {
@@ -887,7 +894,20 @@ export class Engine {
     }
   }
 
-  /** Reads the task's CI from GitHub; all passed may let it merge. */
+  /** Whether a task's CI may still change: checks running, or none yet on a fresh pull request. */
+  private ciPending(task: Task): boolean {
+    const priv = this.store.private(task.id);
+    if (!priv.gh || !task.pr?.head || task.pr.state !== "open" || task.state === "merged" || task.state === "cancelled") return false;
+    if (task.pr.checks.some((c) => c.status === "queued" || c.status === "running")) return true;
+    return task.pr.checks.length === 0 && now() - (priv.prOpenedAt ?? 0) < CI_APPEAR_MS;
+  }
+
+  /** Reads CI again for every pull request still waiting on it; the hub's alarm calls this. */
+  async pollCI() {
+    for (const task of this.store.tasks().filter((t) => this.ciPending(t))) await this.refreshChecks(task.id);
+  }
+
+  /** Reads the task's CI from GitHub; all passed may let it merge. Keeps reading while it runs. */
   async refreshChecks(id: string) {
     const app = githubApp(this.env);
     const task = this.store.task(id);
@@ -895,10 +915,15 @@ export class Engine {
     if (!app || !task?.pr?.head || !gh) return;
     const found = await checks(app, gh.owner, gh.repo, task.pr.head).catch(() => null);
     const now_ = this.store.task(id);
-    if (!found || !now_?.pr) return;
+    if (!now_?.pr) return;
+    if (!found) {
+      if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
+      return;
+    }
     const before = now_.pr.checks.map((c) => `${c.name}:${c.status}`).join();
     now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true }));
     this.store.savePrivate(id, { ...this.store.private(id), checks: found });
+    if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
     if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) return;
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
