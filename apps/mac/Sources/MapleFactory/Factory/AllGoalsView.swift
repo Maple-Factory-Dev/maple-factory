@@ -174,10 +174,34 @@ struct AllGoalsView: View {
         .frame(height: goal.summary.isEmpty ? 48 : 58)
         .contentShape(Rectangle())
         .onTapGesture { state.destination = .goal(goal.name) }
+        .contextMenu { GoalContextMenu(goal: goal) }
         // Its Follow button stays its own control; opening the goal is the row's action.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(goal.name)
         .accessibilityAction(named: "Open") { state.destination = .goal(goal.name) }
+    }
+}
+
+/// What right-clicking a goal offers, in the sidebar and in All goals.
+struct GoalContextMenu: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+    let goal: Goal
+
+    var body: some View {
+        let following = state.isFollowing(goal)
+        Button("Open") { state.destination = .goal(goal.name) }
+        Button(following ? "Unfollow" : "Follow") { state.setFollowing(goal, !following) }
+        if state.isLive, let live = client.goal(named: goal.name) {
+            Divider()
+            Button("Edit Goal…") { state.goalSheet = .edit(live.id) }
+            Button("New Task in \(goal.name)…") { state.startCompose(goal: goal.name) }
+                .disabled(goal.archived)
+            Divider()
+            Button(goal.archived ? "Unarchive" : "Archive Goal") {
+                client.send(.goalArchive(.init(id: live.id, archived: !goal.archived)))
+            }
+        }
     }
 }
 

@@ -147,10 +147,7 @@ struct FactorySidebar: View {
                 .foregroundStyle(Theme.textMuted)
         }
         .onTapGesture { state.destination = .goal(goal.name) }
-        .contextMenu {
-            let following = state.isFollowing(goal)
-            Button(following ? "Unfollow" : "Follow") { state.setFollowing(goal, !following) }
-        }
+        .contextMenu { GoalContextMenu(goal: goal) }
     }
 
     private func personRow(_ person: Person, viewing: String?, online: Bool = true) -> some View {
