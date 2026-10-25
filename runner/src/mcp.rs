@@ -1120,9 +1120,13 @@ fn list_tools(backend: &dyn Backend) -> Value {
     }
 }
 
+/// Built-in names the factory also serves, with its own arguments: never checked against ours.
+const FACTORY_OWNED: &[&str] = &["prove"];
+
 pub fn call_tool(backend: &dyn Backend, name: &str, args: &Value) -> Value {
-    // The built-in tools are checked here; the factory checks its own.
-    let args = if TOOL_NAMES.contains(&name) {
+    // The built-in tools are checked here; the factory checks its own. `prove` is the factory's in a
+    // task session (its list is what the agent sees, with `item`), so it goes through as it came.
+    let args = if TOOL_NAMES.contains(&name) && !FACTORY_OWNED.contains(&name) {
         match validate(name, args) {
             Ok(args) => args,
             Err(e) => return tool_result(&e, None, true),
@@ -1622,6 +1626,17 @@ mod tests {
 
     fn text(result: &Value) -> &str {
         result["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[test]
+    fn the_factorys_prove_goes_through_as_it_came() {
+        // The factory lists `prove` with `item`; checking it against the built-in `criterion` would
+        // turn away every call (what a real Claude Code builder ran into).
+        let fake = Fake::new(vec![json!({})]);
+        let args = json!({ "item": 1, "kind": "terminal", "summary": "README has the section", "command": "cat README.md", "output": ["# x"] });
+        let r = call_tool(&fake, "prove", &args);
+        assert_eq!(r["isError"], false, "{}", text(&r));
+        assert_eq!(fake.calls.lock().unwrap()[0], ("prove".to_string(), args));
     }
 
     #[test]
