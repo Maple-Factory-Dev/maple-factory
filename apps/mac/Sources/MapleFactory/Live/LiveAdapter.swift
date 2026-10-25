@@ -152,7 +152,7 @@ enum LiveAdapter {
             guard let round = t.autoReview?.rounds.last else { return "In review" }
             switch round.verdict {
             case .inProgress: return "Review round \(round.number)"
-            case .passed: return t.reviewsNeeded == 0 ? "Passed review · ready to merge" : "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
+            case .passed: return t.reviewsNeeded == 0 ? "Ready to merge" : "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
             case .changesRequested: return "Changes requested"
             case .escalated: return "Escalated"
             }

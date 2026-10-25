@@ -318,7 +318,7 @@ struct TaskProgressFooter: View {
             HStack(spacing: 8) {
                 Image(systemName: task.checksFailing ? "xmark.circle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(task.checksFailing ? Theme.State.cancelled : Theme.State.merged)
-                Text(task.detail).lineLimit(1).fixedSize()
+                Text(task.detail).lineLimit(1).truncationMode(.tail)
                 if !compact { Spacer() }
                 Text("+\(diff.added)").foregroundStyle(Theme.State.merged).fixedSize()
                 Text("−\(diff.removed)").foregroundStyle(Theme.State.cancelled).fixedSize()

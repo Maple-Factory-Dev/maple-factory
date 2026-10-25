@@ -491,6 +491,11 @@ final class AppState {
             if !myInbox.contains(where: { $0.taskID == selectedTask }), let first = myInbox.first { selectedTask = first.taskID }
             return
         }
+        if destination == .myTasks {
+            let mine = tasks.filter { $0.owner.id == FactoryData.me.id && $0.state != .merged && $0.state != .cancelled }
+            if !mine.contains(where: { $0.id == selectedTask }), let first = mine.first { selectedTask = first.id }
+            return
+        }
         guard case .goal(let name) = destination else { return }
         let goalTasks = tasks.filter { $0.goal == name }
         guard !goalTasks.contains(where: { $0.id == selectedTask }) else { return }
