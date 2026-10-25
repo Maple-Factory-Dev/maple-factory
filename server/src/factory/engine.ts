@@ -192,7 +192,8 @@ export class Engine {
       }
       case "task.steer": {
         const text = msg.text.trim() || fail("Say what to change.");
-        if (!["planning", "awaitingApproval", "building"].includes(task.state)) fail("There's nothing working on it to steer.");
+        if (!["planning", "awaitingApproval", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
+        if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
         const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: msg.anchor ?? null, status: "queued", timing: null };
         task.changes.push(change);
         this.event(task, who, `asked for a change: ${text}`);
@@ -201,6 +202,16 @@ export class Engine {
           task.approvals = [];
           this.save(task);
           return this.startPlanning(task, who, true);
+        }
+        if (task.state === "reviewing") {
+          // A person's request for changes: the builder takes it, and review starts over on what it pushes.
+          await this.closeWorker(task, "cancelled");
+          if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
+          task.reviews = [];
+          task.state = "building";
+          this.save(task);
+          await this.pump();
+          return;
         }
         if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) {
           change.status = "applying";

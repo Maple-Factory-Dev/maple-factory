@@ -1,5 +1,6 @@
 // Steering a running builder: the change request is typed into its session, it applies it and says
-// so, and the pushed change has it.
+// so, and the pushed change has it. Then a change asked for once it's in review goes back to the
+// builder and through review again.
 //   node server/test/e2e-steer.mjs http://localhost:8788 <goal prefix> <repo folder>
 // Needs the scripted agent (test/scripted-agent.mjs) and a goal on a local repo whose origin is bare.
 
@@ -63,4 +64,35 @@ step(`the pushed change has it: ${JSON.stringify(hello.trim().split("\n").at(-1)
 send({ type: "task.cancel", id });
 await wait("cancelled", () => tasks.get(id)?.state === "cancelled");
 step("cancelled");
+
+// Asking for changes once it's in review: the builder takes it, and review runs again on the result.
+// "[risky]" keeps the factory from merging it on its own; ann gives the second approvals.
+const ann = async (m) => {
+  const { token } = await (await fetch(`${base}/dev/token?as=ann`, { method: "POST" })).json();
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/client/connect`, { headers: { authorization: `Bearer ${token}` } });
+  await new Promise((r) => (ws.onopen = r));
+  ws.send(JSON.stringify(m));
+  await new Promise((r) => setTimeout(r, 500));
+  ws.close();
+};
+const known = new Set(tasks.keys());
+send({ type: "task.create", goal: goal.id, title: "Change it in review", brief: "[risky] Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+t = await wait("plan 2", () => [...tasks.values()].find((x) => !known.has(x.id) && x.state === "awaitingApproval"), 60000);
+const id2 = t.id;
+send({ type: "task.approvePlan", id: id2 });
+await ann({ type: "task.approvePlan", id: id2 });
+const passed = (x) => x?.state === "reviewing" && x.autoReview?.rounds.at(-1)?.verdict === "passed";
+t = await wait("review passed", () => passed(tasks.get(id2)) && tasks.get(id2), 120000);
+const rounds = t.autoReview.rounds.length;
+step(`${id2} passed review round ${rounds}; waiting on people`);
+send({ type: "task.steer", id: id2, text: "Add a line for Ann." });
+await wait("back to building", () => tasks.get(id2)?.state === "building");
+step("asking for changes sent it back to the builder");
+t = await wait("review passed again", () => passed(tasks.get(id2)) && tasks.get(id2).autoReview.rounds.length > rounds && tasks.get(id2), 120000);
+const hello2 = execFileSync("git", ["-C", origin, "show", `${t.branch}:hello.txt`], { encoding: "utf8" });
+if (!hello2.includes("Add a line for Ann.") || !hello2.includes("as review asked")) throw new Error(`hello.txt is ${JSON.stringify(hello2)}`);
+if (t.changes.at(-1).status !== "applied") throw new Error(`the change is ${t.changes.at(-1).status}`);
+step(`the change is applied on top of the earlier work and review passed again (round ${t.autoReview.rounds.length})`);
+send({ type: "task.cancel", id: id2 });
+await wait("cancelled 2", () => tasks.get(id2)?.state === "cancelled");
 process.exit(0);

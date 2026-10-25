@@ -12,7 +12,7 @@
 
 import net from "node:net";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const prompt = process.argv.at(-1) ?? "";
 const session = process.env.MAPLE_SESSION_ID;
@@ -70,7 +70,8 @@ async function planner() {
       { text: "hello.txt says hello", proof: "terminal" },
       { text: "The branch has the commit", proof: "terminal" },
     ],
-    risk: { level: "low", reasons: ["One new text file."], areas: [] },
+    // "[risky]" rates it high, so a person approves and merges it instead of the factory.
+    risk: prompt.includes("[risky]") ? { level: "high", reasons: ["It touches the release path."], areas: ["release"] } : { level: "low", reasons: ["One new text file."], areas: [] },
     footprint: { files: 1, lines: 1 },
     mockups: [
       {
@@ -99,7 +100,7 @@ async function planner() {
 
 async function builder() {
   const { data } = await call("get_task");
-  const fixing = /asked for changes/.test(prompt);
+  const fixing = /asked for changes|## Change requests to apply/.test(prompt);
   if (prompt.includes("[hand]") && !fixing) {
     await call("raise_hand", {
       reason: "needsInput",
@@ -114,14 +115,23 @@ async function builder() {
   // Change requests typed in while it worked ("Change request C2 from ann: …"), as steering does.
   const steered = typed.splice(0).map((l) => l.match(/^Change request (C\d+) from [^:]+: (.*)$/)).filter(Boolean);
   for (const [, id, text] of steered) say(`steered (${id}): ${text}`);
+  // Change requests in the prompt (asked for before this session started), applied the same way.
+  const requested = [...prompt.matchAll(/^- \((C\d+)\) [^:]+: (.*)$/gm)];
   await call("progress", { step: 1, status: "active", note: fixing ? "Fixing the review's findings" : "Writing hello.txt" });
-  writeFileSync("hello.txt", `hello from ${data.task.id}${fixing ? "\n(with a trailing newline, as review asked)" : ""}${steered.map(([, , text]) => `\n${text}`).join("")}\n`);
+  // Edits what's there, like an agent would: earlier rounds' lines stay.
+  const greeting = `hello from ${data.task.id}`;
+  const before = existsSync("hello.txt") ? readFileSync("hello.txt", "utf8").split("\n").filter(Boolean) : [];
+  const lines = before[0] === greeting ? before : [greeting];
+  for (const line of [fixing && "(with a trailing newline, as review asked)", ...[...requested, ...steered].map(([, , text]) => text)]) {
+    if (line && !lines.includes(line)) lines.push(line);
+  }
+  writeFileSync("hello.txt", lines.join("\n") + "\n");
   await call("progress", { step: 1, status: "done" });
   await call("progress", { step: 2, status: "active", note: "Committing" });
   git("add", "hello.txt");
-  git("-c", "user.name=Scripted", "-c", "user.email=scripted@maple.invalid", "commit", "-qm", fixing ? "Address review" : "Add hello.txt");
+  if (git("status", "--porcelain")) git("-c", "user.name=Scripted", "-c", "user.email=scripted@maple.invalid", "commit", "-qm", fixing ? "Address review" : "Add hello.txt");
   await call("progress", { step: 2, status: "done" });
-  const applied = [...prompt.matchAll(/- \((C\d+)\)/g)].map((m) => m[1]).concat(steered.map(([, id]) => id));
+  const applied = [...requested, ...steered].map(([, id]) => id);
   if (applied.length) await call("progress", { applied });
   await call("prove", { item: 1, kind: "terminal", summary: "hello.txt has the greeting", command: "cat hello.txt", output: git("show", "HEAD:hello.txt").split("\n") });
   await call("prove", { item: 2, kind: "terminal", summary: "The commit is on the branch", command: "git log --oneline -3", output: git("log", "--oneline", "-3").split("\n") });
