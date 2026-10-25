@@ -245,7 +245,7 @@ extension ContentView {
         switch state.destination {
         case .inbox: InboxView()
         case .myTasks: MyTasksView()
-        case .activity: PlaceholderView(title: "Activity", icon: "waveform.path.ecg")
+        case .activity: ActivityView()
         case .scratchpad: ScratchpadView()
         case .usage: UsageView()
         case .needsHand: NeedsHandView()

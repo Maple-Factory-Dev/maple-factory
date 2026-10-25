@@ -883,7 +883,7 @@ export class Engine {
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
       ],
     };
-    this.event(task, String(role), summary);
+    this.event(task, String(role), `stopped and needs a hand: ${summary}`);
     this.hooks.broadcast({ type: "toast", text: `${task.id} needs a hand: ${summary}`, taskId: task.id });
   }
 

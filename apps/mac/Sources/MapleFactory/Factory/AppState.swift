@@ -863,6 +863,7 @@ final class AppState {
         case "scratchpad": destination = .scratchpad
         case "usage": destination = .usage
         case "hands": destination = .needsHand
+        case "activity": destination = .activity
         case "machines": destination = .machines
         case "requests": destination = .intake
         case let goal?: destination = .goal(goal)
