@@ -219,13 +219,19 @@ export async function createPullRequest(app: GitHubApp, owner: string, repo: str
 }
 
 /** Squash-merges a pull request pinned to `sha`, so GitHub refuses (409) if the head moved. */
+const MERGE_RETRIES = 4;
+const MERGE_RETRY_MS = 1500;
+
 export async function mergePullRequest(app: GitHubApp, owner: string, repo: string, number: number, pr: { sha: string | null; title: string }): Promise<{ sha: string | null }> {
   const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
-  const res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, {
-    ...(pr.sha ? { sha: pr.sha } : {}),
-    merge_method: "squash",
-    commit_title: `${pr.title} (#${number})`.slice(0, 250),
-  });
+  const body = { ...(pr.sha ? { sha: pr.sha } : {}), merge_method: "squash", commit_title: `${pr.title} (#${number})`.slice(0, 250) };
+  // GitHub works out whether a pull request can merge in the background after each push, and says
+  // 405 "not mergeable" until it has: so a 405 soon after a push gets a few more tries.
+  let res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
+  for (let attempt = 1; res.status === 405 && attempt <= MERGE_RETRIES; attempt++) {
+    await new Promise((r) => setTimeout(r, attempt * MERGE_RETRY_MS));
+    res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
+  }
   if (!res.ok) throw await failure(res, `merge pull request #${number}`);
   const j = (await res.json().catch(() => ({}))) as { merged?: boolean; sha?: string; message?: string };
   if (j.merged === false) throw new GitHubError("api", `GitHub didn't merge pull request #${number}${j.message ? `: ${j.message}` : ""}.`, 405);
