@@ -46,7 +46,12 @@ enum FactoryData {
 
     // MARK: Calendar
 
-    static let timelineStart = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 13))!
+    /// The mockup's calendar is pinned to its story; a live workspace's starts 11 days before today.
+    static var timelineStart: Date {
+        liveGoals == nil
+            ? Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 13))!
+            : Calendar.current.date(byAdding: .day, value: -todayOffset, to: Calendar.current.startOfDay(for: Date()))!
+    }
     static let timelineDays = 49
     static let todayOffset = 11
 

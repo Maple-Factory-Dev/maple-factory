@@ -33,11 +33,13 @@ struct GoalView: View {
                 Text("Goal")
                 Text("·")
                 Text("Due \(FactoryData.dueLabel(goal))")
-                Text("·")
-                Text("Lead")
-                AgentAvatar(agent: goal.lead, size: 16)
-                Text(goal.lead.id == FactoryData.me.id ? "You" : goal.lead.firstName)
-                    .foregroundStyle(Theme.text)
+                if !goal.lead.name.isEmpty {
+                    Text("·")
+                    Text("Lead")
+                    AgentAvatar(agent: goal.lead, size: 16)
+                    Text(goal.lead.id == FactoryData.me.id ? "You" : goal.lead.firstName)
+                        .foregroundStyle(Theme.text)
+                }
             }
             .font(.system(size: 12))
             .foregroundStyle(Theme.textMuted)
