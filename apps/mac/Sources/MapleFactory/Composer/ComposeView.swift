@@ -175,16 +175,30 @@ struct FactoryReadingPanel: View {
                         .controlSize(.small)
                         .fixedSize()
                     }
-                    row("Planner") {
-                        Picker("", selection: $state.draft.agent) {
-                            Text("Auto · \(agent.name)").tag(String?.none)
-                            ForEach(FactoryData.agents) { candidate in
-                                Text("\(candidate.name) · \(state.load(candidate)) in flight").tag(String?.some(candidate.name))
+                    if state.isLive {
+                        row("Agent") {
+                            Picker("", selection: $state.draft.agent) {
+                                Text("Claude Code").tag(String?.none)
+                                ForEach(state.liveAgents.filter { $0 != "claude" }, id: \.self) { id in
+                                    Text(agentTitle(id)).tag(String?.some(id))
+                                }
                             }
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .fixedSize()
                         }
-                        .labelsHidden()
-                        .controlSize(.small)
-                        .fixedSize()
+                    } else {
+                        row("Planner") {
+                            Picker("", selection: $state.draft.agent) {
+                                Text("Auto · \(agent.name)").tag(String?.none)
+                                ForEach(FactoryData.agents) { candidate in
+                                    Text("\(candidate.name) · \(state.load(candidate)) in flight").tag(String?.some(candidate.name))
+                                }
+                            }
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .fixedSize()
+                        }
                     }
                     if !state.draft.tickets.isEmpty {
                         row("Tickets") {

@@ -338,8 +338,8 @@ final class AppState {
 
     func startCompose(goal: String? = nil, title: String = "", body: String = "", fromNote: UUID? = nil) {
         let currentGoal: String = {
-            if case let .goal(name) = destination { return name }
-            return FactoryData.goals[0].name
+            if case let .goal(name) = destination, FactoryData.goals.contains(where: { $0.name == name }) { return name }
+            return FactoryData.goals.first?.name ?? ""
         }()
         draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote)
         withAnimation(.snappy(duration: 0.3)) {
@@ -354,6 +354,7 @@ final class AppState {
 
     /// The agent that would pick up a new task: the chosen one, or whoever has the least in flight.
     func assignee(for draft: ComposeDraft) -> Agent {
+        if isLive { return LiveAdapter.role("planner") }
         if let name = draft.agent, let agent = FactoryData.agents.first(where: { $0.name == name }) { return agent }
         return FactoryData.agents.min { load($0) < load($1) } ?? FactoryData.agents[0]
     }
@@ -376,7 +377,7 @@ final class AppState {
             }
             let body = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
             client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
-                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: nil)))
+                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent)))
             withAnimation(.snappy(duration: 0.3)) {
                 isComposing = false
                 destination = .goal(draft.goal)
@@ -513,6 +514,12 @@ final class AppState {
             return
         }
         answerInSession(id, option: text)
+    }
+
+    /// The agents the connected factory's machines can run: what their health reports, Claude Code first.
+    var liveAgents: [String] {
+        let installed = Set((client?.machines ?? []).flatMap { $0.health?.agents.map(\.name) ?? [] })
+        return ["claude", "codex"].filter { installed.contains($0) || $0 == "claude" } + installed.subtracting(["claude", "codex"]).sorted()
     }
 
     func cancel(_ id: String) {
