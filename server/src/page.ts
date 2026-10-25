@@ -23,8 +23,22 @@ export function home(request: Request, env: Env, me: Member | null): Response {
     : authConfigured(env)
       ? `<p>Members of ${org} sign in with GitHub.</p><p><a href="/auth/login">Sign in with GitHub</a></p>`
       : `<p>GitHub sign-in isn't set up yet. Run <code>maple install</code> to finish setting up this factory.</p>`;
+  return page("Maple Factory", body);
+}
+
+/** Where a task link (`/t/<id>`) lands: it opens the task in the app. Says nothing about the task,
+ *  so a link that travels further than the team gives nothing away. */
+export function taskLink(id: string): Response {
+  const app = `maplefactory://task/${encodeURIComponent(id)}`;
+  return page(`${id} · Maple Factory`, `<p>Opening <b>${escape(id)}</b> in Maple Factory…</p>
+    <p><a href="${escape(app)}">Open it in the app</a></p>
+    <p style="opacity:.7;font-size:13px">No app on this machine? Install it from your factory's admin.</p>
+    <script>location.href = ${JSON.stringify(app)};</script>`);
+}
+
+function page(title: string, body: string): Response {
   const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Maple Factory</title>
+<title>${escape(title)}</title>
 <style>
   :root { color-scheme: light dark; --bg: #fbf9f8; --text: #24202a; --accent: #d24e26; }
   @media (prefers-color-scheme: dark) { :root { --bg: #18161c; --text: #e6e2ea; --accent: #ff7a48; } }

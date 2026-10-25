@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FactoryTopBar: View {
     @Environment(AppState.self) private var state
+    @State private var showShare = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -42,6 +43,9 @@ struct FactoryTopBar: View {
                     .fill(Theme.fill)
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
             )
+            .contentShape(Rectangle())
+            .onTapGesture { showShare.toggle() }
+            .popover(isPresented: $showShare, arrowEdge: .bottom) { SharePopover() }
             .padding(.leading, 4)
             .padding(.trailing, 6)
 

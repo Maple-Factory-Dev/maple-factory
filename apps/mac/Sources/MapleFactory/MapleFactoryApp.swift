@@ -101,6 +101,12 @@ struct ContentView: View {
             workspace
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
                 .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
+                .onOpenURL { url in
+                    // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it).
+                    guard url.scheme == "maplefactory", url.host() == "task", let id = url.pathComponents.dropFirst().first else { return }
+                    state.destination = .goal(state.task(id).goal)
+                    state.openFocus(id)
+                }
                 .onChange(of: client.factoryGoals.map(\.name), initial: true) { _, names in
                     // The mock's starting goal isn't one of the workspace's: open the focused task's goal, or the first.
                     guard client.isSignedIn, case .goal(let name) = state.destination, !names.isEmpty, !names.contains(name) else { return }

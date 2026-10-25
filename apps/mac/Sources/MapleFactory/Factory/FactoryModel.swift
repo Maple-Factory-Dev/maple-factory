@@ -194,6 +194,8 @@ struct FactoryTask: Identifiable {
     var machine: String? = nil
     /// Its last pushed commit (live only).
     var pushed: String? = nil
+    /// Its git branch, once it has one (live only).
+    var gitBranch: String? = nil
     /// Changes whenever the task's pushed change does, so its diff is fetched again (live only).
     var diffKey: String? = nil
     /// The risk the planner (or the factory's assessment) gave it, before areas and size.

@@ -3,7 +3,7 @@
 import type { Env } from "./env.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
-import { home } from "./page.ts";
+import { home, taskLink } from "./page.ts";
 import { isLocal, machineHub, orgHub, text } from "./util.ts";
 import { PROTOCOL_VERSION } from "./wire.ts";
 import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
@@ -39,6 +39,9 @@ export default {
       if (!object) return text("Not found.", 404);
       return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", etag: object.httpEtag } });
     }
+
+    const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,5}-\d+)$/);
+    if (link) return taskLink(link[1]);
 
     if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
     if (path.startsWith("/api/intake") && intakeKey(request, env)) return (await intakeApi(request, env, path, null))!;

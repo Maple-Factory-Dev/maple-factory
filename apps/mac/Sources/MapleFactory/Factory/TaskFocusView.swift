@@ -147,8 +147,12 @@ struct TaskFocusView: View {
                 if let viewer = task.viewers.first { ViewerPill(viewer: viewer) }
                 if let risk { RiskBadge(level: risk.level) }
                 Spacer()
-                headerButton("Open branch", icon: "arrow.triangle.branch")
+                if !appState.isLive || task.gitBranch != nil {
+                    headerButton("Open branch", icon: "arrow.triangle.branch")
+                        .onTapGesture { appState.openBranch(task.id) }
+                }
                 headerButton("Copy link", icon: "link")
+                    .onTapGesture { appState.copyLink(task.id) }
                 Image(systemName: "ellipsis")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textMuted)
@@ -178,6 +182,10 @@ struct TaskFocusView: View {
     }
 
     private func headerButton(_ title: String, icon: String) -> some View {
+        headerLabel(title, icon: icon).contentShape(Rectangle())
+    }
+
+    private func headerLabel(_ title: String, icon: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 10.5))
             Text(title)
@@ -424,7 +432,7 @@ struct TaskFocusView: View {
                 }
             }
             detailRow("Branch") {
-                Text("\(task.id.lowercased())-\(slug)")
+                Text(task.gitBranch ?? "\(task.id.lowercased())-\(slug)")
                     .font(.system(size: 11.5, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.tail)

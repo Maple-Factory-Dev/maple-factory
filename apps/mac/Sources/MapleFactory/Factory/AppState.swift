@@ -485,6 +485,34 @@ final class AppState {
         withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
     }
 
+    /// A link to the task that opens it in the app (through the factory's server when live).
+    func link(to id: String) -> String {
+        if isLive, let server = client?.server { return server.appending(path: "t/\(id)").absoluteString }
+        return "maplefactory://task/\(id)"
+    }
+
+    func copyLink(_ id: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link(to: id), forType: .string)
+        showToast("Copied a link to \(id)", icon: "link")
+    }
+
+    /// The task's branch on GitHub; for a goal that names a folder, the command to check it out.
+    func openBranch(_ id: String) {
+        let task = task(id)
+        guard isLive, let client, let branch = task.gitBranch else {
+            showToast("Opened \(id)'s branch on GitHub", icon: "arrow.triangle.branch")
+            return
+        }
+        if let repo = client.goal(named: task.goal)?.repo, let url = URL(string: "https://github.com/\(repo)/tree/\(branch)") {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("git switch \(branch)", forType: .string)
+        showToast("Copied git switch \(branch): it's on \(task.pushed == nil ? task.machine ?? "its machine" : "origin")", icon: "arrow.triangle.branch")
+    }
+
     func showToast(_ text: String, icon: String, color: Color = Theme.accent) {
         let toast = Toast(icon: icon, text: text, color: color)
         withAnimation(.snappy(duration: 0.25)) { self.toast = toast }
