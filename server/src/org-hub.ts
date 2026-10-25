@@ -10,6 +10,7 @@ import { audit, machineHub } from "./util.ts";
 import { toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
+import { Intake, type NewRequest } from "./factory/intake.ts";
 
 interface Client {
   member: Member;
@@ -22,10 +23,15 @@ interface Client {
 export class OrgHub extends DurableObject<Env> {
   private store: Store;
   private engine: Engine;
+  private intake: Intake;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.store = new Store(ctx.storage.sql);
+    this.intake = new Intake(this.store, {
+      broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
+      waitUntil: (p) => ctx.waitUntil(p),
+    });
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
       machines: () => this.machines(),
@@ -34,7 +40,7 @@ export class OrgHub extends DurableObject<Env> {
         if (machine) this.broadcast({ type: "machine.updated", machine });
       },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
-    });
+    }, this.intake);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -80,6 +86,16 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
+      case "/intake": {
+        // A new request from an integration or the API (the Worker checked who's asking).
+        const input = (await request.json()) as NewRequest;
+        return Response.json(this.intake.create(input));
+      }
+      case "/intake/reply": {
+        const { id, author, text } = (await request.json()) as { id: string; author: string; text: string };
+        const updated = this.intake.reply(id, author, text);
+        return updated ? Response.json(updated) : new Response("No such request.", { status: 404 });
+      }
       case "/diff": {
         const patch = this.store.get(`patch:${url.searchParams.get("task")}`);
         return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });
@@ -190,6 +206,7 @@ export class OrgHub extends DurableObject<Env> {
           acceptances: this.store.acceptances(),
           online: this.online(),
           notes: this.store.notes(client.member.login),
+          intake: this.intake.list(),
           protocolVersion: PROTOCOL_VERSION,
         });
         return;

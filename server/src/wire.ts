@@ -436,6 +436,7 @@ export interface Task {
   hand?: Hand | null;
   worker?: Worker | null;
   liveLog?: string | null;
+  intake?: string | null;
   /** Why it isn't running when it could be: "Waiting for a free slot on your machines". */
   waiting?: string | null;
   pr?: PullRequest | null;
@@ -507,6 +508,37 @@ export interface Unattended {
   /** ask (every prompt), project (edits, git and the project's commands) or skip (none). */
   mode: string;
   commands: string[];
+}
+
+/** One message in a request's conversation: the requester, a teammate, or the factory's bot. */
+export interface IntakeMessage {
+  /** A login, or the requester's name for people outside the org. */
+  author: string;
+  text: string;
+  at: number;
+  bot: boolean;
+  /** The task whose agent asked it. */
+  relayedFrom?: string | null;
+}
+
+/** Work asked for from outside the app (Slack, Linear, Jira, the API), waiting to be triaged. */
+export interface IntakeRequest {
+  id: string;
+  /** slack, linear, jira or api. */
+  source: string;
+  channel?: string | null;
+  requester: string;
+  title: string;
+  at: number;
+  thread: IntakeMessage[];
+  tickets: TicketLink[];
+  /** new, clarifying (asked the requester something), accepted (became or joined taskId) or declined. */
+  status: string;
+  taskId?: string | null;
+  /** The goal id it looks like it belongs to. */
+  suggestedGoal?: string | null;
+  relatedTask?: string | null;
+  gaps: string[];
 }
 
 /** A Scratchpad note: loose Markdown that isn't a task yet. Only its owner sees it. */
@@ -790,6 +822,26 @@ export interface ClientMessage_NoteSave {
   note: Note;
 }
 
+/** Fold a request into an existing task: its tickets become the task's context. */
+export interface ClientMessage_IntakeAttach {
+  type: "intake.attach";
+  id: string;
+  task: string;
+}
+
+/** Ask the requester something in their thread. */
+export interface ClientMessage_IntakeAsk {
+  type: "intake.ask";
+  id: string;
+  text: string;
+}
+
+export interface ClientMessage_IntakeDecline {
+  type: "intake.decline";
+  id: string;
+  note?: string | null;
+}
+
 export interface ClientMessage_NoteDelete {
   type: "note.delete";
   id: string;
@@ -875,6 +927,8 @@ export interface ClientMessage_TaskCreate {
   plan: boolean;
   tickets: TicketLink[];
   agent?: string | null;
+  /** The request it was composed from, which then tracks it. */
+  intake?: string | null;
 }
 
 export interface ClientMessage_TaskEdit {
@@ -961,8 +1015,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","note.save","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -978,6 +1032,7 @@ export interface ServerToClient_Snapshot {
   acceptances: RiskAcceptance[];
   online: Presence[];
   notes: Note[];
+  intake: IntakeRequest[];
   protocolVersion: number;
 }
 
@@ -1009,6 +1064,11 @@ export interface ServerToClient_GoalUpdated {
 export interface ServerToClient_NoteUpdated {
   type: "note.updated";
   note: Note;
+}
+
+export interface ServerToClient_IntakeUpdated {
+  type: "intake.updated";
+  request: IntakeRequest;
 }
 
 export interface ServerToClient_NoteRemoved {
@@ -1048,5 +1108,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_NoteRemoved | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","note.removed","presence","policy.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","presence","policy.updated","toast","session.ended","error"] as const;

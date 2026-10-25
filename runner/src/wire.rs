@@ -790,6 +790,8 @@ pub struct Task {
     pub worker: Option<Worker>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_log: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intake: Option<String>,
     /// Why it isn't running when it could be: "Waiting for a free slot on your machines".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting: Option<String>,
@@ -894,6 +896,49 @@ pub struct Unattended {
     pub mode: String,
     #[serde(default)]
     pub commands: Vec<String>,
+}
+
+/// One message in a request's conversation: the requester, a teammate, or the factory's bot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntakeMessage {
+    /// A login, or the requester's name for people outside the org.
+    pub author: String,
+    pub text: String,
+    pub at: u64,
+    pub bot: bool,
+    /// The task whose agent asked it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relayed_from: Option<String>,
+}
+
+/// Work asked for from outside the app (Slack, Linear, Jira, the API), waiting to be triaged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntakeRequest {
+    pub id: String,
+    /// slack, linear, jira or api.
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    pub requester: String,
+    pub title: String,
+    pub at: u64,
+    #[serde(default)]
+    pub thread: Vec<IntakeMessage>,
+    #[serde(default)]
+    pub tickets: Vec<TicketLink>,
+    /// new, clarifying (asked the requester something), accepted (became or joined taskId) or declined.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    /// The goal id it looks like it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_task: Option<String>,
+    #[serde(default)]
+    pub gaps: Vec<String>,
 }
 
 /// A Scratchpad note: loose Markdown that isn't a task yet. Only its owner sees it.
@@ -1196,6 +1241,24 @@ pub enum ClientMessage {
     NoteSave {
         note: Note,
     },
+    /// Fold a request into an existing task: its tickets become the task's context.
+    #[serde(rename = "intake.attach")]
+    IntakeAttach {
+        id: String,
+        task: String,
+    },
+    /// Ask the requester something in their thread.
+    #[serde(rename = "intake.ask")]
+    IntakeAsk {
+        id: String,
+        text: String,
+    },
+    #[serde(rename = "intake.decline")]
+    IntakeDecline {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
     #[serde(rename = "note.delete")]
     NoteDelete {
         id: Uuid,
@@ -1276,6 +1339,9 @@ pub enum ClientMessage {
         tickets: Vec<TicketLink>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
+        /// The request it was composed from, which then tracks it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intake: Option<String>,
     },
     #[serde(rename = "task.edit")]
     TaskEdit {
@@ -1382,6 +1448,8 @@ pub enum ServerToClient {
         online: Vec<Presence>,
         #[serde(default)]
         notes: Vec<Note>,
+        #[serde(default)]
+        intake: Vec<IntakeRequest>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -1407,6 +1475,10 @@ pub enum ServerToClient {
     #[serde(rename = "note.updated")]
     NoteUpdated {
         note: Note,
+    },
+    #[serde(rename = "intake.updated")]
+    IntakeUpdated {
+        request: IntakeRequest,
     },
     #[serde(rename = "note.removed")]
     NoteRemoved {

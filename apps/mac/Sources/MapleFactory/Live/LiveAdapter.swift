@@ -109,6 +109,7 @@ enum LiveAdapter {
             TicketLink(system: $0.system.lowercased() == "jira" ? .jira : .linear, key: $0.key, title: $0.title, status: $0.status, asContext: $0.asContext)
         }
         task.mockups = t.mockups.map(mockup)
+        task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
         return task
     }
@@ -155,6 +156,35 @@ enum LiveAdapter {
         case .merged: .merged
         case .cancelled: .cancelled
         }
+    }
+
+    static func request(_ r: Wire.IntakeRequest, goals: [Wire.Goal], members: [Wire.Member]) -> IntakeRequest {
+        let source: IntakeSource = switch r.source {
+        case "slack": .slack(channel: r.channel ?? "")
+        case "linear": .linear
+        case "jira": .jira
+        default: .api
+        }
+        let who = { (name: String) in
+            members.contains { $0.login == name } ? person(name, members: members) : Person(name: name, color: color(for: name), isHuman: true)
+        }
+        let status: IntakeRequest.Status = switch r.status {
+        case "clarifying": .clarifying
+        case "accepted": .accepted(taskID: r.taskId ?? "")
+        case "declined": .declined
+        default: .new
+        }
+        return IntakeRequest(
+            id: r.id, source: source, requester: who(r.requester), title: r.title, when: ago(r.at),
+            thread: r.thread.map { m in
+                ThreadMessage(author: m.bot ? FactoryData.bot : who(m.author), text: m.text, when: ago(m.at), isBot: m.bot, relayedFrom: m.relayedFrom)
+            },
+            tickets: r.tickets.map { TicketLink(system: $0.system.lowercased() == "jira" ? .jira : .linear, key: $0.key, title: $0.title, status: $0.status, asContext: $0.asContext) },
+            status: status,
+            suggestedGoal: goals.first { $0.id == r.suggestedGoal }?.name ?? goals.first?.name ?? "",
+            relatedTask: r.relatedTask,
+            gaps: r.gaps
+        )
     }
 
     static func note(_ n: Wire.Note) -> Note {

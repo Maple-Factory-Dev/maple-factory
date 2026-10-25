@@ -40,12 +40,15 @@ enum IntakeSource: Hashable {
     case slack(channel: String)
     case linear
     case jira
+    /// Posted to the factory's API, by a script or another tool.
+    case api
 
     var title: String {
         switch self {
         case .slack(let channel): "Slack \(channel)"
         case .linear: "Linear"
         case .jira: "Jira"
+        case .api: "the API"
         }
     }
 
@@ -54,11 +57,13 @@ enum IntakeSource: Hashable {
         case .slack: "number"
         case .linear: "line.diagonal"
         case .jira: "diamond.fill"
+        case .api: "curlybraces"
         }
     }
 
     var color: Color {
         switch self {
+        case .api: Theme.textMuted
         case .slack: Color(hex: 0xE01E5A)
         case .linear: TicketLink.System.linear.color
         case .jira: TicketLink.System.jira.color
@@ -223,6 +228,14 @@ extension AppState {
         withAnimation(.snappy(duration: 0.25)) { mutate(&intake[index]) }
     }
 
+    // Live, the factory does the triage; these send it there.
+
+    private func liveIntake(_ message: Wire.ClientMessage) -> Bool {
+        guard let client, isLive else { return false }
+        client.send(message)
+        return true
+    }
+
     /// Opens the composer with the request's conversation and tickets already in the brief.
     func composeFromIntake(_ id: String) {
         guard let request = intakeRequest(id) else { return }
@@ -257,6 +270,7 @@ extension AppState {
 
     /// Adds the request's tickets to an existing task instead of making a new one.
     func attachIntake(_ id: String, to taskID: String) {
+        if liveIntake(.intakeAttach(.init(id: id, task: taskID))) { return }
         guard let request = intakeRequest(id) else { return }
         update(taskID) { task in
             for ticket in request.tickets where !task.tickets.contains(where: { $0.key == ticket.key }) {
@@ -276,6 +290,7 @@ extension AppState {
 
     /// Posts a follow-up into the request's thread as the bot. The mock requester answers a moment later.
     func askInThread(_ id: String, _ text: String) {
+        if !text.isEmpty, liveIntake(.intakeAsk(.init(id: id, text: text))) { return }
         guard let request = intakeRequest(id), !text.isEmpty else { return }
         updateIntake(id) { request in
             request.thread.append(ThreadMessage(author: FactoryData.bot, text: text, when: "now", isBot: true))
@@ -302,6 +317,7 @@ extension AppState {
     }
 
     func declineIntake(_ id: String) {
+        if liveIntake(.intakeDecline(.init(id: id, note: nil))) { return }
         updateIntake(id) { request in
             request.status = .declined
             request.thread.append(ThreadMessage(author: FactoryData.bot,

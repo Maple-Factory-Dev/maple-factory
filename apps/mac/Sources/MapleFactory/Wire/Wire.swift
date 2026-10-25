@@ -1051,6 +1051,7 @@ public enum Wire {
         public var hand: Hand?
         public var worker: Worker?
         public var liveLog: String?
+        public var intake: String?
         /// Why it isn't running when it could be: "Waiting for a free slot on your machines".
         public var waiting: String?
         public var pr: PullRequest?
@@ -1067,7 +1068,7 @@ public enum Wire {
         /// Where its worktree lives once building started.
         public var machine: String?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -1091,6 +1092,7 @@ public enum Wire {
             self.hand = hand
             self.worker = worker
             self.liveLog = liveLog
+            self.intake = intake
             self.waiting = waiting
             self.pr = pr
             self.diff = diff
@@ -1130,6 +1132,7 @@ public enum Wire {
             hand = try c.decodeIfPresent(Hand.self, forKey: .hand)
             worker = try c.decodeIfPresent(Worker.self, forKey: .worker)
             liveLog = try c.decodeIfPresent(String.self, forKey: .liveLog)
+            intake = try c.decodeIfPresent(String.self, forKey: .intake)
             waiting = try c.decodeIfPresent(String.self, forKey: .waiting)
             pr = try c.decodeIfPresent(PullRequest.self, forKey: .pr)
             diff = try c.decodeIfPresent(Diff.self, forKey: .diff)
@@ -1268,6 +1271,78 @@ public enum Wire {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             mode = try c.decode(String.self, forKey: .mode)
             commands = try c.decodeIfPresent([String].self, forKey: .commands) ?? []
+        }
+    }
+
+    /// One message in a request's conversation: the requester, a teammate, or the factory's bot.
+    public struct IntakeMessage: Codable, Hashable, Sendable {
+        /// A login, or the requester's name for people outside the org.
+        public var author: String
+        public var text: String
+        public var at: UInt64
+        public var bot: Bool
+        /// The task whose agent asked it.
+        public var relayedFrom: String?
+
+        public init(author: String, text: String, at: UInt64, bot: Bool, relayedFrom: String? = nil) {
+            self.author = author
+            self.text = text
+            self.at = at
+            self.bot = bot
+            self.relayedFrom = relayedFrom
+        }
+    }
+
+    /// Work asked for from outside the app (Slack, Linear, Jira, the API), waiting to be triaged.
+    public struct IntakeRequest: Codable, Hashable, Sendable {
+        public var id: String
+        /// slack, linear, jira or api.
+        public var source: String
+        public var channel: String?
+        public var requester: String
+        public var title: String
+        public var at: UInt64
+        public var thread: [IntakeMessage]
+        public var tickets: [TicketLink]
+        /// new, clarifying (asked the requester something), accepted (became or joined taskId) or declined.
+        public var status: String
+        public var taskId: String?
+        /// The goal id it looks like it belongs to.
+        public var suggestedGoal: String?
+        public var relatedTask: String?
+        public var gaps: [String]
+
+        public init(id: String, source: String, channel: String? = nil, requester: String, title: String, at: UInt64, thread: [IntakeMessage] = [], tickets: [TicketLink] = [], status: String, taskId: String? = nil, suggestedGoal: String? = nil, relatedTask: String? = nil, gaps: [String] = []) {
+            self.id = id
+            self.source = source
+            self.channel = channel
+            self.requester = requester
+            self.title = title
+            self.at = at
+            self.thread = thread
+            self.tickets = tickets
+            self.status = status
+            self.taskId = taskId
+            self.suggestedGoal = suggestedGoal
+            self.relatedTask = relatedTask
+            self.gaps = gaps
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            source = try c.decode(String.self, forKey: .source)
+            channel = try c.decodeIfPresent(String.self, forKey: .channel)
+            requester = try c.decode(String.self, forKey: .requester)
+            title = try c.decode(String.self, forKey: .title)
+            at = try c.decode(UInt64.self, forKey: .at)
+            thread = try c.decodeIfPresent([IntakeMessage].self, forKey: .thread) ?? []
+            tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
+            status = try c.decode(String.self, forKey: .status)
+            taskId = try c.decodeIfPresent(String.self, forKey: .taskId)
+            suggestedGoal = try c.decodeIfPresent(String.self, forKey: .suggestedGoal)
+            relatedTask = try c.decodeIfPresent(String.self, forKey: .relatedTask)
+            gaps = try c.decodeIfPresent([String].self, forKey: .gaps) ?? []
         }
     }
 
@@ -1943,6 +2018,38 @@ public enum Wire {
         }
     }
 
+    /// Fold a request into an existing task: its tickets become the task's context.
+    public struct ClientMessageIntakeAttach: Codable, Hashable, Sendable {
+        public var id: String
+        public var task: String
+
+        public init(id: String, task: String) {
+            self.id = id
+            self.task = task
+        }
+    }
+
+    /// Ask the requester something in their thread.
+    public struct ClientMessageIntakeAsk: Codable, Hashable, Sendable {
+        public var id: String
+        public var text: String
+
+        public init(id: String, text: String) {
+            self.id = id
+            self.text = text
+        }
+    }
+
+    public struct ClientMessageIntakeDecline: Codable, Hashable, Sendable {
+        public var id: String
+        public var note: String?
+
+        public init(id: String, note: String? = nil) {
+            self.id = id
+            self.note = note
+        }
+    }
+
     public struct ClientMessageNoteDelete: Codable, Hashable, Sendable {
         public var id: String
 
@@ -2075,8 +2182,10 @@ public enum Wire {
         public var plan: Bool
         public var tickets: [TicketLink]
         public var agent: String?
+        /// The request it was composed from, which then tracks it.
+        public var intake: String?
 
-        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil) {
+        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil) {
             self.goal = goal
             self.title = title
             self.brief = brief
@@ -2084,6 +2193,7 @@ public enum Wire {
             self.plan = plan
             self.tickets = tickets
             self.agent = agent
+            self.intake = intake
         }
 
         public init(from decoder: Decoder) throws {
@@ -2095,6 +2205,7 @@ public enum Wire {
             plan = try c.decode(Bool.self, forKey: .plan)
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             agent = try c.decodeIfPresent(String.self, forKey: .agent)
+            intake = try c.decodeIfPresent(String.self, forKey: .intake)
         }
     }
 
@@ -2238,6 +2349,9 @@ public enum Wire {
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
         case noteSave(ClientMessageNoteSave)
+        case intakeAttach(ClientMessageIntakeAttach)
+        case intakeAsk(ClientMessageIntakeAsk)
+        case intakeDecline(ClientMessageIntakeDecline)
         case noteDelete(ClientMessageNoteDelete)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
@@ -2273,6 +2387,9 @@ public enum Wire {
             switch type {
             case "subscribe": self = .subscribe
             case "note.save": self = .noteSave(try ClientMessageNoteSave(from: decoder))
+            case "intake.attach": self = .intakeAttach(try ClientMessageIntakeAttach(from: decoder))
+            case "intake.ask": self = .intakeAsk(try ClientMessageIntakeAsk(from: decoder))
+            case "intake.decline": self = .intakeDecline(try ClientMessageIntakeDecline(from: decoder))
             case "note.delete": self = .noteDelete(try ClientMessageNoteDelete(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
@@ -2309,6 +2426,15 @@ public enum Wire {
                 try c.encode("subscribe", forKey: .type)
             case .noteSave(let body):
                 try c.encode("note.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .intakeAttach(let body):
+                try c.encode("intake.attach", forKey: .type)
+                try body.encode(to: encoder)
+            case .intakeAsk(let body):
+                try c.encode("intake.ask", forKey: .type)
+                try body.encode(to: encoder)
+            case .intakeDecline(let body):
+                try c.encode("intake.decline", forKey: .type)
                 try body.encode(to: encoder)
             case .noteDelete(let body):
                 try c.encode("note.delete", forKey: .type)
@@ -2404,9 +2530,10 @@ public enum Wire {
         public var acceptances: [RiskAcceptance]
         public var online: [Presence]
         public var notes: [Note]
+        public var intake: [IntakeRequest]
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], intake: [IntakeRequest] = [], protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2418,6 +2545,7 @@ public enum Wire {
             self.acceptances = acceptances
             self.online = online
             self.notes = notes
+            self.intake = intake
             self.protocolVersion = protocolVersion
         }
 
@@ -2434,6 +2562,7 @@ public enum Wire {
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
+            intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -2483,6 +2612,14 @@ public enum Wire {
 
         public init(note: Note) {
             self.note = note
+        }
+    }
+
+    public struct ServerToClientIntakeUpdated: Codable, Hashable, Sendable {
+        public var request: IntakeRequest
+
+        public init(request: IntakeRequest) {
+            self.request = request
         }
     }
 
@@ -2564,6 +2701,7 @@ public enum Wire {
         case taskRemoved(ServerToClientTaskRemoved)
         case goalUpdated(ServerToClientGoalUpdated)
         case noteUpdated(ServerToClientNoteUpdated)
+        case intakeUpdated(ServerToClientIntakeUpdated)
         case noteRemoved(ServerToClientNoteRemoved)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
@@ -2585,6 +2723,7 @@ public enum Wire {
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
             case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
+            case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
@@ -2618,6 +2757,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .noteUpdated(let body):
                 try c.encode("note.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .intakeUpdated(let body):
+                try c.encode("intake.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .noteRemoved(let body):
                 try c.encode("note.removed", forKey: .type)

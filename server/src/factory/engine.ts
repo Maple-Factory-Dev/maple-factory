@@ -15,6 +15,7 @@ import { Store, type TaskSession } from "./store.ts";
 import { builderPrompt, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { assess, validPolicy } from "./policy.ts";
+import type { Intake } from "./intake.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -44,7 +45,7 @@ const fail = (message: string): never => {
 };
 
 export class Engine {
-  constructor(private env: Env, private store: Store, private hooks: Hooks) {}
+  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake) {}
 
   // ---------------------------------------------------------------------------
   // Apps
@@ -91,9 +92,30 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "intake.attach": {
+        const request = this.intake.get(msg.id) ?? fail("That request isn't there any more.");
+        const task = this.store.task(msg.task) ?? fail("That task isn't there any more.");
+        for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
+        task.comments.push({ id: crypto.randomUUID(), author: request.requester, text: request.thread.filter((m) => !m.bot).map((m) => m.text).join("\n\n"), at: now(), anchor: null, via: sourceTitle(request) });
+        this.event(task, who, `added ${request.requester}'s request (${request.id}) to it`);
+        this.save(task);
+        this.intake.accepted(request, task, "attached", who);
+        return;
+      }
+      case "intake.ask": {
+        const request = this.intake.get(msg.id) ?? fail("That request isn't there any more.");
+        this.intake.ask(request, msg.text.trim() || fail("Say what to ask."));
+        return;
+      }
+      case "intake.decline": {
+        const request = this.intake.get(msg.id) ?? fail("That request isn't there any more.");
+        this.intake.decline(request, who, msg.note ?? null);
+        return;
+      }
       case "task.create": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
         if (!msg.title.trim()) fail("A task needs a title.");
+        const request = msg.intake ? this.intake.get(msg.intake) : null;
         const t = now();
         const task: Task = {
           id: this.store.nextId(goal.prefix),
@@ -118,10 +140,16 @@ export class Engine {
           tickets: msg.tickets,
           shareable: msg.shareable,
           agent: msg.agent || "claude",
+          intake: request?.id ?? null,
         };
+        if (request) {
+          for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
+          for (const m of request.thread.filter((m) => !m.bot)) task.comments.push({ id: crypto.randomUUID(), author: m.author, text: m.text, at: m.at, anchor: null, via: sourceTitle(request) });
+        }
         this.save(task);
         await audit(this.env, who, "task.created", task.id, { title: task.title });
         if (msg.plan) await this.startPlanning(task, who);
+        if (request) this.intake.accepted(request, this.store.task(task.id) ?? task, "created", who);
         return;
       }
     }
@@ -583,6 +611,7 @@ export class Engine {
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base} (${msg.commit?.slice(0, 7) ?? ""})`);
+    this.intake.forTask(task, `${task.id} is merged into ${task.pr.base}. Thanks for asking!`);
     this.save(task);
     this.hooks.broadcast({ type: "toast", text: `${task.id} merged into ${task.pr.base}.`, taskId: task.id });
     this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null });
@@ -693,6 +722,7 @@ export class Engine {
         const question = str(a.question, "question");
         task.question = { text: question, options: arr(a.options).map(String), role: s.role, at: now() };
         this.event(task, s.role, `asked: ${question}`);
+        this.intake.forTask(task, `${task.id}'s ${s.role} asks: ${question}`, true);
         this.hooks.broadcast({ type: "toast", text: `${task.id}'s ${s.role} has a question.`, taskId: task.id });
         return { summary: "Asked. End your turn now; the answer will be typed into this session." };
       }
@@ -947,6 +977,11 @@ export class Engine {
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
+}
+
+function sourceTitle(r: { source: string; channel?: string | null }) {
+  const name = { slack: "Slack", linear: "Linear", jira: "Jira", api: "the API" }[r.source] ?? r.source;
+  return r.channel ? `${name} ${r.channel}` : name;
 }
 
 function describeCause(end: SessionEnd) {

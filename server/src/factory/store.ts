@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, MachineSettings, Note, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import type { Goal, IntakeRequest, MachineSettings, Note, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -54,6 +54,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS sessions_task ON sessions (task);
       CREATE TABLE IF NOT EXISTS machine_settings (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, updated INTEGER NOT NULL, doc TEXT NOT NULL, reply_url TEXT);
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
     `);
@@ -149,6 +150,30 @@ export class Store {
       "INSERT INTO machine_settings (id, doc) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET doc = excluded.doc",
       machine, JSON.stringify(settings),
     );
+  }
+
+  // Intake
+
+  intake(): IntakeRequest[] {
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM intake ORDER BY updated DESC LIMIT 200").toArray().map((r) => JSON.parse(r.doc));
+  }
+
+  intakeRequest(id: string): IntakeRequest | null {
+    const row = this.sql.exec<{ doc: string }>("SELECT doc FROM intake WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.doc) : null;
+  }
+
+  /** `replyUrl` undefined keeps the one it has. */
+  saveIntake(request: IntakeRequest, replyUrl?: string | null) {
+    this.sql.exec(
+      `INSERT INTO intake (id, updated, doc, reply_url) VALUES (?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET updated = excluded.updated, doc = excluded.doc${replyUrl === undefined ? "" : ", reply_url = excluded.reply_url"}`,
+      request.id, Date.now(), JSON.stringify(request), replyUrl ?? null,
+    );
+  }
+
+  intakeReplyUrl(id: string): string | null {
+    return this.sql.exec<{ reply_url: string | null }>("SELECT reply_url FROM intake WHERE id = ?", id).toArray()[0]?.reply_url ?? null;
   }
 
   // Notes

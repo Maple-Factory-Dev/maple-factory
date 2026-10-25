@@ -46,7 +46,12 @@ final class AppState {
     // MARK: Machines
 
     var machines = FactoryData.seedMachines
-    var intake = FactoryData.seedIntake
+    /// Requests from outside: the factory's when signed in.
+    var intake: [IntakeRequest] {
+        get { isLive ? client?.intake ?? [] : mockIntake }
+        set { if !isLive { mockIntake = newValue } }
+    }
+    private var mockIntake = FactoryData.seedIntake
     var selectedIntake: String? = FactoryData.seedIntake.first?.id
     /// Who has the keyboard in each live session, and lines typed during this run.
     var sessionDrivers: [String: SessionDriver] = [:]
@@ -382,7 +387,7 @@ final class AppState {
             }
             let body = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
             client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
-                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent)))
+                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID)))
             withAnimation(.snappy(duration: 0.3)) {
                 isComposing = false
                 destination = .goal(draft.goal)

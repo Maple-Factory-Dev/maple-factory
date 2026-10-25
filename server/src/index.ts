@@ -6,6 +6,7 @@ import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine
 import { home } from "./page.ts";
 import { isLocal, machineHub, orgHub, text } from "./util.ts";
 import { PROTOCOL_VERSION } from "./wire.ts";
+import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
 
 export { MachineHub } from "./machine-hub.ts";
 export { OrgHub } from "./org-hub.ts";
@@ -39,6 +40,9 @@ export default {
       return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", etag: object.httpEtag } });
     }
 
+    if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
+    if (path.startsWith("/api/intake") && intakeKey(request, env)) return (await intakeApi(request, env, path, null))!;
+
     const auth = await handleAuth(request, env);
     if (auth) return auth;
     if (path === "/dev/token" && request.method === "POST") return devToken(request, env);
@@ -67,6 +71,8 @@ export default {
       return machineHub(env, machine).fetch(new Request(target, request));
     }
 
+    const intake = await intakeApi(request, env, path, me);
+    if (intake) return intake;
     if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local" });
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);

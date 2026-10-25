@@ -17,6 +17,18 @@ struct IntakeView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: state.intake.map(\.id), initial: true) { _, ids in
+            if !ids.contains(where: { $0 == state.selectedIntake }) { state.selectedIntake = ids.first }
+        }
+    }
+
+    /// Where requests come in from: the mockup's integrations, or what a real factory takes.
+    private var integrations: [(name: String, detail: String, icon: String, color: Color)] {
+        guard state.isLive else { return FactoryData.integrations }
+        return [
+            ("Slack", "/maple <what you need>, once the Slack app is set up", "number", IntakeSource.slack(channel: "").color),
+            ("API", "POST /api/intake with the org's intake key", "curlybraces", Theme.textMuted),
+        ]
     }
 
     private var list: some View {
@@ -26,7 +38,7 @@ struct IntakeView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.text)
                 VStack(alignment: .leading, spacing: 5) {
-                    ForEach(FactoryData.integrations, id: \.name) { integration in
+                    ForEach(integrations, id: \.name) { integration in
                         HStack(spacing: 7) {
                             SourceGlyph(icon: integration.icon, color: integration.color, size: 16)
                             Text(integration.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)

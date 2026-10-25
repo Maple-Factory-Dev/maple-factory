@@ -1,2 +1,5 @@
 DEV_LOGIN=your-github-login
 GITHUB_ORG=your-org
+# Optional: a key for posting requests to /api/intake (Bearer mfi_...), and Slack's signing secret for /maple.
+# INTAKE_KEY=mfi_change_me
+# SLACK_SIGNING_SECRET=

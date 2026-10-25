@@ -32,6 +32,9 @@ import Security
     private(set) var factoryTasks: [FactoryTask] = []
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
+    private(set) var intakeRequests: [Wire.IntakeRequest] = []
+    /// Requests as the views' models, newest first.
+    private(set) var intake: [IntakeRequest] = []
     /// Your Scratchpad, as the views' notes, newest first.
     private(set) var notes: [Note] = []
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
@@ -172,6 +175,7 @@ import Security
             acceptances = snapshot.acceptances
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
+            intakeRequests = snapshot.intake
             rebuild()
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
@@ -205,6 +209,13 @@ import Security
                 goals.append(update.goal)
             }
             rebuild()
+        case .intakeUpdated(let update):
+            if let index = intakeRequests.firstIndex(where: { $0.id == update.request.id }) {
+                intakeRequests[index] = update.request
+            } else {
+                intakeRequests.insert(update.request, at: 0)
+            }
+            intake = intakeRequests.map { LiveAdapter.request($0, goals: goals, members: members) }
         case .noteUpdated(let update):
             let note = LiveAdapter.note(update.note)
             guard unsaved[note.id] == nil else { break }
@@ -238,6 +249,7 @@ import Security
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
         factoryTasks = tasks.map(adapt)
         applyPresence()
+        intake = intakeRequests.map { LiveAdapter.request($0, goals: goals, members: members) }
         riskPolicy = policy.map(LiveAdapter.policy)
         riskAcceptances = Dictionary(acceptances.compactMap { a in
             goals.first { $0.id == a.goal }.map { goal in
