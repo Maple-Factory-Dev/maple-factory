@@ -66,6 +66,15 @@ struct TaskFocusView: View {
             Group {
                 if appState.isLive, let worker = task.worker {
                     TaskLiveTerminal(task: task, worker: worker)
+                } else if appState.isLive {
+                    ContentUnavailableView {
+                        Label("No session running", systemImage: "terminal")
+                    } description: {
+                        Text(task.state == .merged || task.state == .cancelled
+                             ? "\(task.id) is \(task.state.title.lowercased()); its sessions' history is under Machines."
+                             : "A planner, builder or reviewer session shows here while one works on \(task.id).")
+                    }
+                    .foregroundStyle(Theme.textMuted)
                 } else {
                     SessionTerminal(task: task)
                 }
