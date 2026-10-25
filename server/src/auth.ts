@@ -11,7 +11,7 @@ const APP_TOKEN_TTL = 30 * 24 * 3600 * 1000; // ms
 const STATE_TTL = 600;
 const UA = "maple-factory";
 
-interface MemberRow {
+export interface MemberRow {
   login: string;
   github_id: number;
   name: string | null;

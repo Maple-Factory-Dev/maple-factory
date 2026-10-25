@@ -1,0 +1,89 @@
+// The whole factory loop against `wrangler dev` and a real runner whose agents.toml has the
+// `scripted` agent (test/scripted-agent.mjs):
+//   node server/test/e2e-factory.mjs http://localhost:8788 <machine> <repo folder>
+// Makes a goal on a local repo (whose origin is a bare repo), then a task, and drives it through
+// planning, approval, building, two review rounds, human review and merge, checking origin's main.
+
+import { execFileSync } from "node:child_process";
+
+const [base = "http://localhost:8788", machine = "dev-mac", folder] = process.argv.slice(2);
+if (!folder) throw new Error("usage: e2e-factory.mjs <server> <machine> <repo folder>");
+const ws = base.replace(/^http/, "ws");
+const { token } = await (await fetch(`${base}/dev/token`, { method: "POST" })).json();
+
+const feed = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `Bearer ${token}` } });
+const tasks = new Map();
+const errors = [];
+let poke = null;
+feed.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.type === "snapshot") for (const t of m.tasks) tasks.set(t.id, t);
+  if (m.type === "task.updated") tasks.set(m.task.id, m.task);
+  if (m.type === "error") errors.push(m.message);
+  poke?.();
+};
+const send = (m) => feed.send(JSON.stringify(m));
+const wait = async (what, test, ms = 30000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const hit = test();
+    if (hit) return hit;
+    if (errors.length) throw new Error(`server said: ${errors.join("; ")}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => { poke = r; setTimeout(r, 250); });
+  }
+};
+const step = (text) => console.log(`✓ ${text}`);
+
+await new Promise((r) => (feed.onopen = r));
+send({ type: "subscribe" });
+await wait("snapshot", () => tasks.size >= 0 && true);
+
+const prefix = `E${Date.now() % 100000}`.slice(0, 6);
+send({ type: "goal.save", goal: { id: "", name: `E2E ${prefix}`, prefix, color: "#2EA043", summary: "End-to-end test", lead: "", folder, base: "main" } });
+await new Promise((r) => setTimeout(r, 500));
+const goals = await (async () => {
+  // The goal's id comes back on goal.updated; read it from a fresh snapshot.
+  const again = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `Bearer ${token}` } });
+  await new Promise((r) => (again.onopen = r));
+  again.send(JSON.stringify({ type: "subscribe" }));
+  const snap = await new Promise((r) => (again.onmessage = (e) => r(JSON.parse(e.data))));
+  again.close();
+  return snap.goals;
+})();
+const goal = goals.find((g) => g.prefix === prefix);
+if (!goal) throw new Error("goal wasn't saved");
+step(`goal ${goal.name} (${goal.id})`);
+
+send({ type: "task.create", goal: goal.id, title: "Say hello", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+const id = `${prefix}-1`;
+await wait("planning", () => tasks.get(id)?.worker?.role === "planner");
+step(`${id} planning on ${tasks.get(id).machine}`);
+
+let t = await wait("plan", () => tasks.get(id)?.state === "awaitingApproval" && tasks.get(id));
+step(`plan v${t.planVersion}: ${t.plan.length} steps, ${t.doneWhen.length} checks, ${t.mockups.length} mockups, risk ${t.risk.level}`);
+
+send({ type: "task.approvePlan", id });
+await wait("builder", () => tasks.get(id)?.worker?.role === "builder");
+step("approved; builder started");
+
+t = await wait("review round 1", () => tasks.get(id)?.autoReview?.rounds[0]?.verdict === "changesRequested" && tasks.get(id), 60000);
+step(`round 1: ${t.autoReview.findings.length} finding(s); PR #${t.pr.number} at ${t.pr.head?.slice(0, 7)}`);
+
+t = await wait("review round 2", () => tasks.get(id)?.autoReview?.rounds[1]?.verdict === "passed" && tasks.get(id), 90000);
+step(`round 2 passed; findings open: ${t.autoReview.findings.filter((f) => f.status === "open").length}`);
+if (t.doneWhen.some((d) => d.status !== "proven")) throw new Error("not every item is proven");
+
+send({ type: "task.approveChanges", id });
+await wait("review", () => tasks.get(id)?.reviews.length === 1);
+send({ type: "task.merge", id });
+t = await wait("merge", () => tasks.get(id)?.state === "merged" && tasks.get(id), 30000);
+step(`merged: ${t.events.at(-1).text}`);
+
+const origin = execFileSync("git", ["-C", folder, "remote", "get-url", "origin"], { encoding: "utf8" }).trim();
+const hello = execFileSync("git", ["-C", origin, "show", "main:hello.txt"], { encoding: "utf8" });
+if (!hello.includes(id)) throw new Error(`origin's main has ${JSON.stringify(hello)}`);
+step(`origin main has hello.txt: ${JSON.stringify(hello.split("\n")[0])}`);
+console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text}`).join("\n")}`);
+feed.close();
+process.exit(0);

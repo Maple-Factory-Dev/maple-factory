@@ -32,6 +32,12 @@ function uuidString(bytes: Uint8Array): string {
 }
 
 export class MachineHub extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // Runners ping every 20s and drop a connection that's quiet for 60s; answer without waking up.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     switch (url.pathname) {
@@ -51,6 +57,23 @@ export class MachineHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/state": return Response.json(await this.machine());
+      case "/input": {
+        // The factory typing into a session: steering, answers. Text, then Enter on its own, so a
+        // TUI that treats a fast paste-plus-return as a newline still submits.
+        const { session, text } = (await request.json()) as { session: string; text: string };
+        const [runner] = this.ctx.getWebSockets(RUNNER);
+        if (!runner) return new Response("That machine is offline.", { status: 409 });
+        const frame = (bytes: Uint8Array) => {
+          const out = new Uint8Array(16 + bytes.length);
+          out.set(uuidBytes(session));
+          out.set(bytes, 16);
+          return out;
+        };
+        runner.send(frame(new TextEncoder().encode(`\x1b[200~${text}\x1b[201~`)));
+        await new Promise((r) => setTimeout(r, 400));
+        runner.send(frame(new Uint8Array([13])));
+        return new Response(null, { status: 204 });
+      }
     }
     return new Response("Not found.", { status: 404 });
   }
@@ -172,17 +195,33 @@ export class MachineHub extends DurableObject<Env> {
       case "session.opened": {
         const live: LiveSession = { session: msg.session, activity: null };
         await this.publish({ ...machine, sessions: [...machine.sessions.filter((s) => s.session.id !== msg.session.id), live] });
+        if (msg.session.taskId) await this.toFactory(machine.id, msg);
         return;
       }
-      case "session.activity":
+      case "session.activity": {
         await this.publish({
           ...machine,
           sessions: machine.sessions.map((s) => (s.session.id === msg.id ? { ...s, activity: msg.activity } : s)),
         });
+        if (machine.sessions.find((s) => s.session.id === msg.id)?.session.taskId) await this.toFactory(machine.id, msg);
+        return;
+      }
+      case "mcp.request": {
+        const reply = (await this.toFactory(machine.id, msg)) as { result?: unknown; error?: string } | null;
+        this.toRunner({ type: "mcp.response", reqId: msg.reqId, result: reply?.result ?? null, error: reply?.error ?? (reply?.result ? null : "The factory didn't answer.") });
+        return;
+      }
+      case "task.started":
+      case "task.finished":
+      case "task.merged":
+      case "task.cleaned":
+      case "task.token_request":
+        await this.toFactory(machine.id, msg);
         return;
       case "session.ended":
-        await this.recordEnd(machine.id, msg.end, machine.sessions);
+        // The machine first, so the factory sees the session gone when it hears how it ended.
         await this.publish({ ...machine, sessions: machine.sessions.filter((s) => s.session.id !== msg.end.id) });
+        await this.recordEnd(machine.id, msg.end, machine.sessions);
         return;
       case "session.replay": {
         const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
@@ -195,10 +234,18 @@ export class MachineHub extends DurableObject<Env> {
         return;
       }
       case "session.error":
+        await this.toFactory(machine.id, msg);
+        await orgHub(this.env).fetch("https://org/notice", { method: "POST", body: JSON.stringify({ machine: machine.id, msg }) });
+        return;
       case "update.status":
         await orgHub(this.env).fetch("https://org/notice", { method: "POST", body: JSON.stringify({ machine: machine.id, msg }) });
         return;
     }
+  }
+
+  private async toFactory(machine: string, msg: RunnerMessage): Promise<unknown> {
+    const res = await orgHub(this.env).fetch("https://org/runner", { method: "POST", body: JSON.stringify({ machine, msg }) });
+    return res.ok ? res.json() : null;
   }
 
   /** Keeps the end, with its cause, and tells the apps. A `hello` repeats recent ends; the id dedupes. */

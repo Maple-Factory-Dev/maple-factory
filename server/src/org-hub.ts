@@ -1,11 +1,15 @@
 // The org's live feed: every app connection, the latest of every machine, and fan-out of changes.
 // Machines report here from their hubs; apps subscribe and send session commands through here.
+// The factory (goals, tasks and their agent sessions) lives here too, in this object's SQLite.
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Machine, type Member, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, type ClientMessage, type Machine, type Member, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
+import { toMember, type MemberRow } from "./auth.ts";
+import { Store } from "./factory/store.ts";
+import { Engine, FactoryError } from "./factory/engine.ts";
 
 interface Client {
   member: Member;
@@ -13,6 +17,19 @@ interface Client {
 }
 
 export class OrgHub extends DurableObject<Env> {
+  private store: Store;
+  private engine: Engine;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.store = new Store(ctx.storage.sql);
+    this.engine = new Engine(env, this.store, {
+      broadcast: (message) => this.broadcast(message),
+      machines: () => this.machines(),
+      waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     switch (url.pathname) {
@@ -25,14 +42,23 @@ export class OrgHub extends DurableObject<Env> {
       }
       case "/machine": {
         const machine = (await request.json()) as Machine;
+        const before = await this.ctx.storage.get<Machine>(`m:${machine.id}`);
         await this.ctx.storage.put(`m:${machine.id}`, machine);
         this.broadcast({ type: "machine.updated", machine });
+        // Coming online, or a session ending, can free a slot for waiting tasks.
+        if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || !before.health)) await this.engine.pump();
         return new Response(null, { status: 204 });
       }
       case "/ended": {
         const { machine, end } = (await request.json()) as { machine: string; end: SessionEnd };
         this.broadcast({ type: "session.ended", machine, end });
+        await this.engine.fromRunner(machine, { type: "session.ended", end });
         return new Response(null, { status: 204 });
+      }
+      case "/runner": {
+        // A runner message about the factory, from its machine's hub; `mcp.request`s get their answer back.
+        const { machine, msg } = (await request.json()) as { machine: string; msg: RunnerMessage };
+        return Response.json(await this.engine.fromRunner(machine, msg));
       }
       case "/notice": {
         const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null } };
@@ -59,6 +85,11 @@ export class OrgHub extends DurableObject<Env> {
       const reported = live.get(`m:${row.id}`);
       return reported ? { ...reported, name: row.name ?? row.id, owner: row.owner } : offlineMachine(row);
     });
+  }
+
+  private async members(): Promise<Member[]> {
+    const { results } = await this.env.DB.prepare("SELECT * FROM members ORDER BY login").all<MemberRow>();
+    return results.map(toMember);
   }
 
   private async recentEnds(): Promise<EndedSession[]> {
@@ -93,7 +124,17 @@ export class OrgHub extends DurableObject<Env> {
     switch (msg.type) {
       case "subscribe":
         ws.serializeAttachment({ ...client, subscribed: true });
-        this.send(ws, { type: "snapshot", org: this.env.GITHUB_ORG || "local", me: client.member, machines: await this.machines(), ended: await this.recentEnds(), protocolVersion: PROTOCOL_VERSION });
+        this.send(ws, {
+          type: "snapshot",
+          org: this.env.GITHUB_ORG || "local",
+          me: client.member,
+          members: await this.members(),
+          machines: await this.machines(),
+          ended: await this.recentEnds(),
+          goals: this.store.goals(),
+          tasks: this.store.tasks(),
+          protocolVersion: PROTOCOL_VERSION,
+        });
         return;
       case "session.open":
       case "session.kill":
@@ -122,6 +163,17 @@ export class OrgHub extends DurableObject<Env> {
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
         return;
       }
+      case "session.attach":
+      case "session.detach":
+        // Terminals stream over their own socket (/client/terminal).
+        return;
+      default:
+        try {
+          await this.engine.command(msg, client);
+        } catch (e) {
+          if (!(e instanceof FactoryError)) console.error("factory:", e);
+          this.send(ws, { type: "error", message: e instanceof FactoryError ? e.message : "Something went wrong in the factory.", requestId: null });
+        }
     }
   }
 }
