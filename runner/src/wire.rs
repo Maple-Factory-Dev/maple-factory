@@ -35,6 +35,208 @@ pub enum EndCause {
     Unknown,
 }
 
+/// Where a task is in the loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskState {
+    /// Written, not sent to planning yet.
+    Drafting,
+    /// A planner is writing the plan.
+    Planning,
+    /// The plan waits for its approvals.
+    AwaitingApproval,
+    /// Approved: queued for a slot, or a builder is working.
+    Building,
+    /// Pushed: the review agent and people are reviewing it.
+    Reviewing,
+    /// Merged into its base.
+    Merged,
+    /// Stopped.
+    Cancelled,
+}
+
+/// What a factory session is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Role {
+    /// Writes the plan.
+    Planner,
+    /// Builds and proves it.
+    Builder,
+    /// Reviews the change.
+    Reviewer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StepProgress {
+    /// Finished.
+    Done,
+    /// Being worked on.
+    Active,
+    /// Not started.
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProofKind {
+    /// An image.
+    Screenshot,
+    /// A recording.
+    Video,
+    /// A command and its output.
+    Terminal,
+    /// A test run.
+    Tests,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProofStatus {
+    /// No evidence yet.
+    Pending,
+    /// Being proven.
+    Proving,
+    /// Proven.
+    Proven,
+    /// The proof failed.
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeStatus {
+    /// Waiting for the agent.
+    Queued,
+    /// The agent is on it.
+    Applying,
+    /// Done.
+    Applied,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewVerdict {
+    /// Asked for changes.
+    ChangesRequested,
+    /// Passed.
+    Passed,
+    /// Handed to a person.
+    Escalated,
+    /// Reviewing.
+    InProgress,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckVerdict {
+    /// Met.
+    Met,
+    /// Partly met.
+    Partial,
+    /// Missed.
+    Missed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FindingKind {
+    /// Not what was asked.
+    Scope,
+    /// Proof isn't real or enough.
+    Proof,
+    /// Code problem.
+    Code,
+    /// Risk.
+    Risk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Severity {
+    /// Must fix.
+    Blocker,
+    /// Should fix.
+    Major,
+    /// Nice to fix.
+    Minor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FindingStatus {
+    /// Open.
+    Open,
+    /// Fixed (see fixedIn).
+    Fixed,
+    /// The builder disagrees.
+    Disputed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HandReason {
+    /// Review rounds ran out.
+    ReviewLoop,
+    /// Can't produce a proof.
+    ProofBurden,
+    /// Needs more input than the plan has.
+    NeedsInput,
+    /// The fix goes over the size budget.
+    OverBudget,
+    /// Its session ended in a way that needs a person.
+    SessionEnded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MockupStatus {
+    /// Proposed with the plan.
+    Proposed,
+    /// Approved.
+    Approved,
+    /// Someone asked for changes.
+    ChangesRequested,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PRState {
+    /// Draft.
+    Draft,
+    /// Open.
+    Open,
+    /// Merged.
+    Merged,
+    /// Closed without merging.
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckStatus {
+    /// Queued.
+    Queued,
+    /// Running.
+    Running,
+    /// Passed.
+    Passed,
+    /// Failed.
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RiskLevel {
+    /// Low.
+    Low,
+    /// Medium.
+    Medium,
+    /// High.
+    High,
+}
+
 /// What a session's agent is doing, from its hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,6 +375,403 @@ pub struct EndedSession {
     pub end: SessionEnd,
 }
 
+/// A group of tasks with a shared outcome, and where its code lives.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Goal {
+    pub id: String,
+    pub name: String,
+    /// Task ids start with it: ATL-12.
+    pub prefix: String,
+    /// #RRGGBB.
+    pub color: String,
+    pub summary: String,
+    pub lead: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<u64>,
+    /// GitHub owner/name its tasks change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// Or a folder on the machines (local repos, dev).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// The branch tasks start from and merge into (default: the repo's default branch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStep {
+    pub text: String,
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<StepProgress>,
+    /// New in this plan version.
+    pub added: bool,
+    /// What the step said in the previous version, when it changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+}
+
+/// What proves a Done when item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Evidence {
+    pub kind: ProofKind,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passed: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<u32>,
+    /// An uploaded image or video's path under /api/files/.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The agent's role, or a login for "I checked it".
+    pub by: String,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoneItem {
+    pub text: String,
+    pub proof: ProofKind,
+    pub status: ProofStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Evidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comment {
+    pub id: String,
+    /// A login, or an agent like "planner".
+    pub author: String,
+    pub text: String,
+    pub at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    /// Where it came in from, e.g. "Slack #requests".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+}
+
+/// Steering: someone redirecting the planner or builder mid-flight.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeRequest {
+    pub id: String,
+    pub author: String,
+    pub text: String,
+    pub at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    pub status: ChangeStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEvent {
+    pub who: String,
+    pub text: String,
+    pub at: u64,
+}
+
+/// An agent asking a person something it can't decide.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    pub text: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    pub role: Role,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandOption {
+    pub title: String,
+    pub detail: String,
+    pub recommended: bool,
+}
+
+/// An agent stopping to ask a person for help.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hand {
+    pub reason: HandReason,
+    pub summary: String,
+    pub at: u64,
+    pub assignee: String,
+    #[serde(default)]
+    pub options: Vec<HandOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewRound {
+    pub number: u32,
+    pub verdict: ReviewVerdict,
+    pub found: u32,
+    pub at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewCheck {
+    pub text: String,
+    pub verdict: CheckVerdict,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Finding {
+    pub id: String,
+    pub kind: FindingKind,
+    pub severity: Severity,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    pub raised_in: u32,
+    pub status: FindingStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_in: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoReview {
+    pub max_rounds: u32,
+    #[serde(default)]
+    pub rounds: Vec<ReviewRound>,
+    pub summary: String,
+    #[serde(default)]
+    pub ask: Vec<ReviewCheck>,
+    #[serde(default)]
+    pub proofs: Vec<ReviewCheck>,
+    #[serde(default)]
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CICheck {
+    pub name: String,
+    pub status: CheckStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<String>,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequest {
+    pub number: u32,
+    /// On GitHub; none for a local repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub state: PRState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    pub branch: String,
+    pub base: String,
+    #[serde(default)]
+    pub checks: Vec<CICheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MockLine {
+    pub text: String,
+    /// command, output, highlight, dim or error.
+    pub style: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callout: Option<u32>,
+}
+
+/// A picture of the change the planner drew: a screen (HTML) or terminal output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mockup {
+    pub id: String,
+    pub title: String,
+    /// "screen" (html, shown in a browser frame at url) or "terminal" (lines).
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    #[serde(default)]
+    pub lines: Vec<MockLine>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+    pub status: MockupStatus,
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_match: Option<f64>,
+    #[serde(default)]
+    pub differences: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TicketLink {
+    pub system: String,
+    pub key: String,
+    pub title: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub as_context: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Footprint {
+    pub files: u32,
+    pub lines: u32,
+    pub estimated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Risk {
+    pub level: RiskLevel,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default)]
+    pub areas: Vec<String>,
+}
+
+/// The session working on a task right now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Worker {
+    pub role: Role,
+    pub agent: String,
+    pub machine: String,
+    pub session: Uuid,
+    pub started_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diff {
+    pub added: u32,
+    pub removed: u32,
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: String,
+    pub goal: String,
+    pub title: String,
+    pub state: TaskState,
+    /// Login of whoever it belongs to; it runs on their machines first.
+    pub owner: String,
+    /// The Markdown spec it was composed from.
+    pub brief: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    #[serde(default)]
+    pub plan: Vec<PlanStep>,
+    pub plan_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_summary: Option<String>,
+    #[serde(default)]
+    pub done_when: Vec<DoneItem>,
+    #[serde(default)]
+    pub approvals: Vec<String>,
+    pub approvals_needed: u32,
+    #[serde(default)]
+    pub reviews: Vec<String>,
+    pub reviews_needed: u32,
+    #[serde(default)]
+    pub comments: Vec<Comment>,
+    #[serde(default)]
+    pub changes: Vec<ChangeRequest>,
+    #[serde(default)]
+    pub events: Vec<TaskEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<Question>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hand: Option<Hand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<Worker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_log: Option<String>,
+    /// Why it isn't running when it could be: "Waiting for a free slot on your machines".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<PullRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<Diff>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footprint: Option<Footprint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<Risk>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_review: Option<AutoReview>,
+    #[serde(default)]
+    pub mockups: Vec<Mockup>,
+    #[serde(default)]
+    pub tickets: Vec<TicketLink>,
+    pub shareable: bool,
+    /// claude or codex: what builds it.
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Where its worktree lives once building started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+}
+
+/// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeSpec {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    pub existing: bool,
+}
+
+/// The task a session works on, for the runner to set its worktree up.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStart {
+    pub id: String,
+    /// GitHub owner/name; none for a goal that names a folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+}
+
+/// How a factory session treats the agent's permission prompts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Unattended {
+    /// ask (every prompt), project (edits, git and the project's commands) or skip (none).
+    pub mode: String,
+    #[serde(default)]
+    pub commands: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
@@ -242,6 +841,73 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).
+    #[serde(rename = "mcp.request")]
+    McpRequest {
+        req_id: String,
+        session: Uuid,
+        tool: String,
+        args: serde_json::Value,
+    },
+    /// A task's worktree is made: where it came from.
+    #[serde(rename = "task.started")]
+    TaskStarted {
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+        repo_dir: String,
+        base: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
+    #[serde(rename = "task.finished")]
+    TaskFinished {
+        task_id: String,
+        ok: bool,
+        /// app (a GitHub App token) or fallback (the machine's credentials).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pushed: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+        branch: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    #[serde(rename = "task.merged")]
+    TaskMerged {
+        task_id: String,
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    #[serde(rename = "task.cleaned")]
+    TaskCleaned {
+        task_id: String,
+        ok: bool,
+        branch_deleted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// A GitHub token to fetch or push a task's repo.
+    #[serde(rename = "task.token_request")]
+    TaskTokenRequest {
+        req_id: String,
+        task_id: String,
+        owner: String,
+        repo: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        purpose: Option<String>,
+    },
 }
 
 /// Server → runner.
@@ -261,6 +927,14 @@ pub enum ServerToRunner {
         resume: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worktree: Option<WorktreeSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<TaskStart>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unattended: Option<Unattended>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     #[serde(rename = "session.resize")]
     SessionResize {
@@ -283,6 +957,59 @@ pub enum ServerToRunner {
     RunnerUpdate,
     #[serde(rename = "runner.restart")]
     RunnerRestart,
+    /// The answer to `mcp.request`: `result` ({summary, data}) or `error`.
+    #[serde(rename = "mcp.response")]
+    McpResponse {
+        req_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// Commit what's left in a task's worktree and push its branch.
+    #[serde(rename = "task.finish")]
+    TaskFinish {
+        task_id: String,
+        cwd: String,
+        repo_dir: String,
+        branch: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+        title: String,
+        /// Push with the machine's own credentials (no GitHub App).
+        fallback: bool,
+    },
+    /// Merge a task's branch into its base on origin, for repos with no GitHub App.
+    #[serde(rename = "task.merge")]
+    TaskMerge {
+        task_id: String,
+        cwd: String,
+        branch: String,
+        base: String,
+        title: String,
+    },
+    /// Remove a finished task's worktree and local branch if nothing would be lost.
+    #[serde(rename = "task.cleanup")]
+    TaskCleanup {
+        task_id: String,
+        cwd: String,
+        repo_dir: String,
+        branch: String,
+        merged: bool,
+        #[serde(default)]
+        heads: Vec<String>,
+    },
+    /// The answer to `task.token_request`.
+    #[serde(rename = "task.token")]
+    TaskToken {
+        req_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+    },
 }
 
 /// App (macOS, web) → server.
@@ -326,6 +1053,100 @@ pub enum ClientMessage {
         machine: String,
         id: Uuid,
     },
+    #[serde(rename = "goal.save")]
+    GoalSave {
+        goal: Goal,
+    },
+    #[serde(rename = "task.create")]
+    TaskCreate {
+        goal: String,
+        title: String,
+        brief: String,
+        shareable: bool,
+        /// Send it to planning now; otherwise it stays a draft.
+        plan: bool,
+        #[serde(default)]
+        tickets: Vec<TicketLink>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+    },
+    #[serde(rename = "task.edit")]
+    TaskEdit {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        brief: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shareable: Option<bool>,
+    },
+    /// Send a draft to planning.
+    #[serde(rename = "task.plan")]
+    TaskPlan {
+        id: String,
+    },
+    #[serde(rename = "task.comment")]
+    TaskComment {
+        id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<String>,
+    },
+    /// A change request for the planner or builder.
+    #[serde(rename = "task.steer")]
+    TaskSteer {
+        id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<String>,
+    },
+    #[serde(rename = "task.approvePlan")]
+    TaskApprovePlan {
+        id: String,
+    },
+    /// Answer the agent's question.
+    #[serde(rename = "task.answer")]
+    TaskAnswer {
+        id: String,
+        text: String,
+    },
+    #[serde(rename = "task.resolveHand")]
+    TaskResolveHand {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        option: Option<String>,
+        note: String,
+    },
+    #[serde(rename = "task.approveChanges")]
+    TaskApproveChanges {
+        id: String,
+    },
+    #[serde(rename = "task.merge")]
+    TaskMerge {
+        id: String,
+    },
+    #[serde(rename = "task.cancel")]
+    TaskCancel {
+        id: String,
+    },
+    #[serde(rename = "task.retry")]
+    TaskRetry {
+        id: String,
+    },
+    /// "I checked it" for a Done when item.
+    #[serde(rename = "task.checkedIt")]
+    TaskCheckedIt {
+        id: String,
+        item: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    #[serde(rename = "task.mockupChange")]
+    TaskMockupChange {
+        id: String,
+        mockup: String,
+        text: String,
+    },
 }
 
 /// Server → app.
@@ -337,10 +1158,16 @@ pub enum ServerToClient {
         org: String,
         me: Member,
         #[serde(default)]
+        members: Vec<Member>,
+        #[serde(default)]
         machines: Vec<Machine>,
         /// The most recent session ends (last 7 days, newest first).
         #[serde(default)]
         ended: Vec<EndedSession>,
+        #[serde(default)]
+        goals: Vec<Goal>,
+        #[serde(default)]
+        tasks: Vec<Task>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -350,6 +1177,25 @@ pub enum ServerToClient {
     #[serde(rename = "machine.removed")]
     MachineRemoved {
         id: String,
+    },
+    #[serde(rename = "task.updated")]
+    TaskUpdated {
+        task: Task,
+    },
+    #[serde(rename = "task.removed")]
+    TaskRemoved {
+        id: String,
+    },
+    #[serde(rename = "goal.updated")]
+    GoalUpdated {
+        goal: Goal,
+    },
+    /// Something worth a passing line in the app.
+    #[serde(rename = "toast")]
+    Toast {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
     },
     #[serde(rename = "session.ended")]
     SessionEnded {

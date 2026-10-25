@@ -56,6 +56,176 @@ public enum Wire {
         case unknown
     }
 
+    /// Where a task is in the loop.
+    public enum TaskState: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Written, not sent to planning yet.
+        case drafting
+        /// A planner is writing the plan.
+        case planning
+        /// The plan waits for its approvals.
+        case awaitingApproval
+        /// Approved: queued for a slot, or a builder is working.
+        case building
+        /// Pushed: the review agent and people are reviewing it.
+        case reviewing
+        /// Merged into its base.
+        case merged
+        /// Stopped.
+        case cancelled
+    }
+
+    /// What a factory session is for.
+    public enum Role: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Writes the plan.
+        case planner
+        /// Builds and proves it.
+        case builder
+        /// Reviews the change.
+        case reviewer
+    }
+
+    public enum StepProgress: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Finished.
+        case done
+        /// Being worked on.
+        case active
+        /// Not started.
+        case pending
+    }
+
+    public enum ProofKind: String, Codable, Hashable, Sendable, CaseIterable {
+        /// An image.
+        case screenshot
+        /// A recording.
+        case video
+        /// A command and its output.
+        case terminal
+        /// A test run.
+        case tests
+    }
+
+    public enum ProofStatus: String, Codable, Hashable, Sendable, CaseIterable {
+        /// No evidence yet.
+        case pending
+        /// Being proven.
+        case proving
+        /// Proven.
+        case proven
+        /// The proof failed.
+        case failed
+    }
+
+    public enum ChangeStatus: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Waiting for the agent.
+        case queued
+        /// The agent is on it.
+        case applying
+        /// Done.
+        case applied
+    }
+
+    public enum ReviewVerdict: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Asked for changes.
+        case changesRequested
+        /// Passed.
+        case passed
+        /// Handed to a person.
+        case escalated
+        /// Reviewing.
+        case inProgress
+    }
+
+    public enum CheckVerdict: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Met.
+        case met
+        /// Partly met.
+        case partial
+        /// Missed.
+        case missed
+    }
+
+    public enum FindingKind: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Not what was asked.
+        case scope
+        /// Proof isn't real or enough.
+        case proof
+        /// Code problem.
+        case code
+        /// Risk.
+        case risk
+    }
+
+    public enum Severity: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Must fix.
+        case blocker
+        /// Should fix.
+        case major
+        /// Nice to fix.
+        case minor
+    }
+
+    public enum FindingStatus: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Open.
+        case open
+        /// Fixed (see fixedIn).
+        case fixed
+        /// The builder disagrees.
+        case disputed
+    }
+
+    public enum HandReason: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Review rounds ran out.
+        case reviewLoop
+        /// Can't produce a proof.
+        case proofBurden
+        /// Needs more input than the plan has.
+        case needsInput
+        /// The fix goes over the size budget.
+        case overBudget
+        /// Its session ended in a way that needs a person.
+        case sessionEnded
+    }
+
+    public enum MockupStatus: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Proposed with the plan.
+        case proposed
+        /// Approved.
+        case approved
+        /// Someone asked for changes.
+        case changesRequested
+    }
+
+    public enum PRState: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Draft.
+        case draft
+        /// Open.
+        case open
+        /// Merged.
+        case merged
+        /// Closed without merging.
+        case closed
+    }
+
+    public enum CheckStatus: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Queued.
+        case queued
+        /// Running.
+        case running
+        /// Passed.
+        case passed
+        /// Failed.
+        case failed
+    }
+
+    public enum RiskLevel: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Low.
+        case low
+        /// Medium.
+        case medium
+        /// High.
+        case high
+    }
+
     /// What a session's agent is doing, from its hooks.
     public enum AgentState: String, Codable, Hashable, Sendable, CaseIterable {
         /// Running a turn.
@@ -268,6 +438,654 @@ public enum Wire {
         }
     }
 
+    /// A group of tasks with a shared outcome, and where its code lives.
+    public struct Goal: Codable, Hashable, Sendable {
+        public var id: String
+        public var name: String
+        /// Task ids start with it: ATL-12.
+        public var prefix: String
+        /// #RRGGBB.
+        public var color: String
+        public var summary: String
+        public var lead: String
+        public var due: UInt64?
+        /// GitHub owner/name its tasks change.
+        public var repo: String?
+        /// Or a folder on the machines (local repos, dev).
+        public var folder: String?
+        /// The branch tasks start from and merge into (default: the repo's default branch).
+        public var base: String?
+
+        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, folder: String? = nil, base: String? = nil) {
+            self.id = id
+            self.name = name
+            self.prefix = prefix
+            self.color = color
+            self.summary = summary
+            self.lead = lead
+            self.due = due
+            self.repo = repo
+            self.folder = folder
+            self.base = base
+        }
+    }
+
+    public struct PlanStep: Codable, Hashable, Sendable {
+        public var text: String
+        public var file: String
+        public var progress: StepProgress?
+        /// New in this plan version.
+        public var added: Bool
+        /// What the step said in the previous version, when it changed.
+        public var from: String?
+
+        public init(text: String, file: String, progress: StepProgress? = nil, added: Bool, from: String? = nil) {
+            self.text = text
+            self.file = file
+            self.progress = progress
+            self.added = added
+            self.from = from
+        }
+    }
+
+    /// What proves a Done when item.
+    public struct Evidence: Codable, Hashable, Sendable {
+        public var kind: ProofKind
+        public var summary: String
+        public var command: String?
+        public var output: [String]
+        public var passed: UInt32?
+        public var failed: UInt32?
+        /// An uploaded image or video's path under /api/files/.
+        public var file: String?
+        /// The agent's role, or a login for "I checked it".
+        public var by: String
+        public var at: UInt64
+
+        public init(kind: ProofKind, summary: String, command: String? = nil, output: [String] = [], passed: UInt32? = nil, failed: UInt32? = nil, file: String? = nil, by: String, at: UInt64) {
+            self.kind = kind
+            self.summary = summary
+            self.command = command
+            self.output = output
+            self.passed = passed
+            self.failed = failed
+            self.file = file
+            self.by = by
+            self.at = at
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try c.decode(ProofKind.self, forKey: .kind)
+            summary = try c.decode(String.self, forKey: .summary)
+            command = try c.decodeIfPresent(String.self, forKey: .command)
+            output = try c.decodeIfPresent([String].self, forKey: .output) ?? []
+            passed = try c.decodeIfPresent(UInt32.self, forKey: .passed)
+            failed = try c.decodeIfPresent(UInt32.self, forKey: .failed)
+            file = try c.decodeIfPresent(String.self, forKey: .file)
+            by = try c.decode(String.self, forKey: .by)
+            at = try c.decode(UInt64.self, forKey: .at)
+        }
+    }
+
+    public struct DoneItem: Codable, Hashable, Sendable {
+        public var text: String
+        public var proof: ProofKind
+        public var status: ProofStatus
+        public var evidence: Evidence?
+
+        public init(text: String, proof: ProofKind, status: ProofStatus, evidence: Evidence? = nil) {
+            self.text = text
+            self.proof = proof
+            self.status = status
+            self.evidence = evidence
+        }
+    }
+
+    public struct Comment: Codable, Hashable, Sendable {
+        public var id: String
+        /// A login, or an agent like "planner".
+        public var author: String
+        public var text: String
+        public var at: UInt64
+        public var anchor: String?
+        /// Where it came in from, e.g. "Slack #requests".
+        public var via: String?
+
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil) {
+            self.id = id
+            self.author = author
+            self.text = text
+            self.at = at
+            self.anchor = anchor
+            self.via = via
+        }
+    }
+
+    /// Steering: someone redirecting the planner or builder mid-flight.
+    public struct ChangeRequest: Codable, Hashable, Sendable {
+        public var id: String
+        public var author: String
+        public var text: String
+        public var at: UInt64
+        public var anchor: String?
+        public var status: ChangeStatus
+        public var timing: String?
+
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, status: ChangeStatus, timing: String? = nil) {
+            self.id = id
+            self.author = author
+            self.text = text
+            self.at = at
+            self.anchor = anchor
+            self.status = status
+            self.timing = timing
+        }
+    }
+
+    public struct TaskEvent: Codable, Hashable, Sendable {
+        public var who: String
+        public var text: String
+        public var at: UInt64
+
+        public init(who: String, text: String, at: UInt64) {
+            self.who = who
+            self.text = text
+            self.at = at
+        }
+    }
+
+    /// An agent asking a person something it can't decide.
+    public struct Question: Codable, Hashable, Sendable {
+        public var text: String
+        public var options: [String]
+        public var role: Role
+        public var at: UInt64
+
+        public init(text: String, options: [String] = [], role: Role, at: UInt64) {
+            self.text = text
+            self.options = options
+            self.role = role
+            self.at = at
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            text = try c.decode(String.self, forKey: .text)
+            options = try c.decodeIfPresent([String].self, forKey: .options) ?? []
+            role = try c.decode(Role.self, forKey: .role)
+            at = try c.decode(UInt64.self, forKey: .at)
+        }
+    }
+
+    public struct HandOption: Codable, Hashable, Sendable {
+        public var title: String
+        public var detail: String
+        public var recommended: Bool
+
+        public init(title: String, detail: String, recommended: Bool) {
+            self.title = title
+            self.detail = detail
+            self.recommended = recommended
+        }
+    }
+
+    /// An agent stopping to ask a person for help.
+    public struct Hand: Codable, Hashable, Sendable {
+        public var reason: HandReason
+        public var summary: String
+        public var at: UInt64
+        public var assignee: String
+        public var options: [HandOption]
+
+        public init(reason: HandReason, summary: String, at: UInt64, assignee: String, options: [HandOption] = []) {
+            self.reason = reason
+            self.summary = summary
+            self.at = at
+            self.assignee = assignee
+            self.options = options
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            reason = try c.decode(HandReason.self, forKey: .reason)
+            summary = try c.decode(String.self, forKey: .summary)
+            at = try c.decode(UInt64.self, forKey: .at)
+            assignee = try c.decode(String.self, forKey: .assignee)
+            options = try c.decodeIfPresent([HandOption].self, forKey: .options) ?? []
+        }
+    }
+
+    public struct ReviewRound: Codable, Hashable, Sendable {
+        public var number: UInt32
+        public var verdict: ReviewVerdict
+        public var found: UInt32
+        public var at: UInt64
+        public var fix: String?
+
+        public init(number: UInt32, verdict: ReviewVerdict, found: UInt32, at: UInt64, fix: String? = nil) {
+            self.number = number
+            self.verdict = verdict
+            self.found = found
+            self.at = at
+            self.fix = fix
+        }
+    }
+
+    public struct ReviewCheck: Codable, Hashable, Sendable {
+        public var text: String
+        public var verdict: CheckVerdict
+        public var note: String?
+
+        public init(text: String, verdict: CheckVerdict, note: String? = nil) {
+            self.text = text
+            self.verdict = verdict
+            self.note = note
+        }
+    }
+
+    public struct Finding: Codable, Hashable, Sendable {
+        public var id: String
+        public var kind: FindingKind
+        public var severity: Severity
+        public var text: String
+        public var file: String?
+        public var raisedIn: UInt32
+        public var status: FindingStatus
+        public var fixedIn: UInt32?
+
+        public init(id: String, kind: FindingKind, severity: Severity, text: String, file: String? = nil, raisedIn: UInt32, status: FindingStatus, fixedIn: UInt32? = nil) {
+            self.id = id
+            self.kind = kind
+            self.severity = severity
+            self.text = text
+            self.file = file
+            self.raisedIn = raisedIn
+            self.status = status
+            self.fixedIn = fixedIn
+        }
+    }
+
+    public struct AutoReview: Codable, Hashable, Sendable {
+        public var maxRounds: UInt32
+        public var rounds: [ReviewRound]
+        public var summary: String
+        public var ask: [ReviewCheck]
+        public var proofs: [ReviewCheck]
+        public var findings: [Finding]
+
+        public init(maxRounds: UInt32, rounds: [ReviewRound] = [], summary: String, ask: [ReviewCheck] = [], proofs: [ReviewCheck] = [], findings: [Finding] = []) {
+            self.maxRounds = maxRounds
+            self.rounds = rounds
+            self.summary = summary
+            self.ask = ask
+            self.proofs = proofs
+            self.findings = findings
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            maxRounds = try c.decode(UInt32.self, forKey: .maxRounds)
+            rounds = try c.decodeIfPresent([ReviewRound].self, forKey: .rounds) ?? []
+            summary = try c.decode(String.self, forKey: .summary)
+            ask = try c.decodeIfPresent([ReviewCheck].self, forKey: .ask) ?? []
+            proofs = try c.decodeIfPresent([ReviewCheck].self, forKey: .proofs) ?? []
+            findings = try c.decodeIfPresent([Finding].self, forKey: .findings) ?? []
+        }
+    }
+
+    public struct CICheck: Codable, Hashable, Sendable {
+        public var name: String
+        public var status: CheckStatus
+        public var duration: String?
+        public var required: Bool
+
+        public init(name: String, status: CheckStatus, duration: String? = nil, required: Bool) {
+            self.name = name
+            self.status = status
+            self.duration = duration
+            self.required = required
+        }
+    }
+
+    public struct PullRequest: Codable, Hashable, Sendable {
+        public var number: UInt32
+        /// On GitHub; none for a local repo.
+        public var url: String?
+        public var state: PRState
+        public var head: String?
+        public var branch: String
+        public var base: String
+        public var checks: [CICheck]
+
+        public init(number: UInt32, url: String? = nil, state: PRState, head: String? = nil, branch: String, base: String, checks: [CICheck] = []) {
+            self.number = number
+            self.url = url
+            self.state = state
+            self.head = head
+            self.branch = branch
+            self.base = base
+            self.checks = checks
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            number = try c.decode(UInt32.self, forKey: .number)
+            url = try c.decodeIfPresent(String.self, forKey: .url)
+            state = try c.decode(PRState.self, forKey: .state)
+            head = try c.decodeIfPresent(String.self, forKey: .head)
+            branch = try c.decode(String.self, forKey: .branch)
+            base = try c.decode(String.self, forKey: .base)
+            checks = try c.decodeIfPresent([CICheck].self, forKey: .checks) ?? []
+        }
+    }
+
+    public struct MockLine: Codable, Hashable, Sendable {
+        public var text: String
+        /// command, output, highlight, dim or error.
+        public var style: String
+        public var callout: UInt32?
+
+        public init(text: String, style: String, callout: UInt32? = nil) {
+            self.text = text
+            self.style = style
+            self.callout = callout
+        }
+    }
+
+    /// A picture of the change the planner drew: a screen (HTML) or terminal output.
+    public struct Mockup: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+        /// "screen" (html, shown in a browser frame at url) or "terminal" (lines).
+        public var kind: String
+        public var url: String?
+        public var html: String?
+        public var lines: [MockLine]
+        public var notes: [String]
+        public var status: MockupStatus
+        public var version: UInt32
+        public var visualMatch: Double?
+        public var differences: [String]
+
+        public init(id: String, title: String, kind: String, url: String? = nil, html: String? = nil, lines: [MockLine] = [], notes: [String] = [], status: MockupStatus, version: UInt32, visualMatch: Double? = nil, differences: [String] = []) {
+            self.id = id
+            self.title = title
+            self.kind = kind
+            self.url = url
+            self.html = html
+            self.lines = lines
+            self.notes = notes
+            self.status = status
+            self.version = version
+            self.visualMatch = visualMatch
+            self.differences = differences
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            title = try c.decode(String.self, forKey: .title)
+            kind = try c.decode(String.self, forKey: .kind)
+            url = try c.decodeIfPresent(String.self, forKey: .url)
+            html = try c.decodeIfPresent(String.self, forKey: .html)
+            lines = try c.decodeIfPresent([MockLine].self, forKey: .lines) ?? []
+            notes = try c.decodeIfPresent([String].self, forKey: .notes) ?? []
+            status = try c.decode(MockupStatus.self, forKey: .status)
+            version = try c.decode(UInt32.self, forKey: .version)
+            visualMatch = try c.decodeIfPresent(Double.self, forKey: .visualMatch)
+            differences = try c.decodeIfPresent([String].self, forKey: .differences) ?? []
+        }
+    }
+
+    public struct TicketLink: Codable, Hashable, Sendable {
+        public var system: String
+        public var key: String
+        public var title: String
+        public var status: String
+        public var url: String?
+        public var asContext: Bool
+
+        public init(system: String, key: String, title: String, status: String, url: String? = nil, asContext: Bool) {
+            self.system = system
+            self.key = key
+            self.title = title
+            self.status = status
+            self.url = url
+            self.asContext = asContext
+        }
+    }
+
+    public struct Footprint: Codable, Hashable, Sendable {
+        public var files: UInt32
+        public var lines: UInt32
+        public var estimated: Bool
+
+        public init(files: UInt32, lines: UInt32, estimated: Bool) {
+            self.files = files
+            self.lines = lines
+            self.estimated = estimated
+        }
+    }
+
+    public struct Risk: Codable, Hashable, Sendable {
+        public var level: RiskLevel
+        public var reasons: [String]
+        public var areas: [String]
+
+        public init(level: RiskLevel, reasons: [String] = [], areas: [String] = []) {
+            self.level = level
+            self.reasons = reasons
+            self.areas = areas
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            level = try c.decode(RiskLevel.self, forKey: .level)
+            reasons = try c.decodeIfPresent([String].self, forKey: .reasons) ?? []
+            areas = try c.decodeIfPresent([String].self, forKey: .areas) ?? []
+        }
+    }
+
+    /// The session working on a task right now.
+    public struct Worker: Codable, Hashable, Sendable {
+        public var role: Role
+        public var agent: String
+        public var machine: String
+        public var session: String
+        public var startedAt: UInt64
+
+        public init(role: Role, agent: String, machine: String, session: String, startedAt: UInt64) {
+            self.role = role
+            self.agent = agent
+            self.machine = machine
+            self.session = session
+            self.startedAt = startedAt
+        }
+    }
+
+    public struct Diff: Codable, Hashable, Sendable {
+        public var added: UInt32
+        public var removed: UInt32
+        public var files: [String]
+
+        public init(added: UInt32, removed: UInt32, files: [String] = []) {
+            self.added = added
+            self.removed = removed
+            self.files = files
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            added = try c.decode(UInt32.self, forKey: .added)
+            removed = try c.decode(UInt32.self, forKey: .removed)
+            files = try c.decodeIfPresent([String].self, forKey: .files) ?? []
+        }
+    }
+
+    public struct Task: Codable, Hashable, Sendable {
+        public var id: String
+        public var goal: String
+        public var title: String
+        public var state: TaskState
+        /// Login of whoever it belongs to; it runs on their machines first.
+        public var owner: String
+        /// The Markdown spec it was composed from.
+        public var brief: String
+        public var createdAt: UInt64
+        public var updatedAt: UInt64
+        public var plan: [PlanStep]
+        public var planVersion: UInt32
+        public var planSummary: String?
+        public var doneWhen: [DoneItem]
+        public var approvals: [String]
+        public var approvalsNeeded: UInt32
+        public var reviews: [String]
+        public var reviewsNeeded: UInt32
+        public var comments: [Comment]
+        public var changes: [ChangeRequest]
+        public var events: [TaskEvent]
+        public var question: Question?
+        public var hand: Hand?
+        public var worker: Worker?
+        public var liveLog: String?
+        /// Why it isn't running when it could be: "Waiting for a free slot on your machines".
+        public var waiting: String?
+        public var pr: PullRequest?
+        public var diff: Diff?
+        public var footprint: Footprint?
+        public var risk: Risk?
+        public var autoReview: AutoReview?
+        public var mockups: [Mockup]
+        public var tickets: [TicketLink]
+        public var shareable: Bool
+        /// claude or codex: what builds it.
+        public var agent: String
+        public var branch: String?
+        /// Where its worktree lives once building started.
+        public var machine: String?
+
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil) {
+            self.id = id
+            self.goal = goal
+            self.title = title
+            self.state = state
+            self.owner = owner
+            self.brief = brief
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.plan = plan
+            self.planVersion = planVersion
+            self.planSummary = planSummary
+            self.doneWhen = doneWhen
+            self.approvals = approvals
+            self.approvalsNeeded = approvalsNeeded
+            self.reviews = reviews
+            self.reviewsNeeded = reviewsNeeded
+            self.comments = comments
+            self.changes = changes
+            self.events = events
+            self.question = question
+            self.hand = hand
+            self.worker = worker
+            self.liveLog = liveLog
+            self.waiting = waiting
+            self.pr = pr
+            self.diff = diff
+            self.footprint = footprint
+            self.risk = risk
+            self.autoReview = autoReview
+            self.mockups = mockups
+            self.tickets = tickets
+            self.shareable = shareable
+            self.agent = agent
+            self.branch = branch
+            self.machine = machine
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            goal = try c.decode(String.self, forKey: .goal)
+            title = try c.decode(String.self, forKey: .title)
+            state = try c.decode(TaskState.self, forKey: .state)
+            owner = try c.decode(String.self, forKey: .owner)
+            brief = try c.decode(String.self, forKey: .brief)
+            createdAt = try c.decode(UInt64.self, forKey: .createdAt)
+            updatedAt = try c.decode(UInt64.self, forKey: .updatedAt)
+            plan = try c.decodeIfPresent([PlanStep].self, forKey: .plan) ?? []
+            planVersion = try c.decode(UInt32.self, forKey: .planVersion)
+            planSummary = try c.decodeIfPresent(String.self, forKey: .planSummary)
+            doneWhen = try c.decodeIfPresent([DoneItem].self, forKey: .doneWhen) ?? []
+            approvals = try c.decodeIfPresent([String].self, forKey: .approvals) ?? []
+            approvalsNeeded = try c.decode(UInt32.self, forKey: .approvalsNeeded)
+            reviews = try c.decodeIfPresent([String].self, forKey: .reviews) ?? []
+            reviewsNeeded = try c.decode(UInt32.self, forKey: .reviewsNeeded)
+            comments = try c.decodeIfPresent([Comment].self, forKey: .comments) ?? []
+            changes = try c.decodeIfPresent([ChangeRequest].self, forKey: .changes) ?? []
+            events = try c.decodeIfPresent([TaskEvent].self, forKey: .events) ?? []
+            question = try c.decodeIfPresent(Question.self, forKey: .question)
+            hand = try c.decodeIfPresent(Hand.self, forKey: .hand)
+            worker = try c.decodeIfPresent(Worker.self, forKey: .worker)
+            liveLog = try c.decodeIfPresent(String.self, forKey: .liveLog)
+            waiting = try c.decodeIfPresent(String.self, forKey: .waiting)
+            pr = try c.decodeIfPresent(PullRequest.self, forKey: .pr)
+            diff = try c.decodeIfPresent(Diff.self, forKey: .diff)
+            footprint = try c.decodeIfPresent(Footprint.self, forKey: .footprint)
+            risk = try c.decodeIfPresent(Risk.self, forKey: .risk)
+            autoReview = try c.decodeIfPresent(AutoReview.self, forKey: .autoReview)
+            mockups = try c.decodeIfPresent([Mockup].self, forKey: .mockups) ?? []
+            tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
+            shareable = try c.decode(Bool.self, forKey: .shareable)
+            agent = try c.decode(String.self, forKey: .agent)
+            branch = try c.decodeIfPresent(String.self, forKey: .branch)
+            machine = try c.decodeIfPresent(String.self, forKey: .machine)
+        }
+    }
+
+    /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
+    public struct WorktreeSpec: Codable, Hashable, Sendable {
+        public var name: String
+        public var base: String?
+        public var existing: Bool
+
+        public init(name: String, base: String? = nil, existing: Bool) {
+            self.name = name
+            self.base = base
+            self.existing = existing
+        }
+    }
+
+    /// The task a session works on, for the runner to set its worktree up.
+    public struct TaskStart: Codable, Hashable, Sendable {
+        public var id: String
+        /// GitHub owner/name; none for a goal that names a folder.
+        public var repo: String?
+
+        public init(id: String, repo: String? = nil) {
+            self.id = id
+            self.repo = repo
+        }
+    }
+
+    /// How a factory session treats the agent's permission prompts.
+    public struct Unattended: Codable, Hashable, Sendable {
+        /// ask (every prompt), project (edits, git and the project's commands) or skip (none).
+        public var mode: String
+        public var commands: [String]
+
+        public init(mode: String, commands: [String] = []) {
+            self.mode = mode
+            self.commands = commands
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            mode = try c.decode(String.self, forKey: .mode)
+            commands = try c.decodeIfPresent([String].self, forKey: .commands) ?? []
+        }
+    }
+
     public struct Member: Codable, Hashable, Sendable {
         public var login: String
         public var name: String?
@@ -396,6 +1214,110 @@ public enum Wire {
         }
     }
 
+    /// A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).
+    public struct RunnerMessageMcpRequest: Codable, Hashable, Sendable {
+        public var reqId: String
+        public var session: String
+        public var tool: String
+        public var args: JSONValue
+
+        public init(reqId: String, session: String, tool: String, args: JSONValue) {
+            self.reqId = reqId
+            self.session = session
+            self.tool = tool
+            self.args = args
+        }
+    }
+
+    /// A task's worktree is made: where it came from.
+    public struct RunnerMessageTaskStarted: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var repo: String?
+        public var repoDir: String
+        public var base: String
+        public var project: String?
+
+        public init(taskId: String, repo: String? = nil, repoDir: String, base: String, project: String? = nil) {
+            self.taskId = taskId
+            self.repo = repo
+            self.repoDir = repoDir
+            self.base = base
+            self.project = project
+        }
+    }
+
+    public struct RunnerMessageTaskFinished: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var ok: Bool
+        /// app (a GitHub App token) or fallback (the machine's credentials).
+        public var pushed: String?
+        public var owner: String?
+        public var repo: String?
+        public var branch: String
+        public var base: String?
+        public var commit: String?
+        public var reason: String?
+        public var message: String?
+
+        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil) {
+            self.taskId = taskId
+            self.ok = ok
+            self.pushed = pushed
+            self.owner = owner
+            self.repo = repo
+            self.branch = branch
+            self.base = base
+            self.commit = commit
+            self.reason = reason
+            self.message = message
+        }
+    }
+
+    public struct RunnerMessageTaskMerged: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var ok: Bool
+        public var commit: String?
+        public var message: String?
+
+        public init(taskId: String, ok: Bool, commit: String? = nil, message: String? = nil) {
+            self.taskId = taskId
+            self.ok = ok
+            self.commit = commit
+            self.message = message
+        }
+    }
+
+    public struct RunnerMessageTaskCleaned: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var ok: Bool
+        public var branchDeleted: Bool
+        public var message: String?
+
+        public init(taskId: String, ok: Bool, branchDeleted: Bool, message: String? = nil) {
+            self.taskId = taskId
+            self.ok = ok
+            self.branchDeleted = branchDeleted
+            self.message = message
+        }
+    }
+
+    /// A GitHub token to fetch or push a task's repo.
+    public struct RunnerMessageTaskTokenRequest: Codable, Hashable, Sendable {
+        public var reqId: String
+        public var taskId: String
+        public var owner: String
+        public var repo: String
+        public var purpose: String?
+
+        public init(reqId: String, taskId: String, owner: String, repo: String, purpose: String? = nil) {
+            self.reqId = reqId
+            self.taskId = taskId
+            self.owner = owner
+            self.repo = repo
+            self.purpose = purpose
+        }
+    }
+
     /// Runner → server.
     public enum RunnerMessage: Codable, Hashable, Sendable {
         case hello(RunnerMessageHello)
@@ -406,6 +1328,12 @@ public enum Wire {
         case sessionActivity(RunnerMessageSessionActivity)
         case sessionReplay(RunnerMessageSessionReplay)
         case updateStatus(RunnerMessageUpdateStatus)
+        case mcpRequest(RunnerMessageMcpRequest)
+        case taskStarted(RunnerMessageTaskStarted)
+        case taskFinished(RunnerMessageTaskFinished)
+        case taskMerged(RunnerMessageTaskMerged)
+        case taskCleaned(RunnerMessageTaskCleaned)
+        case taskTokenRequest(RunnerMessageTaskTokenRequest)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -422,6 +1350,12 @@ public enum Wire {
             case "session.activity": self = .sessionActivity(try RunnerMessageSessionActivity(from: decoder))
             case "session.replay": self = .sessionReplay(try RunnerMessageSessionReplay(from: decoder))
             case "update.status": self = .updateStatus(try RunnerMessageUpdateStatus(from: decoder))
+            case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
+            case "task.started": self = .taskStarted(try RunnerMessageTaskStarted(from: decoder))
+            case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
+            case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
+            case "task.cleaned": self = .taskCleaned(try RunnerMessageTaskCleaned(from: decoder))
+            case "task.token_request": self = .taskTokenRequest(try RunnerMessageTaskTokenRequest(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -453,6 +1387,24 @@ public enum Wire {
             case .updateStatus(let body):
                 try c.encode("update.status", forKey: .type)
                 try body.encode(to: encoder)
+            case .mcpRequest(let body):
+                try c.encode("mcp.request", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskStarted(let body):
+                try c.encode("task.started", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskFinished(let body):
+                try c.encode("task.finished", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMerged(let body):
+                try c.encode("task.merged", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCleaned(let body):
+                try c.encode("task.cleaned", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskTokenRequest(let body):
+                try c.encode("task.token_request", forKey: .type)
+                try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
             }
@@ -469,8 +1421,12 @@ public enum Wire {
         /// Continue the agent's last conversation in `cwd` (claude --resume / codex resume).
         public var resume: Bool
         public var taskId: String?
+        public var worktree: WorktreeSpec?
+        public var task: TaskStart?
+        public var unattended: Unattended?
+        public var model: String?
 
-        public init(id: String, agent: String, cwd: String, cols: UInt16, rows: UInt16, prompt: String? = nil, resume: Bool, taskId: String? = nil) {
+        public init(id: String, agent: String, cwd: String, cols: UInt16, rows: UInt16, prompt: String? = nil, resume: Bool, taskId: String? = nil, worktree: WorktreeSpec? = nil, task: TaskStart? = nil, unattended: Unattended? = nil, model: String? = nil) {
             self.id = id
             self.agent = agent
             self.cwd = cwd
@@ -479,6 +1435,10 @@ public enum Wire {
             self.prompt = prompt
             self.resume = resume
             self.taskId = taskId
+            self.worktree = worktree
+            self.task = task
+            self.unattended = unattended
+            self.model = model
         }
     }
 
@@ -514,6 +1474,102 @@ public enum Wire {
         }
     }
 
+    /// The answer to `mcp.request`: `result` ({summary, data}) or `error`.
+    public struct ServerToRunnerMcpResponse: Codable, Hashable, Sendable {
+        public var reqId: String
+        public var result: JSONValue?
+        public var error: String?
+
+        public init(reqId: String, result: JSONValue? = nil, error: String? = nil) {
+            self.reqId = reqId
+            self.result = result
+            self.error = error
+        }
+    }
+
+    /// Commit what's left in a task's worktree and push its branch.
+    public struct ServerToRunnerTaskFinish: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var cwd: String
+        public var repoDir: String
+        public var branch: String
+        public var base: String?
+        public var title: String
+        /// Push with the machine's own credentials (no GitHub App).
+        public var fallback: Bool
+
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool) {
+            self.taskId = taskId
+            self.cwd = cwd
+            self.repoDir = repoDir
+            self.branch = branch
+            self.base = base
+            self.title = title
+            self.fallback = fallback
+        }
+    }
+
+    /// Merge a task's branch into its base on origin, for repos with no GitHub App.
+    public struct ServerToRunnerTaskMerge: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var cwd: String
+        public var branch: String
+        public var base: String
+        public var title: String
+
+        public init(taskId: String, cwd: String, branch: String, base: String, title: String) {
+            self.taskId = taskId
+            self.cwd = cwd
+            self.branch = branch
+            self.base = base
+            self.title = title
+        }
+    }
+
+    /// Remove a finished task's worktree and local branch if nothing would be lost.
+    public struct ServerToRunnerTaskCleanup: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var cwd: String
+        public var repoDir: String
+        public var branch: String
+        public var merged: Bool
+        public var heads: [String]
+
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, merged: Bool, heads: [String] = []) {
+            self.taskId = taskId
+            self.cwd = cwd
+            self.repoDir = repoDir
+            self.branch = branch
+            self.merged = merged
+            self.heads = heads
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            taskId = try c.decode(String.self, forKey: .taskId)
+            cwd = try c.decode(String.self, forKey: .cwd)
+            repoDir = try c.decode(String.self, forKey: .repoDir)
+            branch = try c.decode(String.self, forKey: .branch)
+            merged = try c.decode(Bool.self, forKey: .merged)
+            heads = try c.decodeIfPresent([String].self, forKey: .heads) ?? []
+        }
+    }
+
+    /// The answer to `task.token_request`.
+    public struct ServerToRunnerTaskToken: Codable, Hashable, Sendable {
+        public var reqId: String
+        public var token: String?
+        public var error: String?
+        public var code: String?
+
+        public init(reqId: String, token: String? = nil, error: String? = nil, code: String? = nil) {
+            self.reqId = reqId
+            self.token = token
+            self.error = error
+            self.code = code
+        }
+    }
+
     /// Server → runner.
     public enum ServerToRunner: Codable, Hashable, Sendable {
         case sessionOpen(ServerToRunnerSessionOpen)
@@ -522,6 +1578,11 @@ public enum Wire {
         case sessionReplay(ServerToRunnerSessionReplay)
         case runnerUpdate
         case runnerRestart
+        case mcpResponse(ServerToRunnerMcpResponse)
+        case taskFinish(ServerToRunnerTaskFinish)
+        case taskMerge(ServerToRunnerTaskMerge)
+        case taskCleanup(ServerToRunnerTaskCleanup)
+        case taskToken(ServerToRunnerTaskToken)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -536,6 +1597,11 @@ public enum Wire {
             case "session.replay": self = .sessionReplay(try ServerToRunnerSessionReplay(from: decoder))
             case "runner.update": self = .runnerUpdate
             case "runner.restart": self = .runnerRestart
+            case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
+            case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
+            case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
+            case "task.cleanup": self = .taskCleanup(try ServerToRunnerTaskCleanup(from: decoder))
+            case "task.token": self = .taskToken(try ServerToRunnerTaskToken(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -559,6 +1625,21 @@ public enum Wire {
                 try c.encode("runner.update", forKey: .type)
             case .runnerRestart:
                 try c.encode("runner.restart", forKey: .type)
+            case .mcpResponse(let body):
+                try c.encode("mcp.response", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskFinish(let body):
+                try c.encode("task.finish", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMerge(let body):
+                try c.encode("task.merge", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCleanup(let body):
+                try c.encode("task.cleanup", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskToken(let body):
+                try c.encode("task.token", forKey: .type)
+                try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
             }
@@ -630,6 +1711,182 @@ public enum Wire {
         }
     }
 
+    public struct ClientMessageGoalSave: Codable, Hashable, Sendable {
+        public var goal: Goal
+
+        public init(goal: Goal) {
+            self.goal = goal
+        }
+    }
+
+    public struct ClientMessageTaskCreate: Codable, Hashable, Sendable {
+        public var goal: String
+        public var title: String
+        public var brief: String
+        public var shareable: Bool
+        /// Send it to planning now; otherwise it stays a draft.
+        public var plan: Bool
+        public var tickets: [TicketLink]
+        public var agent: String?
+
+        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil) {
+            self.goal = goal
+            self.title = title
+            self.brief = brief
+            self.shareable = shareable
+            self.plan = plan
+            self.tickets = tickets
+            self.agent = agent
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            goal = try c.decode(String.self, forKey: .goal)
+            title = try c.decode(String.self, forKey: .title)
+            brief = try c.decode(String.self, forKey: .brief)
+            shareable = try c.decode(Bool.self, forKey: .shareable)
+            plan = try c.decode(Bool.self, forKey: .plan)
+            tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
+            agent = try c.decodeIfPresent(String.self, forKey: .agent)
+        }
+    }
+
+    public struct ClientMessageTaskEdit: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String?
+        public var brief: String?
+        public var shareable: Bool?
+
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil) {
+            self.id = id
+            self.title = title
+            self.brief = brief
+            self.shareable = shareable
+        }
+    }
+
+    /// Send a draft to planning.
+    public struct ClientMessageTaskPlan: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    public struct ClientMessageTaskComment: Codable, Hashable, Sendable {
+        public var id: String
+        public var text: String
+        public var anchor: String?
+
+        public init(id: String, text: String, anchor: String? = nil) {
+            self.id = id
+            self.text = text
+            self.anchor = anchor
+        }
+    }
+
+    /// A change request for the planner or builder.
+    public struct ClientMessageTaskSteer: Codable, Hashable, Sendable {
+        public var id: String
+        public var text: String
+        public var anchor: String?
+
+        public init(id: String, text: String, anchor: String? = nil) {
+            self.id = id
+            self.text = text
+            self.anchor = anchor
+        }
+    }
+
+    public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// Answer the agent's question.
+    public struct ClientMessageTaskAnswer: Codable, Hashable, Sendable {
+        public var id: String
+        public var text: String
+
+        public init(id: String, text: String) {
+            self.id = id
+            self.text = text
+        }
+    }
+
+    public struct ClientMessageTaskResolveHand: Codable, Hashable, Sendable {
+        public var id: String
+        public var option: String?
+        public var note: String
+
+        public init(id: String, option: String? = nil, note: String) {
+            self.id = id
+            self.option = option
+            self.note = note
+        }
+    }
+
+    public struct ClientMessageTaskApproveChanges: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    public struct ClientMessageTaskMerge: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    public struct ClientMessageTaskCancel: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    public struct ClientMessageTaskRetry: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// "I checked it" for a Done when item.
+    public struct ClientMessageTaskCheckedIt: Codable, Hashable, Sendable {
+        public var id: String
+        public var item: UInt32
+        public var note: String?
+
+        public init(id: String, item: UInt32, note: String? = nil) {
+            self.id = id
+            self.item = item
+            self.note = note
+        }
+    }
+
+    public struct ClientMessageTaskMockupChange: Codable, Hashable, Sendable {
+        public var id: String
+        public var mockup: String
+        public var text: String
+
+        public init(id: String, mockup: String, text: String) {
+            self.id = id
+            self.mockup = mockup
+            self.text = text
+        }
+    }
+
     /// App (macOS, web) → server.
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
@@ -638,6 +1895,21 @@ public enum Wire {
         case sessionDetach(ClientMessageSessionDetach)
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
+        case goalSave(ClientMessageGoalSave)
+        case taskCreate(ClientMessageTaskCreate)
+        case taskEdit(ClientMessageTaskEdit)
+        case taskPlan(ClientMessageTaskPlan)
+        case taskComment(ClientMessageTaskComment)
+        case taskSteer(ClientMessageTaskSteer)
+        case taskApprovePlan(ClientMessageTaskApprovePlan)
+        case taskAnswer(ClientMessageTaskAnswer)
+        case taskResolveHand(ClientMessageTaskResolveHand)
+        case taskApproveChanges(ClientMessageTaskApproveChanges)
+        case taskMerge(ClientMessageTaskMerge)
+        case taskCancel(ClientMessageTaskCancel)
+        case taskRetry(ClientMessageTaskRetry)
+        case taskCheckedIt(ClientMessageTaskCheckedIt)
+        case taskMockupChange(ClientMessageTaskMockupChange)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -652,6 +1924,21 @@ public enum Wire {
             case "session.detach": self = .sessionDetach(try ClientMessageSessionDetach(from: decoder))
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
+            case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
+            case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
+            case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
+            case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
+            case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
+            case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
+            case "task.approvePlan": self = .taskApprovePlan(try ClientMessageTaskApprovePlan(from: decoder))
+            case "task.answer": self = .taskAnswer(try ClientMessageTaskAnswer(from: decoder))
+            case "task.resolveHand": self = .taskResolveHand(try ClientMessageTaskResolveHand(from: decoder))
+            case "task.approveChanges": self = .taskApproveChanges(try ClientMessageTaskApproveChanges(from: decoder))
+            case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
+            case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
+            case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
+            case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
+            case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -676,6 +1963,51 @@ public enum Wire {
             case .sessionKill(let body):
                 try c.encode("session.kill", forKey: .type)
                 try body.encode(to: encoder)
+            case .goalSave(let body):
+                try c.encode("goal.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCreate(let body):
+                try c.encode("task.create", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskEdit(let body):
+                try c.encode("task.edit", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskPlan(let body):
+                try c.encode("task.plan", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskComment(let body):
+                try c.encode("task.comment", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskSteer(let body):
+                try c.encode("task.steer", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskApprovePlan(let body):
+                try c.encode("task.approvePlan", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskAnswer(let body):
+                try c.encode("task.answer", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskResolveHand(let body):
+                try c.encode("task.resolveHand", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskApproveChanges(let body):
+                try c.encode("task.approveChanges", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMerge(let body):
+                try c.encode("task.merge", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCancel(let body):
+                try c.encode("task.cancel", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRetry(let body):
+                try c.encode("task.retry", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCheckedIt(let body):
+                try c.encode("task.checkedIt", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMockupChange(let body):
+                try c.encode("task.mockupChange", forKey: .type)
+                try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
             }
@@ -685,16 +2017,22 @@ public enum Wire {
     public struct ServerToClientSnapshot: Codable, Hashable, Sendable {
         public var org: String
         public var me: Member
+        public var members: [Member]
         public var machines: [Machine]
         /// The most recent session ends (last 7 days, newest first).
         public var ended: [EndedSession]
+        public var goals: [Goal]
+        public var tasks: [Task]
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, machines: [Machine] = [], ended: [EndedSession] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], protocolVersion: UInt32) {
             self.org = org
             self.me = me
+            self.members = members
             self.machines = machines
             self.ended = ended
+            self.goals = goals
+            self.tasks = tasks
             self.protocolVersion = protocolVersion
         }
 
@@ -702,8 +2040,11 @@ public enum Wire {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             org = try c.decode(String.self, forKey: .org)
             me = try c.decode(Member.self, forKey: .me)
+            members = try c.decodeIfPresent([Member].self, forKey: .members) ?? []
             machines = try c.decodeIfPresent([Machine].self, forKey: .machines) ?? []
             ended = try c.decodeIfPresent([EndedSession].self, forKey: .ended) ?? []
+            goals = try c.decodeIfPresent([Goal].self, forKey: .goals) ?? []
+            tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -721,6 +2062,41 @@ public enum Wire {
 
         public init(id: String) {
             self.id = id
+        }
+    }
+
+    public struct ServerToClientTaskUpdated: Codable, Hashable, Sendable {
+        public var task: Task
+
+        public init(task: Task) {
+            self.task = task
+        }
+    }
+
+    public struct ServerToClientTaskRemoved: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    public struct ServerToClientGoalUpdated: Codable, Hashable, Sendable {
+        public var goal: Goal
+
+        public init(goal: Goal) {
+            self.goal = goal
+        }
+    }
+
+    /// Something worth a passing line in the app.
+    public struct ServerToClientToast: Codable, Hashable, Sendable {
+        public var text: String
+        public var taskId: String?
+
+        public init(text: String, taskId: String? = nil) {
+            self.text = text
+            self.taskId = taskId
         }
     }
 
@@ -749,6 +2125,10 @@ public enum Wire {
         case snapshot(ServerToClientSnapshot)
         case machineUpdated(ServerToClientMachineUpdated)
         case machineRemoved(ServerToClientMachineRemoved)
+        case taskUpdated(ServerToClientTaskUpdated)
+        case taskRemoved(ServerToClientTaskRemoved)
+        case goalUpdated(ServerToClientGoalUpdated)
+        case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case error(ServerToClientError)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -762,6 +2142,10 @@ public enum Wire {
             case "snapshot": self = .snapshot(try ServerToClientSnapshot(from: decoder))
             case "machine.updated": self = .machineUpdated(try ServerToClientMachineUpdated(from: decoder))
             case "machine.removed": self = .machineRemoved(try ServerToClientMachineRemoved(from: decoder))
+            case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
+            case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
+            case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
+            case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
             default: self = .unknown(type)
@@ -779,6 +2163,18 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .machineRemoved(let body):
                 try c.encode("machine.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskUpdated(let body):
+                try c.encode("task.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRemoved(let body):
+                try c.encode("task.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .goalUpdated(let body):
+                try c.encode("goal.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .toast(let body):
+                try c.encode("toast", forKey: .type)
                 try body.encode(to: encoder)
             case .sessionEnded(let body):
                 try c.encode("session.ended", forKey: .type)

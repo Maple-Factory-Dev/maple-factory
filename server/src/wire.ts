@@ -6,6 +6,56 @@ export const PROTOCOL_VERSION = 1;
 export type EndCause = "exited" | "killed" | "signaled" | "outOfMemory" | "machineSlept" | "tmuxLost" | "runnerUpdated" | "authExpired" | "usageLimit" | "unknown";
 export const EndCauseValues: readonly EndCause[] = ["exited","killed","signaled","outOfMemory","machineSlept","tmuxLost","runnerUpdated","authExpired","usageLimit","unknown"];
 
+/** Where a task is in the loop. */
+export type TaskState = "drafting" | "planning" | "awaitingApproval" | "building" | "reviewing" | "merged" | "cancelled";
+export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","building","reviewing","merged","cancelled"];
+
+/** What a factory session is for. */
+export type Role = "planner" | "builder" | "reviewer";
+export const RoleValues: readonly Role[] = ["planner","builder","reviewer"];
+
+export type StepProgress = "done" | "active" | "pending";
+export const StepProgressValues: readonly StepProgress[] = ["done","active","pending"];
+
+export type ProofKind = "screenshot" | "video" | "terminal" | "tests";
+export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","terminal","tests"];
+
+export type ProofStatus = "pending" | "proving" | "proven" | "failed";
+export const ProofStatusValues: readonly ProofStatus[] = ["pending","proving","proven","failed"];
+
+export type ChangeStatus = "queued" | "applying" | "applied";
+export const ChangeStatusValues: readonly ChangeStatus[] = ["queued","applying","applied"];
+
+export type ReviewVerdict = "changesRequested" | "passed" | "escalated" | "inProgress";
+export const ReviewVerdictValues: readonly ReviewVerdict[] = ["changesRequested","passed","escalated","inProgress"];
+
+export type CheckVerdict = "met" | "partial" | "missed";
+export const CheckVerdictValues: readonly CheckVerdict[] = ["met","partial","missed"];
+
+export type FindingKind = "scope" | "proof" | "code" | "risk";
+export const FindingKindValues: readonly FindingKind[] = ["scope","proof","code","risk"];
+
+export type Severity = "blocker" | "major" | "minor";
+export const SeverityValues: readonly Severity[] = ["blocker","major","minor"];
+
+export type FindingStatus = "open" | "fixed" | "disputed";
+export const FindingStatusValues: readonly FindingStatus[] = ["open","fixed","disputed"];
+
+export type HandReason = "reviewLoop" | "proofBurden" | "needsInput" | "overBudget" | "sessionEnded";
+export const HandReasonValues: readonly HandReason[] = ["reviewLoop","proofBurden","needsInput","overBudget","sessionEnded"];
+
+export type MockupStatus = "proposed" | "approved" | "changesRequested";
+export const MockupStatusValues: readonly MockupStatus[] = ["proposed","approved","changesRequested"];
+
+export type PRState = "draft" | "open" | "merged" | "closed";
+export const PRStateValues: readonly PRState[] = ["draft","open","merged","closed"];
+
+export type CheckStatus = "queued" | "running" | "passed" | "failed";
+export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","passed","failed"];
+
+export type RiskLevel = "low" | "medium" | "high";
+export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
+
 /** What a session's agent is doing, from its hooks. */
 export type AgentState = "working" | "waiting" | "done" | "idle";
 export const AgentStateValues: readonly AgentState[] = ["working","waiting","done","idle"];
@@ -96,6 +146,283 @@ export interface EndedSession {
   end: SessionEnd;
 }
 
+/** A group of tasks with a shared outcome, and where its code lives. */
+export interface Goal {
+  id: string;
+  name: string;
+  /** Task ids start with it: ATL-12. */
+  prefix: string;
+  /** #RRGGBB. */
+  color: string;
+  summary: string;
+  lead: string;
+  due?: number | null;
+  /** GitHub owner/name its tasks change. */
+  repo?: string | null;
+  /** Or a folder on the machines (local repos, dev). */
+  folder?: string | null;
+  /** The branch tasks start from and merge into (default: the repo's default branch). */
+  base?: string | null;
+}
+
+export interface PlanStep {
+  text: string;
+  file: string;
+  progress?: StepProgress | null;
+  /** New in this plan version. */
+  added: boolean;
+  /** What the step said in the previous version, when it changed. */
+  from?: string | null;
+}
+
+/** What proves a Done when item. */
+export interface Evidence {
+  kind: ProofKind;
+  summary: string;
+  command?: string | null;
+  output: string[];
+  passed?: number | null;
+  failed?: number | null;
+  /** An uploaded image or video's path under /api/files/. */
+  file?: string | null;
+  /** The agent's role, or a login for "I checked it". */
+  by: string;
+  at: number;
+}
+
+export interface DoneItem {
+  text: string;
+  proof: ProofKind;
+  status: ProofStatus;
+  evidence?: Evidence | null;
+}
+
+export interface Comment {
+  id: string;
+  /** A login, or an agent like "planner". */
+  author: string;
+  text: string;
+  at: number;
+  anchor?: string | null;
+  /** Where it came in from, e.g. "Slack #requests". */
+  via?: string | null;
+}
+
+/** Steering: someone redirecting the planner or builder mid-flight. */
+export interface ChangeRequest {
+  id: string;
+  author: string;
+  text: string;
+  at: number;
+  anchor?: string | null;
+  status: ChangeStatus;
+  timing?: string | null;
+}
+
+export interface TaskEvent {
+  who: string;
+  text: string;
+  at: number;
+}
+
+/** An agent asking a person something it can't decide. */
+export interface Question {
+  text: string;
+  options: string[];
+  role: Role;
+  at: number;
+}
+
+export interface HandOption {
+  title: string;
+  detail: string;
+  recommended: boolean;
+}
+
+/** An agent stopping to ask a person for help. */
+export interface Hand {
+  reason: HandReason;
+  summary: string;
+  at: number;
+  assignee: string;
+  options: HandOption[];
+}
+
+export interface ReviewRound {
+  number: number;
+  verdict: ReviewVerdict;
+  found: number;
+  at: number;
+  fix?: string | null;
+}
+
+export interface ReviewCheck {
+  text: string;
+  verdict: CheckVerdict;
+  note?: string | null;
+}
+
+export interface Finding {
+  id: string;
+  kind: FindingKind;
+  severity: Severity;
+  text: string;
+  file?: string | null;
+  raisedIn: number;
+  status: FindingStatus;
+  fixedIn?: number | null;
+}
+
+export interface AutoReview {
+  maxRounds: number;
+  rounds: ReviewRound[];
+  summary: string;
+  ask: ReviewCheck[];
+  proofs: ReviewCheck[];
+  findings: Finding[];
+}
+
+export interface CICheck {
+  name: string;
+  status: CheckStatus;
+  duration?: string | null;
+  required: boolean;
+}
+
+export interface PullRequest {
+  number: number;
+  /** On GitHub; none for a local repo. */
+  url?: string | null;
+  state: PRState;
+  head?: string | null;
+  branch: string;
+  base: string;
+  checks: CICheck[];
+}
+
+export interface MockLine {
+  text: string;
+  /** command, output, highlight, dim or error. */
+  style: string;
+  callout?: number | null;
+}
+
+/** A picture of the change the planner drew: a screen (HTML) or terminal output. */
+export interface Mockup {
+  id: string;
+  title: string;
+  /** "screen" (html, shown in a browser frame at url) or "terminal" (lines). */
+  kind: string;
+  url?: string | null;
+  html?: string | null;
+  lines: MockLine[];
+  notes: string[];
+  status: MockupStatus;
+  version: number;
+  visualMatch?: number | null;
+  differences: string[];
+}
+
+export interface TicketLink {
+  system: string;
+  key: string;
+  title: string;
+  status: string;
+  url?: string | null;
+  asContext: boolean;
+}
+
+export interface Footprint {
+  files: number;
+  lines: number;
+  estimated: boolean;
+}
+
+export interface Risk {
+  level: RiskLevel;
+  reasons: string[];
+  areas: string[];
+}
+
+/** The session working on a task right now. */
+export interface Worker {
+  role: Role;
+  agent: string;
+  machine: string;
+  session: string;
+  startedAt: number;
+}
+
+export interface Diff {
+  added: number;
+  removed: number;
+  files: string[];
+}
+
+export interface Task {
+  id: string;
+  goal: string;
+  title: string;
+  state: TaskState;
+  /** Login of whoever it belongs to; it runs on their machines first. */
+  owner: string;
+  /** The Markdown spec it was composed from. */
+  brief: string;
+  createdAt: number;
+  updatedAt: number;
+  plan: PlanStep[];
+  planVersion: number;
+  planSummary?: string | null;
+  doneWhen: DoneItem[];
+  approvals: string[];
+  approvalsNeeded: number;
+  reviews: string[];
+  reviewsNeeded: number;
+  comments: Comment[];
+  changes: ChangeRequest[];
+  events: TaskEvent[];
+  question?: Question | null;
+  hand?: Hand | null;
+  worker?: Worker | null;
+  liveLog?: string | null;
+  /** Why it isn't running when it could be: "Waiting for a free slot on your machines". */
+  waiting?: string | null;
+  pr?: PullRequest | null;
+  diff?: Diff | null;
+  footprint?: Footprint | null;
+  risk?: Risk | null;
+  autoReview?: AutoReview | null;
+  mockups: Mockup[];
+  tickets: TicketLink[];
+  shareable: boolean;
+  /** claude or codex: what builds it. */
+  agent: string;
+  branch?: string | null;
+  /** Where its worktree lives once building started. */
+  machine?: string | null;
+}
+
+/** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
+export interface WorktreeSpec {
+  name: string;
+  base?: string | null;
+  existing: boolean;
+}
+
+/** The task a session works on, for the runner to set its worktree up. */
+export interface TaskStart {
+  id: string;
+  /** GitHub owner/name; none for a goal that names a folder. */
+  repo?: string | null;
+}
+
+/** How a factory session treats the agent's permission prompts. */
+export interface Unattended {
+  /** ask (every prompt), project (edits, git and the project's commands) or skip (none). */
+  mode: string;
+  commands: string[];
+}
+
 export interface Member {
   login: string;
   name?: string | null;
@@ -160,9 +487,69 @@ export interface RunnerMessage_UpdateStatus {
   message?: string | null;
 }
 
+/** A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools). */
+export interface RunnerMessage_McpRequest {
+  type: "mcp.request";
+  reqId: string;
+  session: string;
+  tool: string;
+  args: unknown;
+}
+
+/** A task's worktree is made: where it came from. */
+export interface RunnerMessage_TaskStarted {
+  type: "task.started";
+  taskId: string;
+  repo?: string | null;
+  repoDir: string;
+  base: string;
+  project?: string | null;
+}
+
+export interface RunnerMessage_TaskFinished {
+  type: "task.finished";
+  taskId: string;
+  ok: boolean;
+  /** app (a GitHub App token) or fallback (the machine's credentials). */
+  pushed?: string | null;
+  owner?: string | null;
+  repo?: string | null;
+  branch: string;
+  base?: string | null;
+  commit?: string | null;
+  reason?: string | null;
+  message?: string | null;
+}
+
+export interface RunnerMessage_TaskMerged {
+  type: "task.merged";
+  taskId: string;
+  ok: boolean;
+  commit?: string | null;
+  message?: string | null;
+}
+
+export interface RunnerMessage_TaskCleaned {
+  type: "task.cleaned";
+  taskId: string;
+  ok: boolean;
+  branchDeleted: boolean;
+  message?: string | null;
+}
+
+/** A GitHub token to fetch or push a task's repo. */
+export interface RunnerMessage_TaskTokenRequest {
+  type: "task.token_request";
+  reqId: string;
+  taskId: string;
+  owner: string;
+  repo: string;
+  purpose?: string | null;
+}
+
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskMerged | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","mcp.request","task.started","task.finished","task.merged","task.cleaned","task.token_request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -175,6 +562,10 @@ export interface ServerToRunner_SessionOpen {
   /** Continue the agent's last conversation in `cwd` (claude --resume / codex resume). */
   resume: boolean;
   taskId?: string | null;
+  worktree?: WorktreeSpec | null;
+  task?: TaskStart | null;
+  unattended?: Unattended | null;
+  model?: string | null;
 }
 
 export interface ServerToRunner_SessionResize {
@@ -205,9 +596,60 @@ export interface ServerToRunner_RunnerRestart {
   type: "runner.restart";
 }
 
+/** The answer to `mcp.request`: `result` ({summary, data}) or `error`. */
+export interface ServerToRunner_McpResponse {
+  type: "mcp.response";
+  reqId: string;
+  result?: unknown | null;
+  error?: string | null;
+}
+
+/** Commit what's left in a task's worktree and push its branch. */
+export interface ServerToRunner_TaskFinish {
+  type: "task.finish";
+  taskId: string;
+  cwd: string;
+  repoDir: string;
+  branch: string;
+  base?: string | null;
+  title: string;
+  /** Push with the machine's own credentials (no GitHub App). */
+  fallback: boolean;
+}
+
+/** Merge a task's branch into its base on origin, for repos with no GitHub App. */
+export interface ServerToRunner_TaskMerge {
+  type: "task.merge";
+  taskId: string;
+  cwd: string;
+  branch: string;
+  base: string;
+  title: string;
+}
+
+/** Remove a finished task's worktree and local branch if nothing would be lost. */
+export interface ServerToRunner_TaskCleanup {
+  type: "task.cleanup";
+  taskId: string;
+  cwd: string;
+  repoDir: string;
+  branch: string;
+  merged: boolean;
+  heads: string[];
+}
+
+/** The answer to `task.token_request`. */
+export interface ServerToRunner_TaskToken {
+  type: "task.token";
+  reqId: string;
+  token?: string | null;
+  error?: string | null;
+  code?: string | null;
+}
+
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskMerge | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.merge","task.cleanup","task.token"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -252,17 +694,120 @@ export interface ClientMessage_SessionKill {
   id: string;
 }
 
+export interface ClientMessage_GoalSave {
+  type: "goal.save";
+  goal: Goal;
+}
+
+export interface ClientMessage_TaskCreate {
+  type: "task.create";
+  goal: string;
+  title: string;
+  brief: string;
+  shareable: boolean;
+  /** Send it to planning now; otherwise it stays a draft. */
+  plan: boolean;
+  tickets: TicketLink[];
+  agent?: string | null;
+}
+
+export interface ClientMessage_TaskEdit {
+  type: "task.edit";
+  id: string;
+  title?: string | null;
+  brief?: string | null;
+  shareable?: boolean | null;
+}
+
+/** Send a draft to planning. */
+export interface ClientMessage_TaskPlan {
+  type: "task.plan";
+  id: string;
+}
+
+export interface ClientMessage_TaskComment {
+  type: "task.comment";
+  id: string;
+  text: string;
+  anchor?: string | null;
+}
+
+/** A change request for the planner or builder. */
+export interface ClientMessage_TaskSteer {
+  type: "task.steer";
+  id: string;
+  text: string;
+  anchor?: string | null;
+}
+
+export interface ClientMessage_TaskApprovePlan {
+  type: "task.approvePlan";
+  id: string;
+}
+
+/** Answer the agent's question. */
+export interface ClientMessage_TaskAnswer {
+  type: "task.answer";
+  id: string;
+  text: string;
+}
+
+export interface ClientMessage_TaskResolveHand {
+  type: "task.resolveHand";
+  id: string;
+  option?: string | null;
+  note: string;
+}
+
+export interface ClientMessage_TaskApproveChanges {
+  type: "task.approveChanges";
+  id: string;
+}
+
+export interface ClientMessage_TaskMerge {
+  type: "task.merge";
+  id: string;
+}
+
+export interface ClientMessage_TaskCancel {
+  type: "task.cancel";
+  id: string;
+}
+
+export interface ClientMessage_TaskRetry {
+  type: "task.retry";
+  id: string;
+}
+
+/** "I checked it" for a Done when item. */
+export interface ClientMessage_TaskCheckedIt {
+  type: "task.checkedIt";
+  id: string;
+  item: number;
+  note?: string | null;
+}
+
+export interface ClientMessage_TaskMockupChange {
+  type: "task.mockupChange";
+  id: string;
+  mockup: string;
+  text: string;
+}
+
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill;
-export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
   org: string;
   me: Member;
+  members: Member[];
   machines: Machine[];
   /** The most recent session ends (last 7 days, newest first). */
   ended: EndedSession[];
+  goals: Goal[];
+  tasks: Task[];
   protocolVersion: number;
 }
 
@@ -274,6 +819,28 @@ export interface ServerToClient_MachineUpdated {
 export interface ServerToClient_MachineRemoved {
   type: "machine.removed";
   id: string;
+}
+
+export interface ServerToClient_TaskUpdated {
+  type: "task.updated";
+  task: Task;
+}
+
+export interface ServerToClient_TaskRemoved {
+  type: "task.removed";
+  id: string;
+}
+
+export interface ServerToClient_GoalUpdated {
+  type: "goal.updated";
+  goal: Goal;
+}
+
+/** Something worth a passing line in the app. */
+export interface ServerToClient_Toast {
+  type: "toast";
+  text: string;
+  taskId?: string | null;
 }
 
 export interface ServerToClient_SessionEnded {
@@ -289,5 +856,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","toast","session.ended","error"] as const;
