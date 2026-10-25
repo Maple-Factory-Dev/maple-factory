@@ -17,6 +17,9 @@ struct ScratchpadView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: state.notes.map(\.id), initial: true) { _, ids in
+            if !ids.contains(where: { $0 == state.selectedNote }) { state.selectedNote = ids.first }
+        }
     }
 
     private var noteList: some View {
@@ -91,6 +94,11 @@ private struct NoteEditor: View {
     let index: Int
 
     var body: some View {
+        // The list can change under the editor (a note deleted elsewhere, signing in or out).
+        if state.notes.indices.contains(index) { editor }
+    }
+
+    @ViewBuilder private var editor: some View {
         @Bindable var state = state
         let note = state.notes[index]
 

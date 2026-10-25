@@ -10,18 +10,24 @@ struct MapleFactoryApp: App {
     }()
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var state = AppState()
-    @State private var client = FactoryClient()
+    @State private var state: AppState
+    @State private var client: FactoryClient
+
+    init() {
+        // Together from the first frame, so a signed-in app never flashes the mockup's data.
+        let client = FactoryClient()
+        let state = AppState()
+        state.client = client
+        _client = State(initialValue: client)
+        _state = State(initialValue: state)
+    }
 
     var body: some Scene {
         WindowGroup("Maple Factory") {
             ContentView()
                 .environment(state)
                 .environment(client)
-                .task {
-                    state.client = client
-                    client.connect()
-                }
+                .task { client.connect() }
                 .frame(minWidth: 720, minHeight: 620)
         }
         .windowStyle(.hiddenTitleBar)

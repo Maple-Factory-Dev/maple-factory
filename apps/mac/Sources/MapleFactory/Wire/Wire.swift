@@ -1200,6 +1200,26 @@ public enum Wire {
         }
     }
 
+    /// A Scratchpad note: loose Markdown that isn't a task yet. Only its owner sees it.
+    public struct Note: Codable, Hashable, Sendable {
+        public var id: String
+        public var owner: String
+        public var title: String
+        public var body: String
+        public var updatedAt: UInt64
+        /// The task it became, once composed into one.
+        public var taskId: String?
+
+        public init(id: String, owner: String, title: String, body: String, updatedAt: UInt64, taskId: String? = nil) {
+            self.id = id
+            self.owner = owner
+            self.title = title
+            self.body = body
+            self.updatedAt = updatedAt
+            self.taskId = taskId
+        }
+    }
+
     /// Someone with the app open, and the task they're looking at.
     public struct Presence: Codable, Hashable, Sendable {
         public var login: String
@@ -1825,6 +1845,22 @@ public enum Wire {
         }
     }
 
+    public struct ClientMessageNoteSave: Codable, Hashable, Sendable {
+        public var note: Note
+
+        public init(note: Note) {
+            self.note = note
+        }
+    }
+
+    public struct ClientMessageNoteDelete: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// The task this app is showing, if any, for teammates' presence.
     public struct ClientMessagePresence: Codable, Hashable, Sendable {
         public var viewing: String?
@@ -2111,6 +2147,8 @@ public enum Wire {
     /// App (macOS, web) → server.
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
+        case noteSave(ClientMessageNoteSave)
+        case noteDelete(ClientMessageNoteDelete)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
@@ -2144,6 +2182,8 @@ public enum Wire {
             let type = try decoder.container(keyedBy: TypeKey.self).decode(String.self, forKey: .type)
             switch type {
             case "subscribe": self = .subscribe
+            case "note.save": self = .noteSave(try ClientMessageNoteSave(from: decoder))
+            case "note.delete": self = .noteDelete(try ClientMessageNoteDelete(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
@@ -2177,6 +2217,12 @@ public enum Wire {
             switch self {
             case .subscribe:
                 try c.encode("subscribe", forKey: .type)
+            case .noteSave(let body):
+                try c.encode("note.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .noteDelete(let body):
+                try c.encode("note.delete", forKey: .type)
+                try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)
                 try body.encode(to: encoder)
@@ -2267,9 +2313,10 @@ public enum Wire {
         public var policy: RiskPolicy
         public var acceptances: [RiskAcceptance]
         public var online: [Presence]
+        public var notes: [Note]
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2280,6 +2327,7 @@ public enum Wire {
             self.policy = policy
             self.acceptances = acceptances
             self.online = online
+            self.notes = notes
             self.protocolVersion = protocolVersion
         }
 
@@ -2295,6 +2343,7 @@ public enum Wire {
             policy = try c.decode(RiskPolicy.self, forKey: .policy)
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
+            notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -2336,6 +2385,22 @@ public enum Wire {
 
         public init(goal: Goal) {
             self.goal = goal
+        }
+    }
+
+    public struct ServerToClientNoteUpdated: Codable, Hashable, Sendable {
+        public var note: Note
+
+        public init(note: Note) {
+            self.note = note
+        }
+    }
+
+    public struct ServerToClientNoteRemoved: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
         }
     }
 
@@ -2408,6 +2473,8 @@ public enum Wire {
         case taskUpdated(ServerToClientTaskUpdated)
         case taskRemoved(ServerToClientTaskRemoved)
         case goalUpdated(ServerToClientGoalUpdated)
+        case noteUpdated(ServerToClientNoteUpdated)
+        case noteRemoved(ServerToClientNoteRemoved)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case toast(ServerToClientToast)
@@ -2427,6 +2494,8 @@ public enum Wire {
             case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
+            case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
+            case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
@@ -2456,6 +2525,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalUpdated(let body):
                 try c.encode("goal.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .noteUpdated(let body):
+                try c.encode("note.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .noteRemoved(let body):
+                try c.encode("note.removed", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)

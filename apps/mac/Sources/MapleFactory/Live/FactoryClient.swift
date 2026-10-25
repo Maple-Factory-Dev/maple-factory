@@ -32,6 +32,10 @@ import Security
     private(set) var factoryTasks: [FactoryTask] = []
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
+    /// Your Scratchpad, as the views' notes, newest first.
+    private(set) var notes: [Note] = []
+    /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
+    private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.
@@ -167,6 +171,7 @@ import Security
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             online = snapshot.online
+            notes = snapshot.notes.map(LiveAdapter.note)
             rebuild()
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
@@ -200,6 +205,12 @@ import Security
                 goals.append(update.goal)
             }
             rebuild()
+        case .noteUpdated(let update):
+            let note = LiveAdapter.note(update.note)
+            guard unsaved[note.id] == nil else { break }
+            if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
+        case .noteRemoved(let removed):
+            notes.removeAll { $0.id.uuidString.lowercased() == removed.id.lowercased() }
         case .presence(let update):
             online = update.online
             applyPresence()
@@ -244,6 +255,23 @@ import Security
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
         guard let goal = goal(named: name) else { return }
         send(.goalAcceptRisk(.init(goal: goal.id, upTo: upTo.map(LiveAdapter.wireLevel), note: note)))
+    }
+
+    /// Keeps edits to notes here at once and saves each one half a second after its last change.
+    func update(notes edited: [Note]) {
+        for note in edited where notes.first(where: { $0.id == note.id }).map({ $0.title != note.title || $0.body != note.body || $0.taskID != note.taskID }) ?? true {
+            unsaved[note.id]?.cancel()
+            unsaved[note.id] = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, !Task.isCancelled, let me = self.me else { return }
+                self.send(.noteSave(.init(note: LiveAdapter.wire(note, owner: me.login))))
+                self.unsaved[note.id] = nil
+            }
+        }
+        for gone in notes where !edited.contains(where: { $0.id == gone.id }) {
+            send(.noteDelete(.init(id: gone.id.uuidString.lowercased())))
+        }
+        notes = edited
     }
 
     /// The task this app is showing, told to teammates.

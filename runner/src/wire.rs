@@ -845,6 +845,20 @@ pub struct Unattended {
     pub commands: Vec<String>,
 }
 
+/// A Scratchpad note: loose Markdown that isn't a task yet. Only its owner sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub id: Uuid,
+    pub owner: String,
+    pub title: String,
+    pub body: String,
+    pub updated_at: u64,
+    /// The task it became, once composed into one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+}
+
 /// Someone with the app open, and the task they're looking at.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1121,6 +1135,14 @@ pub enum ClientMessage {
     /// Start receiving `snapshot` and live updates.
     #[serde(rename = "subscribe")]
     Subscribe,
+    #[serde(rename = "note.save")]
+    NoteSave {
+        note: Note,
+    },
+    #[serde(rename = "note.delete")]
+    NoteDelete {
+        id: Uuid,
+    },
     /// The task this app is showing, if any, for teammates' presence.
     #[serde(rename = "presence")]
     Presence {
@@ -1301,6 +1323,8 @@ pub enum ServerToClient {
         acceptances: Vec<RiskAcceptance>,
         #[serde(default)]
         online: Vec<Presence>,
+        #[serde(default)]
+        notes: Vec<Note>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -1322,6 +1346,14 @@ pub enum ServerToClient {
     #[serde(rename = "goal.updated")]
     GoalUpdated {
         goal: Goal,
+    },
+    #[serde(rename = "note.updated")]
+    NoteUpdated {
+        note: Note,
+    },
+    #[serde(rename = "note.removed")]
+    NoteRemoved {
+        id: Uuid,
     },
     /// Who's online and what they're looking at, whenever it changes.
     #[serde(rename = "presence")]

@@ -370,6 +370,11 @@ export const structs: Record<string, Struct> = {
     fields: { mode: "string", commands: "string[]" },
     fieldDocs: { mode: "ask (every prompt), project (edits, git and the project's commands) or skip (none)." },
   },
+  Note: {
+    doc: "A Scratchpad note: loose Markdown that isn't a task yet. Only its owner sees it.",
+    fields: { id: "uuid", owner: "string", title: "string", body: "string", updatedAt: "u64", taskId: "string?" },
+    fieldDocs: { taskId: "The task it became, once composed into one." },
+  },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
     fields: { login: "string", viewing: "string?", since: "u64" },
@@ -502,6 +507,8 @@ export const unions: Record<string, Union> = {
     doc: "App (macOS, web) → server.",
     variants: {
       subscribe: { doc: "Start receiving `snapshot` and live updates." },
+      "note.save": { fields: { note: "Note" } },
+      "note.delete": { fields: { id: "uuid" } },
       presence: { doc: "The task this app is showing, if any, for teammates' presence.", fields: { viewing: "string?" } },
       "session.open": {
         fields: { machine: "string", agent: "string", cwd: "string", cols: "u16", rows: "u16", prompt: "string?" },
@@ -554,6 +561,7 @@ export const unions: Record<string, Union> = {
           policy: "RiskPolicy",
           acceptances: "RiskAcceptance[]",
           online: "Presence[]",
+          notes: "Note[]",
           protocolVersion: "u32",
         },
         fieldDocs: { ended: "The most recent session ends (last 7 days, newest first)." },
@@ -563,6 +571,8 @@ export const unions: Record<string, Union> = {
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
       "goal.updated": { fields: { goal: "Goal" } },
+      "note.updated": { fields: { note: "Note" } },
+      "note.removed": { fields: { id: "uuid" } },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },

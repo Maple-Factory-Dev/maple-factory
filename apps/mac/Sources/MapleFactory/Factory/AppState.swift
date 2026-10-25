@@ -196,7 +196,12 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
-    var notes: [Note] = FactoryData.seedNotes
+    /// Your Scratchpad: the factory's copy when signed in.
+    var notes: [Note] {
+        get { isLive ? client?.notes ?? [] : mockNotes }
+        set { if let client, isLive { client.update(notes: newValue) } else { mockNotes = newValue } }
+    }
+    private var mockNotes: [Note] = FactoryData.seedNotes
     var selectedNote: UUID? = FactoryData.seedNotes.first?.id
 
     // MARK: Seen state

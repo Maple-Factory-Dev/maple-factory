@@ -476,6 +476,17 @@ export interface Unattended {
   commands: string[];
 }
 
+/** A Scratchpad note: loose Markdown that isn't a task yet. Only its owner sees it. */
+export interface Note {
+  id: string;
+  owner: string;
+  title: string;
+  body: string;
+  updatedAt: number;
+  /** The task it became, once composed into one. */
+  taskId?: string | null;
+}
+
 /** Someone with the app open, and the task they're looking at. */
 export interface Presence {
   login: string;
@@ -735,6 +746,16 @@ export interface ClientMessage_Subscribe {
   type: "subscribe";
 }
 
+export interface ClientMessage_NoteSave {
+  type: "note.save";
+  note: Note;
+}
+
+export interface ClientMessage_NoteDelete {
+  type: "note.delete";
+  id: string;
+}
+
 /** The task this app is showing, if any, for teammates' presence. */
 export interface ClientMessage_Presence {
   type: "presence";
@@ -901,8 +922,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","note.save","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -917,6 +938,7 @@ export interface ServerToClient_Snapshot {
   policy: RiskPolicy;
   acceptances: RiskAcceptance[];
   online: Presence[];
+  notes: Note[];
   protocolVersion: number;
 }
 
@@ -943,6 +965,16 @@ export interface ServerToClient_TaskRemoved {
 export interface ServerToClient_GoalUpdated {
   type: "goal.updated";
   goal: Goal;
+}
+
+export interface ServerToClient_NoteUpdated {
+  type: "note.updated";
+  note: Note;
+}
+
+export interface ServerToClient_NoteRemoved {
+  type: "note.removed";
+  id: string;
 }
 
 /** Who's online and what they're looking at, whenever it changes. */
@@ -977,5 +1009,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","presence","policy.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_NoteRemoved | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","note.removed","presence","policy.updated","toast","session.ended","error"] as const;

@@ -157,6 +157,14 @@ enum LiveAdapter {
         }
     }
 
+    static func note(_ n: Wire.Note) -> Note {
+        Note(id: UUID(uuidString: n.id) ?? UUID(), title: n.title, body: n.body, updated: ago(n.updatedAt), taskID: n.taskId)
+    }
+
+    static func wire(_ n: Note, owner: String) -> Wire.Note {
+        Wire.Note(id: n.id.uuidString.lowercased(), owner: owner, title: n.title, body: n.body, updatedAt: 0, taskId: n.taskID)
+    }
+
     static func riskLevel(_ level: Wire.RiskLevel) -> RiskLevel {
         switch level {
         case .low: .low

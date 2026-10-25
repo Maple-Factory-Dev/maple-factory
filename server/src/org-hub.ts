@@ -151,6 +151,14 @@ export class OrgHub extends DurableObject<Env> {
     }
   }
 
+  /** To one person's apps only (their notes, say). */
+  private sendTo(login: string, message: ServerToClient) {
+    for (const ws of this.ctx.getWebSockets("client")) {
+      const c = ws.deserializeAttachment() as Client;
+      if (c.subscribed && c.member.login === login) this.send(ws, message);
+    }
+  }
+
   private broadcast(message: ServerToClient) {
     for (const ws of this.ctx.getWebSockets("client")) {
       if ((ws.deserializeAttachment() as Client).subscribed) this.send(ws, message);
@@ -181,6 +189,7 @@ export class OrgHub extends DurableObject<Env> {
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
           online: this.online(),
+          notes: this.store.notes(client.member.login),
           protocolVersion: PROTOCOL_VERSION,
         });
         return;
@@ -209,6 +218,22 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        return;
+      }
+      case "note.save": {
+        const existing = this.store.note(msg.note.id);
+        if (existing && existing.owner !== client.member.login) return this.send(ws, { type: "error", message: "That note isn't yours.", requestId: null });
+        if (msg.note.body.length > 200_000) return this.send(ws, { type: "error", message: "That note is too long (200,000 characters at most).", requestId: null });
+        const note = { ...msg.note, owner: client.member.login, updatedAt: Date.now() };
+        this.store.saveNote(note);
+        this.sendTo(client.member.login, { type: "note.updated", note });
+        return;
+      }
+      case "note.delete": {
+        const existing = this.store.note(msg.id);
+        if (!existing || existing.owner !== client.member.login) return;
+        this.store.deleteNote(msg.id);
+        this.sendTo(client.member.login, { type: "note.removed", id: msg.id });
         return;
       }
       case "session.attach":
