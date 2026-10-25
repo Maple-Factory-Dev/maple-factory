@@ -483,7 +483,8 @@ struct TaskComposer: View {
     @State private var interruptNow = false
 
     var body: some View {
-        let steering = mode == .steer
+        // A merged or cancelled task can't be redirected any more, whatever tab was picked before.
+        let steering = mode == .steer && task.isSteerable
 
         VStack(alignment: .leading, spacing: 12) {
             if task.isSteerable, let agent = task.agent {
@@ -557,7 +558,7 @@ struct TaskComposer: View {
     }
 
     private var placeholder: String {
-        guard mode == .steer, let agent = task.agent else { return "Comment or @mention someone…" }
+        guard mode == .steer, task.isSteerable, let agent = task.agent else { return "Comment or @mention someone…" }
         switch task.state {
         case .building: return "Tell \(agent.name) what to change mid-build…"
         case .reviewing: return "What should \(agent.name) fix before merge?"
@@ -593,7 +594,7 @@ struct TaskComposer: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         withAnimation(.snappy(duration: 0.25)) {
-            if mode == .steer {
+            if mode == .steer, task.isSteerable {
                 appState.steer(task.id, text: text, interruptNow: interruptNow)
             } else {
                 appState.comment(task.id, text: text)

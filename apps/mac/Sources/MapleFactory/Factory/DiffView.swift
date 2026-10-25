@@ -20,9 +20,14 @@ struct DiffView: View {
     private var current: DiffFile? { files.first { $0.path == selected } ?? files.first { !$0.hunks.isEmpty } ?? files.first }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            fileList.frame(width: 250)
-            if let current { fileDiff(current) }
+        // A single file needs no list beside it; its header already says what changed.
+        if files.count == 1, let current {
+            fileDiff(current)
+        } else {
+            HStack(alignment: .top, spacing: 16) {
+                fileList.frame(width: 250)
+                if let current { fileDiff(current) }
+            }
         }
     }
 
@@ -31,7 +36,7 @@ struct DiffView: View {
     private var fileList: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                SectionLabel(title: "\(files.count) files")
+                SectionLabel(title: files.count == 1 ? "1 file" : "\(files.count) files")
                 Spacer()
                 Text("+\(files.map(\.added).reduce(0, +))").foregroundStyle(Theme.State.merged)
                 Text("−\(files.map(\.removed).reduce(0, +))").foregroundStyle(Theme.State.cancelled)
@@ -103,6 +108,8 @@ struct DiffView: View {
                 Text(file.path)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 if file.inProgress {
                     HStack(spacing: 4) {
                         ProgressView().controlSize(.mini)
@@ -125,7 +132,7 @@ struct DiffView: View {
             if hunks.isEmpty {
                 collapsedPlaceholder(file)
             } else {
-                ForEach(hunks) { hunk in hunkView(hunk) }
+                ForEach(hunks) { hunk in hunkView(hunk, path: file.path) }
             }
         }
         .background(Theme.cardBG)
@@ -171,8 +178,12 @@ struct DiffView: View {
         }
     }
 
-    private func hunkView(_ hunk: DiffHunk) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+    /// Files read as text rather than code: no syntax colours, which only scramble prose.
+    private static let proseExtensions: Set<String> = ["md", "markdown", "mdx", "txt", "rst", "adoc", ""]
+
+    private func hunkView(_ hunk: DiffHunk, path: String) -> some View {
+        let prose = Self.proseExtensions.contains((path as NSString).pathExtension.lowercased())
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(hunk.header)
                     .font(.system(size: 11, design: .monospaced))
@@ -193,19 +204,20 @@ struct DiffView: View {
             .background(Theme.State.planning.opacity(0.05))
 
             ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
-                lineView(line)
+                lineView(line, prose: prose)
             }
         }
     }
 
-    private func lineView(_ line: DiffLine) -> some View {
+    private func lineView(_ line: DiffLine, prose: Bool) -> some View {
         let (sign, tint): (String, Color?) = switch line.kind {
         case .added: ("+", Theme.State.merged)
         case .removed: ("−", Theme.State.cancelled)
         case .context: (" ", nil)
         }
 
-        return HStack(spacing: 0) {
+        // Long lines wrap inside the box (numbers stay on the first row) rather than running off it.
+        return HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(line.old.map(String.init) ?? "")
                 .frame(width: 38, alignment: .trailing)
             Text(line.new.map(String.init) ?? "")
@@ -213,13 +225,17 @@ struct DiffView: View {
             Text(sign)
                 .foregroundStyle(tint ?? Theme.textFaint)
                 .frame(width: 22)
-            Text(SyntaxHighlighter.highlight(line.text))
-                .fixedSize()
-            Spacer(minLength: 0)
+            Group {
+                if prose { Text(line.text).foregroundStyle(Theme.text) } else { Text(SyntaxHighlighter.highlight(line.text)) }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 12)
         }
         .font(.system(size: 12, design: .monospaced))
         .foregroundStyle(Theme.textFaint)
-        .frame(height: 20)
+        .padding(.vertical, 2)
+        .frame(minHeight: 20)
         .background(tint.map { $0.opacity(0.09) } ?? .clear)
         .overlay(alignment: .leading) {
             if let tint { Rectangle().fill(tint.opacity(0.7)).frame(width: 2) }

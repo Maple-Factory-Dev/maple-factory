@@ -220,7 +220,7 @@ struct TaskFocusView: View {
                     Text("No changes yet").foregroundStyle(Theme.textFaint)
                 } else {
                     HStack(spacing: 4) {
-                        Text("\(diffFiles.count) files\(task.state == .building ? " so far" : "")").foregroundStyle(Theme.textMuted)
+                        Text("\(diffFiles.count) \(diffFiles.count == 1 ? "file" : "files")\(task.state == .building ? " so far" : "")").foregroundStyle(Theme.textMuted)
                         Text("+\(diffFiles.map(\.added).reduce(0, +))").foregroundStyle(Theme.State.merged)
                         Text("−\(diffFiles.map(\.removed).reduce(0, +))").foregroundStyle(Theme.State.cancelled)
                     }
