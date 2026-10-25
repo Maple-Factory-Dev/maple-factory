@@ -845,6 +845,16 @@ pub struct Unattended {
     pub commands: Vec<String>,
 }
 
+/// Someone with the app open, and the task they're looking at.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Presence {
+    pub login: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewing: Option<String>,
+    pub since: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
@@ -1111,6 +1121,12 @@ pub enum ClientMessage {
     /// Start receiving `snapshot` and live updates.
     #[serde(rename = "subscribe")]
     Subscribe,
+    /// The task this app is showing, if any, for teammates' presence.
+    #[serde(rename = "presence")]
+    Presence {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        viewing: Option<String>,
+    },
     #[serde(rename = "session.open")]
     SessionOpen {
         machine: String,
@@ -1283,6 +1299,8 @@ pub enum ServerToClient {
         policy: RiskPolicy,
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
+        #[serde(default)]
+        online: Vec<Presence>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -1304,6 +1322,12 @@ pub enum ServerToClient {
     #[serde(rename = "goal.updated")]
     GoalUpdated {
         goal: Goal,
+    },
+    /// Who's online and what they're looking at, whenever it changes.
+    #[serde(rename = "presence")]
+    Presence {
+        #[serde(default)]
+        online: Vec<Presence>,
     },
     #[serde(rename = "policy.updated")]
     PolicyUpdated {

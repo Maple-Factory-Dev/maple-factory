@@ -10,7 +10,11 @@ enum FactoryData {
     static let people = [me, chris]
 
     /// Who's online and which task they have open (nil = elsewhere in the workspace).
-    static let presence: [(person: Person, viewing: String?)] = [
+    static var presence: [(person: Person, viewing: String?)] { livePresence ?? seedPresence }
+    /// Who's online in the connected factory (`FactoryClient`).
+    nonisolated(unsafe) static var livePresence: [(person: Person, viewing: String?)]?
+
+    static let seedPresence: [(person: Person, viewing: String?)] = [
         (me, nil),
         (chris, "ATL-147"),
     ]

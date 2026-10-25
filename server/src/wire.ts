@@ -476,6 +476,13 @@ export interface Unattended {
   commands: string[];
 }
 
+/** Someone with the app open, and the task they're looking at. */
+export interface Presence {
+  login: string;
+  viewing?: string | null;
+  since: number;
+}
+
 export interface Member {
   login: string;
   name?: string | null;
@@ -728,6 +735,12 @@ export interface ClientMessage_Subscribe {
   type: "subscribe";
 }
 
+/** The task this app is showing, if any, for teammates' presence. */
+export interface ClientMessage_Presence {
+  type: "presence";
+  viewing?: string | null;
+}
+
 export interface ClientMessage_SessionOpen {
   type: "session.open";
   machine: string;
@@ -888,8 +901,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -903,6 +916,7 @@ export interface ServerToClient_Snapshot {
   tasks: Task[];
   policy: RiskPolicy;
   acceptances: RiskAcceptance[];
+  online: Presence[];
   protocolVersion: number;
 }
 
@@ -931,6 +945,12 @@ export interface ServerToClient_GoalUpdated {
   goal: Goal;
 }
 
+/** Who's online and what they're looking at, whenever it changes. */
+export interface ServerToClient_Presence {
+  type: "presence";
+  online: Presence[];
+}
+
 export interface ServerToClient_PolicyUpdated {
   type: "policy.updated";
   policy: RiskPolicy;
@@ -957,5 +977,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","policy.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","presence","policy.updated","toast","session.ended","error"] as const;

@@ -94,7 +94,16 @@ struct ContentView: View {
         } else {
             workspace
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
+                .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
         }
+    }
+
+    /// The task on screen, for teammates' presence: open full-size, or in the inspector.
+    private var viewing: String? {
+        guard client.isSignedIn else { return nil }
+        if let focused = state.focusedTask { return focused }
+        guard state.inspectorInline || state.showInspector, case .goal = state.destination else { return nil }
+        return state.tasks.contains { $0.id == state.selectedTask } ? state.selectedTask : nil
     }
 
     private var workspace: some View {

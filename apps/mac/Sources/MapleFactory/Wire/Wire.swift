@@ -1200,6 +1200,19 @@ public enum Wire {
         }
     }
 
+    /// Someone with the app open, and the task they're looking at.
+    public struct Presence: Codable, Hashable, Sendable {
+        public var login: String
+        public var viewing: String?
+        public var since: UInt64
+
+        public init(login: String, viewing: String? = nil, since: UInt64) {
+            self.login = login
+            self.viewing = viewing
+            self.since = since
+        }
+    }
+
     public struct Member: Codable, Hashable, Sendable {
         public var login: String
         public var name: String?
@@ -1812,6 +1825,15 @@ public enum Wire {
         }
     }
 
+    /// The task this app is showing, if any, for teammates' presence.
+    public struct ClientMessagePresence: Codable, Hashable, Sendable {
+        public var viewing: String?
+
+        public init(viewing: String? = nil) {
+            self.viewing = viewing
+        }
+    }
+
     public struct ClientMessageSessionOpen: Codable, Hashable, Sendable {
         public var machine: String
         public var agent: String
@@ -2089,6 +2111,7 @@ public enum Wire {
     /// App (macOS, web) → server.
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
+        case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
         case sessionDetach(ClientMessageSessionDetach)
@@ -2121,6 +2144,7 @@ public enum Wire {
             let type = try decoder.container(keyedBy: TypeKey.self).decode(String.self, forKey: .type)
             switch type {
             case "subscribe": self = .subscribe
+            case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
             case "session.detach": self = .sessionDetach(try ClientMessageSessionDetach(from: decoder))
@@ -2153,6 +2177,9 @@ public enum Wire {
             switch self {
             case .subscribe:
                 try c.encode("subscribe", forKey: .type)
+            case .presence(let body):
+                try c.encode("presence", forKey: .type)
+                try body.encode(to: encoder)
             case .sessionOpen(let body):
                 try c.encode("session.open", forKey: .type)
                 try body.encode(to: encoder)
@@ -2239,9 +2266,10 @@ public enum Wire {
         public var tasks: [Task]
         public var policy: RiskPolicy
         public var acceptances: [RiskAcceptance]
+        public var online: [Presence]
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2251,6 +2279,7 @@ public enum Wire {
             self.tasks = tasks
             self.policy = policy
             self.acceptances = acceptances
+            self.online = online
             self.protocolVersion = protocolVersion
         }
 
@@ -2265,6 +2294,7 @@ public enum Wire {
             tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
             policy = try c.decode(RiskPolicy.self, forKey: .policy)
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
+            online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -2306,6 +2336,20 @@ public enum Wire {
 
         public init(goal: Goal) {
             self.goal = goal
+        }
+    }
+
+    /// Who's online and what they're looking at, whenever it changes.
+    public struct ServerToClientPresence: Codable, Hashable, Sendable {
+        public var online: [Presence]
+
+        public init(online: [Presence] = []) {
+            self.online = online
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
         }
     }
 
@@ -2364,6 +2408,7 @@ public enum Wire {
         case taskUpdated(ServerToClientTaskUpdated)
         case taskRemoved(ServerToClientTaskRemoved)
         case goalUpdated(ServerToClientGoalUpdated)
+        case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
@@ -2382,6 +2427,7 @@ public enum Wire {
             case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
+            case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
@@ -2410,6 +2456,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalUpdated(let body):
                 try c.encode("goal.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .presence(let body):
+                try c.encode("presence", forKey: .type)
                 try body.encode(to: encoder)
             case .policyUpdated(let body):
                 try c.encode("policy.updated", forKey: .type)

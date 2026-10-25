@@ -31,6 +31,7 @@ import Security
     /// The tasks and goals as the views' models, rebuilt when they change.
     private(set) var factoryTasks: [FactoryTask] = []
     private(set) var factoryGoals: [Goal] = []
+    private(set) var online: [Wire.Presence] = []
     private(set) var policy: Wire.RiskPolicy?
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.
@@ -165,7 +166,9 @@ import Security
             FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
             policy = snapshot.policy
             acceptances = snapshot.acceptances
+            online = snapshot.online
             rebuild()
+            if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
                 machines[index] = update.machine
@@ -197,6 +200,9 @@ import Security
                 goals.append(update.goal)
             }
             rebuild()
+        case .presence(let update):
+            online = update.online
+            applyPresence()
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
@@ -211,13 +217,16 @@ import Security
     }
 
     private func adapt(_ task: Wire.Task) -> FactoryTask {
-        LiveAdapter.task(task, goals: goals, members: members, me: me?.login)
+        var adapted = LiveAdapter.task(task, goals: goals, members: members, me: me?.login)
+        adapted.viewers = online.filter { $0.viewing == task.id && $0.login != me?.login }.map { LiveAdapter.person($0.login, members: members) }
+        return adapted
     }
 
     private func rebuild() {
         factoryGoals = goals.map { LiveAdapter.goal($0, members: members) }
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
         factoryTasks = tasks.map(adapt)
+        applyPresence()
         riskPolicy = policy.map(LiveAdapter.policy)
         riskAcceptances = Dictionary(acceptances.compactMap { a in
             goals.first { $0.id == a.goal }.map { goal in
@@ -235,6 +244,25 @@ import Security
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
         guard let goal = goal(named: name) else { return }
         send(.goalAcceptRisk(.init(goal: goal.id, upTo: upTo.map(LiveAdapter.wireLevel), note: note)))
+    }
+
+    /// The task this app is showing, told to teammates.
+    private var viewing: String?
+
+    func view(task id: String?) {
+        guard id != viewing else { return }
+        viewing = id
+        send(.presence(.init(viewing: id)))
+    }
+
+    /// Puts who's online on the sidebar and who's looking at each task on it.
+    private func applyPresence() {
+        let people = online.map { (person: LiveAdapter.person($0.login, members: members), viewing: $0.viewing) }
+        FactoryData.livePresence = server == nil ? nil : people
+        for index in factoryTasks.indices {
+            let id = factoryTasks[index].id
+            factoryTasks[index].viewers = people.filter { $0.viewing == id && $0.person.github != me?.login }.map(\.person)
+        }
     }
 
     /// The goal a view knows by name.

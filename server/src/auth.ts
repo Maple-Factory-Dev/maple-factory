@@ -213,11 +213,16 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
 }
 
 /** Local dev: an app token for DEV_LOGIN without GitHub, so the Mac app can sign in to `wrangler dev`. */
+/** Local dev: an app token for DEV_LOGIN, or (`?as=<login>`) for a made-up teammate, to try multiplayer alone. */
 export async function devToken(request: Request, env: Env): Promise<Response> {
   if (!env.DEV_LOGIN || !isLocal(request)) return text("Not found.", 404);
   await currentMember(request, env);
+  const as = new URL(request.url).searchParams.get("as");
+  if (as && !/^[\w-]{1,39}$/.test(as)) return text("Not a GitHub login.", 400);
+  const login = as ?? env.DEV_LOGIN;
+  if (as && !(await memberRow(env, as))) await upsertMember(env, { login: as, id: 0, name: null, avatar_url: null }, "member", []);
   const appToken = randomToken("mft");
   await env.DB.prepare("INSERT INTO app_tokens (token_hash, login, label, created_at, expires_at) VALUES (?, ?, 'dev', ?, ?)")
-    .bind(await sha256(appToken), env.DEV_LOGIN, Date.now(), Date.now() + APP_TOKEN_TTL).run();
-  return Response.json({ token: appToken, member: toMember((await memberRow(env, env.DEV_LOGIN))!), org: env.GITHUB_ORG || "local" });
+    .bind(await sha256(appToken), login, Date.now(), Date.now() + APP_TOKEN_TTL).run();
+  return Response.json({ token: appToken, member: toMember((await memberRow(env, login))!), org: env.GITHUB_ORG || "local" });
 }

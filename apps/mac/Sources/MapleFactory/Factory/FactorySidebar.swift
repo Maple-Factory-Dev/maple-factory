@@ -42,7 +42,8 @@ struct FactorySidebar: View {
             VStack(spacing: 2) {
                 if client.isSignedIn {
                     ForEach(client.members, id: \.login) { member in
-                        personRow(LiveAdapter.person(member.login, members: client.members), viewing: nil)
+                        let presence = client.online.first { $0.login == member.login }
+                        personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil)
                     }
                 } else {
                     ForEach(FactoryData.presence, id: \.person.id) { entry in
@@ -130,11 +131,12 @@ struct FactorySidebar: View {
         .onTapGesture { state.destination = .goal(goal.name) }
     }
 
-    private func personRow(_ person: Person, viewing: String?) -> some View {
+    private func personRow(_ person: Person, viewing: String?, online: Bool = true) -> some View {
         let isMe = person.id == FactoryData.me.id
 
         return row(selected: false) {
-            AgentAvatar(agent: person, size: 18, online: true).frame(width: 16)
+            AgentAvatar(agent: person, size: 18, online: online).frame(width: 16)
+                .opacity(online ? 1 : 0.55)
             Text(isMe ? "\(person.firstName) (you)" : person.firstName)
             Spacer()
             if let viewing {
@@ -149,7 +151,7 @@ struct FactorySidebar: View {
         .onTapGesture {
             if let viewing { state.selectedTask = viewing; state.showInspector = true }
         }
-        .help(viewing.map { "\(person.firstName) is viewing \($0)" } ?? "Online")
+        .help(viewing.map { "\(person.firstName) is viewing \($0)" } ?? (online ? "Online" : "Offline"))
     }
 
     private func machineRow(_ machine: Machine) -> some View {

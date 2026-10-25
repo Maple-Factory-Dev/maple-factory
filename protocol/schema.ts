@@ -370,6 +370,10 @@ export const structs: Record<string, Struct> = {
     fields: { mode: "string", commands: "string[]" },
     fieldDocs: { mode: "ask (every prompt), project (edits, git and the project's commands) or skip (none)." },
   },
+  Presence: {
+    doc: "Someone with the app open, and the task they're looking at.",
+    fields: { login: "string", viewing: "string?", since: "u64" },
+  },
   Member: {
     fields: { login: "string", name: "string?", avatarUrl: "string?", role: "string", teams: "string[]" },
   },
@@ -498,6 +502,7 @@ export const unions: Record<string, Union> = {
     doc: "App (macOS, web) → server.",
     variants: {
       subscribe: { doc: "Start receiving `snapshot` and live updates." },
+      presence: { doc: "The task this app is showing, if any, for teammates' presence.", fields: { viewing: "string?" } },
       "session.open": {
         fields: { machine: "string", agent: "string", cwd: "string", cols: "u16", rows: "u16", prompt: "string?" },
       },
@@ -548,6 +553,7 @@ export const unions: Record<string, Union> = {
           tasks: "Task[]",
           policy: "RiskPolicy",
           acceptances: "RiskAcceptance[]",
+          online: "Presence[]",
           protocolVersion: "u32",
         },
         fieldDocs: { ended: "The most recent session ends (last 7 days, newest first)." },
@@ -557,6 +563,7 @@ export const unions: Record<string, Union> = {
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
       "goal.updated": { fields: { goal: "Goal" } },
+      presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },

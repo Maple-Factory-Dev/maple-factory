@@ -4,7 +4,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Machine, type Member, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type Member, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { toMember, type MemberRow } from "./auth.ts";
@@ -14,6 +14,9 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 interface Client {
   member: Member;
   subscribed: boolean;
+  /** The task this connection's app is showing. */
+  viewing?: string | null;
+  since?: number;
 }
 
 export class OrgHub extends DurableObject<Env> {
@@ -118,6 +121,28 @@ export class OrgHub extends DurableObject<Env> {
     }));
   }
 
+  /** One entry per person with the app open: the most recent of their connections' views. */
+  private online(except?: WebSocket): Presence[] {
+    const people = new Map<string, Presence>();
+    for (const ws of this.ctx.getWebSockets("client")) {
+      if (ws === except) continue;
+      const c = ws.deserializeAttachment() as Client;
+      if (!c.subscribed) continue;
+      const seen = people.get(c.member.login);
+      const since = c.since ?? 0;
+      if (!seen || (c.viewing && (!seen.viewing || since > seen.since))) people.set(c.member.login, { login: c.member.login, viewing: c.viewing ?? null, since });
+    }
+    return [...people.values()];
+  }
+
+  async webSocketClose(ws: WebSocket) {
+    this.broadcast({ type: "presence", online: this.online(ws) });
+  }
+
+  async webSocketError(ws: WebSocket) {
+    await this.webSocketClose(ws);
+  }
+
   private send(ws: WebSocket, message: ServerToClient) {
     try {
       ws.send(JSON.stringify(message));
@@ -137,8 +162,13 @@ export class OrgHub extends DurableObject<Env> {
     const client = ws.deserializeAttachment() as Client;
     const msg = JSON.parse(raw) as ClientMessage;
     switch (msg.type) {
+      case "presence":
+        ws.serializeAttachment({ ...client, viewing: msg.viewing ?? null, since: Date.now() });
+        this.broadcast({ type: "presence", online: this.online() });
+        return;
       case "subscribe":
-        ws.serializeAttachment({ ...client, subscribed: true });
+        ws.serializeAttachment({ ...client, subscribed: true, since: Date.now() });
+        this.broadcast({ type: "presence", online: this.online() });
         this.send(ws, {
           type: "snapshot",
           org: this.env.GITHUB_ORG || "local",
@@ -150,6 +180,7 @@ export class OrgHub extends DurableObject<Env> {
           tasks: this.store.tasks(),
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
+          online: this.online(),
           protocolVersion: PROTOCOL_VERSION,
         });
         return;
