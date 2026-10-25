@@ -212,12 +212,14 @@ export const structs: Record<string, Struct> = {
       repos: "string[]",
       folder: "string?",
       base: "string?",
+      archived: "bool?",
     },
     fieldDocs: {
       prefix: "Task ids start with it: ATL-12.",
       color: "#RRGGBB.",
       repo: "GitHub owner/name its tasks change unless they pick another of `repos`.",
       repos: "Every repo the goal's work spans (its `repo` first); each task changes one of them.",
+      archived: "Done with: out of the sidebar and the composer, its tasks kept.",
       folder: "Or a folder on the machines (local repos, dev).",
       base: "The branch tasks start from and merge into (default: the repo's default branch).",
     },
@@ -615,6 +617,7 @@ export const unions: Record<string, Union> = {
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
+      "goal.archive": { doc: "Its lead or an admin; only with nothing of it running.", fields: { id: "string", archived: "bool" } },
       "machine.settings": {
         doc: "Its owner or an admin.",
         fields: { machine: "string", settings: "MachineSettings", handOff: "bool?" },

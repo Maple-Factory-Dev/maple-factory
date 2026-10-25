@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GoalView: View {
     @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
     let goal: Goal
 
     private var tasks: [FactoryTask] { state.tasks(for: goal) }
@@ -51,6 +52,21 @@ struct GoalView: View {
                 Spacer()
                 RiskPolicyButton()
                     .padding(.trailing, 10)
+                if state.isLive, let live = client.goal(named: goal.name) {
+                    Menu {
+                        Button("Edit Goal…") { state.goalSheet = .edit(live.id) }
+                        Divider()
+                        Button(goal.archived ? "Unarchive" : "Archive Goal") {
+                            client.send(.goalArchive(.init(id: live.id, archived: !goal.archived)))
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .padding(.trailing, 8)
+                }
                 Facepile(people: contributors, size: 24)
                 if state.contentWidth > 900 {
                     Text("\(contributors.count) people · \(Set(tasks.compactMap(\.agent?.id)).count) agents")

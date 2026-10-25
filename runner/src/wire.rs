@@ -485,6 +485,9 @@ pub struct Goal {
     /// The branch tasks start from and merge into (default: the repo's default branch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// Done with: out of the sidebar and the composer, its tasks kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1378,6 +1381,12 @@ pub enum ClientMessage {
     #[serde(rename = "goal.save")]
     GoalSave {
         goal: Goal,
+    },
+    /// Its lead or an admin; only with nothing of it running.
+    #[serde(rename = "goal.archive")]
+    GoalArchive {
+        id: String,
+        archived: bool,
     },
     /// Its owner or an admin.
     #[serde(rename = "machine.settings")]

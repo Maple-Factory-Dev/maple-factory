@@ -70,6 +70,8 @@ enum FactoryData {
     /// The connected factory's goals, when signed in (`FactoryClient`); the mockup's otherwise.
     nonisolated(unsafe) static var liveGoals: [Goal]?
     static var goals: [Goal] { liveGoals ?? seedGoals }
+    /// The goals still in play: the sidebar's and the composer's.
+    static var activeGoals: [Goal] { goals.filter { !$0.archived } }
 
     static let seedGoals: [Goal] = [
         Goal(name: "Auth overhaul", color: Theme.State.merged, dueOffset: 32, lead: me,

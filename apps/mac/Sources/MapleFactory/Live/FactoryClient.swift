@@ -42,6 +42,24 @@ import Security
     private(set) var policy: Wire.RiskPolicy?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
+
+    /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
+    var sidebarPicks: [String]? {
+        get { _ = picksChanged; return UserDefaults.standard.stringArray(forKey: picksKey) }
+        set { UserDefaults.standard.set(newValue, forKey: picksKey); picksChanged += 1 }
+    }
+    private var picksChanged = 0
+    private var picksKey: String { "sidebarPeople.\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
+
+    /// The people in the sidebar: their picks, else whoever shares a GitHub team with them (everyone
+    /// when they're on none). Always them first.
+    var sidebarMembers: [Wire.Member] {
+        guard let me else { return members }
+        let others = members.filter { $0.login != me.login }
+        let shown = sidebarPicks.map { picks in others.filter { picks.contains($0.login) } }
+            ?? (me.teams.isEmpty ? others : others.filter { !Set($0.teams).isDisjoint(with: me.teams) })
+        return [members.first { $0.login == me.login } ?? me] + shown
+    }
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.
     private(set) var riskPolicy: RiskPolicy?

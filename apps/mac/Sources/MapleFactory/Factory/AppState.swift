@@ -66,6 +66,8 @@ final class AppState {
     }
     /// The machine being set up or edited in the sheet; "new" for this Mac.
     var machineSheet: MachineSheet? = nil
+    /// The goal being made or edited in the sheet (a live goal's id for .edit).
+    var goalSheet: MachineSheet? = nil
     var queue = FactoryData.seedQueue
 
     /// A queued task got a slot: it starts building like a freshly approved plan.
@@ -348,8 +350,8 @@ final class AppState {
 
     func startCompose(goal: String? = nil, title: String = "", body: String = "", fromNote: UUID? = nil) {
         let currentGoal: String = {
-            if case let .goal(name) = destination, FactoryData.goals.contains(where: { $0.name == name }) { return name }
-            return FactoryData.goals.first?.name ?? ""
+            if case let .goal(name) = destination, FactoryData.activeGoals.contains(where: { $0.name == name }) { return name }
+            return FactoryData.activeGoals.first?.name ?? ""
         }()
         draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote)
         withAnimation(.snappy(duration: 0.3)) {

@@ -64,6 +64,9 @@ struct MapleFactoryApp: App {
 
                 Button("New Task") { state.startCompose() }
                     .keyboardShortcut("n", modifiers: .command)
+                Button("New Goal…") { state.goalSheet = .new }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(!client.isSignedIn)
             }
         }
 
@@ -172,6 +175,9 @@ struct ContentView: View {
         .onAppear { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: state.destination) { if state.sidebarFloating { state.toggleSidebar() } }
+        .sheet(item: Binding(get: { state.goalSheet }, set: { state.goalSheet = $0 })) { sheet in
+            if case .edit(let id) = sheet { GoalSheet(editing: client.goals.first { $0.id == id }) } else { GoalSheet() }
+        }
         .sheet(item: Binding(get: { state.machineSheet }, set: { state.machineSheet = $0 })) { sheet in
             MachineSetupSheet(sheet: sheet, machine: {
                 if case .edit(let id) = sheet, let machine = state.machines.first(where: { $0.id == id }) { return machine }

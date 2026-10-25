@@ -185,7 +185,8 @@ struct GoalSheet: View {
             repo: source == .repo ? repos.first : nil,
             repos: source == .repo ? repos : [],
             folder: source == .folder ? folder.trimmed : nil,
-            base: base.trimmed.isEmpty ? nil : base.trimmed
+            base: base.trimmed.isEmpty ? nil : base.trimmed,
+            archived: editing?.archived
         )
         client.send(.goalSave(.init(goal: goal)))
         dismiss()

@@ -3,7 +3,9 @@ import SwiftUI
 struct FactorySidebar: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
-    @State private var newGoal = false
+    @State private var showArchived = false
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "repos"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,9 +29,21 @@ struct FactorySidebar: View {
             // Goals, people and machines grow with the org; they scroll so the window never has to.
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    sectionHeader("Goals") { if client.isSignedIn { newGoal = true } }
+                    sectionHeader("Goals") { if client.isSignedIn { state.goalSheet = .new } }
                     VStack(spacing: 2) {
-                        ForEach(FactoryData.goals) { goal in goalRow(goal) }
+                        ForEach(FactoryData.activeGoals) { goal in goalRow(goal) }
+                        let archived = FactoryData.goals.filter(\.archived)
+                        if !archived.isEmpty {
+                            row(selected: false) {
+                                Image(systemName: showArchived ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 16)
+                                Text("Archived")
+                                Spacer()
+                                Text("\(archived.count)").font(.system(size: 11).monospacedDigit())
+                            }
+                            .foregroundStyle(Theme.textMuted)
+                            .onTapGesture { withAnimation(.snappy(duration: 0.2)) { showArchived.toggle() } }
+                            if showArchived { ForEach(archived) { goal in goalRow(goal).opacity(0.7) } }
+                        }
                         if client.isSignedIn && client.goals.isEmpty {
                             row(selected: false) {
                                 Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
@@ -37,14 +51,14 @@ struct FactorySidebar: View {
                                 Spacer()
                             }
                             .foregroundStyle(Theme.textMuted)
-                            .onTapGesture { newGoal = true }
+                            .onTapGesture { state.goalSheet = .new }
                         }
                     }
 
-                    sectionHeader("People")
+                    sectionHeader("People") { if client.isSignedIn { settingsTab = "people"; openSettings() } }
                     VStack(spacing: 2) {
                         if client.isSignedIn {
-                            ForEach(client.members, id: \.login) { member in
+                            ForEach(client.sidebarMembers, id: \.login) { member in
                                 let presence = client.online.first { $0.login == member.login }
                                 personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil)
                             }
@@ -72,7 +86,6 @@ struct FactorySidebar: View {
             .scrollIndicators(.never)
         }
         .padding(.horizontal, 12)
-        .sheet(isPresented: $newGoal) { GoalSheet() }
         .overlay(alignment: .topTrailing) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13))

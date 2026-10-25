@@ -566,8 +566,10 @@ public enum Wire {
         public var folder: String?
         /// The branch tasks start from and merge into (default: the repo's default branch).
         public var base: String?
+        /// Done with: out of the sidebar and the composer, its tasks kept.
+        public var archived: Bool?
 
-        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil) {
+        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil, archived: Bool? = nil) {
             self.id = id
             self.name = name
             self.prefix = prefix
@@ -579,6 +581,7 @@ public enum Wire {
             self.repos = repos
             self.folder = folder
             self.base = base
+            self.archived = archived
         }
 
         public init(from decoder: Decoder) throws {
@@ -594,6 +597,7 @@ public enum Wire {
             repos = try c.decodeIfPresent([String].self, forKey: .repos) ?? []
             folder = try c.decodeIfPresent(String.self, forKey: .folder)
             base = try c.decodeIfPresent(String.self, forKey: .base)
+            archived = try c.decodeIfPresent(Bool.self, forKey: .archived)
         }
     }
 
@@ -2261,6 +2265,17 @@ public enum Wire {
         }
     }
 
+    /// Its lead or an admin; only with nothing of it running.
+    public struct ClientMessageGoalArchive: Codable, Hashable, Sendable {
+        public var id: String
+        public var archived: Bool
+
+        public init(id: String, archived: Bool) {
+            self.id = id
+            self.archived = archived
+        }
+    }
+
     /// Its owner or an admin.
     public struct ClientMessageMachineSettings: Codable, Hashable, Sendable {
         public var machine: String
@@ -2539,6 +2554,7 @@ public enum Wire {
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
         case goalSave(ClientMessageGoalSave)
+        case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
         case policySave(ClientMessagePolicySave)
         case reposRefresh
@@ -2583,6 +2599,7 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
+            case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "repos.refresh": self = .reposRefresh
@@ -2650,6 +2667,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalSave(let body):
                 try c.encode("goal.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .goalArchive(let body):
+                try c.encode("goal.archive", forKey: .type)
                 try body.encode(to: encoder)
             case .machineSettings(let body):
                 try c.encode("machine.settings", forKey: .type)

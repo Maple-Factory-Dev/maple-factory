@@ -147,6 +147,17 @@ export class Engine {
         this.intake.accepted(request, task, "attached", who);
         return;
       }
+      case "goal.archive": {
+        const goal = this.store.goal(msg.id) ?? fail("That goal isn't there any more.");
+        if (member.role !== "admin" && goal.lead !== who) fail(`Only admins or ${goal.lead}, its lead, can archive ${goal.name}.`);
+        const running = this.store.tasks().filter((t) => t.goal === goal.id && ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state));
+        if (msg.archived && running.length) fail(`${running.map((t) => t.id).join(", ")} ${running.length === 1 ? "is" : "are"} still going; finish or cancel ${running.length === 1 ? "it" : "them"} first.`);
+        const saved = { ...goal, archived: msg.archived || null };
+        this.store.saveGoal(saved);
+        this.hooks.broadcast({ type: "goal.updated", goal: saved });
+        await audit(this.env, who, msg.archived ? "goal.archived" : "goal.unarchived", goal.id);
+        return;
+      }
       case "intake.ask": {
         const request = this.intake.get(msg.id) ?? fail("That request isn't there any more.");
         this.intake.ask(request, msg.text.trim() || fail("Say what to ask."));
@@ -159,6 +170,7 @@ export class Engine {
       }
       case "task.create": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
+        if (goal.archived) fail(`${goal.name} is archived; unarchive it to add tasks.`);
         if (!msg.title.trim()) fail("A task needs a title.");
         const repo = msg.repo ? goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase()) ?? fail(`${goal.name} doesn't work in ${msg.repo}; add it to the goal's repos first.`) : null;
         const after = msg.after ?? [];

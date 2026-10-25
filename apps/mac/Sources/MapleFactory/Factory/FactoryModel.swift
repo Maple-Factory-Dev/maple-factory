@@ -286,6 +286,8 @@ struct Goal: Identifiable {
     let dueOffset: Int
     let lead: Person
     let summary: String
+    /// Done with: out of the sidebar and the composer, its tasks kept.
+    var archived = false
     var id: String { name }
 }
 

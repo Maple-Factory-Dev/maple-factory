@@ -50,7 +50,7 @@ enum LiveAdapter {
     static func goal(_ goal: Wire.Goal, members: [Wire.Member]) -> Goal {
         let due = goal.due.map(day) ?? (FactoryData.todayOffset + 21)
         return Goal(name: goal.name, color: Color(hexString: goal.color) ?? Theme.State.building, dueOffset: due,
-                    lead: person(goal.lead, members: members), summary: goal.summary)
+                    lead: person(goal.lead, members: members), summary: goal.summary, archived: goal.archived ?? false)
     }
 
     static func task(_ t: Wire.Task, goals: [Wire.Goal], members: [Wire.Member], me: String?) -> FactoryTask {

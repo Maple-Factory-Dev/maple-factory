@@ -170,7 +170,7 @@ struct FactoryReadingPanel: View {
                 VStack(alignment: .leading, spacing: 10) {
                     row("Goal") {
                         Picker("", selection: $state.draft.goal) {
-                            ForEach(FactoryData.goals) { goal in Text(goal.name).tag(goal.name) }
+                            ForEach(FactoryData.activeGoals) { goal in Text(goal.name).tag(goal.name) }
                         }
                         .labelsHidden()
                         .controlSize(.small)
