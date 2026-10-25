@@ -66,6 +66,10 @@ t = await sam.wait("builder", () => sam.tasks.get(id)?.worker?.role === "builder
 step(`building in a team slot on ${t.worker.machine}`);
 await new Promise((r) => setTimeout(r, 4000)); // it writes wip.txt, then thinks
 
+// Whatever happens next, don't leave the machine paused.
+const unpause = () => me.send({ type: "machine.settings", machine: mac.id, settings });
+process.on("uncaughtException", (e) => { unpause(); setTimeout(() => { console.error(e); process.exit(1); }, 500); });
+process.on("unhandledRejection", (e) => { unpause(); setTimeout(() => { console.error(e); process.exit(1); }, 500); });
 me.send({ type: "machine.settings", machine: mac.id, settings: { ...settings, paused: true }, handOff: true });
 t = await sam.wait("hand-off", () => sam.tasks.get(id)?.machine == null && sam.tasks.get(id), 30000);
 step(`handed off: ${t.events.at(-1).text}`);

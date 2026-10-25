@@ -47,7 +47,7 @@ const goals = await (async () => {
   const again = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `Bearer ${token}` } });
   await new Promise((r) => (again.onopen = r));
   again.send(JSON.stringify({ type: "subscribe" }));
-  const snap = await new Promise((r) => (again.onmessage = (e) => r(JSON.parse(e.data))));
+  const snap = await new Promise((r) => (again.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === "snapshot") r(m); }));
   again.close();
   return snap.goals;
 })();

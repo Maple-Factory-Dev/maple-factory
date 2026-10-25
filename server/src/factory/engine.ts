@@ -19,6 +19,8 @@ import type { Intake } from "./intake.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
+/** How old a session must be before `reap` takes it for a leftover rather than one still starting. */
+const REAP_AFTER_MS = 30_000;
 const MAX_RESTARTS = 2;
 /// How long a session that reported its last word gets to wrap up before it's closed.
 const CLOSE_AFTER_MS = 8_000;
@@ -402,9 +404,31 @@ export class Engine {
   // Dispatch
 
   /** Starts a session for every task that should have one and doesn't, where there's room. */
+  private pumping: Promise<void> | null = null;
+  private pumpAgain = false;
+
+  /** One pump at a time (they await the machines, so two could start the same task twice); a pump
+   *  asked for while one runs happens once it's done. */
   async pump(): Promise<void> {
+    if (this.pumping) {
+      this.pumpAgain = true;
+      return this.pumping;
+    }
+    this.pumping = (async () => {
+      do {
+        this.pumpAgain = false;
+        await this.pumpOnce();
+      } while (this.pumpAgain);
+    })().finally(() => (this.pumping = null));
+    return this.pumping;
+  }
+
+  private async pumpOnce(): Promise<void> {
     const machines = await this.hooks.machines();
-    for (const task of this.store.tasks().reverse()) {
+    for (const listed of this.store.tasks().reverse()) {
+      // Read it again: what an earlier dispatch awaited may have changed it (a cancel, a move).
+      const task = this.store.task(listed.id);
+      if (!task) continue;
       const role = this.roleFor(task);
       if (!role || task.worker || task.hand || task.question) continue;
       const waiting = await this.dispatch(task, role, machines);
@@ -503,6 +527,13 @@ export class Engine {
       model: null,
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
+    const now_ = this.store.task(task.id);
+    if (!now_ || now_.worker || this.roleFor(now_) !== role) {
+      // It was cancelled, moved or started elsewhere while the machine was opening this one.
+      this.hooks.waitUntil(this.toRunner(machine.id, { type: "session.kill", id }, "factory"));
+      return null;
+    }
+    Object.assign(task, now_);
     this.store.addSession({ id, task: task.id, role, machine: machine.id, agent: task.agent, started: now(), ended: null, cause: null, kind });
     if (priv.movedFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
@@ -1111,10 +1142,19 @@ export class Engine {
    *  (its task moved elsewhere); those stop now. */
   reap(machine: Machine) {
     for (const { session } of machine.sessions) {
-      const s = session.taskId ? this.store.session(session.id) : null;
-      if (s?.ended != null) this.hooks.waitUntil(this.toRunner(machine.id, { type: "session.kill", id: session.id }, "factory"));
+      if (!session.taskId || this.reaped.has(session.id)) continue;
+      const s = this.store.session(session.id);
+      const task = s ? this.store.task(s.task) : null;
+      // Ended here, or no task's worker: a leftover. Young ones may still be being registered.
+      const orphan = s?.ended != null || (Date.now() - Number(session.startedAt) > REAP_AFTER_MS && task?.worker?.session !== session.id);
+      if (!orphan) continue;
+      this.reaped.add(session.id);
+      this.hooks.waitUntil(this.toRunner(machine.id, { type: "session.kill", id: session.id }, "factory"));
     }
   }
+
+  /** Sessions already sent a kill by `reap`, so a slow one isn't killed on every report. */
+  private reaped = new Set<string>();
 
   /** Types into the task's live session, as if at its keyboard. False when nothing's running. */
   private async type(task: Task, text: string): Promise<boolean> {
