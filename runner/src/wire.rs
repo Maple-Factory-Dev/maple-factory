@@ -398,6 +398,17 @@ pub struct AgentUsage {
     pub account: Option<UsageAccountRef>,
 }
 
+/// Usage caps for one agent's account on a machine, in place of the machine-wide ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCap {
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly: Option<f64>,
+}
+
 /// How much factory work a machine takes, set by its owner.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -421,6 +432,12 @@ pub struct MachineSettings {
     /// The same for its weekly window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly_cap: Option<f64>,
+    /// Per agent account; an agent listed here ignores sessionCap and weeklyCap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_caps: Option<Vec<AgentCap>>,
+    /// Caps stop only teammates' work; the owner's own tasks keep running past them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caps_team_only: Option<bool>,
 }
 
 /// A machine as the apps see it.

@@ -495,7 +495,7 @@ extension LiveAdapter {
         .sorted { ($0.product == .claudeCode ? 0 : 1, $0.id) < ($1.product == .claudeCode ? 0 : 1, $1.id) }
     }
 
-    private static func window(_ w: Wire.UsageReading) -> UsageWindow {
+    static func window(_ w: Wire.UsageReading) -> UsageWindow {
         let now = Date()
         let resets = w.resetsAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         let minutes = Double(w.windowMinutes ?? (w.label == "5h" ? 300 : w.label == "7d" ? 10080 : 0))

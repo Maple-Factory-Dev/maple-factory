@@ -1,8 +1,8 @@
 // A runner that only talks: enrolls as <id>, says hello, reports plan usage, and stays connected
 // for <seconds>, answering pings. For trying server paths without a real machine:
-//   node server/test/fake-runner.mjs http://localhost:8788 <id> <seconds> [usedPercent]
-const [base = "http://localhost:8788", id = "fake-mac", seconds = "20", used = "86"] = process.argv.slice(2);
-const { token: app } = await (await fetch(`${base}/dev/token`, { method: "POST" })).json();
+//   node server/test/fake-runner.mjs http://localhost:8788 <id> <seconds> [usedPercent] [owner login]
+const [base = "http://localhost:8788", id = "fake-mac", seconds = "20", used = "86", owner = ""] = process.argv.slice(2);
+const { token: app } = await (await fetch(`${base}/dev/token${owner ? `?as=${owner}` : ""}`, { method: "POST" })).json();
 const auth = { authorization: `Bearer ${app}` };
 const { code } = await (await fetch(`${base}/api/machines/enroll`, { method: "POST", headers: auth })).json();
 const enrolled = await (await fetch(`${base}/runner/enroll`, {

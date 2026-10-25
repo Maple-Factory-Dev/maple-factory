@@ -157,6 +157,13 @@ export interface AgentUsage {
   account?: UsageAccountRef | null;
 }
 
+/** Usage caps for one agent's account on a machine, in place of the machine-wide ones. */
+export interface AgentCap {
+  agent: string;
+  session?: number | null;
+  weekly?: number | null;
+}
+
 /** How much factory work a machine takes, set by its owner. */
 export interface MachineSettings {
   /** Factory sessions at once; none: worked out from its cores. */
@@ -174,6 +181,10 @@ export interface MachineSettings {
   sessionCap?: number | null;
   /** The same for its weekly window. */
   weeklyCap?: number | null;
+  /** Per agent account; an agent listed here ignores sessionCap and weeklyCap. */
+  agentCaps?: AgentCap[] | null;
+  /** Caps stop only teammates' work; the owner's own tasks keep running past them. */
+  capsTeamOnly?: boolean | null;
 }
 
 /** A machine as the apps see it. */

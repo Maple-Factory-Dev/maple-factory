@@ -457,6 +457,19 @@ public enum Wire {
         }
     }
 
+    /// Usage caps for one agent's account on a machine, in place of the machine-wide ones.
+    public struct AgentCap: Codable, Hashable, Sendable {
+        public var agent: String
+        public var session: Double?
+        public var weekly: Double?
+
+        public init(agent: String, session: Double? = nil, weekly: Double? = nil) {
+            self.agent = agent
+            self.session = session
+            self.weekly = weekly
+        }
+    }
+
     /// How much factory work a machine takes, set by its owner.
     public struct MachineSettings: Codable, Hashable, Sendable {
         /// Factory sessions at once; none: worked out from its cores.
@@ -474,8 +487,12 @@ public enum Wire {
         public var sessionCap: Double?
         /// The same for its weekly window.
         public var weeklyCap: Double?
+        /// Per agent account; an agent listed here ignores sessionCap and weeklyCap.
+        public var agentCaps: [AgentCap]?
+        /// Caps stop only teammates' work; the owner's own tasks keep running past them.
+        public var capsTeamOnly: Bool?
 
-        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil) {
+        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil) {
             self.capacity = capacity
             self.teamSlots = teamSlots
             self.lendIdle = lendIdle
@@ -484,6 +501,8 @@ public enum Wire {
             self.pausedUntil = pausedUntil
             self.sessionCap = sessionCap
             self.weeklyCap = weeklyCap
+            self.agentCaps = agentCaps
+            self.capsTeamOnly = capsTeamOnly
         }
     }
 

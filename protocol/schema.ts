@@ -154,6 +154,10 @@ export const structs: Record<string, Struct> = {
       account: "UsageAccountRef?",
     },
   },
+  AgentCap: {
+    doc: "Usage caps for one agent's account on a machine, in place of the machine-wide ones.",
+    fields: { agent: "string", session: "f64?", weekly: "f64?" },
+  },
   MachineSettings: {
     doc: "How much factory work a machine takes, set by its owner.",
     fields: {
@@ -165,12 +169,16 @@ export const structs: Record<string, Struct> = {
       pausedUntil: "u64?",
       sessionCap: "f64?",
       weeklyCap: "f64?",
+      agentCaps: "AgentCap[]?",
+      capsTeamOnly: "bool?",
     },
     fieldDocs: {
       capacity: "Factory sessions at once; none: worked out from its cores.",
       teamSlots: "Of those, how many teammates' shareable tasks may use.",
       lendIdle: "Lend every idle slot to the team, not just the team slots.",
       loadCap: "Above this share of CPU load, teammates' work isn't started here.",
+      agentCaps: "Per agent account; an agent listed here ignores sessionCap and weeklyCap.",
+      capsTeamOnly: "Caps stop only teammates' work; the owner's own tasks keep running past them.",
       pausedUntil: "When a pause ends on its own; none: until resumed.",
       sessionCap: "Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.",
       weeklyCap: "The same for its weekly window.",
