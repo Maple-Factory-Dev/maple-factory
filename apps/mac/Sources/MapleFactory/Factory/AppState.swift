@@ -969,7 +969,13 @@ final class AppState {
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
-            case "ui": if parts[1] == "compose" { startCompose() } else if parts[1] == "cancel" { cancelCompose() }
+            case "ui":
+                switch parts[1] {
+                case "compose": startCompose()
+                case "cancel": cancelCompose()
+                case "goal": goalSheet = .new
+                default: break
+                }
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             case "teamslots": setTeamSlots(parts[1], to: Int(parts[2]) ?? 1)
             case "offline": toggleOffline(parts[1])
