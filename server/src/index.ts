@@ -4,6 +4,7 @@ import type { Env } from "./env.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
 import { home, taskLink } from "./page.ts";
+import { jiraWebhook, linearWebhook } from "./trackers.ts";
 import { isLocal, machineHub, orgHub, text } from "./util.ts";
 import { PROTOCOL_VERSION } from "./wire.ts";
 import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
@@ -44,6 +45,8 @@ export default {
     if (link) return taskLink(link[1]);
 
     if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
+    if (path === "/integrations/linear" && request.method === "POST") return linearWebhook(request, env);
+    if (path === "/integrations/jira" && request.method === "POST") return jiraWebhook(request, env, url);
     if (path.startsWith("/api/intake") && intakeKey(request, env)) return (await intakeApi(request, env, path, null))!;
 
     const auth = await handleAuth(request, env);

@@ -3,6 +3,7 @@
 // The factory (goals, tasks and their agent sessions) lives here too, in this object's SQLite.
 
 import { DurableObject } from "cloudflare:workers";
+import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type Member, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
@@ -31,6 +32,7 @@ export class OrgHub extends DurableObject<Env> {
     this.intake = new Intake(this.store, {
       broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
       waitUntil: (p) => ctx.waitUntil(p),
+      deliver: (replyUrl, text) => deliver(env, replyUrl, text),
     });
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
@@ -93,8 +95,8 @@ export class OrgHub extends DurableObject<Env> {
         return Response.json(this.intake.create(input));
       }
       case "/intake/reply": {
-        const { id, author, text } = (await request.json()) as { id: string; author: string; text: string };
-        const updated = this.intake.reply(id, author, text);
+        const { id, replyUrl, author, text } = (await request.json()) as { id?: string; replyUrl?: string; author: string; text: string };
+        const updated = replyUrl ? this.intake.replyFrom(replyUrl, author, text) : this.intake.reply(id ?? "", author, text);
         return updated ? Response.json(updated) : new Response("No such request.", { status: 404 });
       }
       case "/diff": {

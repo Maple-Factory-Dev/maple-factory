@@ -23,7 +23,7 @@ const overlap = (a: Set<string>, b: Set<string>) => [...a].filter((w) => b.has(w
 export class Intake {
   constructor(
     private store: Store,
-    private hooks: { broadcast(request: IntakeRequest): void; waitUntil(p: Promise<unknown>): void },
+    private hooks: { broadcast(request: IntakeRequest): void; waitUntil(p: Promise<unknown>): void; deliver(replyUrl: string, text: string): Promise<void> },
   ) {}
 
   list(): IntakeRequest[] {
@@ -35,6 +35,10 @@ export class Intake {
   }
 
   create(input: NewRequest): IntakeRequest {
+    // An issue labelled again (or its webhook sent twice) is the request it already is.
+    const known = input.replyUrl ? this.store.intakeByReplyUrl(input.replyUrl) : null;
+    const existing = known ? this.get(known) : null;
+    if (existing) return existing;
     const text = `${input.title}\n${input.text}`;
     const request: IntakeRequest = {
       id: this.store.nextId("REQ"),
@@ -55,6 +59,12 @@ export class Intake {
     return request;
   }
 
+  /** A reply from where a request came from (a comment on its issue), if it's one of ours. */
+  replyFrom(replyUrl: string, author: string, text: string): IntakeRequest | null {
+    const id = this.store.intakeByReplyUrl(replyUrl);
+    return id ? this.reply(id, author, text) : null;
+  }
+
   /** Someone on the requester's side answered in the thread. */
   reply(id: string, author: string, text: string): IntakeRequest | null {
     const request = this.get(id);
@@ -72,10 +82,7 @@ export class Intake {
     this.save(request);
     const url = this.store.intakeReplyUrl(request.id);
     if (url) {
-      this.hooks.waitUntil(
-        fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, response_type: "in_channel" }) })
-          .catch(() => {}),
-      );
+      this.hooks.waitUntil(this.hooks.deliver(url, text).catch(() => {}));
     }
   }
 

@@ -176,6 +176,11 @@ export class Store {
     );
   }
 
+  /** The request whose replies go to `replyUrl` (an issue's), if there is one. */
+  intakeByReplyUrl(replyUrl: string): string | null {
+    return this.sql.exec<{ id: string }>("SELECT id FROM intake WHERE reply_url = ? ORDER BY updated DESC LIMIT 1", replyUrl).toArray()[0]?.id ?? null;
+  }
+
   intakeReplyUrl(id: string): string | null {
     return this.sql.exec<{ reply_url: string | null }>("SELECT reply_url FROM intake WHERE id = ?", id).toArray()[0]?.reply_url ?? null;
   }
