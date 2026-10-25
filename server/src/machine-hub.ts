@@ -212,9 +212,13 @@ export class MachineHub extends DurableObject<Env> {
         return;
       }
       case "usage": {
-        // Readings replace the agent's last one. Only what the apps show: no account emails.
-        const fresh = msg.agents.map((u) => ({ ...u, account: u.account ? { id: u.account.id ?? null, name: u.account.name ?? null } : null }));
-        const kept = machine.usage.filter((u) => !fresh.some((f) => f.agent === u.agent));
+        // Readings replace the agent's last one. Only what the apps show: no account emails, even inside
+        // a name (a personal Claude org is called "<email>'s Organization").
+        const scrub = (name: string | null | undefined) => (name && /\S+@\S+\.\S+/.test(name) ? "Personal" : name ?? null);
+        const fresh = msg.agents.map((u) => ({ ...u, account: u.account ? { id: u.account.id ?? null, name: scrub(u.account.name) } : null }));
+        const kept = machine.usage
+          .filter((u) => !fresh.some((f) => f.agent === u.agent))
+          .map((u) => ({ ...u, account: u.account ? { ...u.account, name: scrub(u.account.name) } : null }));
         await this.publish({ ...machine, usage: [...kept, ...fresh] });
         return;
       }
