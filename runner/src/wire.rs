@@ -104,6 +104,18 @@ pub enum ProofStatus {
     Failed,
 }
 
+/// What archiving a goal does with its tasks that haven't merged or been cancelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnfinishedTasks {
+    /// Cancel them (ending sessions, closing pull requests) and remove their worktrees where nothing would be lost.
+    Cleanup,
+    /// Cancel them and leave their worktrees.
+    Cancel,
+    /// Leave them running to the end.
+    Finish,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeStatus {
@@ -1416,11 +1428,13 @@ pub enum ClientMessage {
         id: String,
         following: bool,
     },
-    /// Its lead or an admin; only with nothing of it running.
+    /// Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.
     #[serde(rename = "goal.archive")]
     GoalArchive {
         id: String,
         archived: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unfinished: Option<UnfinishedTasks>,
     },
     /// Its owner or an admin.
     #[serde(rename = "machine.settings")]

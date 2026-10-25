@@ -198,9 +198,7 @@ struct GoalContextMenu: View {
             Button("New Task in \(goal.name)…") { state.startCompose(goal: goal.name) }
                 .disabled(goal.archived)
             Divider()
-            Button(goal.archived ? "Unarchive" : "Archive Goal") {
-                client.send(.goalArchive(.init(id: live.id, archived: !goal.archived)))
-            }
+            Button(goal.archived ? "Unarchive" : "Archive Goal…") { state.archive(goal, !goal.archived) }
         }
     }
 }

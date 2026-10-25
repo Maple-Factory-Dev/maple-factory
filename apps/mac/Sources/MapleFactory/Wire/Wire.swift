@@ -115,6 +115,16 @@ public enum Wire {
         case failed
     }
 
+    /// What archiving a goal does with its tasks that haven't merged or been cancelled.
+    public enum UnfinishedTasks: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Cancel them (ending sessions, closing pull requests) and remove their worktrees where nothing would be lost.
+        case cleanup
+        /// Cancel them and leave their worktrees.
+        case cancel
+        /// Leave them running to the end.
+        case finish
+    }
+
     public enum ChangeStatus: String, Codable, Hashable, Sendable, CaseIterable {
         /// Waiting for the agent.
         case queued
@@ -2310,14 +2320,16 @@ public enum Wire {
         }
     }
 
-    /// Its lead or an admin; only with nothing of it running.
+    /// Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.
     public struct ClientMessageGoalArchive: Codable, Hashable, Sendable {
         public var id: String
         public var archived: Bool
+        public var unfinished: UnfinishedTasks?
 
-        public init(id: String, archived: Bool) {
+        public init(id: String, archived: Bool, unfinished: UnfinishedTasks? = nil) {
             self.id = id
             self.archived = archived
+            self.unfinished = unfinished
         }
     }
 

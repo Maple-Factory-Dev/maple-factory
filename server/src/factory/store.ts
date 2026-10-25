@@ -30,6 +30,8 @@ export interface TaskPrivate {
   checks?: import("../github.ts").Check[];
   /** When its pull request was opened or found, so CI that never shows up stops being waited for. */
   prOpenedAt?: number;
+  /** Cancelled with its goal's archive, to have its worktree removed (when nothing would be lost). */
+  discard?: boolean;
 }
 
 export interface TaskSession {

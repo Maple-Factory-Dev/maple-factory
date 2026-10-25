@@ -176,6 +176,20 @@ struct ContentView: View {
         .onAppear { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: state.destination) { if state.sidebarFloating { state.toggleSidebar() } }
+        .confirmationDialog(
+            "Archive \(state.archiving ?? "")?",
+            isPresented: Binding(get: { state.archiving != nil }, set: { if !$0 { state.archiving = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("End Them & Clean Up", role: .destructive) { state.finishArchiving(.cleanup) }
+            Button("End Them, Keep Worktrees") { state.finishArchiving(.cancel) }
+            Button("Let Them Finish") { state.finishArchiving(.finish) }
+            Button("Don't Archive", role: .cancel) { state.archiving = nil }
+        } message: {
+            let unfinished = state.unfinishedTasks(in: state.archiving ?? "")
+            let ids = unfinished.prefix(6).map(\.id).joined(separator: ", ") + (unfinished.count > 6 ? " and \(unfinished.count - 6) more" : "")
+            Text("\(ids) \(unfinished.count == 1 ? "isn't" : "aren't") finished. Ending cancels \(unfinished.count == 1 ? "it" : "them"): sessions stop and pull requests close. Cleaning up also removes \(unfinished.count == 1 ? "its worktree" : "their worktrees"), but never anything uncommitted or unpushed. Letting them finish archives the goal and leaves the work running.")
+        }
         .sheet(item: Binding(get: { state.goalSheet }, set: { state.goalSheet = $0 })) { sheet in
             if case .edit(let id) = sheet { GoalSheet(editing: client.goals.first { $0.id == id }) } else { GoalSheet() }
         }

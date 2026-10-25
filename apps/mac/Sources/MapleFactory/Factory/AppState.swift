@@ -232,6 +232,30 @@ final class AppState {
         FactoryData.activeGoals.filter { isFollowing($0) || destination == .goal($0.name) }
     }
 
+    // MARK: Archiving goals
+
+    /// A goal being archived that still has unfinished tasks, while the app asks what to do with them.
+    var archiving: String? = nil
+
+    func unfinishedTasks(in goal: String) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal && $0.state != .merged && $0.state != .cancelled }
+    }
+
+    /// Archives (or brings back) a goal; with unfinished tasks it asks first.
+    func archive(_ goal: Goal, _ archived: Bool) {
+        guard let client, isLive, let live = client.goal(named: goal.name) else { return }
+        if archived, !unfinishedTasks(in: goal.name).isEmpty { archiving = goal.name; return }
+        client.send(.goalArchive(.init(id: live.id, archived: archived)))
+        if archived, destination == .goal(goal.name) { destination = .allGoals }
+    }
+
+    func finishArchiving(_ unfinished: Wire.UnfinishedTasks) {
+        guard let name = archiving, let client, let live = client.goal(named: name) else { return }
+        archiving = nil
+        client.send(.goalArchive(.init(id: live.id, archived: true, unfinished: unfinished)))
+        if destination == .goal(name) { destination = .allGoals }
+    }
+
     func setFollowing(_ goal: Goal, _ following: Bool) {
         if let client, isLive { client.follow(goal: goal.name, following) } else { mockFollows[goal.name] = following }
     }

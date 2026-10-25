@@ -165,8 +165,19 @@ export class Engine {
       case "goal.archive": {
         const goal = this.store.goal(msg.id) ?? fail("That goal isn't there any more.");
         if (member.role !== "admin" && goal.lead !== who) fail(`Only admins or ${goal.lead}, its lead, can archive ${goal.name}.`);
-        const running = this.store.tasks().filter((t) => t.goal === goal.id && ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state));
-        if (msg.archived && running.length) fail(`${running.map((t) => t.id).join(", ")} ${running.length === 1 ? "is" : "are"} still going; finish or cancel ${running.length === 1 ? "it" : "them"} first.`);
+        const unfinished = this.store.tasks().filter((t) => t.goal === goal.id && t.state !== "merged" && t.state !== "cancelled");
+        if (msg.archived && unfinished.length) {
+          const ids = unfinished.map((t) => t.id).join(", ");
+          if (!msg.unfinished) fail(`${ids} ${unfinished.length === 1 ? "isn't" : "aren't"} finished; say whether to end ${unfinished.length === 1 ? "it" : "them"} or let ${unfinished.length === 1 ? "it" : "them"} finish.`);
+          if (msg.unfinished !== "finish") {
+            for (const task of unfinished) {
+              if (msg.unfinished === "cleanup") this.store.savePrivate(task.id, { ...this.store.private(task.id), discard: true });
+              await this.cancel(task, who, `cancelled it, archiving ${goal.name}`);
+              await this.cleanup(task);
+            }
+            await this.pump();
+          }
+        }
         const saved = { ...goal, archived: msg.archived || null };
         this.store.saveGoal(saved);
         this.hooks.broadcast({ type: "goal.updated", goal: saved });
@@ -287,7 +298,7 @@ export class Engine {
         if (decision) task.comments.push({ id: crypto.randomUUID(), author: who, text: decision, at: now(), anchor: `Hand: ${hand.summary}`, via: null });
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
         if (hand.reason === "reviewLoop" && task.autoReview) task.autoReview.maxRounds += 2;
-        this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0, discard: false, cleaned: false });
         this.save(task);
         if (!(await this.type(task, `${who} answered your raised hand: ${decision || "carry on."}`))) await this.pump();
         return;
@@ -312,24 +323,7 @@ export class Engine {
       }
       case "task.cancel": {
         if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
-        await this.closeWorker(task, "cancelled");
-        task.state = "cancelled";
-        // Nothing's reviewing it or going to merge it now.
-        if (task.pr && (task.pr.state === "open" || task.pr.state === "draft")) {
-          task.pr.state = "closed";
-          const app = githubApp(this.env);
-          const gh = this.store.private(task.id).gh;
-          if (app && gh && task.pr.url) {
-            this.hooks.waitUntil(closePullRequest(app, gh.owner, gh.repo, task.pr.number, `${who} cancelled ${task.id} in Maple Factory.`).catch(() => {}));
-          }
-        }
-        if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
-        task.waiting = null;
-        task.question = null;
-        task.hand = null;
-        this.event(task, who, "cancelled it");
-        this.save(task);
-        await audit(this.env, who, "task.cancelled", task.id);
+        await this.cancel(task, who);
         await this.pump();
         return;
       }
@@ -1017,10 +1011,37 @@ export class Engine {
     if (this.store.tasks().some((t) => t.after.includes(task.id))) this.hooks.waitUntil(this.pump());
   }
 
-  /** Removes a merged task's worktree once none of its sessions are still in it (the runner refuses otherwise). */
+  /** Ends a task's work: its session, its pull request, anything waiting on a person. */
+  private async cancel(task: Task, who: string, why = "cancelled it") {
+    await this.closeWorker(task, "cancelled");
+    task.state = "cancelled";
+    // Nothing's reviewing it or going to merge it now.
+    if (task.pr && (task.pr.state === "open" || task.pr.state === "draft")) {
+      task.pr.state = "closed";
+      const app = githubApp(this.env);
+      const gh = this.store.private(task.id).gh;
+      if (app && gh && task.pr.url) {
+        this.hooks.waitUntil(closePullRequest(app, gh.owner, gh.repo, task.pr.number, `${who} cancelled ${task.id} in Maple Factory.`).catch(() => {}));
+      }
+    }
+    if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
+    task.waiting = null;
+    task.question = null;
+    task.hand = null;
+    this.event(task, who, why);
+    this.save(task);
+    await audit(this.env, who, "task.cancelled", task.id);
+  }
+
+  /**
+   * Removes a merged task's worktree (or a cancelled one's, when its goal was archived with "clean up")
+   * once none of its sessions are still in it (the runner refuses otherwise, and whenever anything
+   * would be lost).
+   */
   private async cleanup(task: Task) {
     const priv = this.store.private(task.id);
-    if (task.state !== "merged" || !task.machine || !priv.worktree || !priv.repoDir || priv.cleaned) return;
+    const finished = task.state === "merged" || (task.state === "cancelled" && priv.discard);
+    if (!finished || !task.machine || !priv.worktree || !priv.repoDir || priv.cleaned) return;
     const machine = (await this.hooks.machines()).find((m) => m.id === task.machine);
     if (machine?.sessions.some((s) => s.session.taskId === task.id)) return; // its last end calls this again
     this.store.savePrivate(task.id, { ...priv, cleaned: true });
@@ -1030,7 +1051,7 @@ export class Engine {
       cwd: priv.worktree,
       repoDir: priv.repoDir,
       branch: task.pr?.branch ?? `agent/${branchName(task)}`,
-      merged: true,
+      merged: task.state === "merged",
       heads: [task.pr?.head, priv.mergedAs].filter((h): h is string => Boolean(h)),
     });
   }

@@ -52,6 +52,14 @@ export const enums: Record<string, Enum> = {
   StepProgress: { values: { done: "Finished.", active: "Being worked on.", pending: "Not started." } },
   ProofKind: { values: { screenshot: "An image.", video: "A recording.", terminal: "A command and its output.", tests: "A test run." } },
   ProofStatus: { values: { pending: "No evidence yet.", proving: "Being proven.", proven: "Proven.", failed: "The proof failed." } },
+  UnfinishedTasks: {
+    doc: "What archiving a goal does with its tasks that haven't merged or been cancelled.",
+    values: {
+      cleanup: "Cancel them (ending sessions, closing pull requests) and remove their worktrees where nothing would be lost.",
+      cancel: "Cancel them and leave their worktrees.",
+      finish: "Leave them running to the end.",
+    },
+  },
   ChangeStatus: { values: { queued: "Waiting for the agent.", applying: "The agent is on it.", applied: "Done." } },
   ReviewVerdict: { values: { changesRequested: "Asked for changes.", passed: "Passed.", escalated: "Handed to a person.", inProgress: "Reviewing." } },
   CheckVerdict: { values: { met: "Met.", partial: "Partly met.", missed: "Missed." } },
@@ -632,7 +640,10 @@ export const unions: Record<string, Union> = {
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
-      "goal.archive": { doc: "Its lead or an admin; only with nothing of it running.", fields: { id: "string", archived: "bool" } },
+      "goal.archive": {
+        doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
+        fields: { id: "string", archived: "bool", unfinished: "UnfinishedTasks?" },
+      },
       "machine.settings": {
         doc: "Its owner or an admin.",
         fields: { machine: "string", settings: "MachineSettings", handOff: "bool?" },

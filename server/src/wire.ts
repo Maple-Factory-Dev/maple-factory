@@ -23,6 +23,10 @@ export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","term
 export type ProofStatus = "pending" | "proving" | "proven" | "failed";
 export const ProofStatusValues: readonly ProofStatus[] = ["pending","proving","proven","failed"];
 
+/** What archiving a goal does with its tasks that haven't merged or been cancelled. */
+export type UnfinishedTasks = "cleanup" | "cancel" | "finish";
+export const UnfinishedTasksValues: readonly UnfinishedTasks[] = ["cleanup","cancel","finish"];
+
 export type ChangeStatus = "queued" | "applying" | "applied";
 export const ChangeStatusValues: readonly ChangeStatus[] = ["queued","applying","applied"];
 
@@ -977,11 +981,12 @@ export interface ClientMessage_GoalFollow {
   following: boolean;
 }
 
-/** Its lead or an admin; only with nothing of it running. */
+/** Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them. */
 export interface ClientMessage_GoalArchive {
   type: "goal.archive";
   id: string;
   archived: boolean;
+  unfinished?: UnfinishedTasks | null;
 }
 
 /** Its owner or an admin. */

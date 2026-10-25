@@ -62,9 +62,7 @@ struct GoalView: View {
                     Menu {
                         Button("Edit Goal…") { state.goalSheet = .edit(live.id) }
                         Divider()
-                        Button(goal.archived ? "Unarchive" : "Archive Goal") {
-                            client.send(.goalArchive(.init(id: live.id, archived: !goal.archived)))
-                        }
+                        Button(goal.archived ? "Unarchive" : "Archive Goal…") { state.archive(goal, !goal.archived) }
                     } label: {
                         Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
                     }
