@@ -10,6 +10,7 @@ export function home(request: Request, env: Env, me: Member | null): Response {
   const org = escape(env.GITHUB_ORG || "this factory");
   const body = me
     ? `<p>Signed in as <b>${escape(me.login)}</b> (${escape(me.role)}) in ${org}.</p>
+       <p><a href="/app">Open the factory</a>: your inbox, plans to approve and changes to review.</p>
        <p><button id="add">Add a machine</button></p><pre id="out"></pre>
        <script>
          document.getElementById("add").onclick = async () => {
@@ -31,9 +32,13 @@ export function home(request: Request, env: Env, me: Member | null): Response {
 export function taskLink(id: string): Response {
   const app = `maplefactory://task/${encodeURIComponent(id)}`;
   return page(`${id} · Maple Factory`, `<p>Opening <b>${escape(id)}</b> in Maple Factory…</p>
-    <p><a href="${escape(app)}">Open it in the app</a></p>
+    <p><a href="${escape(app)}">Open it in the app</a> · <a href="/app#/t/${escape(encodeURIComponent(id))}">or in the browser</a></p>
     <p style="opacity:.7;font-size:13px">No app on this machine? Install it from your factory's admin.</p>
-    <script>location.href = ${JSON.stringify(app)};</script>`);
+    <script>
+      // Try the app; if nothing takes the link (no app here, or a phone), go to the web app.
+      location.href = ${JSON.stringify(app)};
+      setTimeout(() => { if (!document.hidden) location.replace(${JSON.stringify(`/app#/t/${id}`)}); }, 1500);
+    </script>`);
 }
 
 function page(title: string, body: string): Response {

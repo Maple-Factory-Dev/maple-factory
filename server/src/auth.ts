@@ -149,7 +149,10 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
 
   // Web: OAuth redirect.
   if (url.pathname === "/auth/login") {
-    const state = await sign({ nonce: crypto.randomUUID(), exp: Math.floor(Date.now() / 1000) + STATE_TTL }, env.SESSION_SECRET!);
+    // Where to land after: a path on this site only (the web app's task links).
+    const asked = url.searchParams.get("next") ?? "/";
+    const next = /^\/(?!\/)[\w\-./#?=&%]*$/.test(asked) ? asked : "/";
+    const state = await sign({ nonce: crypto.randomUUID(), next, exp: Math.floor(Date.now() / 1000) + STATE_TTL }, env.SESSION_SECRET!);
     const gh = new URL("https://github.com/login/oauth/authorize");
     gh.searchParams.set("client_id", env.GITHUB_CLIENT_ID!);
     gh.searchParams.set("redirect_uri", `${url.origin}/auth/callback`);
@@ -159,7 +162,8 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
   if (url.pathname === "/auth/callback") {
     const state = url.searchParams.get("state") ?? "";
     const code = url.searchParams.get("code") ?? "";
-    if (!code || state !== readCookie(request, "oauth") || !(await verify(state, env.SESSION_SECRET!))) {
+    const signed = await verify<{ exp: number; next?: string }>(state, env.SESSION_SECRET!);
+    if (!code || state !== readCookie(request, "oauth") || !signed) {
       return text("That sign-in link expired or didn't come from this browser. Try again.", 400);
     }
     const token = await exchange(env, { code, redirect_uri: `${url.origin}/auth/callback` });
@@ -168,7 +172,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
     if (!verdict.ok) return text(verdict.message, verdict.status);
     await audit(env, verdict.member.login, "auth.login", null, { via: "web" });
     const session = await sign({ login: verdict.member.login, exp: Math.floor(Date.now() / 1000) + SESSION_TTL }, env.SESSION_SECRET!);
-    const headers = new Headers({ location: "/" });
+    const headers = new Headers({ location: signed.next || "/" });
     headers.append("set-cookie", cookie(url, "session", session, SESSION_TTL));
     headers.append("set-cookie", cookie(url, "oauth", "", 0));
     return new Response(null, { status: 302, headers });

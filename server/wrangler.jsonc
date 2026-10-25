@@ -5,6 +5,8 @@
   "name": "maple-factory",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  // The web app (web/app): static files; its data comes over the signed-in feed like the apps'.
+  "assets": { "directory": "./web", "html_handling": "auto-trailing-slash" },
   "dev": { "host": "localhost" },
   "durable_objects": {
     "bindings": [
