@@ -123,6 +123,7 @@ struct ContentView: View {
                     state.selectedTask = id
                     state.focusedTask = id
                 }
+                .onChange(of: [state.destination.hashValue, state.tasks.count], initial: true) { state.keepSelectionInGoal() }
                 .onChange(of: client.factoryGoals.map(\.name), initial: true) { _, names in
                     // The mock's starting goal isn't one of the workspace's: open the focused task's goal, or the first.
                     guard client.isSignedIn, case .goal(let name) = state.destination, !names.isEmpty, !names.contains(name) else { return }

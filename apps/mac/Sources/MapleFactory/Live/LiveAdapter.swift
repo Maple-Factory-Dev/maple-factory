@@ -144,7 +144,7 @@ enum LiveAdapter {
         switch t.state {
         case .drafting: return "Draft"
         case .planning: return t.worker == nil ? "Waiting for a planner" : "Drafting the plan"
-        case .awaitingApproval: return "Plan v\(t.planVersion) · \(t.approvals.count) of \(t.approvalsNeeded) approvals"
+        case .awaitingApproval: return t.approvalsNeeded == 0 ? "Plan v\(t.planVersion) ready" : "Plan v\(t.planVersion) · \(t.approvals.count) of \(t.approvalsNeeded) approvals"
         case .building:
             let done = t.plan.filter { $0.progress == .done }.count
             return t.worker == nil ? "Queued" : "Step \(min(done + 1, max(t.plan.count, 1))) of \(max(t.plan.count, 1))"
@@ -152,7 +152,7 @@ enum LiveAdapter {
             guard let round = t.autoReview?.rounds.last else { return "In review" }
             switch round.verdict {
             case .inProgress: return "Review round \(round.number)"
-            case .passed: return "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
+            case .passed: return t.reviewsNeeded == 0 ? "Passed review · ready to merge" : "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
             case .changesRequested: return "Changes requested"
             case .escalated: return "Escalated"
             }

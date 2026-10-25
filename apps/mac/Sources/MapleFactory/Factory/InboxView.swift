@@ -11,6 +11,8 @@ struct InboxView: View {
     private var goalCount: Int {
         Set(items.map { state.task($0.taskID).goal }).count
     }
+    private var things: String { items.count == 1 ? "1 thing" : "\(items.count) things" }
+    private var goals: String { goalCount == 1 ? "1 goal" : "\(goalCount) goals" }
 
     var body: some View {
         ScrollView {
@@ -44,8 +46,8 @@ struct InboxView: View {
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(Theme.text)
                     Text(mineOnly
-                         ? "\(items.count) things across \(goalCount) goals are waiting on you."
-                         : "\(items.count) things across \(goalCount) goals are waiting on the team.")
+                         ? "\(things) across \(goals) \(items.count == 1 ? "is" : "are") waiting on you."
+                         : "\(things) across \(goals) \(items.count == 1 ? "is" : "are") waiting on the team.")
                         .font(.system(size: 13.5))
                         .foregroundStyle(Theme.textMuted)
                 }

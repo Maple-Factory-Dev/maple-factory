@@ -167,10 +167,10 @@ struct BoardColumns: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
 
-            ForEach(columnTasks) { task in
-                TaskCard(task: task, selected: task.id == state.selectedTask)
-                    .onTapGesture(count: 2) { state.openFocus(task.id) }
-                    .onTapGesture { state.selectedTask = task.id }
+            // A column hugs its cards until they outgrow the window, then scrolls on its own.
+            ViewThatFits(in: .vertical) {
+                cards(columnTasks)
+                ScrollView { cards(columnTasks) }.scrollIndicators(.never)
             }
 
             if columnTasks.isEmpty {
@@ -189,6 +189,16 @@ struct BoardColumns: View {
         .frame(width: 240, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.columnBG))
         .opacity(taskState == .cancelled ? 0.7 : 1)
+    }
+
+    private func cards(_ columnTasks: [FactoryTask]) -> some View {
+        VStack(spacing: 8) {
+            ForEach(columnTasks) { task in
+                TaskCard(task: task, selected: task.id == state.selectedTask)
+                    .onTapGesture(count: 2) { state.openFocus(task.id) }
+                    .onTapGesture { state.selectedTask = task.id }
+            }
+        }
     }
 }
 

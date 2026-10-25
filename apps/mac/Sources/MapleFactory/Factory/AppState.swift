@@ -484,6 +484,21 @@ final class AppState {
         }
     }
 
+    /// The inspector shows a task from the goal on screen: when the selection belongs elsewhere (or is
+    /// gone), it moves to the goal's first unfinished task.
+    func keepSelectionInGoal() {
+        if destination == .inbox {
+            if !myInbox.contains(where: { $0.taskID == selectedTask }), let first = myInbox.first { selectedTask = first.taskID }
+            return
+        }
+        guard case .goal(let name) = destination else { return }
+        let goalTasks = tasks.filter { $0.goal == name }
+        guard !goalTasks.contains(where: { $0.id == selectedTask }) else { return }
+        if let pick = goalTasks.first(where: { $0.state != .merged && $0.state != .cancelled }) ?? goalTasks.first {
+            selectedTask = pick.id
+        }
+    }
+
     func closeFocus() {
         withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
     }
