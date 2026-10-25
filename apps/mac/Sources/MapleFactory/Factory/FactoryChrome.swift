@@ -45,6 +45,10 @@ struct FactoryTopBar: View {
             )
             .contentShape(Rectangle())
             .onTapGesture { showShare.toggle() }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Share")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { showShare.toggle() }
             .popover(isPresented: $showShare, arrowEdge: .bottom) { SharePopover() }
             .padding(.leading, 4)
             .padding(.trailing, 6)

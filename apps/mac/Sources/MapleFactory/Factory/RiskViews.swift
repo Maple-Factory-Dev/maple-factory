@@ -276,7 +276,7 @@ struct RiskPolicyEditor: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(FactoryData.goals) { goal in
+                ForEach(FactoryData.activeGoals) { goal in
                     HStack(spacing: 8) {
                         Circle().fill(goal.color).frame(width: 7, height: 7)
                         Text(goal.name).font(.system(size: 12.5)).foregroundStyle(Theme.text)
@@ -409,6 +409,10 @@ struct RiskPolicyButton: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { open = true }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Risk policy")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { open = true }
         .popover(isPresented: $open, arrowEdge: .bottom) { RiskPolicyEditor() }
     }
 }
