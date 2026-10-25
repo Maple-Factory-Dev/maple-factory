@@ -192,6 +192,15 @@ struct FactoryStatusBar: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
 
+    /// Your plan account closest to its 5-hour limit (anyone's, if your machines report none).
+    private var busiestAccount: UsageAccount? {
+        let accounts = LiveAdapter.usageAccounts(machines: client.machines, members: client.members).filter { $0.sessionWindow != nil }
+        let mine = accounts.filter { $0.owner?.github == client.me?.login }
+        return (mine.isEmpty ? accounts : mine).max { ($0.sessionWindow?.used ?? 0) < ($1.sessionWindow?.used ?? 0) }
+    }
+
+    private func percent(_ used: Double) -> String { "\(Int((used * 100).rounded()))%" }
+
     var body: some View {
         HStack(spacing: 16) {
             if client.isSignedIn {
@@ -233,6 +242,18 @@ struct FactoryStatusBar: View {
             }
             Spacer()
             if state.isLive {
+                if let account = busiestAccount, let session = account.sessionWindow {
+                    HStack(spacing: 5) {
+                        ProductMark(product: account.product).scaleEffect(0.55).frame(width: 13, height: 13)
+                        Text(state.isCompact
+                             ? "\(percent(session.used))\(account.weekWindow.map { " · \(percent($0.used))" } ?? "")"
+                             : "\(percent(session.used)) session\(account.weekWindow.map { " · \(percent($0.used)) week" } ?? "")")
+                    }
+                    .foregroundStyle(session.used >= 0.9 ? Theme.State.cancelled : session.runsOutEarly ? Theme.State.awaitingApproval : Theme.textMuted)
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.destination = .usage; state.focusedTask = nil }
+                    .help("\(account.title): the busiest of your plan accounts. Click for all of them.")
+                }
                 Text(client.status == .live ? "Live" : client.status == .connecting ? "Connecting…" : "Reconnecting…")
             } else {
             HStack(spacing: 5) {

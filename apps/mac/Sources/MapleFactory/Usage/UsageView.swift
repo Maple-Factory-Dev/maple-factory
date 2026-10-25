@@ -122,7 +122,7 @@ struct UsageView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
 
-    private var live: [UsageAccount] { LiveAdapter.usageAccounts(machines: client.machines, members: client.members) }
+    private var live: [UsageAccount] { LiveAdapter.usageAccounts(machines: client.machines, members: client.members, tasks: client.factoryTasks) }
 
     private var narrow: Bool { state.contentWidth < 920 }
     private var columns: [GridItem] {

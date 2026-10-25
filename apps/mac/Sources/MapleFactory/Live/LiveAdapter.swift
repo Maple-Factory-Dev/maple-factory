@@ -442,30 +442,36 @@ struct FlowLayout: Layout {
 extension LiveAdapter {
     /// One card per plan account the machines report, newest reading first: machines signed in to
     /// the same account share its limits.
-    static func usageAccounts(machines: [Wire.Machine], members: [Wire.Member]) -> [UsageAccount] {
-        var byAccount: [String: (reading: Wire.AgentUsage, machine: Wire.Machine, machines: [String])] = [:]
+    /// `tasks` gives each account the factory sessions running on its machines with its agent.
+    static func usageAccounts(machines: [Wire.Machine], members: [Wire.Member], tasks: [FactoryTask] = []) -> [UsageAccount] {
+        var byAccount: [String: (reading: Wire.AgentUsage, machine: Wire.Machine, machines: [Wire.Machine])] = [:]
         for machine in machines {
             for reading in machine.usage {
                 let key = "\(reading.agent)-\(reading.account?.id ?? machine.id)"
                 if let seen = byAccount[key] {
                     let newer = reading.observedAt > seen.reading.observedAt
-                    byAccount[key] = (newer ? reading : seen.reading, newer ? machine : seen.machine, seen.machines + [machine.name])
+                    byAccount[key] = (newer ? reading : seen.reading, newer ? machine : seen.machine, seen.machines + [machine])
                 } else {
-                    byAccount[key] = (reading, machine, [machine.name])
+                    byAccount[key] = (reading, machine, [machine])
                 }
             }
         }
         return byAccount.map { key, entry in
             let r = entry.reading
+            let ids = Set(entry.machines.map(\.id))
+            let routed = tasks.compactMap { task -> Agent? in
+                guard let w = task.worker, ids.contains(w.machine), w.agent == r.agent else { return nil }
+                return Agent(name: "\(task.id) \(w.role)", color: role(w.role).color)
+            }
             return UsageAccount(
                 id: key,
                 product: r.agent == "codex" ? .codex : .claudeCode,
                 plan: r.plan ?? "plan",
                 owner: person(entry.machine.owner, members: members),
                 accountName: r.account?.name,
-                machines: entry.machines,
+                machines: entry.machines.map(\.name),
                 windows: r.windows.map(window),
-                agents: [],
+                agents: routed,
                 updated: ago(r.observedAt),
                 updatedFrom: entry.machine.name,
                 source: r.source == "statusline" ? "From the status line of Claude Code sessions." : "From Codex's own usage reports.",
