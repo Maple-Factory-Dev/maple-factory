@@ -22,6 +22,7 @@ mod statusline;
 mod tasks;
 mod thumbs;
 mod tmux;
+mod trust;
 mod update;
 mod usage;
 mod ends;

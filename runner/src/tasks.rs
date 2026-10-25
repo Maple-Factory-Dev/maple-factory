@@ -572,12 +572,15 @@ pub async fn open(
     if req.existing {
         // Its builder again: the worktree as it is, and the prompt with its project's settings as before.
         let worktree = existing(cwd, req).await?;
+        crate::trust::trust_worktree(&expand_home(&worktree));
         let p = crate::factory::prepare(&expand_home(&worktree), prompt, &task.projects).await;
         let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
         return Ok((worktree, prompt, images));
     }
     let emit = |m: Outbound| sessions.emit(m);
     let started = start(&emit, &task.id, cwd, task.repo.as_deref(), req, &Places::here()).await?;
+    // A worktree the runner just made: Claude Code shouldn't stop to ask whether to trust it.
+    crate::trust::trust_worktree(&expand_home(&started.worktree));
     let p = crate::factory::prepare(&expand_home(&started.worktree), prompt, &task.projects).await;
     sessions.emit(Outbound::TaskStarted {
         task_id: task.id.clone(),
