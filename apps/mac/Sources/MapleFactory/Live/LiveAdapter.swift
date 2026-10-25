@@ -68,6 +68,10 @@ enum LiveAdapter {
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
+        let goal = goals.first { $0.id == t.goal }
+        if let goal, goal.repos.count > 1 { task.repo = t.repo ?? goal.repo }
+        task.after = t.after
+        task.followUps = t.followUps.map { (repo: $0.repo, title: $0.title, task: $0.task) }
         task.brief = t.brief
         task.spec = t.brief
         task.progress = t.state == .building && !t.plan.isEmpty ? max(0.04, Double(done) / Double(t.plan.count)) : nil

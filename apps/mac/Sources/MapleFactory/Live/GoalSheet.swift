@@ -31,14 +31,52 @@ struct GoalSheet: View {
         _summary = State(initialValue: goal.summary)
         _source = State(initialValue: goal.repo == nil ? .folder : .repo)
         _folder = State(initialValue: goal.folder ?? "")
-        _repo = State(initialValue: goal.repo ?? "")
+        _repo = State(initialValue: (goal.repos.isEmpty ? [goal.repo].compactMap { $0 } : goal.repos).joined(separator: ", "))
         _base = State(initialValue: goal.base ?? "")
         _color = State(initialValue: Self.colors.firstIndex { $0.hex.caseInsensitiveCompare(goal.color) == .orderedSame } ?? 0)
     }
 
     private var valid: Bool {
         !name.trimmed.isEmpty && prefix.range(of: "^[A-Z][A-Z0-9]{0,5}$", options: .regularExpression) != nil
-            && (source == .folder ? !folder.trimmed.isEmpty : repo.range(of: "^[\\w.-]+/[\\w.-]+$", options: .regularExpression) != nil)
+            && (source == .folder ? !folder.trimmed.isEmpty : !repos.isEmpty && repos.allSatisfy { $0.range(of: "^[\\w.-]+/[\\w.-]+$", options: .regularExpression) != nil })
+    }
+
+    /// The goal's repos in order, the default first: "acme/api, acme/web".
+    private var repos: [String] { repo.split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" }).map(String.init) }
+
+    /// The org's repos (Settings → Repositories), ticked for this goal; the first ticked is the default.
+    private var repoPicker: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(client.repos, id: \.name) { org in
+                    let picked = repos.contains { $0.caseInsensitiveCompare(org.name) == .orderedSame }
+                    HStack(spacing: 8) {
+                        Image(systemName: picked ? "checkmark.square.fill" : "square")
+                            .foregroundStyle(picked ? Theme.accent : Theme.textFaint)
+                        Text(org.name)
+                            .font(.system(size: 12.5, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                        Spacer()
+                        if picked && repos.first?.caseInsensitiveCompare(org.name) == .orderedSame {
+                            Text("Default").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textMuted)
+                        } else if picked {
+                            Text("Make default")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.accent)
+                                .onTapGesture { repo = ([org.name] + repos.filter { $0.caseInsensitiveCompare(org.name) != .orderedSame }).joined(separator: ", ") }
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        repo = (picked ? repos.filter { $0.caseInsensitiveCompare(org.name) != .orderedSame } : repos + [org.name]).joined(separator: ", ")
+                    }
+                }
+            }
+        }
+        .frame(height: min(CGFloat(client.repos.count) * 28, 140))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
     }
 
     var body: some View {
@@ -74,17 +112,25 @@ struct GoalSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                HStack(spacing: 12) {
-                    if source == .folder {
+                if source == .folder {
+                    HStack(spacing: 12) {
                         input { TextField("~/Projects/atlas", text: $folder) }
-                    } else {
-                        input { TextField("acme/atlas", text: $repo) }
+                        input { TextField("Base branch (default)", text: $base) }.frame(width: 190)
                     }
-                    input { TextField("Base branch (default)", text: $base) }.frame(width: 190)
+                } else if client.repos.isEmpty {
+                    HStack(spacing: 12) {
+                        input { TextField("acme/api, acme/web", text: $repo) }
+                        input { TextField("Base branch (default)", text: $base) }.frame(width: 190)
+                    }
+                } else {
+                    repoPicker
+                    input { TextField("Base branch (each repo's default)", text: $base) }.frame(width: 240)
                 }
                 Text(source == .folder
                      ? "The same path on each machine that works on it. Tasks branch from origin/<base> in their own worktrees."
-                     : "Each machine uses its own checkout of the repo, or clones it.")
+                     : client.repos.isEmpty
+                        ? "One or more repos, the first the default. Add the org's in Settings → Repositories to pick from them."
+                        : "Each task changes one of these; work across them becomes linked tasks. Machines use their own checkouts, or clone.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textFaint)
             }
@@ -136,7 +182,8 @@ struct GoalSheet: View {
             summary: summary.trimmed,
             lead: editing?.lead ?? client.me?.login ?? "",
             due: editing?.due,
-            repo: source == .repo ? repo.trimmed : nil,
+            repo: source == .repo ? repos.first : nil,
+            repos: source == .repo ? repos : [],
             folder: source == .folder ? folder.trimmed : nil,
             base: base.trimmed.isEmpty ? nil : base.trimmed
         )

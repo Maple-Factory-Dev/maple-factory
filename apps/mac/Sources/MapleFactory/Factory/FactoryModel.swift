@@ -205,6 +205,11 @@ struct FactoryTask: Identifiable {
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
+    /// The GitHub repo it changes (live goals that span several), and the tasks it builds on.
+    var repo: String? = nil
+    var after: [String] = []
+    /// Its plan's parts for the goal's other repos, and the tasks made for them once approved.
+    var followUps: [(repo: String, title: String, task: String?)] = []
     /// The full Markdown brief the task was composed from, when there is one.
     var spec: String? = nil
     /// What the dedicated review agent found, once the task reaches review.
@@ -368,6 +373,8 @@ struct ComposeDraft {
     var goal = "Auth overhaul"
     /// An agent's name, or nil to let the factory pick the least busy one.
     var agent: String? = nil
+    /// Which of the goal's repos it changes; nil: the goal's default.
+    var repo: String? = nil
     var fromNote: UUID? = nil
     var shareable = false
     var tickets: [TicketLink] = []

@@ -66,6 +66,12 @@ struct MapleFactoryApp: App {
                     .keyboardShortcut("n", modifiers: .command)
             }
         }
+
+        Settings {
+            OrgSettingsView()
+                .environment(state)
+                .environment(client)
+        }
     }
 }
 

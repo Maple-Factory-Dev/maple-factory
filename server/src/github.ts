@@ -8,6 +8,7 @@
 // needs. GITHUB_API_URL can point all of it at a fake GitHub for tests; it's only honored on localhost.
 
 import type { Env } from "./env.ts";
+import type { OrgRepo } from "./wire.ts";
 
 const API = "https://api.github.com";
 const USER_AGENT = "maple-factory";
@@ -143,6 +144,27 @@ async function failure(res: Response, what: string): Promise<GitHubError> {
 const seg = (s: string) => encodeURIComponent(s);
 
 /** The app's installation on owner/repo. A 404 means the app isn't installed there. */
+/** Every repo the app is installed on, across its installations. */
+export async function installedRepos(app: GitHubApp): Promise<OrgRepo[]> {
+  const jwt = `Bearer ${await appJwt(app)}`;
+  const res = await call(app, "GET", "/app/installations?per_page=100", jwt);
+  if (!res.ok) throw await failure(res, "listing the app's installations");
+  const repos: OrgRepo[] = [];
+  for (const installation of (await res.json()) as { id: number }[]) {
+    const tokenRes = await call(app, "POST", `/app/installations/${installation.id}/access_tokens`, jwt, { permissions: { metadata: "read" } });
+    if (!tokenRes.ok) throw await failure(tokenRes, "reading an installation's repos");
+    const { token } = (await tokenRes.json()) as { token: string };
+    for (let page = 1; ; page++) {
+      const list = await call(app, "GET", `/installation/repositories?per_page=100&page=${page}`, `token ${token}`);
+      if (!list.ok) throw await failure(list, "listing an installation's repos");
+      const { repositories } = (await list.json()) as { repositories: { full_name: string; default_branch?: string; private?: boolean }[] };
+      for (const r of repositories) repos.push({ name: r.full_name, defaultBranch: r.default_branch ?? null, isPrivate: r.private ?? false, source: "github" });
+      if (repositories.length < 100) break;
+    }
+  }
+  return repos;
+}
+
 export async function installationId(app: GitHubApp, owner: string, repo: string): Promise<number> {
   const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/installation`, `Bearer ${await appJwt(app)}`);
   if (res.status === 404) throw new GitHubError("not_installed", `The GitHub App isn't installed on ${owner}/${repo}.`, 404);

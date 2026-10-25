@@ -209,7 +209,9 @@ function taskView(id) {
     h("h1", {}, t.title),
     h("div", { class: "row" },
       h("span", { class: `pill s-${t.state}` }, STATE_TITLE[t.state]),
-      h("span", { class: "muted" }, `${name(t.owner)} · ${goal?.name ?? ""} · updated ${ago(t.updatedAt)}`)),
+      h("span", { class: "muted" }, `${name(t.owner)} · ${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
+    (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
+      t.after.map((id, i) => [i ? ", " : "", h("a", { href: `#/t/${id}` }, id)])),
     h("div", { class: "stepper" }, STATES.map((s, i) => h("span", { class: i <= reached ? `bg-${STATES[Math.min(i, reached)]}` : "" }))),
     t.waiting && h("p", { class: "muted" }, t.waiting),
     t.liveLog && !t.waiting && t.worker && h("p", { class: "muted" }, `${name(t.worker.role)}: ${t.liveLog}`),
@@ -302,6 +304,10 @@ function overview(t) {
     t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
       h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
         h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
+    (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
+      t.followUps.map((f) => h("div", { class: "check" }, h("div", {},
+        h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
+        f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
     t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map(doneItem))],
     timeline(t));
 }

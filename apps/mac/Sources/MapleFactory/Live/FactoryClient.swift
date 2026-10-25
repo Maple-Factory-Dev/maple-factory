@@ -40,6 +40,8 @@ import Security
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
+    /// The org's repos: the GitHub App's, and any added by hand.
+    private(set) var repos: [Wire.OrgRepo] = []
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.
     private(set) var riskPolicy: RiskPolicy?
@@ -176,6 +178,7 @@ import Security
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             intakeRequests = snapshot.intake
+            repos = snapshot.repos
             rebuild()
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
@@ -225,6 +228,8 @@ import Security
         case .presence(let update):
             online = update.online
             applyPresence()
+        case .reposUpdated(let update):
+            repos = update.repos
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances

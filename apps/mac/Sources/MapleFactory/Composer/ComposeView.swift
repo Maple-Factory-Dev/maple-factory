@@ -145,6 +145,7 @@ struct ComposeView: View {
 /// Live read-back of the brief: where it goes, who picks it up, what must be proven, and how risky it looks.
 struct FactoryReadingPanel: View {
     @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
     let reading: BriefReading
 
     private var areaLevel: RiskLevel {
@@ -174,6 +175,17 @@ struct FactoryReadingPanel: View {
                         .labelsHidden()
                         .controlSize(.small)
                         .fixedSize()
+                    }
+                    if state.isLive, let goal = client.goal(named: state.draft.goal), goal.repos.count > 1 {
+                        row("Repo") {
+                            Picker("", selection: $state.draft.repo) {
+                                Text("\(goal.repos[0]) (default)").tag(String?.none)
+                                ForEach(goal.repos.dropFirst(), id: \.self) { repo in Text(repo).tag(String?.some(repo)) }
+                            }
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .fixedSize()
+                        }
                     }
                     if state.isLive {
                         row("Agent") {

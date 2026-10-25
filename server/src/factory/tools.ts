@@ -67,6 +67,17 @@ const TOOLS: Tool[] = [
           ),
           "Pictures of the change: required for UI work.",
         ),
+        otherRepos: list(
+          obj(
+            {
+              repo: str("One of the goal's other repos (owner/name)."),
+              title: str("The task's title there."),
+              brief: str("What that repo needs, for its own planner: what this task changes that it builds on."),
+            },
+            ["repo", "title", "brief"],
+          ),
+          "Parts of the work that belong in the goal's other repos; each becomes a task there once this plan is approved.",
+        ),
       },
       ["summary", "steps", "doneWhen", "risk", "footprint"],
     ),

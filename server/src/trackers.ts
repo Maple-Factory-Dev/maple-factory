@@ -168,6 +168,11 @@ export async function githubWebhook(request: Request, env: Env): Promise<Respons
   if (!(await verifyWebhook(env.GITHUB_WEBHOOK_SECRET, raw, request.headers.get("x-hub-signature-256")))) return text("Bad signature.", 401);
   const kind = request.headers.get("x-github-event") ?? "";
   const e = JSON.parse(new TextDecoder().decode(raw)) as any;
+  // The app was installed, removed, or given or denied repos: the org's repo list changed.
+  if (kind === "installation" || kind === "installation_repositories") {
+    await orgHub(env).fetch("https://org/github/repos", { method: "POST" });
+    return new Response(null, { status: 204 });
+  }
   const owner = e.repository?.owner?.login;
   const repo = e.repository?.name;
   if (typeof owner !== "string" || typeof repo !== "string") return new Response(null, { status: 204 });

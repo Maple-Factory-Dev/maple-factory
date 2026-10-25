@@ -194,6 +194,16 @@ struct TaskCard: View {
                 Text(task.id)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textFaint)
+                if let repo = task.repo {
+                    // The repo's short name: goals that span repos say which one each card is in.
+                    Text(repo.split(separator: "/").last.map(String.init) ?? repo)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Theme.textMuted)
+                        .padding(.horizontal, 5)
+                        .frame(height: 16)
+                        .background(Capsule().fill(Theme.fill))
+                        .help(repo)
+                }
                 if let risk = state.risk(for: task), risk.level > .low {
                     RiskBadge(level: risk.level, compact: true)
                 }

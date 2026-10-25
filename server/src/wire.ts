@@ -56,6 +56,9 @@ export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","pa
 export type RiskLevel = "low" | "medium" | "high";
 export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
 
+export type RepoSource = "github" | "manual";
+export const RepoSourceValues: readonly RepoSource[] = ["github","manual"];
+
 /** What a session's agent is doing, from its hooks. */
 export type AgentState = "working" | "waiting" | "done" | "idle";
 export const AgentStateValues: readonly AgentState[] = ["working","waiting","done","idle"];
@@ -208,8 +211,10 @@ export interface Goal {
   summary: string;
   lead: string;
   due?: number | null;
-  /** GitHub owner/name its tasks change. */
+  /** GitHub owner/name its tasks change unless they pick another of `repos`. */
   repo?: string | null;
+  /** Every repo the goal's work spans (its `repo` first); each task changes one of them. */
+  repos: string[];
   /** Or a folder on the machines (local repos, dev). */
   folder?: string | null;
   /** The branch tasks start from and merge into (default: the repo's default branch). */
@@ -389,6 +394,25 @@ export interface Footprint {
   estimated: boolean;
 }
 
+/** A repository the org's goals can work in. */
+export interface OrgRepo {
+  /** GitHub owner/name. */
+  name: string;
+  defaultBranch?: string | null;
+  isPrivate: boolean;
+  /** Granted to the GitHub App, or added by hand (no app, or not yet granted). */
+  source: RepoSource;
+}
+
+/** Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved. */
+export interface FollowUp {
+  repo: string;
+  title: string;
+  brief: string;
+  /** The task made for it, once the plan is approved. */
+  task?: string | null;
+}
+
 export interface Risk {
   level: RiskLevel;
   reasons: string[];
@@ -454,6 +478,11 @@ export interface Task {
   machine?: string | null;
   /** The task it was split off from to stay inside the PR budget. */
   splitFrom?: string | null;
+  /** Which of its goal's repos it changes; none: the goal's `repo` (or its folder). */
+  repo?: string | null;
+  /** Tasks that must merge before it starts building, e.g. the API change a web change uses. */
+  after: string[];
+  followUps: FollowUp[];
 }
 
 /** Code that raises a change's risk when touched. */
@@ -935,6 +964,23 @@ export interface ClientMessage_PolicySave {
   policy: RiskPolicy;
 }
 
+/** Read the repos the GitHub App is installed on again. */
+export interface ClientMessage_ReposRefresh {
+  type: "repos.refresh";
+}
+
+/** Admins only: a repo the GitHub App doesn't list (or there's no app). */
+export interface ClientMessage_ReposAdd {
+  type: "repos.add";
+  name: string;
+}
+
+/** Admins only: one added by hand. */
+export interface ClientMessage_ReposRemove {
+  type: "repos.remove";
+  name: string;
+}
+
 /** Let the factory auto-merge a goal's work up to `upTo`; none takes it back. */
 export interface ClientMessage_GoalAcceptRisk {
   type: "goal.acceptRisk";
@@ -955,6 +1001,8 @@ export interface ClientMessage_TaskCreate {
   agent?: string | null;
   /** The request it was composed from, which then tracks it. */
   intake?: string | null;
+  repo?: string | null;
+  after?: string[] | null;
 }
 
 export interface ClientMessage_TaskEdit {
@@ -963,6 +1011,7 @@ export interface ClientMessage_TaskEdit {
   title?: string | null;
   brief?: string | null;
   shareable?: boolean | null;
+  repo?: string | null;
 }
 
 /** Send a draft to planning. */
@@ -1060,8 +1109,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1078,6 +1127,7 @@ export interface ServerToClient_Snapshot {
   online: Presence[];
   notes: Note[];
   intake: IntakeRequest[];
+  repos: OrgRepo[];
   protocolVersion: number;
 }
 
@@ -1133,6 +1183,11 @@ export interface ServerToClient_PolicyUpdated {
   acceptances: RiskAcceptance[];
 }
 
+export interface ServerToClient_ReposUpdated {
+  type: "repos.updated";
+  repos: OrgRepo[];
+}
+
 /** Something worth a passing line in the app. */
 export interface ServerToClient_Toast {
   type: "toast";
@@ -1153,5 +1208,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","presence","policy.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","presence","policy.updated","repos.updated","toast","session.ended","error"] as const;

@@ -226,6 +226,13 @@ public enum Wire {
         case high
     }
 
+    public enum RepoSource: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Granted to the GitHub App.
+        case github
+        /// Added by an admin.
+        case manual
+    }
+
     /// What a session's agent is doing, from its hooks.
     public enum AgentState: String, Codable, Hashable, Sendable, CaseIterable {
         /// Running a turn.
@@ -551,14 +558,16 @@ public enum Wire {
         public var summary: String
         public var lead: String
         public var due: UInt64?
-        /// GitHub owner/name its tasks change.
+        /// GitHub owner/name its tasks change unless they pick another of `repos`.
         public var repo: String?
+        /// Every repo the goal's work spans (its `repo` first); each task changes one of them.
+        public var repos: [String]
         /// Or a folder on the machines (local repos, dev).
         public var folder: String?
         /// The branch tasks start from and merge into (default: the repo's default branch).
         public var base: String?
 
-        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, folder: String? = nil, base: String? = nil) {
+        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil) {
             self.id = id
             self.name = name
             self.prefix = prefix
@@ -567,8 +576,24 @@ public enum Wire {
             self.lead = lead
             self.due = due
             self.repo = repo
+            self.repos = repos
             self.folder = folder
             self.base = base
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            name = try c.decode(String.self, forKey: .name)
+            prefix = try c.decode(String.self, forKey: .prefix)
+            color = try c.decode(String.self, forKey: .color)
+            summary = try c.decode(String.self, forKey: .summary)
+            lead = try c.decode(String.self, forKey: .lead)
+            due = try c.decodeIfPresent(UInt64.self, forKey: .due)
+            repo = try c.decodeIfPresent(String.self, forKey: .repo)
+            repos = try c.decodeIfPresent([String].self, forKey: .repos) ?? []
+            folder = try c.decodeIfPresent(String.self, forKey: .folder)
+            base = try c.decodeIfPresent(String.self, forKey: .base)
         }
     }
 
@@ -970,6 +995,39 @@ public enum Wire {
         }
     }
 
+    /// A repository the org's goals can work in.
+    public struct OrgRepo: Codable, Hashable, Sendable {
+        /// GitHub owner/name.
+        public var name: String
+        public var defaultBranch: String?
+        public var isPrivate: Bool
+        /// Granted to the GitHub App, or added by hand (no app, or not yet granted).
+        public var source: RepoSource
+
+        public init(name: String, defaultBranch: String? = nil, isPrivate: Bool, source: RepoSource) {
+            self.name = name
+            self.defaultBranch = defaultBranch
+            self.isPrivate = isPrivate
+            self.source = source
+        }
+    }
+
+    /// Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.
+    public struct FollowUp: Codable, Hashable, Sendable {
+        public var repo: String
+        public var title: String
+        public var brief: String
+        /// The task made for it, once the plan is approved.
+        public var task: String?
+
+        public init(repo: String, title: String, brief: String, task: String? = nil) {
+            self.repo = repo
+            self.title = title
+            self.brief = brief
+            self.task = task
+        }
+    }
+
     public struct Risk: Codable, Hashable, Sendable {
         public var level: RiskLevel
         public var reasons: [String]
@@ -1069,8 +1127,13 @@ public enum Wire {
         public var machine: String?
         /// The task it was split off from to stay inside the PR budget.
         public var splitFrom: String?
+        /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
+        public var repo: String?
+        /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
+        public var after: [String]
+        public var followUps: [FollowUp]
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = []) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -1108,6 +1171,9 @@ public enum Wire {
             self.branch = branch
             self.machine = machine
             self.splitFrom = splitFrom
+            self.repo = repo
+            self.after = after
+            self.followUps = followUps
         }
 
         public init(from decoder: Decoder) throws {
@@ -1149,6 +1215,9 @@ public enum Wire {
             branch = try c.decodeIfPresent(String.self, forKey: .branch)
             machine = try c.decodeIfPresent(String.self, forKey: .machine)
             splitFrom = try c.decodeIfPresent(String.self, forKey: .splitFrom)
+            repo = try c.decodeIfPresent(String.self, forKey: .repo)
+            after = try c.decodeIfPresent([String].self, forKey: .after) ?? []
+            followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
         }
     }
 
@@ -2215,6 +2284,24 @@ public enum Wire {
         }
     }
 
+    /// Admins only: a repo the GitHub App doesn't list (or there's no app).
+    public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
+        public var name: String
+
+        public init(name: String) {
+            self.name = name
+        }
+    }
+
+    /// Admins only: one added by hand.
+    public struct ClientMessageReposRemove: Codable, Hashable, Sendable {
+        public var name: String
+
+        public init(name: String) {
+            self.name = name
+        }
+    }
+
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
     public struct ClientMessageGoalAcceptRisk: Codable, Hashable, Sendable {
         public var goal: String
@@ -2239,8 +2326,10 @@ public enum Wire {
         public var agent: String?
         /// The request it was composed from, which then tracks it.
         public var intake: String?
+        public var repo: String?
+        public var after: [String]?
 
-        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil) {
+        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil) {
             self.goal = goal
             self.title = title
             self.brief = brief
@@ -2249,6 +2338,8 @@ public enum Wire {
             self.tickets = tickets
             self.agent = agent
             self.intake = intake
+            self.repo = repo
+            self.after = after
         }
 
         public init(from decoder: Decoder) throws {
@@ -2261,6 +2352,8 @@ public enum Wire {
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             agent = try c.decodeIfPresent(String.self, forKey: .agent)
             intake = try c.decodeIfPresent(String.self, forKey: .intake)
+            repo = try c.decodeIfPresent(String.self, forKey: .repo)
+            after = try c.decodeIfPresent([String].self, forKey: .after)
         }
     }
 
@@ -2269,12 +2362,14 @@ public enum Wire {
         public var title: String?
         public var brief: String?
         public var shareable: Bool?
+        public var repo: String?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
             self.shareable = shareable
+            self.repo = repo
         }
     }
 
@@ -2446,6 +2541,9 @@ public enum Wire {
         case goalSave(ClientMessageGoalSave)
         case machineSettings(ClientMessageMachineSettings)
         case policySave(ClientMessagePolicySave)
+        case reposRefresh
+        case reposAdd(ClientMessageReposAdd)
+        case reposRemove(ClientMessageReposRemove)
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
         case taskEdit(ClientMessageTaskEdit)
@@ -2487,6 +2585,9 @@ public enum Wire {
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
+            case "repos.refresh": self = .reposRefresh
+            case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
+            case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
@@ -2555,6 +2656,14 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .policySave(let body):
                 try c.encode("policy.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .reposRefresh:
+                try c.encode("repos.refresh", forKey: .type)
+            case .reposAdd(let body):
+                try c.encode("repos.add", forKey: .type)
+                try body.encode(to: encoder)
+            case .reposRemove(let body):
+                try c.encode("repos.remove", forKey: .type)
                 try body.encode(to: encoder)
             case .goalAcceptRisk(let body):
                 try c.encode("goal.acceptRisk", forKey: .type)
@@ -2630,9 +2739,10 @@ public enum Wire {
         public var online: [Presence]
         public var notes: [Note]
         public var intake: [IntakeRequest]
+        public var repos: [OrgRepo]
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], intake: [IntakeRequest] = [], protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -2645,6 +2755,7 @@ public enum Wire {
             self.online = online
             self.notes = notes
             self.intake = intake
+            self.repos = repos
             self.protocolVersion = protocolVersion
         }
 
@@ -2662,6 +2773,7 @@ public enum Wire {
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
+            repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -2760,6 +2872,19 @@ public enum Wire {
         }
     }
 
+    public struct ServerToClientReposUpdated: Codable, Hashable, Sendable {
+        public var repos: [OrgRepo]
+
+        public init(repos: [OrgRepo] = []) {
+            self.repos = repos
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
+        }
+    }
+
     /// Something worth a passing line in the app.
     public struct ServerToClientToast: Codable, Hashable, Sendable {
         public var text: String
@@ -2804,6 +2929,7 @@ public enum Wire {
         case noteRemoved(ServerToClientNoteRemoved)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
+        case reposUpdated(ServerToClientReposUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case error(ServerToClientError)
@@ -2826,6 +2952,7 @@ public enum Wire {
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
+            case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
@@ -2868,6 +2995,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .policyUpdated(let body):
                 try c.encode("policy.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .reposUpdated(let body):
+                try c.encode("repos.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .toast(let body):
                 try c.encode("toast", forKey: .type)

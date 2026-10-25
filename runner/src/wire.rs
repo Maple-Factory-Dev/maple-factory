@@ -237,6 +237,15 @@ pub enum RiskLevel {
     High,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoSource {
+    /// Granted to the GitHub App.
+    Github,
+    /// Added by an admin.
+    Manual,
+}
+
 /// What a session's agent is doing, from its hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -464,9 +473,12 @@ pub struct Goal {
     pub lead: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due: Option<u64>,
-    /// GitHub owner/name its tasks change.
+    /// GitHub owner/name its tasks change unless they pick another of `repos`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// Every repo the goal's work spans (its `repo` first); each task changes one of them.
+    #[serde(default)]
+    pub repos: Vec<String>,
     /// Or a folder on the machines (local repos, dev).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
@@ -720,6 +732,31 @@ pub struct Footprint {
     pub estimated: bool,
 }
 
+/// A repository the org's goals can work in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgRepo {
+    /// GitHub owner/name.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+    pub is_private: bool,
+    /// Granted to the GitHub App, or added by hand (no app, or not yet granted).
+    pub source: RepoSource,
+}
+
+/// Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowUp {
+    pub repo: String,
+    pub title: String,
+    pub brief: String,
+    /// The task made for it, once the plan is approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Risk {
@@ -820,6 +857,14 @@ pub struct Task {
     /// The task it was split off from to stay inside the PR budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_from: Option<String>,
+    /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
+    #[serde(default)]
+    pub after: Vec<String>,
+    #[serde(default)]
+    pub follow_ups: Vec<FollowUp>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1348,6 +1393,19 @@ pub enum ClientMessage {
     PolicySave {
         policy: RiskPolicy,
     },
+    /// Read the repos the GitHub App is installed on again.
+    #[serde(rename = "repos.refresh")]
+    ReposRefresh,
+    /// Admins only: a repo the GitHub App doesn't list (or there's no app).
+    #[serde(rename = "repos.add")]
+    ReposAdd {
+        name: String,
+    },
+    /// Admins only: one added by hand.
+    #[serde(rename = "repos.remove")]
+    ReposRemove {
+        name: String,
+    },
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
     #[serde(rename = "goal.acceptRisk")]
     GoalAcceptRisk {
@@ -1372,6 +1430,10 @@ pub enum ClientMessage {
         /// The request it was composed from, which then tracks it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         intake: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<Vec<String>>,
     },
     #[serde(rename = "task.edit")]
     TaskEdit {
@@ -1382,6 +1444,8 @@ pub enum ClientMessage {
         brief: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shareable: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
     },
     /// Send a draft to planning.
     #[serde(rename = "task.plan")]
@@ -1496,6 +1560,8 @@ pub enum ServerToClient {
         notes: Vec<Note>,
         #[serde(default)]
         intake: Vec<IntakeRequest>,
+        #[serde(default)]
+        repos: Vec<OrgRepo>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -1541,6 +1607,11 @@ pub enum ServerToClient {
         policy: RiskPolicy,
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
+    },
+    #[serde(rename = "repos.updated")]
+    ReposUpdated {
+        #[serde(default)]
+        repos: Vec<OrgRepo>,
     },
     /// Something worth a passing line in the app.
     #[serde(rename = "toast")]

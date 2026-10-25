@@ -380,6 +380,42 @@ struct TaskFocusView: View {
                     Text(goal.name)
                 }
             }
+            if let repo = task.repo {
+                detailRow("Repo") { Text(repo).font(.system(size: 12, design: .monospaced)) }
+            }
+            if !task.after.isEmpty {
+                detailRow("Builds on") {
+                    HStack(spacing: 6) {
+                        ForEach(task.after, id: \.self) { id in
+                            Text(id)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(appState.task(id).state == .merged ? Theme.State.merged : Theme.accent)
+                                .onTapGesture { appState.openFocus(id) }
+                                .help(appState.task(id).state == .merged ? "\(id) is merged" : "It builds once \(id) merges")
+                        }
+                    }
+                }
+            }
+            if !task.followUps.isEmpty {
+                detailRow("Other repos") {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(task.followUps, id: \.title) { part in
+                            HStack(spacing: 6) {
+                                Text(part.repo).font(.system(size: 11.5, design: .monospaced))
+                                if let id = part.task {
+                                    Text(id)
+                                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Theme.accent)
+                                        .onTapGesture { appState.openFocus(id) }
+                                } else {
+                                    Text("once approved").foregroundStyle(Theme.textFaint)
+                                }
+                            }
+                            .help(part.title)
+                        }
+                    }
+                }
+            }
             detailRow("Owner") {
                 HStack(spacing: 6) {
                     AgentAvatar(agent: task.owner, size: 18)

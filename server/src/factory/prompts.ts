@@ -2,6 +2,7 @@
 // (tools.ts); the prompts say which, and when to stop.
 
 import type { Goal, Task } from "../wire.ts";
+import { goalRepos, taskRepo } from "./repos.ts";
 
 const plain = (task: Task) => `${task.id} · ${task.title}`;
 
@@ -9,6 +10,8 @@ function brief(task: Task, goal: Goal | null) {
   return [
     `Task ${plain(task)}`,
     goal ? `Goal: ${goal.name}${goal.summary ? ` — ${goal.summary}` : ""}` : null,
+    taskRepo(task, goal) ? `Repo: ${taskRepo(task, goal)}` : null,
+    task.after.length ? `Builds on ${task.after.join(", ")} (in the goal's other repos), merged before this starts building.` : null,
     "",
     "## Brief",
     task.brief.trim() || task.title,
@@ -31,9 +34,14 @@ function comments(task: Task) {
 }
 
 export function plannerPrompt(task: Task, goal: Goal | null): string {
+  const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
-${brief(task, goal)}${comments(task)}${changes(task)}
+${brief(task, goal)}${comments(task)}${changes(task)}${
+    others.length
+      ? `\n\n## The goal's other repos\n${others.map((r) => `- ${r}`).join("\n")}\nThis task changes ${taskRepo(task, goal)} only. If the work also needs changes in one of these, plan just this repo's part and list each other repo's part in \`otherRepos\` (repo, title, brief): it becomes its own task, planned and built there once this one merges.`
+      : ""
+  }
 
 Read the repository (this worktree) to understand where the change goes. Then call the \`submit_plan\` tool once with:
 - summary: two or three sentences on the approach.

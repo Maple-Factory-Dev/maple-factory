@@ -7,7 +7,8 @@
 //     command = "/path/to/server/test/scripted-agent.mjs"
 //     prompt = "positional"
 //
-// Planner: submits a two-step plan with a terminal and a screen mockup. Builder: commits a file,
+// Planner: submits a two-step plan with a terminal and a screen mockup ("[cross-repo]": plus a part
+// for the goal's next repo). Builder: commits a file,
 // proves both items and finishes. Reviewer: asks for changes in round 1, passes round 2.
 
 import net from "node:net";
@@ -73,6 +74,10 @@ async function planner() {
     // "[risky]" rates it high, so a person approves and merges it instead of the factory.
     risk: prompt.includes("[risky]") ? { level: "high", reasons: ["It touches the release path."], areas: ["release"] } : { level: "low", reasons: ["One new text file."], areas: [] },
     footprint: { files: 1, lines: 1 },
+    // "[cross-repo]": the goal's next repo gets the part that uses this one, as its own task.
+    otherRepos: prompt.includes("[cross-repo]")
+      ? [...prompt.matchAll(/^- ([\w.-]+\/[\w.-]+)$/gm)].slice(0, 1).map(([, repo]) => ({ repo, title: `Use ${data.task.id}'s greeting`, brief: `Show the greeting ${data.task.id} adds. Add hello.txt with a greeting.` }))
+      : [],
     mockups: [
       {
         title: "cat hello.txt",

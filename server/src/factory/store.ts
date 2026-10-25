@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, IntakeRequest, MachineSettings, Note, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import type { Goal, IntakeRequest, MachineSettings, Note, OrgRepo, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -70,12 +70,12 @@ export class Store {
   // Goals
 
   goals(): Goal[] {
-    return this.sql.exec<{ doc: string }>("SELECT doc FROM goals").toArray().map((r) => JSON.parse(r.doc));
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM goals").toArray().map((r) => goalDoc(r.doc));
   }
 
   goal(id: string): Goal | null {
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM goals WHERE id = ?", id).toArray()[0];
-    return row ? JSON.parse(row.doc) : null;
+    return row ? goalDoc(row.doc) : null;
   }
 
   saveGoal(goal: Goal) {
@@ -85,12 +85,12 @@ export class Store {
   // Tasks
 
   tasks(): Task[] {
-    return this.sql.exec<{ doc: string }>("SELECT doc FROM tasks ORDER BY updated DESC").toArray().map((r) => JSON.parse(r.doc));
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM tasks ORDER BY updated DESC").toArray().map((r) => taskDoc(r.doc));
   }
 
   task(id: string): Task | null {
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM tasks WHERE id = ?", id).toArray()[0];
-    return row ? JSON.parse(row.doc) : null;
+    return row ? taskDoc(row.doc) : null;
   }
 
   private(id: string): TaskPrivate {
@@ -232,6 +232,20 @@ export class Store {
     this.set("policy", JSON.stringify(policy));
   }
 
+  /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */
+  repos(): OrgRepo[] {
+    return (JSON.parse(this.get("repos") ?? "[]") as (OrgRepo & { private?: boolean })[]).map(({ private: hidden, ...r }) => ({ ...r, isPrivate: r.isPrivate ?? hidden ?? false }));
+  }
+
+  saveRepos(repos: OrgRepo[]) {
+    this.set("repos", JSON.stringify([...repos].sort((a, b) => a.name.localeCompare(b.name))));
+    this.set("reposAt", String(Date.now()));
+  }
+
+  reposAt(): number {
+    return Number(this.get("reposAt") ?? 0);
+  }
+
   acceptances(): RiskAcceptance[] {
     return JSON.parse(this.get("acceptances") ?? "[]");
   }
@@ -247,4 +261,16 @@ export class Store {
   set(key: string, value: string) {
     this.sql.exec("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value);
   }
+}
+
+/** A stored goal, with fields added since it was saved. */
+function goalDoc(doc: string): Goal {
+  const goal = JSON.parse(doc) as Goal;
+  return { ...goal, repos: goal.repos ?? (goal.repo ? [goal.repo] : []) };
+}
+
+/** A stored task, with fields added since it was saved. */
+function taskDoc(doc: string): Task {
+  const task = JSON.parse(doc) as Task;
+  return { ...task, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [] };
 }

@@ -12,6 +12,7 @@
 //
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
 //   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
+//   GET  /app/installations, GET /installation/repositories   the app's installations, and an installation's repos
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n, POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
@@ -138,11 +139,25 @@ createServer((req, res) => {
       const id = installed.get(`${m[1]}/${m[2]}`.toLowerCase());
       return id ? send(res, 200, { id }) : send(res, 404, { message: "Not Found" });
     }
+    if (req.method === "GET" && url.pathname === "/app/installations") {
+      const why = verifyJwt(req.headers.authorization);
+      if (why) return send(res, 401, { message: why });
+      return send(res, 200, [...new Set(installed.values())].map((id) => ({ id, account: { login: [...installed].find(([, i]) => i === id)[0].split("/")[0] } })));
+    }
+    if (req.method === "GET" && url.pathname === "/installation/repositories") {
+      const t = /^token (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+      const g = t && tokens.get(t);
+      if (!g) return send(res, 401, { message: "Bad credentials" });
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const mine = [...installed].filter(([, id]) => id === g.installation).map(([name]) => name);
+      const repositories = (page === 1 ? mine : []).map((name) => ({ full_name: name, default_branch: "main", private: true }));
+      return send(res, 200, { total_count: mine.length, repositories });
+    }
     if (req.method === "POST" && (m = url.pathname.match(/^\/app\/installations\/(\d+)\/access_tokens$/))) {
       const why = verifyJwt(req.headers.authorization);
       if (why) return send(res, 401, { message: why });
       const token = `ghs_${randomBytes(18).toString("hex")}`;
-      tokens.set(token, { repositories: body?.repositories, permissions: body?.permissions });
+      tokens.set(token, { repositories: body?.repositories, permissions: body?.permissions, installation: Number(m[1]) });
       return send(res, 201, { token, expires_at: new Date(Date.now() + 3600_000).toISOString() });
     }
 

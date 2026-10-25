@@ -7,16 +7,17 @@
 
 import type { Env } from "../env.ts";
 import type {
-  ChangeRequest, ClientMessage, Evidence, Finding, Hand, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
+  ChangeRequest, ClientMessage, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
   ServerToRunner, SessionEnd, Task,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { Store, type TaskSession } from "./store.ts";
 import { builderPrompt, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { Intake } from "./intake.ts";
-import { checks, closePullRequest, createPullRequest, GitHubError, githubApp, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
+import { checks, closePullRequest, createPullRequest, GitHubError, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -62,9 +63,38 @@ export class Engine {
         if (!/^[A-Z][A-Z0-9]{0,5}$/.test(goal.prefix)) fail("A goal's prefix is 1–6 letters or digits, starting with a letter.");
         if (!goal.name.trim()) fail("A goal needs a name.");
         if (!goal.id) goal.id = crypto.randomUUID();
+        goal.repos = goalRepos({ ...goal, repo: goal.repo?.trim() || null, repos: (goal.repos ?? []).map((r) => r.trim()).filter(Boolean) });
+        for (const r of goal.repos) if (!REPO.test(r)) fail(`${r} isn't a GitHub owner/name.`);
+        goal.repo = goal.repos[0] ?? null;
+        const known = this.store.repos();
+        const unknown = goal.repos.find((r) => known.length && !known.some((k) => k.name.toLowerCase() === r.toLowerCase()));
+        if (unknown) fail(`${unknown} isn't one of the org's repos. Add it in Settings → Repositories (or grant the GitHub App access) first.`);
         if (this.store.goals().some((g) => g.prefix === goal.prefix && g.id !== goal.id)) fail(`Another goal already uses ${goal.prefix}.`);
         this.store.saveGoal(goal);
         this.hooks.broadcast({ type: "goal.updated", goal });
+        return;
+      }
+      case "repos.refresh":
+        return this.refreshRepos(true);
+      case "repos.add": {
+        if (member.role !== "admin") fail("Only admins can add repos.");
+        const name = msg.name.trim().replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
+        if (!REPO.test(name)) fail(`${name} isn't a GitHub owner/name.`);
+        const repos = this.store.repos();
+        if (repos.some((r) => r.name.toLowerCase() === name.toLowerCase())) fail(`${name} is already there.`);
+        this.store.saveRepos([...repos, { name, defaultBranch: null, isPrivate: true, source: "manual" }]);
+        await audit(this.env, who, "repo.added", null, { name });
+        this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+        return;
+      }
+      case "repos.remove": {
+        if (member.role !== "admin") fail("Only admins can remove repos.");
+        const repos = this.store.repos();
+        const repo = repos.find((r) => r.name.toLowerCase() === msg.name.toLowerCase()) ?? fail(`${msg.name} isn't in the list.`);
+        if (repo.source === "github") fail(`${repo.name} comes from the GitHub App; remove the app's access to it on GitHub.`);
+        this.store.saveRepos(repos.filter((r) => r !== repo));
+        await audit(this.env, who, "repo.removed", null, { name: repo.name });
+        this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
         return;
       }
       case "policy.save": {
@@ -130,33 +160,11 @@ export class Engine {
       case "task.create": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
         if (!msg.title.trim()) fail("A task needs a title.");
+        const repo = msg.repo ? goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase()) ?? fail(`${goal.name} doesn't work in ${msg.repo}; add it to the goal's repos first.`) : null;
+        const after = msg.after ?? [];
+        for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
-        const t = now();
-        const task: Task = {
-          id: this.store.nextId(goal.prefix),
-          goal: goal.id,
-          title: msg.title.trim(),
-          state: "drafting",
-          owner: who,
-          brief: msg.brief,
-          createdAt: t,
-          updatedAt: t,
-          plan: [],
-          planVersion: 0,
-          doneWhen: [],
-          approvals: [],
-          approvalsNeeded: 1,
-          reviews: [],
-          reviewsNeeded: 1,
-          comments: [],
-          changes: [],
-          events: [{ who, text: "created it", at: t }],
-          mockups: [],
-          tickets: msg.tickets,
-          shareable: msg.shareable,
-          agent: msg.agent || "claude",
-          intake: request?.id ?? null,
-        };
+        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after });
         if (request) {
           for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
           for (const m of request.thread.filter((m) => !m.bot)) task.comments.push({ id: crypto.randomUUID(), author: m.author, text: m.text, at: m.at, anchor: null, via: sourceTitle(request) });
@@ -176,6 +184,11 @@ export class Engine {
         if (msg.title != null && msg.title.trim()) task.title = msg.title.trim();
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
+        if (msg.repo != null && msg.repo !== task.repo) {
+          if (task.state !== "drafting") fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
+          const goal = this.store.goal(task.goal);
+          task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
+        }
         this.event(task, who, "edited it");
         this.save(task);
         await this.pump();
@@ -225,11 +238,7 @@ export class Engine {
         task.approvals.push(who);
         for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
         this.event(task, who, "approved the plan");
-        if (task.approvals.length >= task.approvalsNeeded) {
-          task.state = "building";
-          task.waiting = null;
-          this.event(task, "factory", "queued it for building");
-        }
+        if (task.approvals.length >= task.approvalsNeeded) await this.approved(task, "queued it for building");
         this.save(task);
         await this.pump();
         return;
@@ -382,6 +391,7 @@ export class Engine {
             machine: null,
             intake: null,
             splitFrom: task.id,
+            followUps: [],
           };
           this.save(part);
           created.push(part);
@@ -481,6 +491,49 @@ export class Engine {
     return this.store.tasks().some((t) => t.waiting && !t.worker);
   }
 
+  /** A new draft task in `goal`, saved. */
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after">): Task {
+    const t = now();
+    const task: Task = {
+      id: this.store.nextId(goal.prefix),
+      goal: goal.id,
+      state: "drafting",
+      owner: who,
+      createdAt: t,
+      updatedAt: t,
+      plan: [],
+      planVersion: 0,
+      doneWhen: [],
+      approvals: [],
+      approvalsNeeded: 1,
+      reviews: [],
+      reviewsNeeded: 1,
+      comments: [],
+      changes: [],
+      events: [{ who, text: "created it", at: t }],
+      mockups: [],
+      followUps: [],
+      ...f,
+    };
+    this.save(task);
+    return task;
+  }
+
+  /** A plan just got its approvals: it builds, and its other repos' parts become tasks that wait on it. */
+  private async approved(task: Task, why: string) {
+    task.state = "building";
+    task.waiting = null;
+    this.event(task, "factory", why);
+    const goal = this.store.goal(task.goal);
+    if (!goal) return;
+    for (const f of task.followUps.filter((f) => !f.task)) {
+      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id] });
+      f.task = part.id;
+      this.event(task, "factory", `made ${part.id} for its ${f.repo} part`);
+      await this.startPlanning(part, "factory");
+    }
+  }
+
   /** The session a task needs now, if any. */
   private roleFor(task: Task): Role | null {
     switch (task.state) {
@@ -495,7 +548,14 @@ export class Engine {
   private async dispatch(task: Task, role: Role, machines: Machine[]): Promise<string | null> {
     const goal = this.store.goal(task.goal);
     if (!goal) return "Its goal is gone.";
-    if (!goal.folder && !goal.repo) return `The goal ${goal.name} doesn't say where its code is: set a repo or folder.`;
+    if (!goal.folder && !taskRepo(task, goal)) return `The goal ${goal.name} doesn't say where its code is: set a repo or folder.`;
+    if (role === "builder") {
+      // Work that builds on another repo's change starts once that change is in.
+      const before = task.after.map((id) => this.store.task(id)).filter((t): t is Task => !!t && t.state !== "merged");
+      const dropped = before.find((t) => t.state === "cancelled");
+      if (dropped) return `${dropped.id}, which it builds on, was cancelled. Take it off its "after" list or cancel this too.`;
+      if (before.length) return `Waiting for ${before.map((t) => t.id).join(" and ")} to merge first.`;
+    }
     const priv = this.store.private(task.id);
     const live = this.store.liveSessions();
     const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length;
@@ -552,14 +612,15 @@ export class Engine {
       type: "session.open",
       id,
       agent: task.agent,
-      cwd: existing ? priv.worktree! : (goal.folder ?? "~"),
+      // No folder: the runner finds its checkout of the task's repo, or clones it.
+      cwd: existing ? priv.worktree! : (goal.folder ?? ""),
       cols: COLS,
       rows: ROWS,
       prompt,
       resume: false,
       taskId: task.id,
       worktree: { name: branchName(task), base: goal.base ?? null, existing },
-      task: { id: task.id, repo: goal.repo ?? null },
+      task: { id: task.id, repo: taskRepo(task, goal) },
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
       model: null,
     };
@@ -690,7 +751,8 @@ export class Engine {
         const task = this.store.task(msg.taskId);
         const goal = task && this.store.goal(task.goal);
         if (!task || task.machine !== machine) return await reply(null, "That task isn't running on this machine.", "api"), null;
-        if (goal?.repo && goal.repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${goal.repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
+        const repo = taskRepo(task, goal ?? null);
+        if (repo && repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
         try {
           const { token } = await repoToken(app, msg.owner, msg.repo, msg.purpose === "fetch" ? PERMISSIONS.fetch : PERMISSIONS.push);
           await reply(token, null, null);
@@ -828,6 +890,26 @@ export class Engine {
   }
 
   /** A GitHub webhook about a repo's checks or pull requests: the tasks it's about read their CI again. */
+  /** Reads the repos the GitHub App is installed on, keeping the ones added by hand. `asked`: a
+   *  person pressed Refresh, so failures are theirs to see. */
+  async refreshRepos(asked = false) {
+    const app = githubApp(this.env);
+    if (!app) {
+      if (asked) fail("There's no GitHub App set up, so repos are added by hand.");
+      return;
+    }
+    let granted: OrgRepo[];
+    try {
+      granted = await installedRepos(app);
+    } catch (e) {
+      if (asked) fail(`Couldn't read the app's repos: ${(e as Error).message}`);
+      return;
+    }
+    const manual = this.store.repos().filter((r) => r.source === "manual" && !granted.some((g) => g.name.toLowerCase() === r.name.toLowerCase()));
+    this.store.saveRepos([...granted, ...manual]);
+    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+  }
+
   async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean }) {
     const repo = `${event.owner}/${event.repo}`.toLowerCase();
     for (const task of this.store.tasks()) {
@@ -866,6 +948,8 @@ export class Engine {
     this.hooks.broadcast({ type: "toast", text: `${task.id} merged into ${task.pr.base}.`, taskId: task.id });
     this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null });
     this.hooks.waitUntil(this.cleanup(task));
+    // Tasks waiting on this one ("after") can build now.
+    if (this.store.tasks().some((t) => t.after.includes(task.id))) this.hooks.waitUntil(this.pump());
   }
 
   /** Removes a merged task's worktree once none of its sessions are still in it (the runner refuses otherwise). */
@@ -920,6 +1004,17 @@ export class Engine {
         const done = arr(a.doneWhen).map((x) => obj(x));
         if (!steps.length) fail("steps: at least one.");
         if (!done.length) fail("doneWhen: at least one.");
+        // Work for the goal's other repos becomes tasks of their own once this plan is approved.
+        const goal = this.store.goal(task.goal);
+        const repos = goal ? goalRepos(goal) : [];
+        const mine = taskRepo(task, goal)?.toLowerCase();
+        task.followUps = arr(a.otherRepos).map((x) => {
+          const f = obj(x);
+          const named = str(f.repo, "otherRepos[].repo");
+          const repo = repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(`otherRepos: ${named} isn't one of this goal's repos (${repos.join(", ")}).`);
+          if (repo.toLowerCase() === mine) fail(`otherRepos: ${repo} is this task's own repo; put that work in steps.`);
+          return { repo, title: str(f.title, "otherRepos[].title"), brief: str(f.brief, "otherRepos[].brief"), task: null };
+        });
         const before = task.plan;
         task.plan = steps.map((st, i) => {
           const prev = before[i];
@@ -1132,8 +1227,7 @@ export class Engine {
       if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` === before) continue;
       this.save(task, false);
       if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
-        task.state = "building";
-        this.event(task, "factory", "queued it for building (the policy needs fewer approvals now)");
+        await this.approved(task, "queued it for building (the policy needs fewer approvals now)");
         this.save(task);
       }
       await this.autoMerge(task);

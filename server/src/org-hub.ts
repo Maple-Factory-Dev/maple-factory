@@ -103,6 +103,10 @@ export class OrgHub extends DurableObject<Env> {
         await this.engine.fromGitHub(await request.json());
         return new Response(null, { status: 204 });
       }
+      case "/github/repos": {
+        await this.engine.refreshRepos();
+        return new Response(null, { status: 204 });
+      }
       case "/usage/goals": {
         // Agent time per goal over the last week: which goals the machines' plans went on.
         const rows = this.store.sessionTime(Date.now() - 7 * 86_400_000);
@@ -228,8 +232,11 @@ export class OrgHub extends DurableObject<Env> {
           online: this.online(),
           notes: this.store.notes(client.member.login),
           intake: this.intake.list(),
+          repos: this.store.repos(),
           protocolVersion: PROTOCOL_VERSION,
         });
+        // The app's repos change on GitHub's side; read them again when they're an hour old.
+        if (Date.now() - this.store.reposAt() > 3_600_000) this.ctx.waitUntil(this.engine.refreshRepos().catch(() => {}));
         return;
       case "session.open":
       case "session.kill":

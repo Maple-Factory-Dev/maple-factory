@@ -387,7 +387,8 @@ final class AppState {
             }
             let body = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
             client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
-                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID)))
+                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID,
+                                          repo: draft.repo.flatMap { goal.repos.contains($0) ? $0 : nil })))
             withAnimation(.snappy(duration: 0.3)) {
                 isComposing = false
                 destination = .goal(draft.goal)
