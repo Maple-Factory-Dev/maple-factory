@@ -5,6 +5,8 @@ struct MachineSettingsSheet: View {
     @Environment(FactoryClient.self) private var client
     @Environment(\.dismiss) private var dismiss
     let machine: Wire.Machine
+    /// In Settings rather than a sheet: no title or Cancel, and Save stays put.
+    var embedded = false
 
     @State private var automatic: Bool
     @State private var capacity: Int
@@ -32,8 +34,11 @@ struct MachineSettingsSheet: View {
         }
     }
 
-    init(machine: Wire.Machine) {
+    @State private var saved = false
+
+    init(machine: Wire.Machine, embedded: Bool = false) {
         self.machine = machine
+        self.embedded = embedded
         let s = machine.settings
         _automatic = State(initialValue: s?.capacity == nil)
         _capacity = State(initialValue: Int(s?.capacity ?? machine.capacity ?? 2))
@@ -47,6 +52,7 @@ struct MachineSettingsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            if !embedded {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Factory work on \(machine.name)")
                     .font(.system(size: 20, weight: .semibold))
@@ -55,6 +61,7 @@ struct MachineSettingsSheet: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
+            }
             }
 
             group("Slots") {
@@ -109,13 +116,16 @@ struct MachineSettingsSheet: View {
             }
 
             HStack(spacing: 8) {
+                if saved {
+                    Label("Saved", systemImage: "checkmark").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                }
                 Spacer()
-                button("Cancel", primary: false) { dismiss() }
+                if !embedded { button("Cancel", primary: false) { dismiss() } }
                 button("Save", primary: true, action: save)
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .padding(embedded ? 0 : 24)
+        .frame(width: embedded ? nil : 520)
     }
 
     /// Teammates' tasks running here, in team slots.
@@ -137,7 +147,7 @@ struct MachineSettingsSheet: View {
         )
         let pausing = paused && !wasPaused
         client.send(.machineSettings(.init(machine: machine.id, settings: settings, handOff: pausing && handOff && !teammates.isEmpty)))
-        dismiss()
+        if embedded { withAnimation { saved = true } } else { dismiss() }
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

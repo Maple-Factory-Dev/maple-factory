@@ -599,3 +599,11 @@ extension FactoryClient {
         return false
     }
 }
+
+extension FactoryClient {
+    /// This Mac's machine in this factory, when its runner is enrolled here.
+    var thisMac: Wire.Machine? {
+        guard let server, LocalRunner.isEnrolled(with: server), let id = LocalRunner.enrolled?.runnerId else { return nil }
+        return machines.first { $0.id == id }
+    }
+}
