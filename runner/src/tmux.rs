@@ -164,7 +164,7 @@ impl Tmux {
             if let Ok(pid) = f[4].parse() {
                 self.remember_server(pid);
             }
-            let signal = f[3].parse().ok().filter(|s| *s != 0);
+            let signal = parse_signal(f[3]);
             panes.insert(f[0].to_string(), PaneState { dead: f[1] == "1", status: f[2].parse().ok(), signal });
         }
         Ok(panes)
@@ -417,9 +417,47 @@ fn find_tmux() -> Option<PathBuf> {
     candidates.into_iter().chain(from_path).find(|p| p.is_file())
 }
 
+/// `#{pane_dead_signal}`: a number in older tmux, a name ("kill", "segv") from 3.5 on.
+pub fn parse_signal(field: &str) -> Option<u32> {
+    if let Ok(n) = field.parse::<u32>() {
+        return (n != 0).then_some(n);
+    }
+    let name = field.trim().trim_start_matches("SIG").trim_start_matches("sig").to_lowercase();
+    Some(match name.as_str() {
+        "hup" => 1,
+        "int" => 2,
+        "quit" => 3,
+        "ill" => 4,
+        "trap" => 5,
+        "abrt" => 6,
+        "bus" => libc::SIGBUS as u32,
+        "fpe" => 8,
+        "kill" => 9,
+        "usr1" => libc::SIGUSR1 as u32,
+        "segv" => 11,
+        "usr2" => libc::SIGUSR2 as u32,
+        "pipe" => 13,
+        "alrm" => 14,
+        "term" => 15,
+        "xcpu" => libc::SIGXCPU as u32,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dead_pane_signals_by_number_or_name() {
+        assert_eq!(parse_signal("9"), Some(9));
+        assert_eq!(parse_signal("0"), None);
+        assert_eq!(parse_signal(""), None);
+        assert_eq!(parse_signal("kill"), Some(9));
+        assert_eq!(parse_signal("SIGSEGV"), Some(11));
+        assert_eq!(parse_signal("term"), Some(15));
+        assert_eq!(parse_signal("nonsense"), None);
+    }
 
     #[test]
     fn unescapes_control_bytes() {

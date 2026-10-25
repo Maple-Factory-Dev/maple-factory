@@ -34,13 +34,34 @@ function call(tool, args = {}) {
   });
 }
 
+// What a person types into the session (answers, decisions, change requests), a line at a time,
+// without the bracketed-paste markers the factory wraps it in.
+const typed = [];
+let wake = null;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  for (const line of chunk.replace(/\x1b\[20[01]~/g, "").split(/\r|\n/)) if (line.trim()) typed.push(line.trim());
+  wake?.();
+});
+async function nextLine() {
+  while (!typed.length) await new Promise((r) => (wake = r));
+  const line = typed.shift();
+  say(`got: ${line}`);
+  return line;
+}
+
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
 
 async function planner() {
   say("reading the code");
   const { data } = await call("get_task");
+  let answer = "";
+  if (prompt.includes("[ask]") && !/answered/.test(data.task.comments.map((c) => c.anchor ?? "").join(" ") + prompt)) {
+    await call("ask", { question: "Formal or casual greeting?", options: ["Formal", "Casual"] });
+    answer = await nextLine();
+  }
   const plan = await call("submit_plan", {
-    summary: `Add a greeting file for ${data.task.id}, so the factory has something real to commit, push and merge.`,
+    summary: `Add a greeting file for ${data.task.id}, so the factory has something real to commit, push and merge.${answer ? ` (${answer})` : ""}`,
     steps: [
       { text: "Write hello.txt with a greeting", file: "hello.txt" },
       { text: "Commit it on the task branch", file: "hello.txt" },
@@ -79,6 +100,17 @@ async function planner() {
 async function builder() {
   const { data } = await call("get_task");
   const fixing = /asked for changes/.test(prompt);
+  if (prompt.includes("[hand]") && !fixing) {
+    await call("raise_hand", {
+      reason: "needsInput",
+      summary: "The greeting could go in a file or the README; the plan doesn't say.",
+      options: [
+        { title: "A new file", detail: "hello.txt, as planned.", recommended: true },
+        { title: "The README", detail: "Append it to README.md." },
+      ],
+    });
+    await nextLine();
+  }
   await call("progress", { step: 1, status: "active", note: fixing ? "Fixing the review's findings" : "Writing hello.txt" });
   writeFileSync("hello.txt", `hello from ${data.task.id}${fixing ? "\n(with a trailing newline, as review asked)" : ""}\n`);
   await call("progress", { step: 1, status: "done" });
