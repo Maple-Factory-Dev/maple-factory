@@ -21,8 +21,11 @@ struct ActivityView: View {
 
     private static let agents: Set<String> = ["planner", "builder", "reviewer", "factory"]
 
+    /// What the filter picks, in the goals the scope shows.
+    private var entries: [Entry] { filtered.filter { state.inScope($0.task) } }
+
     /// Live: every task's events with their times. The mockup's tasks only have relative labels.
-    private var entries: [Entry] {
+    private var filtered: [Entry] {
         let all: [Entry]
         if state.isLive {
             all = client.tasks.flatMap { wire -> [Entry] in
@@ -76,11 +79,13 @@ struct ActivityView: View {
                         Text("Activity")
                             .font(.system(size: 24, weight: .semibold))
                             .foregroundStyle(Theme.text)
-                        Text("What people and agents did across every goal, newest first.")
+                        Text(state.goalScope == .all ? "What people and agents did across every goal, newest first." : "What people and agents did in the goals you follow and on your tasks, newest first.")
                             .font(.system(size: 13.5))
                             .foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
+                    GoalScopeMenu(hidden: filtered.count - entries.count)
+                        .padding(.trailing, 8)
                     Picker("", selection: $filter) {
                         ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }

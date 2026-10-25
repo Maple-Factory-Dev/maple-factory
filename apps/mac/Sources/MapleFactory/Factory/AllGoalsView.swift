@@ -205,6 +205,38 @@ struct GoalContextMenu: View {
     }
 }
 
+/// "Goals I follow" / "All goals" for the views that span goals, with how many more the other shows.
+struct GoalScopeMenu: View {
+    @Environment(AppState.self) private var state
+    /// How many items the goals you don't follow would add.
+    let hidden: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button { state.goalScope = .following } label: {
+                    Label("Goals I follow", systemImage: state.goalScope == .following ? "checkmark" : "")
+                }
+                Button { state.goalScope = .all } label: {
+                    Label("All goals", systemImage: state.goalScope == .all ? "checkmark" : "")
+                }
+            } label: {
+                Label(state.goalScope == .following ? "Goals I follow" : "All goals", systemImage: "scope")
+            }
+            .menuStyle(.borderlessButton)
+            .font(.system(size: 12.5))
+            .fixedSize()
+            .help("Which goals this shows. Your own tasks, mentions of you and hands raised to you always show.")
+            if state.goalScope == .following, hidden > 0 {
+                Button("+\(hidden) in other goals") { state.goalScope = .all }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+            }
+        }
+    }
+}
+
 /// "Follow" / "Following": whether a goal is in your sidebar.
 struct FollowButton: View {
     let following: Bool

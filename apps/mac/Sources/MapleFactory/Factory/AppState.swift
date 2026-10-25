@@ -281,7 +281,36 @@ final class AppState {
     }
 
     /// Derived from live task state, so acting on a task clears its inbox item on its own.
+    // MARK: Goal scope
+
+    /// Inbox, Needs a hand and Activity show the goals you follow unless you ask for all of them.
+    enum GoalScope: String { case following, all }
+
+    var goalScope: GoalScope = GoalScope(rawValue: UserDefaults.standard.string(forKey: "goalScope") ?? "") ?? .following {
+        didSet { UserDefaults.standard.set(goalScope.rawValue, forKey: "goalScope") }
+    }
+
+    private var followedGoalNames: Set<String> { Set(FactoryData.goals.filter(isFollowing).map(\.name)) }
+
+    /// A task the current scope shows: any of yours, else one in a goal you follow.
+    func inScope(_ task: FactoryTask) -> Bool {
+        goalScope == .all || task.owner.id == FactoryData.me.id || followedGoalNames.contains(task.goal)
+    }
+
+    /// The scoped inbox; mentions of you always come through.
     var inbox: [InboxItem] {
+        let all = allInbox
+        guard goalScope == .following else { return all }
+        let followed = followedGoalNames
+        return all.filter { item in
+            guard item.kind != .mention else { return true }
+            let task = task(item.taskID)
+            return task.owner.id == FactoryData.me.id || followed.contains(task.goal)
+        }
+    }
+
+    /// Everything waiting on anyone, in every goal.
+    var allInbox: [InboxItem] {
         if isLive { return liveInbox }
         return FactoryData.seedInbox.filter { item in
             let task = task(item.taskID)
@@ -325,7 +354,11 @@ final class AppState {
     }
 
     /// Tasks whose agent has stopped and asked for a human, longest-waiting first.
-    var handRaises: [FactoryTask] { tasks.filter { $0.hand != nil } }
+    var allHandRaises: [FactoryTask] { tasks.filter { $0.hand != nil } }
+    /// Scoped like the inbox; a hand raised to you always shows.
+    var handRaises: [FactoryTask] {
+        allHandRaises.filter { inScope($0) || $0.hand?.assignee.id == FactoryData.me.id }
+    }
     var myHandRaises: [FactoryTask] { handRaises.filter { $0.hand?.assignee.id == FactoryData.me.id } }
 
     var myInbox: [InboxItem] { inbox.filter { $0.assignee.id == FactoryData.me.id } }

@@ -52,7 +52,10 @@ struct InboxView: View {
                         .foregroundStyle(Theme.textMuted)
                 }
                 Spacer()
-                scopePicker
+                VStack(alignment: .trailing, spacing: 8) {
+                    scopePicker
+                    GoalScopeMenu(hidden: state.allInbox.count - state.inbox.count)
+                }
             }
 
             HStack(spacing: 6) {

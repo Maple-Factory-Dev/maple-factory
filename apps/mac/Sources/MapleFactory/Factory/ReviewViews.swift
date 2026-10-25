@@ -505,6 +505,8 @@ struct NeedsHandView: View {
                 HStack(spacing: 6) {
                     filter("Everyone", count: state.handRaises.count, active: !mineOnly) { mineOnly = false }
                     filter("Asking me", count: state.myHandRaises.count, active: mineOnly) { mineOnly = true }
+                    GoalScopeMenu(hidden: state.allHandRaises.count - state.handRaises.count)
+                        .padding(.leading, 6)
                     Spacer()
                     reasonSummary
                 }
