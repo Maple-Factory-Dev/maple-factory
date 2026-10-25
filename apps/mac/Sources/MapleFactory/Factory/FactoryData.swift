@@ -7,7 +7,9 @@ enum FactoryData {
     nonisolated(unsafe) static var me = Person(name: "Andrea Fomera", color: Color(light: 0xD9488F, dark: 0xF07AB4), isHuman: true, github: "afomera")
     static let chris = Person(name: "Chris", color: Color(light: 0xE0662F, dark: 0xFF8A5B), isHuman: true, github: "excid3")
 
-    static let people = [me, chris]
+    /// The org's people: its members when connected, for mentions, facepiles and avatars.
+    static var people: [Person] { livePeople ?? [me, chris] }
+    nonisolated(unsafe) static var livePeople: [Person]?
 
     /// Who's online and which task they have open (nil = elsewhere in the workspace).
     static var presence: [(person: Person, viewing: String?)] { livePresence ?? seedPresence }

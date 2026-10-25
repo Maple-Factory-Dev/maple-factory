@@ -247,6 +247,7 @@ import Security
     private func rebuild() {
         factoryGoals = goals.map { LiveAdapter.goal($0, members: members) }
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
+        FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) }
         factoryTasks = tasks.map(adapt)
         applyPresence()
         intake = intakeRequests.map { LiveAdapter.request($0, goals: goals, members: members) }
