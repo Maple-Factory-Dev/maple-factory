@@ -111,14 +111,17 @@ async function builder() {
     });
     await nextLine();
   }
+  // Change requests typed in while it worked ("Change request C2 from ann: …"), as steering does.
+  const steered = typed.splice(0).map((l) => l.match(/^Change request (C\d+) from [^:]+: (.*)$/)).filter(Boolean);
+  for (const [, id, text] of steered) say(`steered (${id}): ${text}`);
   await call("progress", { step: 1, status: "active", note: fixing ? "Fixing the review's findings" : "Writing hello.txt" });
-  writeFileSync("hello.txt", `hello from ${data.task.id}${fixing ? "\n(with a trailing newline, as review asked)" : ""}\n`);
+  writeFileSync("hello.txt", `hello from ${data.task.id}${fixing ? "\n(with a trailing newline, as review asked)" : ""}${steered.map(([, , text]) => `\n${text}`).join("")}\n`);
   await call("progress", { step: 1, status: "done" });
   await call("progress", { step: 2, status: "active", note: "Committing" });
   git("add", "hello.txt");
   git("-c", "user.name=Scripted", "-c", "user.email=scripted@maple.invalid", "commit", "-qm", fixing ? "Address review" : "Add hello.txt");
   await call("progress", { step: 2, status: "done" });
-  const applied = [...prompt.matchAll(/- \((C\d+)\)/g)].map((m) => m[1]);
+  const applied = [...prompt.matchAll(/- \((C\d+)\)/g)].map((m) => m[1]).concat(steered.map(([, id]) => id));
   if (applied.length) await call("progress", { applied });
   await call("prove", { item: 1, kind: "terminal", summary: "hello.txt has the greeting", command: "cat hello.txt", output: git("show", "HEAD:hello.txt").split("\n") });
   await call("prove", { item: 2, kind: "terminal", summary: "The commit is on the branch", command: "git log --oneline -3", output: git("log", "--oneline", "-3").split("\n") });
