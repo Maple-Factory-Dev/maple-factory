@@ -32,7 +32,7 @@ pub struct Hooks {
 
 /// The `agents` MCP server, as Claude Code's `--mcp-config` file has it.
 fn mcp_config(exe: &str) -> Value {
-    json!({ "mcpServers": { "agents": { "command": exe, "args": ["mcp"] } } })
+    json!({ "mcpServers": { "maple": { "command": exe, "args": ["mcp"] } } })
 }
 
 impl Hooks {
@@ -86,15 +86,15 @@ impl Hooks {
                     "-c".into(),
                     format!("notify=[{exe},\"hook\",\"codex\"]"),
                     "-c".into(),
-                    format!("mcp_servers.agents.command={exe}"),
+                    format!("mcp_servers.maple.command={exe}"),
                     "-c".into(),
-                    "mcp_servers.agents.args=[\"mcp\"]".into(),
+                    "mcp_servers.maple.args=[\"mcp\"]".into(),
                     // Codex starts MCP servers with a minimal environment; these say which session is asking.
                     "-c".into(),
-                    format!("mcp_servers.agents.env_vars=[\"{SESSION_ENV}\",\"{SOCKET_ENV}\"]"),
+                    format!("mcp_servers.maple.env_vars=[\"{SESSION_ENV}\",\"{SOCKET_ENV}\"]"),
                     // wait_for can take up to 10 minutes; Codex's default tool timeout is 60s.
                     "-c".into(),
-                    "mcp_servers.agents.tool_timeout_sec=660".into(),
+                    "mcp_servers.maple.tool_timeout_sec=660".into(),
                 ]
             }
             _ => vec![],
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(h.mcp_config, path);
         let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
-        assert_eq!(written, json!({ "mcpServers": { "agents": { "command": exe, "args": ["mcp"] } } }));
+        assert_eq!(written, json!({ "mcpServers": { "maple": { "command": exe, "args": ["mcp"] } } }));
         let args = h.agent_args("claude");
         assert_eq!(
             args,
@@ -587,13 +587,13 @@ mod tests {
                 "-c",
                 r#"notify=["/Users/me/.local/share/maple/bin/maple-runner","hook","codex"]"#,
                 "-c",
-                r#"mcp_servers.agents.command="/Users/me/.local/share/maple/bin/maple-runner""#,
+                r#"mcp_servers.maple.command="/Users/me/.local/share/maple/bin/maple-runner""#,
                 "-c",
-                r#"mcp_servers.agents.args=["mcp"]"#,
+                r#"mcp_servers.maple.args=["mcp"]"#,
                 "-c",
-                r#"mcp_servers.agents.env_vars=["MAPLE_SESSION_ID","MAPLE_HOOK_SOCKET"]"#,
+                r#"mcp_servers.maple.env_vars=["MAPLE_SESSION_ID","MAPLE_HOOK_SOCKET"]"#,
                 "-c",
-                "mcp_servers.agents.tool_timeout_sec=660",
+                "mcp_servers.maple.tool_timeout_sec=660",
             ]
         );
         // Each -c value is valid TOML.

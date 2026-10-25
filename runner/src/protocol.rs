@@ -218,6 +218,9 @@ pub enum Outbound {
     /// Scrollback for one attaching browser, routed by `nonce`.
     #[serde(rename = "session.replay")]
     SessionReplay { id: Uuid, nonce: String, data: String },
+    /// How `task.merge` went.
+    #[serde(rename = "task.merged")]
+    TaskMerged { task_id: String, ok: bool, commit: Option<String>, message: Option<String> },
     /// How an update the hub asked for (`runner.update`) is going. `version` is the latest
     /// release's, once known. `updating` is sent just before the runner exits to restart
     /// into the new build.
@@ -576,6 +579,9 @@ pub enum Inbound {
         #[serde(default)]
         files: Vec<String>,
     },
+    /// Merge a task's branch into its base on origin (see `tasks::run_merge`).
+    #[serde(rename = "task.merge")]
+    TaskMerge(crate::tasks::Merge),
     /// The hub's answer to `task.token_request`: `token`, or `error` with a `code`.
     #[serde(rename = "task.token")]
     TaskToken {

@@ -28,7 +28,7 @@ use crate::sessions::Sessions;
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Versions this server speaks; a client asking for one of these gets it back.
 const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
-const SERVER_NAME: &str = "agents";
+const SERVER_NAME: &str = "maple";
 
 const MAX_TEXT: usize = 16_000;
 /// A Scratchpad note's markdown (the control plane's limit; the hook socket takes lines up to 1 MiB).
@@ -110,6 +110,12 @@ pub fn serve() -> ! {
         match handle(&line) {
             Handled::Nothing => {}
             Handled::Reply(msg) => send(msg),
+            Handled::List { id } => {
+                let backend = backend.clone();
+                let send = send.clone();
+                calls.retain(|c: &std::thread::JoinHandle<()>| !c.is_finished());
+                calls.push(std::thread::spawn(move || send(response(id, json!({ "tools": list_tools(backend.as_ref()) })))));
+            }
             Handled::Call { id, name, args } => {
                 let backend = backend.clone();
                 let send = send.clone();
@@ -131,6 +137,8 @@ pub enum Handled {
     /// A notification, or a response to us: no answer.
     Nothing,
     Reply(Value),
+    /// A `tools/list`: ask the factory for this session's tools, then answer with `id`.
+    List { id: Value },
     /// A `tools/call` to run, then answer with `id`.
     Call {
         id: Value,
@@ -174,23 +182,19 @@ pub fn handle(line: &str) -> Handled {
                 json!({
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": SERVER_NAME, "title": "agents orchestrator", "version": crate::update::VERSION },
-                    "instructions": "Tools for seeing and driving the other agent sessions on your machines \
-                        (the agents orchestrator), and for its tasks, projects, Scratchpad notes and factory cards. \
-                        Machines are named by id; sessions and cards by uuid. \
-                        What you may do is set by the user in Settings → Agents.",
+                    "serverInfo": { "name": SERVER_NAME, "title": "maple factory", "version": crate::update::VERSION },
+                    "instructions": "Tools for reporting to the maple factory: the task this session works on, \
+                        its plan, progress, proofs and reviews. Which tools there are depends on the session's role.",
                 }),
             ))
         }
         "ping" => Handled::Reply(response(id, json!({}))),
-        "tools/list" => Handled::Reply(response(id, json!({ "tools": tools() }))),
+        // The factory decides which tools a session gets (by its role), so the list comes from it.
+        "tools/list" => Handled::List { id },
         "tools/call" => {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return Handled::Reply(rpc_error(id, -32602, "tools/call needs a tool name"));
             };
-            if !TOOL_NAMES.contains(&name) {
-                return Handled::Reply(rpc_error(id, -32602, &format!("Unknown tool: {name}")));
-            }
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
             Handled::Call { id, name: name.to_string(), args }
         }
@@ -252,6 +256,8 @@ const MAX_REVIEW_SUMMARY: usize = 2_000;
 const MAX_RAISE_RISK: usize = 500;
 const TASK_STATUSES: &[&str] = &["queued", "running", "needs_input", "done", "pr_open", "merged", "closed", "failed", "cancelled"];
 
+/// The built-in tools, no longer listed: sessions get the factory's (`list_tools`). Kept until they're retired.
+#[allow(dead_code)]
 fn tools() -> Value {
     let machine = json!({ "type": "string", "description": "Machine id, from list_machines (its display name works too)." });
     let id = json!({ "type": "string", "description": "Session id (a uuid), from list_sessions." });
@@ -531,6 +537,7 @@ fn tools() -> Value {
 
 /// The factory's cards (control/src/cards.ts), as the Cards page has them; a list of their own to keep
 /// `json!` within its recursion limit.
+#[allow(dead_code)]
 fn card_tools() -> Vec<Value> {
     let read = json!({ "readOnlyHint": true, "openWorldHint": false });
     let card_id = json!({ "type": "string", "description": "Card id (a uuid), from list_cards or plan_card." });
@@ -1105,10 +1112,23 @@ fn hub_result(result: &Value) -> Value {
     tool_result(summary, result.get("data"), false)
 }
 
+/// This session's tools, from the factory; none when it can't be reached (or isn't a factory session).
+fn list_tools(backend: &dyn Backend) -> Value {
+    match backend.call("tools/list", &json!({})) {
+        Ok(r) => r["data"]["tools"].as_array().cloned().map(Value::Array).unwrap_or_else(|| json!([])),
+        Err(_) => json!([]),
+    }
+}
+
 pub fn call_tool(backend: &dyn Backend, name: &str, args: &Value) -> Value {
-    let args = match validate(name, args) {
-        Ok(args) => args,
-        Err(e) => return tool_result(&e, None, true),
+    // The built-in tools are checked here; the factory checks its own.
+    let args = if TOOL_NAMES.contains(&name) {
+        match validate(name, args) {
+            Ok(args) => args,
+            Err(e) => return tool_result(&e, None, true),
+        }
+    } else {
+        args.clone()
     };
     let result = if name == "wait_for" { wait_for(backend, &args) } else { backend.call(name, &args).map(|r| hub_result(&r)) };
     result.unwrap_or_else(|e| tool_result(&e, None, true))
@@ -1207,9 +1227,6 @@ pub async fn forward(sessions: &Sessions, request: &Value) -> Value {
     let Some(session) = session.filter(|id| sessions.is_live(*id)) else {
         return answer(Err("This session isn't one the runner is running, so it can't use the agents tools.".into()));
     };
-    if !TOOL_NAMES.contains(&tool) {
-        return answer(Err(format!("Unknown tool: {tool}")));
-    }
     if !CONNECTED.load(Ordering::Relaxed) {
         return answer(Err("The runner isn't connected to the control plane right now. Try again in a moment.".into()));
     }
@@ -1253,7 +1270,7 @@ mod tests {
         );
         assert_eq!(r["id"], 1);
         assert_eq!(r["result"]["protocolVersion"], "2025-06-18");
-        assert_eq!(r["result"]["serverInfo"]["name"], "agents");
+        assert_eq!(r["result"]["serverInfo"]["name"], "maple");
         assert!(r["result"]["capabilities"]["tools"].is_object());
         // An older version we speak is echoed; one we don't gets ours.
         let r = reply(r#"{"jsonrpc":"2.0","id":"a","method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#);
@@ -1271,14 +1288,15 @@ mod tests {
         let r = reply("{not json");
         assert_eq!((r["id"].clone(), r["error"]["code"].as_i64()), (Value::Null, Some(-32700)));
         assert_eq!(reply(r#"{"jsonrpc":"2.0","id":8,"method":"sampling/whatever"}"#)["error"]["code"], -32601);
-        assert_eq!(reply(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"rm_rf"}}"#)["error"]["code"], -32602);
+        assert_eq!(reply(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{}}"#)["error"]["code"], -32602);
         // A response from the client to something we never asked: ignored.
         assert_eq!(handle(r#"{"jsonrpc":"2.0","id":5,"result":{}}"#), Handled::Nothing);
     }
 
     #[test]
-    fn lists_the_tools() {
-        let r = reply(r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#);
+    fn builtin_tools_are_described() {
+        assert_eq!(handle(r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#), Handled::List { id: json!(3) });
+        let r = json!({ "result": { "tools": tools() } });
         let names: Vec<&str> = r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(names, TOOL_NAMES);
         for t in r["result"]["tools"].as_array().unwrap() {

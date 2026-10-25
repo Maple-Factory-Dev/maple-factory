@@ -81,6 +81,48 @@ pub struct Cleanup {
     pub heads: Vec<String>,
 }
 
+/// `task.merge` from the hub, for a repo with no GitHub App to merge its pull request: merge the
+/// task's branch into its base on origin, with the machine's own credentials, as a merge commit.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Merge {
+    pub task_id: String,
+    /// The worktree, `~`-abbreviated.
+    pub cwd: String,
+    pub branch: String,
+    pub base: String,
+    /// The merge commit's message.
+    pub title: String,
+}
+
+/// Runs a merge and answers with `task.merged`. The worktree goes back to the task's branch either way.
+pub async fn run_merge(sessions: Sessions, m: Merge) {
+    let dir = expand_home(&m.cwd);
+    let merged = merge(&dir, &m).await;
+    let _ = git(&dir, &["checkout", "--quiet", &m.branch], None).await;
+    sessions.emit(match merged {
+        Ok(commit) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None },
+        Err(e) => {
+            let _ = git(&dir, &["merge", "--abort"], None).await;
+            Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) }
+        }
+    });
+}
+
+async fn merge(dir: &Path, m: &Merge) -> Result<String> {
+    if !m.branch.starts_with(BRANCH_PREFIX) {
+        bail!("{} isn't a task branch.", m.branch);
+    }
+    if !git(dir, &["status", "--porcelain"], None).await?.trim().is_empty() {
+        bail!("The worktree has uncommitted changes.");
+    }
+    git(dir, &["fetch", "--quiet", "origin", &m.base], None).await?;
+    git(dir, &["checkout", "--quiet", "--detach", &format!("origin/{}", m.base)], None).await?;
+    git(dir, &["merge", "--no-ff", "--quiet", "-m", &m.title, &m.branch], None).await.map_err(|e| anyhow!("It doesn't merge cleanly into {}: {e}", m.base))?;
+    git(dir, &["push", "--quiet", "origin", &format!("HEAD:refs/heads/{}", m.base)], None).await?;
+    Ok(git(dir, &["rev-parse", "HEAD"], None).await?.trim().to_string())
+}
+
 /// Runs a cleanup and answers with `task.cleaned`.
 pub async fn run_cleanup(sessions: Sessions, c: Cleanup) {
     let cwds: Vec<String> = sessions.list().into_iter().map(|s| s.cwd).collect();
