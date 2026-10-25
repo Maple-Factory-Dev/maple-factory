@@ -155,6 +155,7 @@ struct MachineSettingsSheet: View {
             SectionLabel(title: title)
             VStack(alignment: .leading, spacing: 12) { content() }
                 .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
         }
         .font(.system(size: 12.5))
@@ -182,6 +183,7 @@ struct MachineSettingsSheet: View {
     }
 
     private func button(_ title: String, primary: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
         Text(title)
             .font(.system(size: 13, weight: primary ? .semibold : .medium))
             .foregroundStyle(primary ? .white : Theme.text)
@@ -189,6 +191,7 @@ struct MachineSettingsSheet: View {
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 8).fill(primary ? Theme.accent : Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(primary ? .clear : Theme.stroke)))
             .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+        }
+        .buttonStyle(.plain)
     }
 }
