@@ -3,7 +3,8 @@ import SwiftUI
 enum FactoryData {
     // MARK: People
 
-    static let me = Person(name: "Andrea Fomera", color: Color(light: 0xD9488F, dark: 0xF07AB4), isHuman: true, github: "afomera")
+    /// You: the signed-in member once the app is connected to a factory (`FactoryClient`).
+    nonisolated(unsafe) static var me = Person(name: "Andrea Fomera", color: Color(light: 0xD9488F, dark: 0xF07AB4), isHuman: true, github: "afomera")
     static let chris = Person(name: "Chris", color: Color(light: 0xE0662F, dark: 0xFF8A5B), isHuman: true, github: "excid3")
 
     static let people = [me, chris]
@@ -55,7 +56,11 @@ enum FactoryData {
 
     // MARK: Goals
 
-    static let goals: [Goal] = [
+    /// The connected factory's goals, when signed in (`FactoryClient`); the mockup's otherwise.
+    nonisolated(unsafe) static var liveGoals: [Goal]?
+    static var goals: [Goal] { liveGoals ?? seedGoals }
+
+    static let seedGoals: [Goal] = [
         Goal(name: "Auth overhaul", color: Theme.State.merged, dueOffset: 32, lead: me,
              summary: "Move every surface to rotating sessions, passkeys and enterprise SSO ahead of the Q1 security review."),
         Goal(name: "Billing v2", color: Theme.State.building, dueOffset: 25, lead: chris,
@@ -69,7 +74,7 @@ enum FactoryData {
     ]
 
     static func goal(named name: String) -> Goal {
-        goals.first { $0.name == name } ?? goals[0]
+        goals.first { $0.name == name } ?? goals.first ?? Goal(name: name, color: Theme.textMuted, dueOffset: todayOffset, lead: me, summary: "")
     }
 
     // MARK: Tasks

@@ -18,7 +18,10 @@ struct MapleFactoryApp: App {
             ContentView()
                 .environment(state)
                 .environment(client)
-                .task { client.connect() }
+                .task {
+                    state.client = client
+                    client.connect()
+                }
                 .frame(minWidth: 720, minHeight: 620)
         }
         .windowStyle(.hiddenTitleBar)

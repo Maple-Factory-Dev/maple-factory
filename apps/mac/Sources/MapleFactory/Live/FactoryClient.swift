@@ -1,8 +1,9 @@
 import Foundation
 import Security
 
-/// The app's connection to a real factory: who you are, the live machines, and recent session ends.
-/// The rest of the app is still the design mockup; views switch to this where it has real data.
+/// The app's connection to a real factory: who you are, the live machines, recent session ends, and
+/// the goals and tasks. Views that were designed against mock data read the adapted copies
+/// (`factoryTasks`, `factoryGoals`) when signed in.
 @MainActor @Observable final class FactoryClient {
     enum Status: Equatable {
         case signedOut
@@ -24,6 +25,14 @@ import Security
     private(set) var me: Wire.Member?
     private(set) var machines: [Wire.Machine] = []
     private(set) var ends: [EndRecord] = []
+    private(set) var members: [Wire.Member] = []
+    private(set) var goals: [Wire.Goal] = []
+    private(set) var tasks: [Wire.Task] = []
+    /// The tasks and goals as the views' models, rebuilt when they change.
+    private(set) var factoryTasks: [FactoryTask] = []
+    private(set) var factoryGoals: [Goal] = []
+    /// A passing line from the factory ("ATL-3 merged"), for the app's toast.
+    private(set) var toast: (text: String, taskID: String?, at: Date)?
     private(set) var status: Status = .signedOut
     /// The last thing the server refused, shown as a toast-like line.
     var notice: String?
@@ -66,6 +75,9 @@ import Security
         me = nil
         machines = []
         ends = []
+        goals = []
+        tasks = []
+        rebuild()
         status = .signedOut
     }
 
@@ -136,6 +148,11 @@ import Security
             me = snapshot.me
             machines = snapshot.machines
             ends = snapshot.ended.map { EndRecord(machine: $0.machine, end: $0.end) }
+            members = snapshot.members
+            goals = snapshot.goals
+            tasks = snapshot.tasks
+            FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
+            rebuild()
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
                 machines[index] = update.machine
@@ -147,12 +164,45 @@ import Security
         case .sessionEnded(let ended):
             ends.insert(EndRecord(machine: ended.machine, end: ended.end), at: 0)
             if ends.count > 50 { ends.removeLast(ends.count - 50) }
+        case .taskUpdated(let update):
+            if let index = tasks.firstIndex(where: { $0.id == update.task.id }) {
+                tasks[index] = update.task
+                factoryTasks[index] = adapt(update.task)
+            } else {
+                tasks.insert(update.task, at: 0)
+                factoryTasks.insert(adapt(update.task), at: 0)
+            }
+        case .taskRemoved(let removed):
+            tasks.removeAll { $0.id == removed.id }
+            factoryTasks.removeAll { $0.id == removed.id }
+        case .goalUpdated(let update):
+            if let index = goals.firstIndex(where: { $0.id == update.goal.id }) {
+                goals[index] = update.goal
+            } else {
+                goals.append(update.goal)
+            }
+            rebuild()
+        case .toast(let toast):
+            self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
             notice = error.message
         case .unknown:
             break
         }
     }
+
+    private func adapt(_ task: Wire.Task) -> FactoryTask {
+        LiveAdapter.task(task, goals: goals, members: members, me: me?.login)
+    }
+
+    private func rebuild() {
+        factoryGoals = goals.map { LiveAdapter.goal($0, members: members) }
+        FactoryData.liveGoals = server == nil ? nil : factoryGoals
+        factoryTasks = tasks.map(adapt)
+    }
+
+    /// The goal a view knows by name.
+    func goal(named name: String) -> Wire.Goal? { goals.first { $0.name == name } }
 
     func send(_ message: Wire.ClientMessage) {
         guard let socket, let data = try? JSONEncoder().encode(message), let text = String(data: data, encoding: .utf8) else { return }

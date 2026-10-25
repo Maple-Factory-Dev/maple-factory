@@ -98,7 +98,7 @@ struct AutoReview {
 /// An agent stopping to ask a human for help it can't get anywhere else.
 struct HandRaise {
     enum Reason {
-        case reviewLoop, proofBurden, needsInput, overBudget
+        case reviewLoop, proofBurden, needsInput, overBudget, sessionEnded
 
         var title: String {
             switch self {
@@ -106,6 +106,7 @@ struct HandRaise {
             case .proofBurden: "Can't meet the proof"
             case .needsInput: "Needs more input"
             case .overBudget: "Fix goes over budget"
+            case .sessionEnded: "Its session ended"
             }
         }
 
@@ -115,6 +116,7 @@ struct HandRaise {
             case .proofBurden: "checkmark.seal"
             case .needsInput: "text.bubble"
             case .overBudget: "gauge.with.dots.needle.100percent"
+            case .sessionEnded: "bolt.horizontal.circle"
             }
         }
 
@@ -124,6 +126,7 @@ struct HandRaise {
             case .proofBurden: Theme.State.reviewing
             case .needsInput: Theme.State.planning
             case .overBudget: Theme.State.awaitingApproval
+            case .sessionEnded: Theme.State.cancelled
             }
         }
     }

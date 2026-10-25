@@ -58,8 +58,13 @@ struct TaskOwnership: View {
 }
 
 struct QuestionBlock: View {
+    @Environment(AppState.self) private var appState
     let task: FactoryTask
     let question: String
+    @State private var replying = false
+    @State private var reply = ""
+
+    private var options: [String] { appState.isLive ? task.questionOptions : ["Auto-provision", "Require invite"] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -95,8 +100,8 @@ struct QuestionBlock: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
             }
-            HStack(spacing: 6) {
-                ForEach(["Auto-provision", "Require invite", "Reply…"], id: \.self) { answer in
+            FlowLayout(spacing: 6) {
+                ForEach(options + ["Reply…"], id: \.self) { answer in
                     Text(answer)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.text)
@@ -107,6 +112,29 @@ struct QuestionBlock: View {
                                 .fill(Theme.cardBG)
                                 .overlay(Capsule().strokeBorder(Theme.stroke))
                         )
+                        .contentShape(Capsule())
+                        .onTapGesture {
+                            if answer == "Reply…" { replying = true } else { appState.answer(task.id, text: answer) }
+                        }
+                }
+            }
+            if replying {
+                HStack(spacing: 6) {
+                    TextField("Your answer", text: $reply)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke)))
+                        .onSubmit(sendReply)
+                    Text("Send")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.State.planning))
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: sendReply)
                 }
             }
         }
@@ -116,6 +144,16 @@ struct QuestionBlock: View {
                 .fill(Theme.State.planning.opacity(0.08))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.planning.opacity(0.25)))
         )
+    }
+}
+
+extension QuestionBlock {
+    private func sendReply() {
+        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        appState.answer(task.id, text: text)
+        reply = ""
+        replying = false
     }
 }
 
@@ -556,12 +594,9 @@ struct TaskComposer: View {
         guard !text.isEmpty else { return }
         withAnimation(.snappy(duration: 0.25)) {
             if mode == .steer {
-                let timing = interruptNow && task.state == .building ? "Interrupting after the current edit" : task.steerTiming
-                appState.steering[task.id, default: []].append(
-                    ChangeRequest(author: FactoryData.me, text: text, status: interruptNow ? .applying : .queued, timing: timing)
-                )
+                appState.steer(task.id, text: text, interruptNow: interruptNow)
             } else {
-                appState.postedComments[task.id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+                appState.comment(task.id, text: text)
             }
         }
         draft = ""

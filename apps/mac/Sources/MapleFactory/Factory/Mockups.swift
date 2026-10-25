@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 // MARK: Model
 
@@ -7,6 +8,8 @@ struct Mockup: Identifiable {
     enum Kind {
         case screen(ScreenMock, url: String)
         case terminal([TermMockLine])
+        /// A planner's mockup: a small self-contained page.
+        case html(String, url: String)
     }
 
     enum Status {
@@ -131,6 +134,10 @@ extension AppState {
     func requestMockupChange(_ taskID: String, mockup: Mockup, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if let client, isLive {
+            client.send(.taskMockupChange(.init(id: taskID, mockup: mockup.id, text: trimmed)))
+            return
+        }
         withAnimation(.snappy(duration: 0.2)) {
             steering[taskID, default: []].append(
                 ChangeRequest(author: FactoryData.me, text: trimmed, anchor: "Mockup: \(mockup.title)", timing: "Next mockup version")
@@ -225,6 +232,9 @@ struct MockupsSection: View {
                 switch mockup.kind {
                 case .terminal(let lines):
                     TerminalMock(lines: lines)
+                case .html(let html, let url):
+                    BrowserFrame(url: url) { HTMLMock(html: html).frame(height: 380) }
+                        .frame(maxWidth: 640)
                 case .screen(let screen, let url):
                     if isBuilt, view == .side {
                         HStack(alignment: .top, spacing: 14) {
@@ -643,4 +653,29 @@ private enum Mock {
     static let muted = Color(hex: 0x6A707A)
     static let link = Color(hex: 0x2F6FEB)
     static let danger = Color(hex: 0xD14343)
+}
+
+/// A planner's HTML mockup, drawn without scripts or network: what's on the page is all there is.
+struct HTMLMock: NSViewRepresentable {
+    let html: String
+
+    func makeNSView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.defaultWebpagePreferences.allowsContentJavaScript = false
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.setValue(false, forKey: "drawsBackground")
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        guard context.coordinator.loaded != html else { return }
+        context.coordinator.loaded = html
+        view.loadHTMLString(html, baseURL: nil)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var loaded: String?
+    }
 }

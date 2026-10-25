@@ -3,6 +3,7 @@ import SwiftUI
 struct FactorySidebar: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
+    @State private var newGoal = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -23,15 +24,30 @@ struct FactorySidebar: View {
                 navRow("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage)
             }
 
-            sectionHeader("Goals")
+            sectionHeader("Goals") { if client.isSignedIn { newGoal = true } }
             VStack(spacing: 2) {
                 ForEach(FactoryData.goals) { goal in goalRow(goal) }
+                if client.isSignedIn && client.goals.isEmpty {
+                    row(selected: false) {
+                        Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
+                        Text("New goal")
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.textMuted)
+                    .onTapGesture { newGoal = true }
+                }
             }
 
             sectionHeader("People")
             VStack(spacing: 2) {
-                ForEach(FactoryData.presence, id: \.person.id) { entry in
-                    personRow(entry.person, viewing: entry.viewing)
+                if client.isSignedIn {
+                    ForEach(client.members, id: \.login) { member in
+                        personRow(LiveAdapter.person(member.login, members: client.members), viewing: nil)
+                    }
+                } else {
+                    ForEach(FactoryData.presence, id: \.person.id) { entry in
+                        personRow(entry.person, viewing: entry.viewing)
+                    }
                 }
             }
 
@@ -50,6 +66,7 @@ struct FactorySidebar: View {
             Spacer()
         }
         .padding(.horizontal, 12)
+        .sheet(isPresented: $newGoal) { GoalSheet() }
         .overlay(alignment: .topTrailing) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13))

@@ -132,7 +132,17 @@ final class AppState {
 
     // MARK: Live data
 
-    var tasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).map { seed in
+    /// The connected factory. Signed in, tasks and goals are its, and actions go to it; otherwise
+    /// everything here is the design mockup's.
+    var client: FactoryClient?
+    var isLive: Bool { client?.isSignedIn == true }
+
+    var tasks: [FactoryTask] {
+        get { isLive ? client?.factoryTasks ?? [] : mockTasks }
+        set { if !isLive { mockTasks = newValue } }
+    }
+
+    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).map { seed in
         var task = seed
         task.autoReview = FactoryData.seedReviews[task.id]
         task.hand = FactoryData.seedHands[task.id]
@@ -179,7 +189,7 @@ final class AppState {
     // MARK: Queries
 
     func task(_ id: String) -> FactoryTask {
-        tasks.first { $0.id == id } ?? tasks[0]
+        tasks.first { $0.id == id } ?? tasks.first ?? FactoryTask.none
     }
 
     func tasks(for goal: Goal) -> [FactoryTask] {
@@ -311,6 +321,23 @@ final class AppState {
             showToast("Give the task a title first", icon: "exclamationmark.circle", color: Theme.State.awaitingApproval)
             return
         }
+        if let client, isLive {
+            guard let goal = client.goal(named: draft.goal) else {
+                showToast("Pick a goal first", icon: "exclamationmark.circle", color: Theme.State.awaitingApproval)
+                return
+            }
+            let body = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
+                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: nil)))
+            withAnimation(.snappy(duration: 0.3)) {
+                isComposing = false
+                destination = .goal(draft.goal)
+            }
+            showToast(sendToPlanning ? "Sent to planning" : "Saved as a draft",
+                      icon: sendToPlanning ? "list.bullet.indent" : "pencil.line",
+                      color: sendToPlanning ? Theme.State.planning : Theme.State.drafting)
+            return
+        }
         let reading = BriefReading(draft.body)
         let agent = assignee(for: draft)
         let prefix = tasks.first { $0.goal == draft.goal }?.id ?? "NEW-1"
@@ -412,12 +439,67 @@ final class AppState {
 
     // MARK: Task actions
 
+    /// A change request for the task's planner or builder.
+    func steer(_ id: String, text: String, interruptNow: Bool) {
+        if let client, isLive {
+            client.send(.taskSteer(.init(id: id, text: text)))
+            return
+        }
+        let task = task(id)
+        let timing = interruptNow && task.state == .building ? "Interrupting after the current edit" : task.steerTiming
+        steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: text, status: interruptNow ? .applying : .queued, timing: timing))
+    }
+
+    func comment(_ id: String, text: String) {
+        if let client, isLive {
+            client.send(.taskComment(.init(id: id, text: text)))
+            return
+        }
+        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+    }
+
+    /// Answers the agent's open question.
+    func answer(_ id: String, text: String) {
+        if let client, isLive {
+            client.send(.taskAnswer(.init(id: id, text: text)))
+            return
+        }
+        answerInSession(id, option: text)
+    }
+
+    func cancel(_ id: String) {
+        if let client, isLive {
+            client.send(.taskCancel(.init(id: id)))
+            return
+        }
+        update(id) { $0.state = .cancelled }
+    }
+
+    func retry(_ id: String) {
+        if let client, isLive {
+            client.send(.taskRetry(.init(id: id)))
+        }
+    }
+
+    /// Sends a draft to planning.
+    func plan(_ id: String) {
+        if let client, isLive {
+            client.send(.taskPlan(.init(id: id)))
+            return
+        }
+        update(id) { $0.state = .planning }
+    }
+
     func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         mutate(&tasks[index])
     }
 
     func approvePlan(_ id: String) {
+        if let client, isLive {
+            client.send(.taskApprovePlan(.init(id: id)))
+            return
+        }
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -446,6 +528,16 @@ final class AppState {
 
     /// Answers a raised hand: the agent takes the chosen option (plus any note) and gets moving again.
     func resolveHand(_ id: String, option: HandRaise.Option?, note: String) {
+        if let client, isLive {
+            if option?.title == "Cancel it" {
+                client.send(.taskCancel(.init(id: id)))
+            } else if option?.title == "Retry" && task(id).agent == nil {
+                client.send(.taskRetry(.init(id: id)))
+            } else {
+                client.send(.taskResolveHand(.init(id: id, option: option?.title, note: note)))
+            }
+            return
+        }
         guard let hand = task(id).hand else { return }
         let me = FactoryData.me
         let answer = option?.title ?? note
@@ -497,6 +589,10 @@ final class AppState {
     }
 
     func approveChanges(_ id: String) {
+        if let client, isLive {
+            client.send(.taskApproveChanges(.init(id: id)))
+            return
+        }
         let me = FactoryData.me
         withAnimation(.snappy(duration: 0.3)) {
             update(id) { task in
@@ -531,6 +627,10 @@ final class AppState {
     }
 
     func merge(_ id: String, byFactory: Bool = false) {
+        if let client, isLive {
+            if !byFactory { client.send(.taskMerge(.init(id: id))) }
+            return
+        }
         let number = task(id).pr?.number
         withAnimation(.snappy(duration: 0.35)) {
             update(id) { task in
@@ -657,6 +757,7 @@ final class AppState {
 
     /// Finds reviewing tasks that now meet every gate and are allowed to auto-merge, and lands them.
     func sweepForAutoMerge() {
+        guard !isLive else { return }
         for task in tasks where task.state == .reviewing && !autoMerging.contains(task.id) {
             let gate = mergeGate(for: task)
             guard gate.canMerge, gate.autoMerge else { continue }

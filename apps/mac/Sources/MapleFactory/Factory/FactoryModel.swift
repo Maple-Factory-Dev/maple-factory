@@ -165,6 +165,8 @@ struct FactoryTask: Identifiable {
     var brief = ""
     var plan: [PlanStep] = []
     var question: String? = nil
+    /// The answers the agent suggested for `question`.
+    var questionOptions: [String] = []
     var activity: [ActivityItem] = []
     /// Teammates who have this task open right now.
     var viewers: [Person] = []
@@ -201,6 +203,9 @@ struct FactoryTask: Identifiable {
     var mockups: [Mockup] = []
 
     var proven: Int { doneWhen.filter { $0.status == .proven }.count }
+
+    /// Stands in when there are no tasks yet, so views that need one have something to show.
+    static let none = FactoryTask(id: "—", goal: "", title: "No tasks yet", state: .drafting, detail: "")
 }
 
 struct PullRequest {
@@ -209,8 +214,10 @@ struct PullRequest {
     var number: Int
     var state: State
     var checks: [CICheck]
+    /// Where it is on GitHub; none for a local repo's change.
+    var link: URL? = nil
 
-    var url: URL { URL(string: "https://github.com/\(FactoryData.repo)/pull/\(number)")! }
+    var url: URL { link ?? URL(string: "https://github.com/\(FactoryData.repo)/pull/\(number)")! }
     var requiredChecksPassing: Bool { checks.filter(\.required).allSatisfy { $0.status == .passed } }
 }
 
