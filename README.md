@@ -30,6 +30,9 @@ scripts/dev-stack.sh down
 
 Signed in, the Mac app is the live factory: tasks run through planning, approval, building, review and
 merge on enrolled machines, with terminals through the relay. Signed out, it's the design mockup.
+On a phone or any browser, `/app` is the web companion: the inbox and task pages (plan, mockups,
+diff, review, checks, proofs) with approve, request changes, merge and answers to agents; no terminals
+or machine settings. Task links (`/t/<ID>`) open the Mac app and fall back to it.
 End-to-end tests for each piece are in server/test (each says what it needs at the top). Launch flags for screenshots: `-onboardingURL localhost:8788
 -onboardingContinue YES` plays the real sign-in; `-destination machines -liveSession first` opens a terminal.
 
