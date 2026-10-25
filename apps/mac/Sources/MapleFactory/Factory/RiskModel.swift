@@ -1,0 +1,110 @@
+import SwiftUI
+
+enum RiskLevel: Int, CaseIterable, Comparable {
+    case low, medium, high
+
+    static func < (a: RiskLevel, b: RiskLevel) -> Bool { a.rawValue < b.rawValue }
+
+    var title: String {
+        switch self {
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .low: Theme.State.merged
+        case .medium: Theme.State.awaitingApproval
+        case .high: Theme.State.cancelled
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .low: "checkmark.shield"
+        case .medium: "exclamationmark.shield"
+        case .high: "exclamationmark.shield.fill"
+        }
+    }
+}
+
+/// Code paths that raise a task's risk just by being touched.
+struct SensitiveArea: Identifiable {
+    let name: String
+    let paths: [String]
+    var level: RiskLevel
+    var enabled = true
+    var id: String { name }
+}
+
+/// Team-wide rules for how big a change may be and how much human sign-off each risk level needs.
+struct RiskPolicy {
+    var maxFiles = 12
+    var maxLines = 500
+    var sensitiveAreas: [SensitiveArea] = [
+        SensitiveArea(name: "Auth", paths: ["lib/auth/**", "app/api/auth/**"], level: .high),
+        SensitiveArea(name: "Billing", paths: ["lib/billing/**", "app/api/billing/**"], level: .high),
+        SensitiveArea(name: "Migrations", paths: ["db/migrations/**"], level: .medium),
+    ]
+    var planApprovals: [RiskLevel: Int] = [.low: 1, .medium: 1, .high: 2]
+    var finalReviews: [RiskLevel: Int] = [.low: 0, .medium: 1, .high: 2]
+    var autoMerge: [RiskLevel: Bool] = [.low: true, .medium: false, .high: false]
+
+    func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
+        guard let footprint = task.footprint else { return nil }
+
+        let areas = sensitiveAreas.filter { $0.enabled && task.areas.contains($0.name) }
+        let overFiles = footprint.files > maxFiles
+        let overLines = footprint.lines > maxLines
+        let areaLevel = areas.map(\.level).max() ?? .low
+        let sizeLevel: RiskLevel = overFiles || overLines ? .medium : .low
+        let level = max(areaLevel, sizeLevel)
+        // A goal that has accepted risk up to this level lets the factory merge without human review.
+        let accepted = acceptance.map { level <= $0.autoMergeUpTo } ?? false
+
+        return RiskAssessment(
+            level: level,
+            files: footprint.files,
+            lines: footprint.lines,
+            estimated: footprint.estimated,
+            areas: areas,
+            overFiles: overFiles,
+            overLines: overLines,
+            approvals: planApprovals[level, default: 1],
+            reviews: accepted ? 0 : finalReviews[level, default: 1],
+            autoMerge: accepted || autoMerge[level, default: false],
+            acceptance: accepted ? acceptance : nil,
+            suggestedSplit: overFiles || overLines
+                ? max(Int((Double(footprint.files) / Double(maxFiles)).rounded(.up)),
+                      Int((Double(footprint.lines) / Double(maxLines)).rounded(.up)))
+                : nil
+        )
+    }
+}
+
+struct RiskAssessment {
+    let level: RiskLevel
+    let files: Int
+    let lines: Int
+    /// Planning-stage numbers are the agent's estimate; building and later are measured from the diff.
+    let estimated: Bool
+    let areas: [SensitiveArea]
+    let overFiles: Bool
+    let overLines: Bool
+    let approvals: Int
+    let reviews: Int
+    let autoMerge: Bool
+    /// Set when the goal's risk acceptance is what's allowing auto-merge.
+    let acceptance: RiskAcceptance?
+    let suggestedSplit: Int?
+}
+
+/// A goal-level decision to let the factory auto-merge work up to a given risk level, on the record.
+struct RiskAcceptance {
+    var autoMergeUpTo: RiskLevel
+    var acceptedBy: Person
+    var when: String
+    var note: String? = nil
+}

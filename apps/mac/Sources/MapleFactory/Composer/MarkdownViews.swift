@@ -1,0 +1,360 @@
+import SwiftUI
+
+// MARK: - Parsing
+
+/// Just enough Markdown structure for briefs and notes: headings, lists, task lists, quotes, code.
+enum MarkdownBlock {
+    case heading(level: Int, text: String)
+    case task(checked: Bool, text: String)
+    case bullet(String)
+    case numbered(Int, String)
+    case quote(String)
+    case code([String])
+    case paragraph(String)
+    case rule
+
+    static func parse(_ source: String) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        var paragraph: [String] = []
+        var code: [String]? = nil
+
+        func flush() {
+            if !paragraph.isEmpty {
+                blocks.append(.paragraph(paragraph.joined(separator: " ")))
+                paragraph = []
+            }
+        }
+
+        for raw in source.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+
+            if line.hasPrefix("```") {
+                if let lines = code {
+                    blocks.append(.code(lines))
+                    code = nil
+                } else {
+                    flush()
+                    code = []
+                }
+                continue
+            }
+            if code != nil {
+                code?.append(raw)
+                continue
+            }
+
+            if line.isEmpty { flush(); continue }
+            if line == "---" { flush(); blocks.append(.rule); continue }
+
+            if let hashes = line.firstIndex(where: { $0 != "#" }), line.hasPrefix("#"),
+               line[hashes] == " " {
+                flush()
+                let level = line.distance(from: line.startIndex, to: hashes)
+                blocks.append(.heading(level: level, text: String(line[hashes...]).trimmingCharacters(in: .whitespaces)))
+            } else if line.hasPrefix("- [ ] ") || line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") {
+                flush()
+                blocks.append(.task(checked: !line.hasPrefix("- [ ]"), text: String(line.dropFirst(6))))
+            } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                flush()
+                blocks.append(.bullet(String(line.dropFirst(2))))
+            } else if let dot = line.firstIndex(of: "."), let number = Int(line[..<dot]),
+                      line[line.index(after: dot)...].hasPrefix(" ") {
+                flush()
+                blocks.append(.numbered(number, String(line[line.index(dot, offsetBy: 2)...])))
+            } else if line.hasPrefix("> ") {
+                flush()
+                blocks.append(.quote(String(line.dropFirst(2))))
+            } else {
+                paragraph.append(line)
+            }
+        }
+        if let lines = code { blocks.append(.code(lines)) }
+        flush()
+        return blocks
+    }
+}
+
+/// What the factory understands from a free-form brief: the summary, the acceptance checks, the
+/// sensitive areas it's likely to touch, and who it mentions.
+struct BriefReading {
+    let summary: String
+    let doneWhen: [DoneCriterion]
+    let areas: [String]
+    let mentions: [Person]
+
+    init(_ source: String) {
+        let blocks = MarkdownBlock.parse(source)
+
+        summary = blocks.compactMap { if case let .paragraph(text) = $0 { text } else { nil } }.first ?? ""
+
+        // Prefer the checklist under a "Done when" heading; fall back to every task-list item.
+        var underDoneWhen: [String] = []
+        var allTasks: [String] = []
+        var inDoneWhen = false
+        for block in blocks {
+            switch block {
+            case let .heading(_, text): inDoneWhen = text.lowercased().contains("done when")
+            case let .task(_, text):
+                allTasks.append(text)
+                if inDoneWhen { underDoneWhen.append(text) }
+            case let .bullet(text) where inDoneWhen: underDoneWhen.append(text)
+            default: break
+            }
+        }
+        doneWhen = (underDoneWhen.isEmpty ? allTasks : underDoneWhen).map {
+            DoneCriterion(text: $0, proof: BriefReading.proofKind(for: $0))
+        }
+
+        let lower = source.lowercased()
+        let keywords: [(String, [String])] = [
+            ("Auth", ["auth", "login", "sign in", "sign-in", "session", "token", "passkey", "sso", "password"]),
+            ("Billing", ["billing", "invoice", "stripe", "payment", "subscription", "proration"]),
+            ("Migrations", ["migration", "schema", "new table", "add column", "backfill"]),
+        ]
+        areas = keywords.filter { _, words in words.contains { lower.contains($0) } }.map(\.0)
+
+        mentions = FactoryData.people.filter { person in
+            person.github.map { lower.contains("@\($0.lowercased())") } ?? false
+        }
+    }
+
+    static func proofKind(for text: String) -> DoneCriterion.ProofKind {
+        let lower = text.lowercased()
+        if ["video", "record", "end to end", "end-to-end", "flow", "walkthrough"].contains(where: lower.contains) { return .video }
+        if ["screenshot", "looks", "renders", "shows", "visible", "page"].contains(where: lower.contains) { return .screenshot }
+        if ["test", "spec", "suite", "passes"].contains(where: lower.contains) { return .tests }
+        return .terminal
+    }
+}
+
+// MARK: - Preview
+
+struct MarkdownPreview: View {
+    let source: String
+    var baseSize: CGFloat = 13.5
+
+    var body: some View {
+        let blocks = MarkdownBlock.parse(source)
+
+        VStack(alignment: .leading, spacing: 10) {
+            if blocks.isEmpty {
+                Text("Nothing to preview")
+                    .font(.system(size: baseSize))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                view(for: block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
+        switch block {
+        case let .heading(level, text):
+            Text(inline(text))
+                .font(.system(size: level == 1 ? baseSize + 9 : level == 2 ? baseSize + 4 : baseSize + 1.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .padding(.top, level <= 2 ? 6 : 2)
+        case let .task(checked, text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(checked ? Theme.accent : Theme.textMuted)
+                Text(inline(text)).foregroundStyle(Theme.text)
+            }
+            .font(.system(size: baseSize))
+        case let .bullet(text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("•").foregroundStyle(Theme.textMuted)
+                Text(inline(text)).foregroundStyle(Theme.text)
+            }
+            .font(.system(size: baseSize))
+        case let .numbered(number, text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(number).").foregroundStyle(Theme.textMuted).monospacedDigit()
+                Text(inline(text)).foregroundStyle(Theme.text)
+            }
+            .font(.system(size: baseSize))
+        case let .quote(text):
+            Text(inline(text))
+                .font(.system(size: baseSize))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.fillSelected).frame(width: 3) }
+        case let .code(lines):
+            Text(lines.joined(separator: "\n"))
+                .font(.system(size: baseSize - 1.5, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill))
+        case let .paragraph(text):
+            Text(inline(text))
+                .font(.system(size: baseSize))
+                .foregroundStyle(Theme.text.opacity(0.9))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        case .rule:
+            Hairline()
+        }
+    }
+
+    private func inline(_ text: String) -> AttributedString {
+        var result = (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
+        for person in FactoryData.people {
+            guard let handle = person.github, let range = result.range(of: "@\(handle)") else { continue }
+            result[range].foregroundColor = Theme.mention
+        }
+        return result
+    }
+}
+
+// MARK: - Editor
+
+/// A GitHub-issue-style editor: Write/Preview tabs and a toolbar that wraps the current selection.
+struct MarkdownEditor: View {
+    @Binding var text: String
+    var placeholder = "Write in Markdown…"
+    var minHeight: CGFloat = 320
+
+    @State private var previewing = false
+    @State private var selection: TextSelection? = nil
+
+    private enum Format {
+        case heading, bold, italic, code, link, bullet, numbered, task, quote, mention
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 2) {
+                tab("Write", active: !previewing) { previewing = false }
+                tab("Preview", active: previewing) { previewing = true }
+                Spacer()
+                if !previewing { toolbar }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 40)
+            .background(Theme.fillSubtle)
+            .overlay(alignment: .bottom) { Hairline() }
+
+            Group {
+                if previewing {
+                    ScrollView {
+                        MarkdownPreview(source: text)
+                            .padding(16)
+                    }
+                } else {
+                    ZStack(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text(placeholder)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(Theme.textFaint)
+                                .padding(.horizontal, 17)
+                                .padding(.vertical, 14)
+                                .allowsHitTesting(false)
+                        }
+                        TextEditor(text: $text, selection: $selection)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .scrollContentBackground(.hidden)
+                            .lineSpacing(4)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                    }
+                }
+            }
+            .frame(minHeight: minHeight)
+
+            HStack(spacing: 6) {
+                Image(systemName: "photo.on.rectangle.angled").font(.system(size: 10.5))
+                Text("Paste or drop screenshots, logs and files")
+                Spacer()
+                Image(systemName: "m.square").font(.system(size: 11))
+                Text("Markdown supported")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textFaint)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .overlay(alignment: .top) { Hairline() }
+        }
+        .background(Theme.cardBG)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+    }
+
+    private func tab(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Text(title)
+            .font(.system(size: 12.5, weight: active ? .semibold : .regular))
+            .foregroundStyle(active ? Theme.text : Theme.textMuted)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 6).fill(active ? Theme.cardBG : .clear))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(active ? Theme.stroke : .clear))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 1) {
+            toolButton("textformat.size", .heading, "Heading")
+            toolButton("bold", .bold, "Bold")
+            toolButton("italic", .italic, "Italic")
+            toolButton("chevron.left.forwardslash.chevron.right", .code, "Code")
+            toolButton("link", .link, "Link")
+            divider
+            toolButton("list.bullet", .bullet, "Bulleted list")
+            toolButton("list.number", .numbered, "Numbered list")
+            toolButton("checklist", .task, "Task list")
+            toolButton("text.quote", .quote, "Quote")
+            divider
+            toolButton("at", .mention, "Mention")
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Theme.border).frame(width: 1, height: 16).padding(.horizontal, 4)
+    }
+
+    private func toolButton(_ icon: String, _ format: Format, _ help: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(Theme.textMuted)
+            .frame(width: 26, height: 26)
+            .contentShape(Rectangle())
+            .onTapGesture { apply(format) }
+            .help(help)
+    }
+
+    /// Wraps the selection (or inserts at the cursor) the way GitHub's issue editor does.
+    private func apply(_ format: Format) {
+        let range: Range<String.Index> = {
+            if case let .selection(range)? = selection?.indices { return range }
+            return text.endIndex..<text.endIndex
+        }()
+        let selected = String(text[range])
+        let atLineStart = range.lowerBound == text.startIndex || text[text.index(before: range.lowerBound)] == "\n"
+        let lineBreak = atLineStart ? "" : "\n"
+
+        let replacement: String = switch format {
+        case .heading: "\(lineBreak)## \(selected.isEmpty ? "Heading" : selected)"
+        case .bold: "**\(selected.isEmpty ? "bold" : selected)**"
+        case .italic: "_\(selected.isEmpty ? "italic" : selected)_"
+        case .code: selected.contains("\n") ? "\n```\n\(selected)\n```\n" : "`\(selected.isEmpty ? "code" : selected)`"
+        case .link: "[\(selected.isEmpty ? "title" : selected)](https://)"
+        case .bullet: "\(lineBreak)- \(selected)"
+        case .numbered: "\(lineBreak)1. \(selected)"
+        case .task: "\(lineBreak)- [ ] \(selected)"
+        case .quote: "\(lineBreak)> \(selected)"
+        case .mention: "@"
+        }
+
+        let start = text.distance(from: text.startIndex, to: range.lowerBound)
+        text.replaceSubrange(range, with: replacement)
+        selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: start + replacement.count))
+    }
+}

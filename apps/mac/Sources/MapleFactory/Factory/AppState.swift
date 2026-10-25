@@ -1,0 +1,761 @@
+import SwiftUI
+
+struct Toast: Identifiable, Equatable {
+    let id = UUID()
+    let icon: String
+    let text: String
+    let color: Color
+
+    static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
+}
+
+/// Everything a merge depends on, in one place so buttons, copy and auto-merge agree.
+struct MergeGate {
+    let proofsReady: Bool
+    let failedProofs: Int
+    let unproven: Int
+    let checksReady: Bool
+    let failedChecks: Int
+    let reviewsNeeded: Int
+    let reviewsReady: Bool
+    let autoMerge: Bool
+
+    var canMerge: Bool { proofsReady && checksReady && reviewsReady }
+}
+
+@MainActor @Observable
+final class AppState {
+    // MARK: Navigation
+
+    var destination: Destination = .goal("Auth overhaul") {
+        didSet {
+            focusedTask = nil
+            isComposing = false
+        }
+    }
+    var layout: GoalLayout = .board {
+        didSet { focusedTask = nil }
+    }
+    /// A task opened full-screen in place of the board/list/timeline.
+    var focusedTask: String? = nil
+    var showInspector = true
+    var selectedTask = "ATL-147" {
+        didSet { if isCompact, focusedTask == nil { showInspector = true } }
+    }
+
+    // MARK: Machines
+
+    var machines = FactoryData.seedMachines
+    var intake = FactoryData.seedIntake
+    var selectedIntake: String? = FactoryData.seedIntake.first?.id
+    /// Who has the keyboard in each live session, and lines typed during this run.
+    var sessionDrivers: [String: SessionDriver] = [:]
+    var sessionLines: [String: [TermLine]] = [:]
+    /// Tab to open the next focused task on, e.g. straight into its live session.
+    var pendingTab: String? = nil
+
+    func openSession(_ taskID: String) {
+        pendingTab = "session"
+        destination = .goal(task(taskID).goal)
+        openFocus(taskID)
+    }
+    /// The machine being set up or edited in the sheet; "new" for this Mac.
+    var machineSheet: MachineSheet? = nil
+    var queue = FactoryData.seedQueue
+
+    /// A queued task got a slot: it starts building like a freshly approved plan.
+    func startQueued(_ id: String) {
+        update(id) { task in
+            let resuming = (task.progress ?? 0) > 0.05
+            task.detail = resuming ? "Resumed from checkpoint" : "Starting"
+            task.progress = max(task.progress ?? 0, 0.04)
+            task.liveLog = resuming ? "Pulled the last checkpoint, picking up where it left off" : "Setting up a worktree for \(task.id.lowercased())"
+            task.updated = "now"
+            task.activity.insert(ActivityItem(who: task.agent?.name ?? "Agent", text: "Got a slot and started building", when: "now"), at: 0)
+        }
+    }
+
+    // MARK: Onboarding
+
+    /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
+    var showOnboarding = UserDefaults.standard.bool(forKey: "onboarding") || UserDefaults.standard.bool(forKey: "onboardingAuto")
+
+    func startOnboarding() {
+        withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
+    }
+
+    func finishOnboarding() {
+        withAnimation(.easeInOut(duration: 0.45)) { showOnboarding = false }
+        showToast("Welcome to Studio Workspace", icon: "hand.wave.fill")
+    }
+
+    // MARK: Layout
+
+    var windowWidth: CGFloat = 1600
+    /// Icon rail instead of the full sidebar. Narrow windows force it on; the full sidebar then floats over the content.
+    var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    /// What the user picked at full width, restored when the window widens again.
+    private var sidebarPreference = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+
+    /// Around half a laptop screen: the inspector floats and the sidebar becomes a rail.
+    var isCompact: Bool { windowWidth < 1180 }
+    var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
+    var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
+    var inspectorInline: Bool {
+        showInspector && !isCompact && focusedTask == nil && !isComposing
+            && ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(destination)
+    }
+    /// Width left for the main content once the sidebar and an inline inspector take theirs.
+    var contentWidth: CGFloat { windowWidth - sidebarSpace - (inspectorInline ? 380 : 0) }
+
+    func windowResized(to width: CGFloat) {
+        let wasCompact = isCompact
+        windowWidth = width
+        guard isCompact != wasCompact else { return }
+        withAnimation(.snappy(duration: 0.25)) {
+            if isCompact {
+                sidebarCollapsed = true
+                showInspector = false
+            } else {
+                sidebarCollapsed = sidebarPreference
+            }
+        }
+    }
+
+    func toggleSidebar() {
+        withAnimation(.snappy(duration: 0.25)) { sidebarCollapsed.toggle() }
+        if !isCompact {
+            sidebarPreference = sidebarCollapsed
+            UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed")
+        }
+    }
+
+    // MARK: Live data
+
+    var tasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).map { seed in
+        var task = seed
+        task.autoReview = FactoryData.seedReviews[task.id]
+        task.hand = FactoryData.seedHands[task.id]
+        task.shareable = FactoryData.seedShareable.contains(task.id)
+        task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
+        task.mockups = FactoryData.seedMockups[task.id] ?? []
+        if task.id == "ATL-160" {
+            task.intakeID = "req-sso"
+            task.comments.append(Comment(author: FactoryData.dana,
+                                         text: "All three prospects expect auto-provisioning (JIT). An invite step would be a dealbreaker for Acme.",
+                                         when: "4m", via: "Slack #maple-requests"))
+        }
+        if task.hand != nil { task.needsYou = true }
+        return task
+    }
+    /// Change requests and comments sent from this session.
+    var steering: [String: [ChangeRequest]] = [:]
+    var postedComments: [String: [Comment]] = [:]
+    var policy = RiskPolicy() {
+        didSet { sweepForAutoMerge() }
+    }
+    var acceptances: [String: RiskAcceptance] = FactoryData.seedAcceptances {
+        didSet { sweepForAutoMerge() }
+    }
+    /// Over-budget tasks someone chose to keep as a single PR.
+    var keptWhole: Set<String> = []
+    /// Tasks the factory has picked up for auto-merge and is about to land.
+    var autoMerging: Set<String> = []
+    var dismissedMentions: Set<String> = []
+    var toast: Toast?
+
+    // MARK: Composer & scratchpad
+
+    var isComposing = false
+    var draft = ComposeDraft()
+    var notes: [Note] = FactoryData.seedNotes
+    var selectedNote: UUID? = FactoryData.seedNotes.first?.id
+
+    // MARK: Seen state
+
+    /// How many activity items you'd seen on each task when you last looked (newest-first list).
+    var seenActivityCount: [String: Int] = [:]
+
+    // MARK: Queries
+
+    func task(_ id: String) -> FactoryTask {
+        tasks.first { $0.id == id } ?? tasks[0]
+    }
+
+    func tasks(for goal: Goal) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal.name }
+    }
+
+    func stats(for goal: Goal) -> (merged: Int, total: Int) {
+        let live = tasks(for: goal).filter { $0.state != .cancelled }
+        return (live.filter { $0.state == .merged }.count, live.count)
+    }
+
+    func risk(for task: FactoryTask) -> RiskAssessment? {
+        policy.assess(task, acceptance: acceptances[task.goal])
+    }
+
+    func mergeGate(for task: FactoryTask) -> MergeGate {
+        let risk = risk(for: task)
+        let failedProofs = task.doneWhen.filter { $0.status == .failed }.count
+        let unproven = task.doneWhen.filter { $0.status != .proven }.count
+        let required = task.pr?.checks.filter(\.required) ?? []
+        let reviewsNeeded = risk?.reviews ?? 1
+
+        return MergeGate(
+            proofsReady: unproven == 0,
+            failedProofs: failedProofs,
+            unproven: unproven,
+            checksReady: required.allSatisfy { $0.status == .passed },
+            failedChecks: required.filter { $0.status == .failed }.count,
+            reviewsNeeded: reviewsNeeded,
+            reviewsReady: task.reviews.count >= reviewsNeeded,
+            autoMerge: risk?.autoMerge ?? false
+        )
+    }
+
+    /// Derived from live task state, so acting on a task clears its inbox item on its own.
+    var inbox: [InboxItem] {
+        FactoryData.seedInbox.filter { item in
+            let task = task(item.taskID)
+            switch item.kind {
+            case .mention: return !dismissedMentions.contains(item.id)
+            case .approval: return task.state == .awaitingApproval && !task.approvals.contains { $0.id == FactoryData.me.id }
+            case .question: return task.question != nil && task.state == .planning
+            case .failing: return task.state != .merged && (task.pr?.checks.contains { $0.status == .failed } ?? false)
+            case .review: return task.state == .reviewing && !task.reviews.contains { $0.id == FactoryData.me.id }
+            }
+        }
+    }
+
+    /// Tasks whose agent has stopped and asked for a human, longest-waiting first.
+    var handRaises: [FactoryTask] { tasks.filter { $0.hand != nil } }
+    var myHandRaises: [FactoryTask] { handRaises.filter { $0.hand?.assignee.id == FactoryData.me.id } }
+
+    var myInbox: [InboxItem] { inbox.filter { $0.assignee.id == FactoryData.me.id } }
+
+    func inbox(_ kind: InboxItem.Kind, mine: Bool = false) -> [InboxItem] {
+        (mine ? myInbox : inbox).filter { $0.kind == kind }
+    }
+
+    func changeRequests(for task: FactoryTask) -> [ChangeRequest] {
+        task.changeRequests + steering[task.id, default: []]
+    }
+
+    func queuedChanges(for task: FactoryTask) -> Int {
+        changeRequests(for: task).filter { $0.status != .applied }.count
+    }
+
+    // MARK: Changes since last viewed
+
+    /// Activity from other people and agents since you last opened the task.
+    func unseenChanges(for task: FactoryTask) -> [ActivityItem] {
+        let others = { (item: ActivityItem) in item.who != FactoryData.me.name }
+        if let seen = seenActivityCount[task.id] {
+            return Array(task.activity.prefix(max(task.activity.count - seen, 0))).filter(others)
+        }
+        guard let ago = FactoryData.seedLastViewed[task.id] else { return [] }
+        return task.activity.filter { minutesAgo($0.when) < ago }.filter(others)
+    }
+
+    func lastViewedLabel(for task: FactoryTask) -> String? {
+        if seenActivityCount[task.id] != nil { return "earlier this session" }
+        return FactoryData.seedLastViewed[task.id].map { "\($0)m ago" }
+    }
+
+    func markSeen(_ id: String) {
+        withAnimation(.snappy(duration: 0.25)) {
+            seenActivityCount[id] = task(id).activity.count
+        }
+    }
+
+    func minutesAgo(_ label: String) -> Int {
+        let digits = Int(label.prefix { $0.isNumber }) ?? 0
+        if label.hasSuffix("h") { return digits * 60 }
+        if label.hasSuffix("d") { return digits * 1440 }
+        return digits
+    }
+
+    // MARK: Composer actions
+
+    func startCompose(goal: String? = nil, title: String = "", body: String = "", fromNote: UUID? = nil) {
+        let currentGoal: String = {
+            if case let .goal(name) = destination { return name }
+            return FactoryData.goals[0].name
+        }()
+        draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote)
+        withAnimation(.snappy(duration: 0.3)) {
+            focusedTask = nil
+            isComposing = true
+        }
+    }
+
+    func cancelCompose() {
+        withAnimation(.snappy(duration: 0.3)) { isComposing = false }
+    }
+
+    /// The agent that would pick up a new task: the chosen one, or whoever has the least in flight.
+    func assignee(for draft: ComposeDraft) -> Agent {
+        if let name = draft.agent, let agent = FactoryData.agents.first(where: { $0.name == name }) { return agent }
+        return FactoryData.agents.min { load($0) < load($1) } ?? FactoryData.agents[0]
+    }
+
+    func load(_ agent: Agent) -> Int {
+        tasks.filter { $0.agent?.id == agent.id && [.planning, .building].contains($0.state) }.count
+    }
+
+    /// Turns the composer's brief into a task, either parked as a draft or handed straight to a planner.
+    func submitDraft(sendToPlanning: Bool) {
+        let title = draft.title.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else {
+            showToast("Give the task a title first", icon: "exclamationmark.circle", color: Theme.State.awaitingApproval)
+            return
+        }
+        let reading = BriefReading(draft.body)
+        let agent = assignee(for: draft)
+        let prefix = tasks.first { $0.goal == draft.goal }?.id ?? "NEW-1"
+        let id = nextTaskID(like: prefix)
+        let me = FactoryData.me
+
+        var task = FactoryTask(
+            id: id, goal: draft.goal, title: title,
+            state: sendToPlanning ? .planning : .drafting,
+            agent: sendToPlanning ? agent : nil, owner: me,
+            detail: sendToPlanning ? "Reading the brief…" : "Edited just now",
+            span: FactoryData.todayOffset...(FactoryData.todayOffset + 6), updated: "now"
+        )
+        task.brief = reading.summary
+        task.spec = draft.body
+        task.shareable = draft.shareable
+        task.tickets = draft.tickets
+        task.intakeID = draft.intakeID
+        task.doneWhen = reading.doneWhen
+        task.areas = reading.areas
+        if sendToPlanning {
+            task.plan = [PlanStep(text: "Drafting the plan…", file: "", progress: .active)]
+            task.liveLog = "Reading the brief and exploring the codebase"
+            task.footprint = (3, 150, true)
+        }
+        task.activity = [ActivityItem(
+            who: me.name,
+            text: sendToPlanning ? "Created and handed to \(agent.name) for planning" : "Created a draft",
+            when: "now"
+        )]
+
+        tasks.append(task)
+        seenActivityCount[id] = task.activity.count
+        if let noteID = draft.fromNote, let index = notes.firstIndex(where: { $0.id == noteID }) {
+            notes[index].taskID = id
+        }
+        if let intakeID = draft.intakeID {
+            acceptIntake(intakeID, as: id, agent: sendToPlanning ? agent.name : nil)
+        }
+
+        withAnimation(.snappy(duration: 0.3)) {
+            isComposing = false
+            destination = .goal(draft.goal)
+        }
+        openFocus(id)
+        showToast(
+            sendToPlanning ? "\(id) created · \(agent.name) is drafting a plan" : "\(id) saved as a draft",
+            icon: sendToPlanning ? "list.bullet.indent" : "pencil.line",
+            color: sendToPlanning ? Theme.State.planning : Theme.State.drafting
+        )
+    }
+
+    /// Parks the composer's contents in the scratchpad instead of making a task.
+    func saveDraftAsNote() {
+        let note = Note(
+            id: UUID(),
+            title: draft.title.isEmpty ? "Untitled note" : draft.title,
+            body: draft.body,
+            updated: "now"
+        )
+        notes.insert(note, at: 0)
+        selectedNote = note.id
+        withAnimation(.snappy(duration: 0.3)) {
+            isComposing = false
+            destination = .scratchpad
+        }
+        showToast("Saved to scratchpad", icon: "note.text", color: Theme.State.drafting)
+    }
+
+    func newNote() {
+        let note = Note(id: UUID(), title: "", body: "", updated: "now")
+        notes.insert(note, at: 0)
+        selectedNote = note.id
+    }
+
+    // MARK: Navigation actions
+
+    func openFocus(_ id: String) {
+        withAnimation(.snappy(duration: 0.3)) {
+            selectedTask = id
+            focusedTask = id
+        }
+    }
+
+    func closeFocus() {
+        withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+    }
+
+    func showToast(_ text: String, icon: String, color: Color = Theme.accent) {
+        let toast = Toast(icon: icon, text: text, color: color)
+        withAnimation(.snappy(duration: 0.25)) { self.toast = toast }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3.5))
+            if self.toast == toast {
+                withAnimation(.easeOut(duration: 0.3)) { self.toast = nil }
+            }
+        }
+    }
+
+    // MARK: Task actions
+
+    func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&tasks[index])
+    }
+
+    func approvePlan(_ id: String) {
+        let me = FactoryData.me
+        let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
+        // Read before `update`, which holds exclusive access to `tasks` while it mutates.
+        let prNumber = nextPRNumber()
+        var started = false
+
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
+                task.approvals.append(me)
+                task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
+                if task.approvals.count >= needed {
+                    startBuilding(&task, prNumber: prNumber)
+                    started = true
+                }
+            }
+        }
+
+        let task = task(id)
+        if started {
+            showToast("Plan approved · \(task.agent?.name ?? "Agent") started building \(id)", icon: "hammer.fill", color: Theme.State.building)
+        } else {
+            showToast("You approved \(id) · \(task.approvals.count) of \(needed)", icon: "checkmark.circle.fill")
+        }
+    }
+
+    /// Answers a raised hand: the agent takes the chosen option (plus any note) and gets moving again.
+    func resolveHand(_ id: String, option: HandRaise.Option?, note: String) {
+        guard let hand = task(id).hand else { return }
+        let me = FactoryData.me
+        let answer = option?.title ?? note
+        let wasEscalated = hand.reason == .reviewLoop || hand.reason == .proofBurden
+
+        withAnimation(.snappy(duration: 0.35)) {
+            update(id) { task in
+                let agent = task.agent?.name ?? "Agent"
+                task.hand = nil
+                task.needsYou = false
+                task.updated = "now"
+                task.activity.insert(ActivityItem(who: me.name, text: "Answered: \(answer)", when: "now"), at: 0)
+                if !note.isEmpty, option != nil {
+                    task.comments.append(Comment(author: me, text: note, when: "now"))
+                }
+                if task.state == .planning {
+                    task.question = nil
+                    task.detail = "Drafting plan"
+                    task.liveLog = "Planning with your answer: \(answer)"
+                } else {
+                    task.state = .building
+                    task.detail = "Applying your call"
+                    task.progress = 0.1
+                    task.liveLog = "Applying: \(answer)"
+                    if wasEscalated, var review = task.autoReview {
+                        review.maxRounds = review.rounds.count + 3
+                        task.autoReview = review
+                    }
+                }
+                task.activity.insert(ActivityItem(who: agent, text: "Picked it back up", when: "now"), at: 0)
+            }
+        }
+        showToast("\(task(id).agent?.name ?? "Agent") is back on \(id)", icon: "hand.thumbsup.fill", color: Theme.State.building)
+    }
+
+    private func startBuilding(_ task: inout FactoryTask, prNumber: Int) {
+        task.state = .building
+        task.needsYou = false
+        for index in task.plan.indices {
+            task.plan[index].progress = index == 0 ? .active : .pending
+            task.plan[index].change = nil
+        }
+        task.detail = "Step 1 of \(max(task.plan.count, 1))"
+        task.progress = 0.04
+        task.liveLog = "Starting: \(task.plan.first?.text ?? "setting up the branch")"
+        task.updated = "now"
+        task.pr = PullRequest(number: prNumber, state: .draft, checks: CICheck.queued())
+        task.activity.insert(ActivityItem(who: task.agent?.name ?? "Agent", text: "Opened a draft PR and started step 1", when: "now"), at: 0)
+    }
+
+    func approveChanges(_ id: String) {
+        let me = FactoryData.me
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                guard !task.reviews.contains(where: { $0.id == me.id }) else { return }
+                task.reviews.append(me)
+                task.activity.insert(ActivityItem(who: me.name, text: "Approved the changes", when: "now"), at: 0)
+            }
+        }
+        let gate = mergeGate(for: task(id))
+        showToast("You approved the changes on \(id) · \(task(id).reviews.count) of \(gate.reviewsNeeded) reviews",
+                  icon: "checkmark.circle.fill")
+
+        // Stand-in for real multiplayer: when a second review is needed, Chris follows up.
+        if !gate.reviewsReady {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                let chris = FactoryData.chris
+                guard self.task(id).state == .reviewing,
+                      !self.task(id).reviews.contains(where: { $0.id == chris.id }),
+                      !self.mergeGate(for: self.task(id)).reviewsReady else { return }
+                withAnimation(.snappy(duration: 0.3)) {
+                    self.update(id) { task in
+                        task.reviews.append(chris)
+                        task.activity.insert(ActivityItem(who: chris.firstName, text: "Approved the changes", when: "now"), at: 0)
+                    }
+                }
+                self.showToast("Chris approved the changes on \(id)", icon: "person.fill.checkmark", color: chris.color)
+                self.sweepForAutoMerge()
+            }
+        }
+        sweepForAutoMerge()
+    }
+
+    func merge(_ id: String, byFactory: Bool = false) {
+        let number = task(id).pr?.number
+        withAnimation(.snappy(duration: 0.35)) {
+            update(id) { task in
+                task.state = .merged
+                task.needsYou = false
+                task.liveLog = nil
+                task.progress = nil
+                task.pr?.state = .merged
+                task.detail = number.map { "#\($0) · just now" } ?? "Merged just now"
+                task.updated = "now"
+                task.activity.insert(ActivityItem(
+                    who: byFactory ? "Factory" : FactoryData.me.name,
+                    text: "Merged #\(number ?? 0) into main\(byFactory ? " (auto-merge)" : "")",
+                    when: "now"
+                ), at: 0)
+            }
+            autoMerging.remove(id)
+        }
+        showToast(byFactory ? "Factory auto-merged \(id) (#\(number ?? 0))" : "Merged \(id) into main",
+                  icon: byFactory ? "bolt.fill" : "arrow.triangle.merge", color: Theme.State.merged)
+    }
+
+    func rerunFailedChecks(_ id: String) {
+        withAnimation(.snappy(duration: 0.25)) {
+            update(id) { task in
+                guard var pr = task.pr else { return }
+                for index in pr.checks.indices where pr.checks[index].status == .failed {
+                    pr.checks[index].status = .running
+                    pr.checks[index].duration = ""
+                }
+                task.pr = pr
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Re-ran failed checks", when: "now"), at: 0)
+            }
+        }
+        showToast("Re-running failed checks on #\(task(id).pr?.number ?? 0)", icon: "arrow.clockwise", color: Theme.State.building)
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr else { return }
+                    for index in pr.checks.indices where pr.checks[index].status == .running {
+                        pr.checks[index].status = .passed
+                        pr.checks[index].duration = "2:\(10 + index * 7)"
+                    }
+                    task.pr = pr
+                    task.checksFailing = false
+                    if task.state == .reviewing { task.detail = "All checks passed" }
+                }
+            }
+            self.showToast("Checks passed on #\(self.task(id).pr?.number ?? 0)", icon: "checkmark.seal.fill", color: Theme.State.merged)
+            self.sweepForAutoMerge()
+        }
+    }
+
+    /// Splits an over-budget task into `parts`: the original keeps everything up to its current step,
+    /// and the remaining steps become new tasks queued for planning.
+    func split(_ id: String, into parts: Int) {
+        let original = task(id)
+        let steps = original.plan
+        guard parts > 1, steps.count >= parts else { return }
+
+        let firstEnd = max(original.activeStep ?? (steps.count / parts - 1), 0)
+        let rest = Array(steps[(firstEnd + 1)...])
+        let perPart = Int((Double(rest.count) / Double(parts - 1)).rounded(.up))
+        let chunks = stride(from: 0, to: rest.count, by: max(perPart, 1)).map { Array(rest[$0..<min($0 + perPart, rest.count)]) }
+
+        let footprint = original.footprint
+        let shareFiles = footprint.map { Int((Double($0.files) / Double(parts)).rounded(.up)) } ?? 0
+        let shareLines = footprint.map { $0.lines / parts } ?? 0
+
+        var created: [String] = []
+        var insertAt = (tasks.firstIndex { $0.id == id } ?? tasks.count - 1) + 1
+        for chunk in chunks {
+            let newID = nextTaskID(like: id)
+            var task = FactoryTask(
+                id: newID, goal: original.goal,
+                title: chunk.count > 1 ? "\(chunk[0].text) (+\(chunk.count - 1) more)" : chunk[0].text,
+                state: .planning, agent: original.agent, owner: original.owner,
+                detail: "Split from \(id) · queued",
+                span: original.span.upperBound...(original.span.upperBound + 4), updated: "now"
+            )
+            task.brief = "Split from \(id) to stay inside the PR budget. \(original.brief)"
+            task.plan = chunk.map { step in
+                var step = step
+                step.progress = nil
+                step.change = nil
+                return step
+            }
+            task.doneWhen = [
+                DoneCriterion(text: "Type-checks cleanly", proof: .terminal),
+                DoneCriterion(text: "Existing auth tests still pass", proof: .tests),
+            ]
+            task.footprint = (shareFiles, shareLines, true)
+            task.areas = original.areas
+            task.splitFrom = id
+            task.activity = [ActivityItem(who: FactoryData.me.name, text: "Created by splitting \(id)", when: "now")]
+            tasks.insert(task, at: insertAt)
+            insertAt += 1
+            created.append(newID)
+        }
+
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                task.plan = Array(steps[...firstEnd])
+                task.footprint = footprint.map { (shareFiles, shareLines, $0.estimated) }
+                let done = task.plan.filter { $0.progress == .done }.count
+                task.detail = "Step \(min(done + 1, task.plan.count)) of \(task.plan.count)"
+                task.progress = Double(done) / Double(max(task.plan.count, 1))
+                task.activity.insert(ActivityItem(
+                    who: FactoryData.me.name,
+                    text: "Split into \(parts) tasks: \(([id] + created).joined(separator: ", "))",
+                    when: "now"
+                ), at: 0)
+            }
+        }
+        showToast("Split \(id) into \(parts) tasks · \(created.joined(separator: ", ")) queued for planning",
+                  icon: "scissors", color: Theme.State.awaitingApproval)
+    }
+
+    func keepWhole(_ id: String) {
+        withAnimation(.snappy(duration: 0.25)) { _ = keptWhole.insert(id) }
+    }
+
+    /// Finds reviewing tasks that now meet every gate and are allowed to auto-merge, and lands them.
+    func sweepForAutoMerge() {
+        for task in tasks where task.state == .reviewing && !autoMerging.contains(task.id) {
+            let gate = mergeGate(for: task)
+            guard gate.canMerge, gate.autoMerge else { continue }
+            let id = task.id
+            withAnimation(.snappy(duration: 0.25)) { _ = autoMerging.insert(id) }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.8))
+                let current = self.task(id)
+                let gate = self.mergeGate(for: current)
+                guard self.autoMerging.contains(id), current.state == .reviewing, gate.canMerge, gate.autoMerge else {
+                    self.autoMerging.remove(id)
+                    return
+                }
+                self.merge(id, byFactory: true)
+            }
+        }
+    }
+
+    private func nextPRNumber() -> Int {
+        (tasks.compactMap { $0.pr?.number }.max() ?? 480) + 1
+    }
+
+    private func nextTaskID(like id: String) -> String {
+        let prefix = id.split(separator: "-").first.map(String.init) ?? "TASK"
+        let highest = tasks
+            .filter { $0.id.hasPrefix(prefix + "-") }
+            .compactMap { Int($0.id.split(separator: "-").last ?? "") }
+            .max() ?? 0
+        return "\(prefix)-\(highest + 1)"
+    }
+
+    // MARK: Launch arguments
+
+    /// Launch arguments like `-destination inbox -layout timeline -inspector NO` jump straight to a view.
+    init() {
+        let defaults = UserDefaults.standard
+        if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
+            self.layout = layout
+        }
+        switch defaults.string(forKey: "destination") {
+        case "inbox": destination = .inbox
+        case "mytasks": destination = .myTasks
+        case "scratchpad": destination = .scratchpad
+        case "usage": destination = .usage
+        case "hands": destination = .needsHand
+        case "machines": destination = .machines
+        case "requests": destination = .intake
+        case let goal?: destination = .goal(goal)
+        case nil: break
+        }
+        if let task = defaults.string(forKey: "task") {
+            selectedTask = task
+        }
+        if let task = defaults.string(forKey: "focus") {
+            selectedTask = task
+            focusedTask = task
+        }
+        if defaults.object(forKey: "inspector") != nil {
+            showInspector = defaults.bool(forKey: "inspector")
+        }
+        if defaults.bool(forKey: "compose") {
+            draft = ComposeDraft(title: "Passkey sign-in on the login page", body: FactoryData.sampleBrief, goal: "Auth overhaul")
+            isComposing = true
+        }
+        if let script = defaults.string(forKey: "actions") {
+            Task { @MainActor in await self.play(script) }
+        }
+    }
+
+    /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
+    /// one action per second, so flows can be shown (or screenshotted) without clicking.
+    private func play(_ script: String) async {
+        for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+            try? await Task.sleep(for: .seconds(1))
+            let parts = command.split(separator: ":").map(String.init)
+            guard parts.count >= 2 else { continue }
+            switch parts[0] {
+            case "approve": approvePlan(parts[1])
+            case "review": approveChanges(parts[1])
+            case "merge": merge(parts[1])
+            case "rerun": rerunFailedChecks(parts[1])
+            case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
+            case "send": submitDraft(sendToPlanning: true)
+            case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
+            case "teamslots": setTeamSlots(parts[1], to: Int(parts[2]) ?? 1)
+            case "offline": toggleOffline(parts[1])
+            case "resume": resumeElsewhere(parts[1])
+            case "share": setShareable(parts[1], true)
+            case "pause": pauseMachine(parts[1], until: "1:15 AM")
+            case "handoff": pauseMachine(parts[1], until: nil, handOff: true)
+            case "drive": takeWheel(parts[1])
+            case "compose-intake": composeFromIntake(parts[1])
+            case "attach": attachIntake(parts[1], to: parts[2])
+            case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            case "accept":
+                let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
+                acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
+            default: break
+            }
+        }
+    }
+}
