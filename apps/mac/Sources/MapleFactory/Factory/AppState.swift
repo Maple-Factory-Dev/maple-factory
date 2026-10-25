@@ -215,7 +215,12 @@ final class AppState {
     /// The mockup's follows, by goal name; the live ones are the server's.
     private var mockFollows: [String: Bool] = [:]
 
-    func isFollowing(_ goal: Goal) -> Bool { isLive ? goal.following : mockFollows[goal.name] ?? goal.following }
+    /// Read through the client (whose follows and tasks views observe), so unfollowing redraws at once.
+    func isFollowing(_ goal: Goal) -> Bool {
+        guard isLive else { return mockFollows[goal.name] ?? goal.following }
+        guard let client, let live = client.goal(named: goal.name) else { return goal.following }
+        return client.isFollowing(live)
+    }
 
     /// The sidebar's goals: the ones you follow, plus the one you're looking at.
     var sidebarGoals: [Goal] {
