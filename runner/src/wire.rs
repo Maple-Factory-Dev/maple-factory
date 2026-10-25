@@ -1406,6 +1406,11 @@ pub enum ClientMessage {
     TaskRetry {
         id: String,
     },
+    /// Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.
+    #[serde(rename = "task.move")]
+    TaskMove {
+        id: String,
+    },
     /// "I checked it" for a Done when item.
     #[serde(rename = "task.checkedIt")]
     TaskCheckedIt {

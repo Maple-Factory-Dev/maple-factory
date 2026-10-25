@@ -272,6 +272,29 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.move": {
+        if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting") fail("There's nothing running to move.");
+        if (!task.machine) fail("It hasn't started on a machine yet.");
+        const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
+        const stuck = !from || !from.online || this.store.settings(from.id).paused || !task.worker;
+        if (!stuck) fail(`It's running on ${from!.name}; it moves when that machine is offline or paused, or once it stops.`);
+        const name = from?.name ?? task.machine;
+        this.closeWorker(task, "moved");
+        const priv = this.store.private(task.id);
+        this.store.savePrivate(task.id, { ...priv, worktree: null, repoDir: null, restarts: 0, finishing: false });
+        task.machine = null;
+        task.hand = null;
+        task.question = null;
+        task.waiting = null;
+        task.liveLog = null;
+        this.event(task, who, task.pr?.head
+          ? `moved it off ${name}; it carries on from its last push (${task.pr.head.slice(0, 7)})`
+          : `moved it off ${name}; it starts again from ${task.state === "planning" ? "the brief" : "its plan"}, since nothing was pushed`);
+        this.save(task);
+        await audit(this.env, who, "task.moved", task.id, { from: from?.id ?? name });
+        await this.pump();
+        return;
+      }
       case "task.checkedIt": {
         const item = task.doneWhen[msg.item] ?? fail("There's no such Done when item.");
         item.status = "proven";
@@ -350,7 +373,7 @@ export class Engine {
     if (task.machine && priv.worktree) {
       // Its worktree is on one machine: the rest of its sessions run there.
       machine = machines.find((m) => m.id === task.machine);
-      if (!machine) return `${task.machine} was removed; retry it to start over elsewhere.`;
+      if (!machine) return `${task.machine} was removed; move it to start over elsewhere.`;
       if (!machine.online) return `Waiting for ${machine.name} to come back online.`;
       if (this.store.settings(machine.id).paused) return `${machine.name} is paused.`;
       const capped = this.overCap(machine, task.agent);
@@ -948,6 +971,15 @@ export class Engine {
       await this.toRunner(w.machine, { type: "session.kill", id: w.session }, "factory");
     };
     this.hooks.waitUntil(kill());
+  }
+
+  /** A machine that's back can still be running sessions the factory ended while it was away
+   *  (its task moved elsewhere); those stop now. */
+  reap(machine: Machine) {
+    for (const { session } of machine.sessions) {
+      const s = session.taskId ? this.store.session(session.id) : null;
+      if (s?.ended != null) this.hooks.waitUntil(this.toRunner(machine.id, { type: "session.kill", id: session.id }, "factory"));
+    }
   }
 
   /** Types into the task's live session, as if at its keyboard. False when nothing's running. */

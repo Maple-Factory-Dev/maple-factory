@@ -60,6 +60,7 @@ export class OrgHub extends DurableObject<Env> {
         this.broadcast({ type: "machine.updated", machine: this.withSettings(machine) });
         // Coming online, or a session ending, can free a slot for waiting tasks.
         // So can a pause running out, so health reports retry whatever's waiting.
+        if (machine.online && !before?.online) this.engine.reap(machine);
         if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || this.engine.waiting())) await this.engine.pump();
         return new Response(null, { status: 204 });
       }

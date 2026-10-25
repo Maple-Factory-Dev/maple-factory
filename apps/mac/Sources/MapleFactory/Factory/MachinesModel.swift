@@ -338,6 +338,12 @@ extension AppState {
     }
 
     func setShareable(_ id: String, _ shareable: Bool) {
+        if let client, isLive {
+            client.send(.taskEdit(.init(id: id, title: nil, brief: nil, shareable: shareable)))
+            showToast(shareable ? "\(id) can use team slots now" : "\(id) will only run on its owner's machines",
+                      icon: shareable ? "person.3.fill" : "lock.fill")
+            return
+        }
         update(id) { task in
             task.shareable = shareable
             task.activity.insert(ActivityItem(who: FactoryData.me.name,
@@ -348,7 +354,19 @@ extension AppState {
         dispatch()
     }
 
+    /// A live task whose machine went offline, was paused or removed while it was mid-flight.
+    func liveStranded(_ taskID: String) -> (name: String, why: String, lastSeen: UInt64?)? {
+        guard isLive, let client else { return nil }
+        let task = task(taskID)
+        guard let id = task.machine, [.planning, .building, .reviewing].contains(task.state), task.hand == nil else { return nil }
+        guard let machine = client.machines.first(where: { $0.id == id }) else { return (id, "was removed", nil) }
+        if !machine.online { return (machine.name, "went offline", machine.lastSeen) }
+        if machine.settings?.paused == true { return (machine.name, "was paused", nil) }
+        return nil
+    }
+
     func stranded(_ taskID: String) -> (machine: Machine, session: Session)? {
+        if isLive { return nil }
         guard let found = session(for: taskID), found.session.stranded != nil else { return nil }
         return found
     }
@@ -383,6 +401,12 @@ extension AppState {
 
     /// Moves a stranded session off its dark machine: it re-queues at the front and resumes from the checkpoint.
     func resumeElsewhere(_ taskID: String) {
+        if let client, isLive {
+            client.send(.taskMove(.init(id: taskID)))
+            showToast("\(taskID) moves to the next free machine\(task(taskID).pushed == nil ? "" : " · carries on from its last push")",
+                      icon: "arrow.uturn.forward.circle.fill", color: Theme.State.building)
+            return
+        }
         guard let found = session(for: taskID),
               let index = machines.firstIndex(where: { $0.id == found.machine.id }) else { return }
         withAnimation(.snappy(duration: 0.3)) {

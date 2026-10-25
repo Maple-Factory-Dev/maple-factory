@@ -2320,6 +2320,15 @@ public enum Wire {
         }
     }
 
+    /// Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.
+    public struct ClientMessageTaskMove: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// "I checked it" for a Done when item.
     public struct ClientMessageTaskCheckedIt: Codable, Hashable, Sendable {
         public var id: String
@@ -2375,6 +2384,7 @@ public enum Wire {
         case taskMerge(ClientMessageTaskMerge)
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
+        case taskMove(ClientMessageTaskMove)
         case taskCheckedIt(ClientMessageTaskCheckedIt)
         case taskMockupChange(ClientMessageTaskMockupChange)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -2413,6 +2423,7 @@ public enum Wire {
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
+            case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
             case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
             default: self = .unknown(type)
@@ -2504,6 +2515,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRetry(let body):
                 try c.encode("task.retry", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMove(let body):
+                try c.encode("task.move", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCheckedIt(let body):
                 try c.encode("task.checkedIt", forKey: .type)

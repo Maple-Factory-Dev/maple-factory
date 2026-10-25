@@ -64,6 +64,8 @@ enum LiveAdapter {
         task.agent = t.worker.map { role($0.role.rawValue) }
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
         task.owner = who(t.owner)
+        task.machine = t.machine
+        task.pushed = t.pr?.head
         task.brief = t.brief
         task.spec = t.brief
         task.progress = t.state == .building && !t.plan.isEmpty ? max(0.04, Double(done) / Double(t.plan.count)) : nil

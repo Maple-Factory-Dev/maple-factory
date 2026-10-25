@@ -653,6 +653,62 @@ struct StrandedTaskBanner: View {
     }
 }
 
+/// Shown at the top of a live task whose machine went dark, was paused or removed mid-flight.
+struct LiveStrandedBanner: View {
+    @Environment(AppState.self) private var state
+    let task: FactoryTask
+    let name: String
+    let why: String
+    let lastSeen: UInt64?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: why == "was paused" ? "pause.circle" : "wifi.slash").foregroundStyle(Theme.State.cancelled)
+                Text("\(name) \(why) mid-\(task.state == .planning ? "plan" : task.state == .reviewing ? "review" : "build")")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                if let lastSeen {
+                    Text(LiveAdapter.ago(lastSeen) == "now" ? "just now" : "last seen \(LiveAdapter.ago(lastSeen)) ago")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                Spacer()
+            }
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let pushed = task.pushed {
+                        Label("Last push \(pushed.prefix(7)) is safe on the remote", systemImage: "checkmark.icloud")
+                            .foregroundStyle(Theme.State.merged)
+                    } else {
+                        Label("Nothing pushed yet: elsewhere it starts again from \(task.state == .planning ? "the brief" : "its plan")", systemImage: "exclamationmark.icloud")
+                            .foregroundStyle(Theme.State.awaitingApproval)
+                    }
+                    Text("It waits for \(name) unless you move it. Work that was only on \(name) stays there.")
+                        .foregroundStyle(Theme.textMuted)
+                }
+                .font(.system(size: 11.5))
+                .labelStyle(.titleAndIcon)
+                Spacer(minLength: 8)
+                Text("Resume elsewhere")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 12)
+                    .frame(height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke)))
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.resumeElsewhere(task.id) }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.State.cancelled.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.cancelled.opacity(0.25)))
+        )
+    }
+}
+
 /// Whether a task may use teammates' team slots. The owner can flip it; everyone else sees it.
 struct ShareableChip: View {
     @Environment(AppState.self) private var state

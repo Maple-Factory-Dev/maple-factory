@@ -608,6 +608,10 @@ export const unions: Record<string, Union> = {
       "task.merge": { fields: { id: "string" } },
       "task.cancel": { fields: { id: "string" } },
       "task.retry": { fields: { id: "string" } },
+      "task.move": {
+        doc: "Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.",
+        fields: { id: "string" },
+      },
       "task.checkedIt": { doc: "\"I checked it\" for a Done when item.", fields: { id: "string", item: "u32", note: "string?" } },
       "task.mockupChange": { fields: { id: "string", mockup: "string", text: "string" } },
     },

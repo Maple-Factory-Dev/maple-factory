@@ -78,7 +78,7 @@ enum FactoryData {
     ]
 
     static func goal(named name: String) -> Goal {
-        goals.first { $0.name == name } ?? goals.first ?? Goal(name: name, color: Theme.textMuted, dueOffset: todayOffset, lead: me, summary: "")
+        goals.first { $0.name == name } ?? Goal(name: name, color: Theme.textMuted, dueOffset: todayOffset, lead: me, summary: "")
     }
 
     // MARK: Tasks

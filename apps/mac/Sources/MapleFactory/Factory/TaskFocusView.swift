@@ -256,7 +256,11 @@ struct TaskFocusView: View {
             if let found = appState.stranded(task.id) {
                 StrandedTaskBanner(machine: found.machine, session: found.session)
             }
-            if task.liveLog != nil, task.state == .planning || task.state == .building { LiveStrip(task: task) }
+            let liveStranded = appState.liveStranded(task.id)
+            if let live = liveStranded {
+                LiveStrandedBanner(task: task, name: live.name, why: live.why, lastSeen: live.lastSeen)
+            }
+            if task.liveLog != nil, liveStranded == nil, task.state == .planning || task.state == .building { LiveStrip(task: task) }
             if let question = task.question, task.hand == nil { QuestionBlock(task: task, question: question) }
             if let hand = task.hand { HandRaiseCard(task: task, hand: hand, showsTask: false) }
             if let review = task.autoReview { AutoReviewSection(task: task, review: review) }

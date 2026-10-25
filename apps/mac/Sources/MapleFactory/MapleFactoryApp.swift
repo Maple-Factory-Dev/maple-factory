@@ -101,6 +101,14 @@ struct ContentView: View {
             workspace
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
                 .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
+                .onChange(of: client.factoryGoals.map(\.name), initial: true) { _, names in
+                    // The mock's starting goal isn't one of the workspace's: open the focused task's goal, or the first.
+                    guard client.isSignedIn, case .goal(let name) = state.destination, !names.isEmpty, !names.contains(name) else { return }
+                    let open = state.focusedTask
+                    let focused = open.map { state.task($0).goal }
+                    state.destination = .goal(focused.flatMap { names.contains($0) ? $0 : nil } ?? names[0])
+                    state.focusedTask = open
+                }
         }
     }
 
