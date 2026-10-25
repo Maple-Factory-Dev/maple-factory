@@ -1,0 +1,14 @@
+{
+  "name": "maple-factory",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "server"
+  ],
+  "scripts": {
+    "gen": "node protocol/gen.ts",
+    "gen:check": "node protocol/gen.ts --check",
+    "dev": "npm run dev --workspace server",
+    "typecheck": "npm run typecheck --workspaces"
+  }
+}
