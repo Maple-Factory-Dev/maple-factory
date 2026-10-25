@@ -132,6 +132,17 @@ export const structs: Record<string, Struct> = {
       agents: "AgentInstall[]",
     },
   },
+  MachineSettings: {
+    doc: "How much factory work a machine takes, set by its owner.",
+    fields: { capacity: "u32?", teamSlots: "u32", lendIdle: "bool", loadCap: "f64", paused: "bool", pausedUntil: "u64?" },
+    fieldDocs: {
+      capacity: "Factory sessions at once; none: worked out from its cores.",
+      teamSlots: "Of those, how many teammates' shareable tasks may use.",
+      lendIdle: "Lend every idle slot to the team, not just the team slots.",
+      loadCap: "Above this share of CPU load, teammates' work isn't started here.",
+      pausedUntil: "When a pause ends on its own; none: until resumed.",
+    },
+  },
   Machine: {
     doc: "A machine as the apps see it.",
     fields: {
@@ -144,8 +155,10 @@ export const structs: Record<string, Struct> = {
       os: "string?",
       health: "Health?",
       sessions: "LiveSession[]",
+      settings: "MachineSettings?",
+      capacity: "u32?",
     },
-    fieldDocs: { owner: "The GitHub login of the person who enrolled it." },
+    fieldDocs: { owner: "The GitHub login of the person who enrolled it.", capacity: "Factory sessions it takes now, settings and cores considered." },
   },
   EndedSession: {
     doc: "A session end with the machine it was on, for lists.",
@@ -496,6 +509,7 @@ export const unions: Record<string, Union> = {
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
+      "machine.settings": { doc: "Its owner or an admin.", fields: { machine: "string", settings: "MachineSettings" } },
       "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",

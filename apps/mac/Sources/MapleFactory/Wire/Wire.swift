@@ -388,6 +388,30 @@ public enum Wire {
         }
     }
 
+    /// How much factory work a machine takes, set by its owner.
+    public struct MachineSettings: Codable, Hashable, Sendable {
+        /// Factory sessions at once; none: worked out from its cores.
+        public var capacity: UInt32?
+        /// Of those, how many teammates' shareable tasks may use.
+        public var teamSlots: UInt32
+        /// Lend every idle slot to the team, not just the team slots.
+        public var lendIdle: Bool
+        /// Above this share of CPU load, teammates' work isn't started here.
+        public var loadCap: Double
+        public var paused: Bool
+        /// When a pause ends on its own; none: until resumed.
+        public var pausedUntil: UInt64?
+
+        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil) {
+            self.capacity = capacity
+            self.teamSlots = teamSlots
+            self.lendIdle = lendIdle
+            self.loadCap = loadCap
+            self.paused = paused
+            self.pausedUntil = pausedUntil
+        }
+    }
+
     /// A machine as the apps see it.
     public struct Machine: Codable, Hashable, Sendable {
         public var id: String
@@ -400,8 +424,11 @@ public enum Wire {
         public var os: String?
         public var health: Health?
         public var sessions: [LiveSession]
+        public var settings: MachineSettings?
+        /// Factory sessions it takes now, settings and cores considered.
+        public var capacity: UInt32?
 
-        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = []) {
+        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil) {
             self.id = id
             self.name = name
             self.owner = owner
@@ -411,6 +438,8 @@ public enum Wire {
             self.os = os
             self.health = health
             self.sessions = sessions
+            self.settings = settings
+            self.capacity = capacity
         }
 
         public init(from decoder: Decoder) throws {
@@ -424,6 +453,8 @@ public enum Wire {
             os = try c.decodeIfPresent(String.self, forKey: .os)
             health = try c.decodeIfPresent(Health.self, forKey: .health)
             sessions = try c.decodeIfPresent([LiveSession].self, forKey: .sessions) ?? []
+            settings = try c.decodeIfPresent(MachineSettings.self, forKey: .settings)
+            capacity = try c.decodeIfPresent(UInt32.self, forKey: .capacity)
         }
     }
 
@@ -1854,6 +1885,17 @@ public enum Wire {
         }
     }
 
+    /// Its owner or an admin.
+    public struct ClientMessageMachineSettings: Codable, Hashable, Sendable {
+        public var machine: String
+        public var settings: MachineSettings
+
+        public init(machine: String, settings: MachineSettings) {
+            self.machine = machine
+            self.settings = settings
+        }
+    }
+
     /// Admins only.
     public struct ClientMessagePolicySave: Codable, Hashable, Sendable {
         public var policy: RiskPolicy
@@ -2053,6 +2095,7 @@ public enum Wire {
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
         case goalSave(ClientMessageGoalSave)
+        case machineSettings(ClientMessageMachineSettings)
         case policySave(ClientMessagePolicySave)
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
@@ -2084,6 +2127,7 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
+            case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
@@ -2126,6 +2170,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalSave(let body):
                 try c.encode("goal.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .machineSettings(let body):
+                try c.encode("machine.settings", forKey: .type)
                 try body.encode(to: encoder)
             case .policySave(let body):
                 try c.encode("policy.save", forKey: .type)

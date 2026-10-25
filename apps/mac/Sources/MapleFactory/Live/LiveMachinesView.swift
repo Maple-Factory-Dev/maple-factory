@@ -35,6 +35,43 @@ struct LiveMachinesView: View {
         .sheet(isPresented: $adding) { AddMachineSheet() }
     }
 
+    /// Tasks that could run but have no slot yet, oldest first, with why.
+    private var queued: [Wire.Task] {
+        client.tasks.filter { $0.worker == nil && $0.waiting != nil }.sorted { $0.updatedAt < $1.updatedAt }
+    }
+
+    private var queue: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(title: "Waiting for a slot · \(queued.count)")
+            VStack(spacing: 6) {
+                ForEach(queued, id: \.id) { task in
+                    HStack(spacing: 10) {
+                        Text(task.id)
+                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.textMuted)
+                        Text(task.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        if task.shareable {
+                            Text("Shareable").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.State.planning)
+                        }
+                        Spacer(minLength: 8)
+                        Text(task.waiting ?? "")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.State.awaitingApproval)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 36)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fillSubtle))
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.openSession(task.id) }
+                }
+            }
+        }
+    }
+
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -54,6 +91,7 @@ struct LiveMachinesView: View {
                             })
                         }
                     }
+                    if !queued.isEmpty { queue }
                     if !client.ends.isEmpty { RecentEnds() }
                 }
             }
@@ -171,6 +209,7 @@ struct LiveMachineCard: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if let health = machine.health, machine.online { meters(health) }
+            factory
             sessions
             if let health = machine.health, machine.online { agents(health) }
         }
@@ -217,9 +256,51 @@ struct LiveMachineCard: View {
     }
 
     @State private var confirmRemove = false
+    @State private var editing = false
+
+    /// The factory's use of it: slots taken, team slots, and whether it's paused.
+    private var factory: some View {
+        let used = machine.sessions.filter { $0.session.taskId != nil }.count
+        let capacity = Int(machine.capacity ?? 0)
+        let settings = machine.settings
+        return HStack(spacing: 10) {
+            Image(systemName: "shippingbox").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            HStack(spacing: 3) {
+                ForEach(0..<max(capacity, used), id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(index < used ? Theme.State.building : Theme.fill)
+                        .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(index >= capacity - Int(settings?.teamSlots ?? 0) && index < capacity ? Theme.State.planning.opacity(0.6) : .clear))
+                        .frame(width: 14, height: 8)
+                }
+            }
+            Text("\(used) of \(capacity) factory slots\(settings.map { $0.teamSlots > 0 || $0.lendIdle ? " · \($0.lendIdle ? "lends idle slots" : "\($0.teamSlots) for the team")" : "" } ?? "")")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textMuted)
+            Spacer()
+            if settings?.paused == true {
+                HStack(spacing: 4) {
+                    Image(systemName: "pause.circle.fill")
+                    Text(settings?.pausedUntil.map { "Paused until \(Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened))" } ?? "Paused")
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.State.awaitingApproval)
+            }
+        }
+        .sheet(isPresented: $editing) { MachineSettingsSheet(machine: machine) }
+    }
 
     private var moreMenu: some View {
         Menu {
+            Button("Factory Settings…") { editing = true }
+            if let settings = machine.settings {
+                Button(settings.paused ? "Resume Factory Work" : "Pause Factory Work") {
+                    var changed = settings
+                    changed.paused.toggle()
+                    changed.pausedUntil = nil
+                    client.send(.machineSettings(.init(machine: machine.id, settings: changed)))
+                }
+            }
+            Divider()
             Button("Copy Machine ID") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(machine.id, forType: .string)
@@ -361,6 +442,14 @@ struct LiveSessionRow: View {
                 .overlay(Circle().stroke(state.color.opacity(0.3), lineWidth: state == .working ? 4 : 0))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
+                    if let task = live.session.taskId {
+                        Text(task)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.State.building)
+                            .padding(.horizontal, 5)
+                            .frame(height: 17)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.State.building.opacity(0.12)))
+                    }
                     Text(agentTitle(live.session.agent))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Theme.text)

@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import type { Goal, MachineSettings, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -36,18 +36,7 @@ export interface TaskSession {
   kind: "personal" | "team";
 }
 
-export interface MachineSettings {
-  /// Sessions at once, factory work only. Null: worked out from the machine's cores and memory.
-  capacity: number | null;
-  /// Of those, how many anyone on the team may use.
-  teamSlots: number;
-  lendIdle: boolean;
-  /// Above this share of CPU load, teammates' work isn't started here.
-  loadCap: number;
-  paused: { until: string | null; handedOff: boolean } | null;
-}
-
-export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: null };
+export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null };
 
 export class Store {
   constructor(private sql: SqlStorage) {
@@ -143,9 +132,14 @@ export class Store {
 
   // Machines
 
+  /** A machine's settings; a pause whose time is up reads as resumed. */
   settings(machine: string): MachineSettings {
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM machine_settings WHERE id = ?", machine).toArray()[0];
-    return { ...DEFAULT_SETTINGS, ...(row ? JSON.parse(row.doc) : {}) };
+    const s: MachineSettings = { ...DEFAULT_SETTINGS, ...(row ? JSON.parse(row.doc) : {}) };
+    // Pauses from before pausedUntil was a field were objects.
+    if (typeof s.paused !== "boolean") s.paused = Boolean(s.paused);
+    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null };
+    return s;
   }
 
   saveSettings(machine: string, settings: MachineSettings) {

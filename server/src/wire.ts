@@ -126,6 +126,21 @@ export interface Health {
   agents: AgentInstall[];
 }
 
+/** How much factory work a machine takes, set by its owner. */
+export interface MachineSettings {
+  /** Factory sessions at once; none: worked out from its cores. */
+  capacity?: number | null;
+  /** Of those, how many teammates' shareable tasks may use. */
+  teamSlots: number;
+  /** Lend every idle slot to the team, not just the team slots. */
+  lendIdle: boolean;
+  /** Above this share of CPU load, teammates' work isn't started here. */
+  loadCap: number;
+  paused: boolean;
+  /** When a pause ends on its own; none: until resumed. */
+  pausedUntil?: number | null;
+}
+
 /** A machine as the apps see it. */
 export interface Machine {
   id: string;
@@ -138,6 +153,9 @@ export interface Machine {
   os?: string | null;
   health?: Health | null;
   sessions: LiveSession[];
+  settings?: MachineSettings | null;
+  /** Factory sessions it takes now, settings and cores considered. */
+  capacity?: number | null;
 }
 
 /** A session end with the machine it was on, for lists. */
@@ -753,6 +771,13 @@ export interface ClientMessage_GoalSave {
   goal: Goal;
 }
 
+/** Its owner or an admin. */
+export interface ClientMessage_MachineSettings {
+  type: "machine.settings";
+  machine: string;
+  settings: MachineSettings;
+}
+
 /** Admins only. */
 export interface ClientMessage_PolicySave {
   type: "policy.save";
@@ -863,8 +888,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_MachineSettings | ClientMessage_PolicySave | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","machine.settings","policy.save","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";

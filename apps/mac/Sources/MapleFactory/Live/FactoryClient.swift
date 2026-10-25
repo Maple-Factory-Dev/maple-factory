@@ -175,6 +175,8 @@ import Security
         case .machineRemoved(let removed):
             machines.removeAll { $0.id == removed.id }
         case .sessionEnded(let ended):
+            // The factory closing a session that reported back is how it's meant to go, not news.
+            guard ended.end.by != "factory" else { break }
             ends.insert(EndRecord(machine: ended.machine, end: ended.end), at: 0)
             if ends.count > 50 { ends.removeLast(ends.count - 50) }
         case .taskUpdated(let update):

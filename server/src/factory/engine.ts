@@ -30,6 +30,8 @@ type Reply = { result?: { summary: string; data?: unknown }; error?: string };
 type Hooks = {
   broadcast(message: ServerToClient): void;
   machines(): Promise<Machine[]>;
+  /** Tell the apps a machine's settings changed. */
+  machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
 };
 
@@ -76,6 +78,18 @@ export class Engine {
         this.store.saveAcceptances(msg.upTo ? [...rest, { goal: goal.id, upTo: msg.upTo, by: who, at: now(), note: msg.note ?? null }] : rest);
         await audit(this.env, who, msg.upTo ? "risk.accepted" : "risk.withdrawn", goal.id, { upTo: msg.upTo, note: msg.note });
         return this.policyChanged();
+      }
+      case "machine.settings": {
+        const machine = (await this.hooks.machines()).find((m) => m.id === msg.machine) ?? fail("That machine isn't there any more.");
+        if (machine.owner !== who && member.role !== "admin") fail(`Only ${machine.owner} can change ${machine.name}'s settings.`);
+        const s = msg.settings;
+        if (s.capacity != null && (s.capacity < 0 || s.capacity > 16)) fail("A machine takes 0 to 16 sessions.");
+        if (s.teamSlots > (s.capacity ?? this.capacity(machine))) fail("It can't lend more slots than it has.");
+        this.store.saveSettings(machine.id, { ...s, loadCap: Math.min(1, Math.max(0.1, s.loadCap)) });
+        await audit(this.env, who, "machine.settings", machine.id, s);
+        await this.hooks.machineChanged(machine.id);
+        await this.pump();
+        return;
       }
       case "task.create": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
@@ -279,6 +293,11 @@ export class Engine {
     }
   }
 
+  /** Whether any task is waiting for a machine. */
+  waiting(): boolean {
+    return this.store.tasks().some((t) => t.waiting && !t.worker);
+  }
+
   /** The session a task needs now, if any. */
   private roleFor(task: Task): Role | null {
     switch (task.state) {
@@ -315,7 +334,8 @@ export class Engine {
         const lent = usable.filter((m) => {
           const s = this.store.settings(m.id);
           const load = m.health ? m.health.load1 / Math.max(1, m.health.cores) : 0;
-          return m.owner !== task.owner && busy(m.id, "team") < s.teamSlots && busy(m.id) < this.capacity(m) && load < s.loadCap;
+          const lendable = s.lendIdle ? this.capacity(m) : s.teamSlots;
+          return m.owner !== task.owner && busy(m.id, "team") < lendable && busy(m.id) < this.capacity(m) && load < s.loadCap;
         });
         machine = lent.sort((a, b) => busy(a.id) - busy(b.id))[0];
         kind = "team";
@@ -323,8 +343,14 @@ export class Engine {
       if (!machine) {
         const mine = machines.filter((m) => m.owner === task.owner);
         if (!mine.length) return task.shareable ? "Waiting for a free team slot (you have no machines)." : "Waiting for one of your machines: add one under Machines.";
-        if (!mine.some((m) => m.online)) return task.shareable ? "Your machines are offline; waiting for them or a team slot." : "Waiting for one of your machines to come online.";
-        if (!usable.some((m) => m.owner === task.owner)) return `None of your online machines has ${task.agent} installed.`;
+        const online = mine.filter((m) => m.online);
+        if (!online.length) return task.shareable ? "Your machines are offline; waiting for them or a team slot." : "Waiting for one of your machines to come online.";
+        const running = online.filter((m) => !this.store.settings(m.id).paused);
+        if (!running.length) {
+          const names = online.map((m) => m.name).join(", ");
+          return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused.`;
+        }
+        if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of your online machines has ${task.agent} installed.`;
         return task.shareable ? "Waiting for a free slot on your machines or the team's." : "Waiting for a free slot on your machines.";
       }
     }
@@ -366,7 +392,8 @@ export class Engine {
     return !machine.health || machine.health.agents.some((a) => a.name === agent);
   }
 
-  private capacity(machine: Machine) {
+  /** The factory sessions a machine takes now: its setting, else from its cores. */
+  capacity(machine: Machine) {
     const set = this.store.settings(machine.id).capacity;
     if (set != null) return set;
     const cores = machine.health?.cores ?? 4;

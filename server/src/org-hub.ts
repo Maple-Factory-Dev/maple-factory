@@ -26,6 +26,10 @@ export class OrgHub extends DurableObject<Env> {
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
       machines: () => this.machines(),
+      machineChanged: async (id) => {
+        const machine = (await this.machines()).find((m) => m.id === id);
+        if (machine) this.broadcast({ type: "machine.updated", machine });
+      },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
     });
   }
@@ -44,9 +48,10 @@ export class OrgHub extends DurableObject<Env> {
         const machine = (await request.json()) as Machine;
         const before = await this.ctx.storage.get<Machine>(`m:${machine.id}`);
         await this.ctx.storage.put(`m:${machine.id}`, machine);
-        this.broadcast({ type: "machine.updated", machine });
+        this.broadcast({ type: "machine.updated", machine: this.withSettings(machine) });
         // Coming online, or a session ending, can free a slot for waiting tasks.
-        if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || !before.health)) await this.engine.pump();
+        // So can a pause running out, so health reports retry whatever's waiting.
+        if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || this.engine.waiting())) await this.engine.pump();
         return new Response(null, { status: 204 });
       }
       case "/ended": {
@@ -87,8 +92,14 @@ export class OrgHub extends DurableObject<Env> {
     // Removed machines drop out here: D1 is the list, the hubs only add what's live.
     return rows.map((row) => {
       const reported = live.get(`m:${row.id}`);
-      return reported ? { ...reported, name: row.name ?? row.id, owner: row.owner } : offlineMachine(row);
+      return this.withSettings(reported ? { ...reported, name: row.name ?? row.id, owner: row.owner } : offlineMachine(row));
     });
+  }
+
+  /** A machine with the factory's settings for it, and the capacity they come to. */
+  private withSettings(machine: Machine): Machine {
+    const settings = this.store.settings(machine.id);
+    return { ...machine, settings, capacity: this.engine.capacity({ ...machine, settings }) };
   }
 
   private async members(): Promise<Member[]> {
@@ -98,7 +109,7 @@ export class OrgHub extends DurableObject<Env> {
 
   private async recentEnds(): Promise<EndedSession[]> {
     const since = Date.now() - 7 * 24 * 3600 * 1000;
-    const { results } = await this.env.DB.prepare("SELECT * FROM session_ends WHERE at > ? ORDER BY at DESC LIMIT 20").bind(since).all<{
+    const { results } = await this.env.DB.prepare("SELECT * FROM session_ends WHERE at > ? AND ended_by IS NOT 'factory' ORDER BY at DESC LIMIT 20").bind(since).all<{
       id: string; machine: string; cause: SessionEnd["cause"]; code: number | null; signal: string | null; detail: string | null; at: number; last_output: string; ended_by: string | null;
     }>();
     return results.map((r) => ({

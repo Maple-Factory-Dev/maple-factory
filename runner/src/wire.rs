@@ -346,6 +346,25 @@ pub struct Health {
     pub agents: Vec<AgentInstall>,
 }
 
+/// How much factory work a machine takes, set by its owner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineSettings {
+    /// Factory sessions at once; none: worked out from its cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<u32>,
+    /// Of those, how many teammates' shareable tasks may use.
+    pub team_slots: u32,
+    /// Lend every idle slot to the team, not just the team slots.
+    pub lend_idle: bool,
+    /// Above this share of CPU load, teammates' work isn't started here.
+    pub load_cap: f64,
+    pub paused: bool,
+    /// When a pause ends on its own; none: until resumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_until: Option<u64>,
+}
+
 /// A machine as the apps see it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -365,6 +384,11 @@ pub struct Machine {
     pub health: Option<Health>,
     #[serde(default)]
     pub sessions: Vec<LiveSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<MachineSettings>,
+    /// Factory sessions it takes now, settings and cores considered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<u32>,
 }
 
 /// A session end with the machine it was on, for lists.
@@ -1124,6 +1148,12 @@ pub enum ClientMessage {
     #[serde(rename = "goal.save")]
     GoalSave {
         goal: Goal,
+    },
+    /// Its owner or an admin.
+    #[serde(rename = "machine.settings")]
+    MachineSettings {
+        machine: String,
+        settings: MachineSettings,
     },
     /// Admins only.
     #[serde(rename = "policy.save")]
