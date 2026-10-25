@@ -2309,6 +2309,17 @@ public enum Wire {
         }
     }
 
+    /// Its owner or an admin: a nickname shown everywhere in place of its id. Empty goes back to the id.
+    public struct ClientMessageMachineRename: Codable, Hashable, Sendable {
+        public var machine: String
+        public var name: String
+
+        public init(machine: String, name: String) {
+            self.machine = machine
+            self.name = name
+        }
+    }
+
     /// Its owner or an admin: update its runner to the latest release now.
     public struct ClientMessageMachineUpdate: Codable, Hashable, Sendable {
         public var machine: String
@@ -2584,6 +2595,7 @@ public enum Wire {
         case goalSave(ClientMessageGoalSave)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
+        case machineRename(ClientMessageMachineRename)
         case machineUpdate(ClientMessageMachineUpdate)
         case policySave(ClientMessagePolicySave)
         case reposRefresh
@@ -2630,6 +2642,7 @@ public enum Wire {
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
+            case "machine.rename": self = .machineRename(try ClientMessageMachineRename(from: decoder))
             case "machine.update": self = .machineUpdate(try ClientMessageMachineUpdate(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "repos.refresh": self = .reposRefresh
@@ -2703,6 +2716,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .machineSettings(let body):
                 try c.encode("machine.settings", forKey: .type)
+                try body.encode(to: encoder)
+            case .machineRename(let body):
+                try c.encode("machine.rename", forKey: .type)
                 try body.encode(to: encoder)
             case .machineUpdate(let body):
                 try c.encode("machine.update", forKey: .type)

@@ -231,7 +231,7 @@ struct TaskFocusView: View {
                 if appState.isLive, let worker = task.worker {
                     HStack(spacing: 4) {
                         Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
-                        Text("\(worker.role) live on \(worker.machine)").foregroundStyle(Theme.textMuted)
+                        Text("\(worker.role) live on \(client.machineName(worker.machine))").foregroundStyle(Theme.textMuted)
                     }
                 } else if let placement = appState.session(for: task.id) {
                     HStack(spacing: 4) {
@@ -433,7 +433,7 @@ struct TaskFocusView: View {
             if appState.isLive {
                 if let worker = task.worker {
                     detailRow("Runs on") {
-                        Text(worker.machine).font(.system(size: 12, design: .monospaced))
+                        Text(client.machineName(worker.machine)).font(.system(size: 12, design: .monospaced))
                     }
                 } else if let waiting = task.liveLog, task.state != .merged, task.state != .cancelled {
                     detailRow("Runs on") { Text(waiting).foregroundStyle(Theme.State.awaitingApproval).lineLimit(2) }

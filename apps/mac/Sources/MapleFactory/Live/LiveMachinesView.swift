@@ -258,6 +258,13 @@ struct LiveMachineCard: View {
             if machine.online && isMine { newSessionMenu }
             if isMine || client.me?.role == "admin" { moreMenu }
         }
+        .alert("Rename \(machine.name)", isPresented: $renaming) {
+            TextField(machine.id, text: $nickname)
+            Button("Rename") { client.send(.machineRename(.init(machine: machine.id, name: nickname))) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A nickname everyone sees in place of \(machine.id). Leave it empty to go back to that.")
+        }
         .confirmationDialog("Remove \(machine.name) from \(client.org)?", isPresented: $confirmRemove) {
             Button("Remove Machine", role: .destructive) { Task { await client.removeMachine(machine.id) } }
         } message: {
@@ -266,6 +273,8 @@ struct LiveMachineCard: View {
     }
 
     @State private var confirmRemove = false
+    @State private var renaming = false
+    @State private var nickname = ""
     @State private var editing = false
 
     /// The factory's use of it: slots taken, team slots, and whether it's paused.
@@ -302,6 +311,7 @@ struct LiveMachineCard: View {
     private var moreMenu: some View {
         Menu {
             Button("Factory Settings…") { editing = true }
+            Button("Rename…") { nickname = machine.name == machine.id ? "" : machine.name; renaming = true }
             if let settings = machine.settings {
                 let teammates = client.factoryTasks.contains { $0.worker?.machine == machine.id && $0.owner.github != machine.owner }
                 Button(settings.paused ? "Resume Factory Work" : teammates ? "Pause Factory Work…" : "Pause Factory Work") {

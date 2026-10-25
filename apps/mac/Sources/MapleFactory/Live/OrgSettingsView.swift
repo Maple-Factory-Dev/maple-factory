@@ -105,6 +105,11 @@ struct RunnerSettings: View {
     @Environment(FactoryClient.self) private var client
     @State private var adding: String?
     @State private var error: String?
+    @State private var nickname = ""
+
+    private func rename(_ machine: Wire.Machine) {
+        client.send(.machineRename(.init(machine: machine.id, name: nickname)))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -138,6 +143,20 @@ struct RunnerSettings: View {
                         }
                     }
                 }
+                SettingsCard {
+                    HStack {
+                        Text("Name")
+                        TextField(machine.id, text: $nickname)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { rename(machine) }
+                        Button("Rename") { rename(machine) }
+                            .disabled(nickname.trimmingCharacters(in: .whitespaces) == machine.name)
+                    }
+                    Text("What everyone sees for this Mac on Machines, tasks and the sidebar. Leave it empty to use \(machine.id).")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textFaint)
+                }
+                .onAppear { nickname = machine.name == machine.id ? "" : machine.name }
                 MachineSettingsSheet(machine: machine, embedded: true)
                     .id(machine.id)
             } else if LocalRunner.enrolled != nil {

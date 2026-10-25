@@ -631,6 +631,10 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", settings: "MachineSettings", handOff: "bool?" },
         fieldDocs: { handOff: "When pausing: checkpoint teammates' tasks running here and move them to other machines." },
       },
+      "machine.rename": {
+        doc: "Its owner or an admin: a nickname shown everywhere in place of its id. Empty goes back to the id.",
+        fields: { machine: "string", name: "string" },
+      },
       "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
       "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },

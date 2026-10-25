@@ -57,6 +57,10 @@ export class MachineHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/state": return Response.json(await this.machine());
+      case "/rename": {
+        await this.publish({ ...(await this.machine()), name: await request.text() });
+        return new Response(null, { status: 204 });
+      }
       case "/input": {
         // The factory typing into a session: steering, answers. Text, then Enter on its own, so a
         // TUI that treats a fast paste-plus-return as a newline still submits.

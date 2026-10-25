@@ -799,7 +799,7 @@ export class Engine {
       return this.pump();
     }
     const priv = this.store.private(task.id);
-    const where = s.machine;
+    const where = (await this.hooks.machines()).find((m) => m.id === s.machine)?.name ?? s.machine;
     switch (end.cause) {
       case "machineSlept":
       case "tmuxLost":
@@ -1290,7 +1290,7 @@ export class Engine {
       base: task.pr!.base,
       title: `Merge ${task.id}: ${task.title}`,
     });
-    if (!sent) fail(`${task.machine} is offline; it merges when it's back.`);
+    if (!sent) fail(`${(await this.hooks.machines()).find((m) => m.id === task.machine)?.name ?? task.machine} is offline; it merges when it's back.`);
     this.store.savePrivate(task.id, { ...priv, merging: true });
     this.event(task, who, text);
     task.liveLog = "Merging…";

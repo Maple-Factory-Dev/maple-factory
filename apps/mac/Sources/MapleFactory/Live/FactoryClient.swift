@@ -607,3 +607,10 @@ extension FactoryClient {
         return machines.first { $0.id == id }
     }
 }
+
+extension FactoryClient {
+    /// A machine's nickname (or id, when it has none or isn't known).
+    func machineName(_ id: String) -> String {
+        machines.first { $0.id == id }?.name ?? id
+    }
+}

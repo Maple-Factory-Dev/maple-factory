@@ -290,6 +290,19 @@ export class OrgHub extends DurableObject<Env> {
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
         return;
       }
+      case "machine.rename": {
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (machine.owner !== client.member.login && client.member.role !== "admin") {
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} or an admin can rename ${machine.name}.`, requestId: null });
+        }
+        const name = msg.name.trim().replace(/\s+/g, " ");
+        if (name.length > 40) return this.send(ws, { type: "error", message: "Keep a machine's name to 40 characters.", requestId: null });
+        await this.env.DB.prepare("UPDATE machines SET name = ? WHERE id = ?").bind(name || null, machine.id).run();
+        await machineHub(this.env, machine.id).fetch("https://hub/rename", { method: "POST", body: name || machine.id });
+        await audit(this.env, client.member.login, "machine.renamed", machine.id, { from: machine.name, to: name || machine.id });
+        return;
+      }
       case "machine.update": {
         const machine = (await this.machines()).find((m) => m.id === msg.machine);
         if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });

@@ -1414,6 +1414,12 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hand_off: Option<bool>,
     },
+    /// Its owner or an admin: a nickname shown everywhere in place of its id. Empty goes back to the id.
+    #[serde(rename = "machine.rename")]
+    MachineRename {
+        machine: String,
+        name: String,
+    },
     /// Its owner or an admin: update its runner to the latest release now.
     #[serde(rename = "machine.update")]
     MachineUpdate {
