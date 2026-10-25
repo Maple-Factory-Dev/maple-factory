@@ -682,6 +682,16 @@ export interface RunnerMessage_TaskMerged {
   message?: string | null;
 }
 
+/** How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not. */
+export interface RunnerMessage_TaskHandedOff {
+  type: "task.handed_off";
+  taskId: string;
+  ok: boolean;
+  pushed?: string | null;
+  commit?: string | null;
+  message?: string | null;
+}
+
 export interface RunnerMessage_TaskCleaned {
   type: "task.cleaned";
   taskId: string;
@@ -701,8 +711,8 @@ export interface RunnerMessage_TaskTokenRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","mcp.request","task.started","task.finished","task.diff","task.merged","task.cleaned","task.token_request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","task.cleaned","task.token_request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -788,6 +798,18 @@ export interface ServerToRunner_TaskMerge {
   title: string;
 }
 
+/** The task is moving to another machine: commit what its worktree has (as WIP) and push its branch. */
+export interface ServerToRunner_TaskHandoff {
+  type: "task.handoff";
+  taskId: string;
+  cwd: string;
+  repoDir: string;
+  branch: string;
+  base?: string | null;
+  title: string;
+  fallback: boolean;
+}
+
 /** Remove a finished task's worktree and local branch if nothing would be lost. */
 export interface ServerToRunner_TaskCleanup {
   type: "task.cleanup";
@@ -809,8 +831,8 @@ export interface ServerToRunner_TaskToken {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.cleanup","task.token"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","task.cleanup","task.token"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -901,6 +923,8 @@ export interface ClientMessage_MachineSettings {
   type: "machine.settings";
   machine: string;
   settings: MachineSettings;
+  /** When pausing: checkpoint teammates' tasks running here and move them to other machines. */
+  handOff?: boolean | null;
 }
 
 /** Admins only. */

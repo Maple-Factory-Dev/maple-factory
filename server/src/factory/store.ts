@@ -21,6 +21,10 @@ export interface TaskPrivate {
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
   mergedAs?: string | null;
   cleaned?: boolean;
+  /// A hand-off (`task.handoff`) was sent and hasn't been answered; who asked for it.
+  handingOff?: string | null;
+  /// Where it was moved from, and the commit it carries on from, until its next session starts.
+  movedFrom?: { machine: string; commit: string | null } | null;
 }
 
 export interface TaskSession {

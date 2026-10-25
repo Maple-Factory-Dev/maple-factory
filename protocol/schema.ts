@@ -503,6 +503,10 @@ export const unions: Record<string, Union> = {
         fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?" },
       },
       "task.merged": { fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?" } },
+      "task.handed_off": {
+        doc: "How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.",
+        fields: { taskId: "string", ok: "bool", pushed: "string?", commit: "string?", message: "string?" },
+      },
       "task.cleaned": { fields: { taskId: "string", ok: "bool", branchDeleted: "bool", message: "string?" } },
       "task.token_request": {
         doc: "A GitHub token to fetch or push a task's repo.",
@@ -556,6 +560,10 @@ export const unions: Record<string, Union> = {
         doc: "Merge a task's branch into its base on origin, for repos with no GitHub App.",
         fields: { taskId: "string", cwd: "string", branch: "string", base: "string", title: "string" },
       },
+      "task.handoff": {
+        doc: "The task is moving to another machine: commit what its worktree has (as WIP) and push its branch.",
+        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool" },
+      },
       "task.cleanup": {
         doc: "Remove a finished task's worktree and local branch if nothing would be lost.",
         fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]" },
@@ -587,7 +595,11 @@ export const unions: Record<string, Union> = {
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "goal.save": { fields: { goal: "Goal" } },
-      "machine.settings": { doc: "Its owner or an admin.", fields: { machine: "string", settings: "MachineSettings" } },
+      "machine.settings": {
+        doc: "Its owner or an admin.",
+        fields: { machine: "string", settings: "MachineSettings", handOff: "bool?" },
+        fieldDocs: { handOff: "When pausing: checkpoint teammates' tasks running here and move them to other machines." },
+      },
       "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",

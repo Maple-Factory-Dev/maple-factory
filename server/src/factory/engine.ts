@@ -86,8 +86,20 @@ export class Engine {
         const s = msg.settings;
         if (s.capacity != null && (s.capacity < 0 || s.capacity > 16)) fail("A machine takes 0 to 16 sessions.");
         if (s.teamSlots > (s.capacity ?? this.capacity(machine))) fail("It can't lend more slots than it has.");
+        const pausing = s.paused && !this.store.settings(machine.id).paused;
         this.store.saveSettings(machine.id, { ...s, loadCap: Math.min(1, Math.max(0.1, s.loadCap)) });
         await audit(this.env, who, "machine.settings", machine.id, s);
+        if (pausing && msg.handOff) {
+          // Teammates' tasks shouldn't wait out the owner's pause: their work goes to other machines.
+          for (const session of this.store.liveSessions().filter((x) => x.machine === machine.id && x.kind === "team" && x.role !== "reviewer")) {
+            const task = this.store.task(session.task);
+            if (!task || task.worker?.session !== session.id) continue;
+            this.event(task, who, `paused ${machine.name} and handed it off`);
+            if (!(await this.handOff(task, who))) {
+              this.relocate(task, who, machine.name, null);
+            }
+          }
+        }
         await this.hooks.machineChanged(machine.id);
         await this.pump();
         return;
@@ -275,23 +287,14 @@ export class Engine {
       case "task.move": {
         if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting") fail("There's nothing running to move.");
         if (!task.machine) fail("It hasn't started on a machine yet.");
+        if (this.store.private(task.id).handingOff) fail("It's already being handed off.");
         const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
         const stuck = !from || !from.online || this.store.settings(from.id).paused || !task.worker;
         if (!stuck) fail(`It's running on ${from!.name}; it moves when that machine is offline or paused, or once it stops.`);
-        const name = from?.name ?? task.machine;
-        this.closeWorker(task, "moved");
-        const priv = this.store.private(task.id);
-        this.store.savePrivate(task.id, { ...priv, worktree: null, repoDir: null, restarts: 0, finishing: false });
-        task.machine = null;
-        task.hand = null;
-        task.question = null;
-        task.waiting = null;
-        task.liveLog = null;
-        this.event(task, who, task.pr?.head
-          ? `moved it off ${name}; it carries on from its last push (${task.pr.head.slice(0, 7)})`
-          : `moved it off ${name}; it starts again from ${task.state === "planning" ? "the brief" : "its plan"}, since nothing was pushed`);
-        this.save(task);
-        await audit(this.env, who, "task.moved", task.id, { from: from?.id ?? name });
+        await audit(this.env, who, "task.moved", task.id, { from: from?.id ?? task.machine });
+        // A machine that's still there pushes the work it has first, so nothing stays behind on it.
+        if (from?.online && (await this.handOff(task, who))) return;
+        this.relocate(task, who, from?.name ?? task.machine ?? "its machine", null);
         await this.pump();
         return;
       }
@@ -411,7 +414,9 @@ export class Engine {
     }
 
     const id = crypto.randomUUID();
-    const resumed = priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
+    const resumed = priv.movedFrom
+      ? { reason: `This task was moved here from ${priv.movedFrom.machine}${priv.movedFrom.commit ? `; its work so far is on the branch, up to ${priv.movedFrom.commit.slice(0, 7)} (any "WIP" commit is unfinished)` : ""}.` }
+      : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
     const prompt = role === "planner" ? plannerPrompt(task, goal) : role === "builder" ? builderPrompt(task, goal, resumed) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main");
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
@@ -431,6 +436,7 @@ export class Engine {
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
     this.store.addSession({ id, task: task.id, role, machine: machine.id, agent: task.agent, started: now(), ended: null, cause: null, kind });
+    if (priv.movedFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
     task.machine = machine.id;
     task.branch = `agent/${branchName(task)}`;
@@ -521,6 +527,7 @@ export class Engine {
         return null;
       }
       case "task.finished": return this.finished(msg), null;
+      case "task.handed_off": return this.handedOff(machine, msg), null;
       case "task.diff": {
         const task = this.store.task(msg.taskId);
         if (!task || !msg.ok) return null;
@@ -670,6 +677,7 @@ export class Engine {
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
+    if (name !== "get_task" && this.store.private(task.id).handingOff) return { error: "The task is being handed off to another machine; stop here." };
     try {
       const out = this.run(task, s, name, args);
       this.save(task);
@@ -960,6 +968,64 @@ export class Engine {
   }
 
   /** Ends the task's current session on purpose: after its last word, or when it's cancelled. */
+  /** Asks the task's machine to commit its work so far and push the branch, then move it
+   *  (`task.handed_off`). False when there's no worktree to push from. */
+  private async handOff(task: Task, who: string): Promise<boolean> {
+    const priv = this.store.private(task.id);
+    if (!task.machine || !priv.worktree || !priv.repoDir || task.state === "planning") return false;
+    const sent = await this.toRunner(task.machine, {
+      type: "task.handoff",
+      taskId: task.id,
+      cwd: priv.worktree,
+      repoDir: priv.repoDir,
+      branch: `agent/${branchName(task)}`,
+      base: priv.base,
+      title: task.title,
+      fallback: true,
+    });
+    if (!sent) return false;
+    this.store.savePrivate(task.id, { ...priv, handingOff: who });
+    task.liveLog = "Pushing its work so far, to hand it off…";
+    this.save(task);
+    return true;
+  }
+
+  private handedOff(machine: string, msg: Extract<RunnerMessage, { type: "task.handed_off" }>) {
+    const task = this.store.task(msg.taskId);
+    const priv = task && this.store.private(task.id);
+    if (!task || !priv?.handingOff) return;
+    const who = priv.handingOff;
+    this.store.savePrivate(task.id, { ...priv, handingOff: null });
+    const nothing = !msg.ok && /nothing to carry/.test(msg.message ?? "");
+    if (!msg.ok && !nothing) {
+      task.liveLog = null;
+      this.event(task, "factory", `couldn't hand it off (${msg.message ?? "no reason given"}); it stays on ${machine}`);
+      this.save(task);
+      return;
+    }
+    this.relocate(task, who, machine, msg.ok ? msg.commit ?? null : null);
+    this.hooks.waitUntil(this.pump());
+  }
+
+  /** Frees a task from its machine: its next session starts on any free one, from what's pushed. */
+  private relocate(task: Task, who: string, from: string, commit: string | null) {
+    this.closeWorker(task, "moved");
+    const priv = this.store.private(task.id);
+    const carried = commit ?? task.pr?.head ?? null;
+    this.store.savePrivate(task.id, { ...priv, worktree: null, repoDir: null, restarts: 0, finishing: false, movedFrom: { machine: from, commit: carried } });
+    task.machine = null;
+    task.hand = null;
+    task.question = null;
+    task.waiting = null;
+    task.liveLog = null;
+    this.event(task, who, commit
+      ? `pushed its work so far (${commit.slice(0, 7)}) and moved it off ${from}`
+      : carried
+        ? `moved it off ${from}; it carries on from its last push (${carried.slice(0, 7)})`
+        : `moved it off ${from}; it starts again from ${task.state === "planning" ? "the brief" : "its plan"}, since nothing was pushed`);
+    this.save(task);
+  }
+
   private closeWorker(task: Task, cause: string) {
     const w = task.worker;
     if (!w) return;

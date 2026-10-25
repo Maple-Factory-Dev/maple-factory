@@ -1623,6 +1623,23 @@ public enum Wire {
         }
     }
 
+    /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
+    public struct RunnerMessageTaskHandedOff: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var ok: Bool
+        public var pushed: String?
+        public var commit: String?
+        public var message: String?
+
+        public init(taskId: String, ok: Bool, pushed: String? = nil, commit: String? = nil, message: String? = nil) {
+            self.taskId = taskId
+            self.ok = ok
+            self.pushed = pushed
+            self.commit = commit
+            self.message = message
+        }
+    }
+
     public struct RunnerMessageTaskCleaned: Codable, Hashable, Sendable {
         public var taskId: String
         public var ok: Bool
@@ -1670,6 +1687,7 @@ public enum Wire {
         case taskFinished(RunnerMessageTaskFinished)
         case taskDiff(RunnerMessageTaskDiff)
         case taskMerged(RunnerMessageTaskMerged)
+        case taskHandedOff(RunnerMessageTaskHandedOff)
         case taskCleaned(RunnerMessageTaskCleaned)
         case taskTokenRequest(RunnerMessageTaskTokenRequest)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -1694,6 +1712,7 @@ public enum Wire {
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
             case "task.diff": self = .taskDiff(try RunnerMessageTaskDiff(from: decoder))
             case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
+            case "task.handed_off": self = .taskHandedOff(try RunnerMessageTaskHandedOff(from: decoder))
             case "task.cleaned": self = .taskCleaned(try RunnerMessageTaskCleaned(from: decoder))
             case "task.token_request": self = .taskTokenRequest(try RunnerMessageTaskTokenRequest(from: decoder))
             default: self = .unknown(type)
@@ -1744,6 +1763,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskMerged(let body):
                 try c.encode("task.merged", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskHandedOff(let body):
+                try c.encode("task.handed_off", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCleaned(let body):
                 try c.encode("task.cleaned", forKey: .type)
@@ -1885,6 +1907,27 @@ public enum Wire {
         }
     }
 
+    /// The task is moving to another machine: commit what its worktree has (as WIP) and push its branch.
+    public struct ServerToRunnerTaskHandoff: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var cwd: String
+        public var repoDir: String
+        public var branch: String
+        public var base: String?
+        public var title: String
+        public var fallback: Bool
+
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool) {
+            self.taskId = taskId
+            self.cwd = cwd
+            self.repoDir = repoDir
+            self.branch = branch
+            self.base = base
+            self.title = title
+            self.fallback = fallback
+        }
+    }
+
     /// Remove a finished task's worktree and local branch if nothing would be lost.
     public struct ServerToRunnerTaskCleanup: Codable, Hashable, Sendable {
         public var taskId: String
@@ -1941,6 +1984,7 @@ public enum Wire {
         case taskFinish(ServerToRunnerTaskFinish)
         case taskDiff(ServerToRunnerTaskDiff)
         case taskMerge(ServerToRunnerTaskMerge)
+        case taskHandoff(ServerToRunnerTaskHandoff)
         case taskCleanup(ServerToRunnerTaskCleanup)
         case taskToken(ServerToRunnerTaskToken)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -1961,6 +2005,7 @@ public enum Wire {
             case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
             case "task.diff": self = .taskDiff(try ServerToRunnerTaskDiff(from: decoder))
             case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
+            case "task.handoff": self = .taskHandoff(try ServerToRunnerTaskHandoff(from: decoder))
             case "task.cleanup": self = .taskCleanup(try ServerToRunnerTaskCleanup(from: decoder))
             case "task.token": self = .taskToken(try ServerToRunnerTaskToken(from: decoder))
             default: self = .unknown(type)
@@ -1997,6 +2042,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskMerge(let body):
                 try c.encode("task.merge", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskHandoff(let body):
+                try c.encode("task.handoff", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCleanup(let body):
                 try c.encode("task.cleanup", forKey: .type)
@@ -2144,10 +2192,13 @@ public enum Wire {
     public struct ClientMessageMachineSettings: Codable, Hashable, Sendable {
         public var machine: String
         public var settings: MachineSettings
+        /// When pausing: checkpoint teammates' tasks running here and move them to other machines.
+        public var handOff: Bool?
 
-        public init(machine: String, settings: MachineSettings) {
+        public init(machine: String, settings: MachineSettings, handOff: Bool? = nil) {
             self.machine = machine
             self.settings = settings
+            self.handOff = handOff
         }
     }
 

@@ -1101,6 +1101,18 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
+    #[serde(rename = "task.handed_off")]
+    TaskHandedOff {
+        task_id: String,
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pushed: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     #[serde(rename = "task.cleaned")]
     TaskCleaned {
         task_id: String,
@@ -1205,6 +1217,18 @@ pub enum ServerToRunner {
         branch: String,
         base: String,
         title: String,
+    },
+    /// The task is moving to another machine: commit what its worktree has (as WIP) and push its branch.
+    #[serde(rename = "task.handoff")]
+    TaskHandoff {
+        task_id: String,
+        cwd: String,
+        repo_dir: String,
+        branch: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+        title: String,
+        fallback: bool,
     },
     /// Remove a finished task's worktree and local branch if nothing would be lost.
     #[serde(rename = "task.cleanup")]
@@ -1312,6 +1336,9 @@ pub enum ClientMessage {
     MachineSettings {
         machine: String,
         settings: MachineSettings,
+        /// When pausing: checkpoint teammates' tasks running here and move them to other machines.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hand_off: Option<bool>,
     },
     /// Admins only.
     #[serde(rename = "policy.save")]

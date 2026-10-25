@@ -61,7 +61,7 @@ export class MachineHub extends DurableObject<Env> {
         // The factory typing into a session: steering, answers. Text, then Enter on its own, so a
         // TUI that treats a fast paste-plus-return as a newline still submits.
         const { session, text } = (await request.json()) as { session: string; text: string };
-        const [runner] = this.ctx.getWebSockets(RUNNER);
+        const runner = this.runner();
         if (!runner) return new Response("That machine is offline.", { status: 409 });
         const frame = (bytes: Uint8Array) => {
           const out = new Uint8Array(16 + bytes.length);
@@ -104,8 +104,13 @@ export class MachineHub extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
+  /** The runner's connection: the newest open one, since a replaced one lingers while it closes. */
+  private runner(): WebSocket | undefined {
+    return this.ctx.getWebSockets(RUNNER).filter((ws) => ws.readyState === WebSocket.OPEN).at(-1);
+  }
+
   private toRunner(message: ServerToRunner): boolean {
-    const [runner] = this.ctx.getWebSockets(RUNNER);
+    const runner = this.runner();
     if (!runner) return false;
     runner.send(JSON.stringify(message));
     return true;
@@ -119,7 +124,7 @@ export class MachineHub extends DurableObject<Env> {
       return;
     }
     const viewer = ws.deserializeAttachment() as Viewer;
-    const [runner] = this.ctx.getWebSockets(RUNNER);
+    const runner = this.runner();
     if (!runner) return;
     if (typeof message === "string") {
       const msg = JSON.parse(message) as { type?: string; cols?: number; rows?: number };
@@ -223,6 +228,7 @@ export class MachineHub extends DurableObject<Env> {
       case "task.finished":
       case "task.merged":
       case "task.cleaned":
+      case "task.handed_off":
       case "task.token_request":
         await this.toFactory(machine.id, msg);
         return;

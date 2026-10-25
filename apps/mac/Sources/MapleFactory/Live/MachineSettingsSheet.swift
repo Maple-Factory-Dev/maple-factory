@@ -15,6 +15,7 @@ struct MachineSettingsSheet: View {
     @State private var sessionCap: Double?
     @State private var weeklyCap: Double?
     @State private var pauseFor: PauseLength = .untilResumed
+    @State private var handOff = true
 
     enum PauseLength: String, CaseIterable {
         case hour = "1 hour", tonight = "Until tomorrow", untilResumed = "Until I resume"
@@ -93,8 +94,16 @@ struct MachineSettingsSheet: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    if !teammates.isEmpty {
+                        Toggle("Hand off \(teammates.count == 1 ? "\(teammates[0].owner.firstName)'s task" : "\(teammates.count) teammates' tasks") (\(teammates.map(\.id).joined(separator: ", ")))",
+                               isOn: $handOff)
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 12.5))
+                    }
                 }
-                Text("Running sessions finish what they're doing; nothing new starts here while it's paused.")
+                Text(paused && !teammates.isEmpty && handOff && !(machine.settings?.paused ?? false)
+                     ? "Their work so far is pushed and they carry on on another machine. Your own sessions finish here; nothing new starts while it's paused."
+                     : "Running sessions finish what they're doing; nothing new starts here while it's paused.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textFaint)
             }
@@ -109,6 +118,11 @@ struct MachineSettingsSheet: View {
         .frame(width: 520)
     }
 
+    /// Teammates' tasks running here, in team slots.
+    private var teammates: [FactoryTask] {
+        client.factoryTasks.filter { $0.worker?.machine == machine.id && $0.worker?.role != "reviewer" && $0.owner.github != machine.owner }
+    }
+
     private func save() {
         let wasPaused = machine.settings?.paused ?? false
         let settings = Wire.MachineSettings(
@@ -121,7 +135,8 @@ struct MachineSettingsSheet: View {
             sessionCap: sessionCap,
             weeklyCap: weeklyCap
         )
-        client.send(.machineSettings(.init(machine: machine.id, settings: settings)))
+        let pausing = paused && !wasPaused
+        client.send(.machineSettings(.init(machine: machine.id, settings: settings, handOff: pausing && handOff && !teammates.isEmpty)))
         dismiss()
     }
 

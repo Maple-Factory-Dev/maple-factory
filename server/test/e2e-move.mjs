@@ -77,6 +77,8 @@ step("the session left behind was stopped when its machine came back");
 
 send({ type: "task.cancel", id });
 await wait("cancelled", () => tasks.get(id)?.state === "cancelled");
-step("cancelled");
+const last = tasks.get(id).events.findLast((e) => / started on /.test(e.text)) && t.worker.session;
+await wait("its session stopped", () => !machines.get(first.machine)?.sessions.some((s) => s.session.id === last), 20000);
+step("cancelled, and its session stopped");
 feed.close();
 process.exit(0);

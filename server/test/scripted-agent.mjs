@@ -145,7 +145,11 @@ async function reviewer() {
 }
 
 // "[slow]" in a brief keeps each session busy for a while first, so it can be watched live.
-if (prompt.includes("[slow]")) {
+// "[slow-build]" only slows the builder, after it has started writing (uncommitted), so a hand-off
+// has work to carry.
+const slowBuild = prompt.includes("[slow-build]") && /You are the builder/.test(prompt) && !/moved here from/.test(prompt);
+if (slowBuild) writeFileSync("wip.txt", "started on the first machine\n");
+if (prompt.includes("[slow]") || slowBuild) {
   for (let i = 1; i <= 45; i++) {
     say(`thinking (${i})…`);
     await new Promise((r) => setTimeout(r, 2000));
