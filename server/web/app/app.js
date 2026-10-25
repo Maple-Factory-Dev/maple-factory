@@ -261,6 +261,7 @@ function decisions(t) {
     if (passed && t.reviews.length < t.reviewsNeeded) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => send({ type: "task.approveChanges", id: t.id }) },
         t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
+      buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     if (passed && t.reviews.length >= t.reviewsNeeded) {
       buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
@@ -269,11 +270,14 @@ function decisions(t) {
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
     if (!passed) buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "The review agent is still on it."));
   }
-  const steerable = ["planning", "awaitingApproval", "building"].includes(t.state);
+  const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
+  const [placeholder, label] = {
+    awaitingApproval: ["Ask for a change to the plan…", "Request change"],
+    reviewing: ["What should change before it merges? The builder picks it up.", "Request changes"],
+  }[t.state] ?? ["Steer it: what should change?", "Request change"];
   return h("div", {},
     buttons.length > 0 && h("div", { class: "actions" }, buttons),
-    steerable && compose(t, "steer", t.state === "awaitingApproval" ? "Ask for a change to the plan…" : "Steer it: what should change?", "Request change",
-      (text) => send({ type: "task.steer", id: t.id, text })));
+    steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
 }
 
 function compose(t, key, placeholder, label, submit) {
@@ -322,7 +326,7 @@ function pull(t) {
   return [h("h2", {}, "Pull request"), h("div", { class: "card" },
     h("div", { class: "row" },
       pr.url ? h("a", { href: pr.url, target: "_blank", rel: "noopener" }, `#${pr.number} ↗`) : h("b", {}, `#${pr.number}`),
-      h("span", { class: "pill" }, pr.state),
+      h("span", { class: "pill" }, t.state === "cancelled" && (pr.state === "open" || pr.state === "draft") ? "closed" : pr.state),
       h("span", { class: "mono muted" }, `${pr.branch} → ${pr.base}`)),
     pr.checks.length === 0
       ? h("p", { class: "muted", style: "margin:8px 0 0" }, pr.url ? "No CI checks reported." : "No CI: a local repo's change is checked by its proofs and review.")

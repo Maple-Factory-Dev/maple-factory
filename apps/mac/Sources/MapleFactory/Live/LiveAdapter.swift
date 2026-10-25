@@ -104,9 +104,16 @@ enum LiveAdapter {
             request.link = pr.url.flatMap(URL.init(string:))
             request.branch = pr.branch
             request.base = pr.base
+            // Cancelling closes it; older servers left it marked open.
+            if t.state == .cancelled, request.state == .open || request.state == .draft { request.state = .closed }
             return request
         }
         task.autoReview = t.autoReview.map(review)
+        // A round still open on a cancelled task never finished (older servers left it behind).
+        if t.state == .cancelled, task.autoReview?.rounds.last?.verdict == .inProgress {
+            task.autoReview?.rounds.removeLast()
+            if task.autoReview?.rounds.isEmpty == true { task.autoReview = nil }
+        }
         task.hand = t.hand.map { hand(t, $0, assignee: who($0.assignee)) }
         task.shareable = t.shareable
         task.tickets = t.tickets.map {
@@ -285,7 +292,8 @@ enum LiveAdapter {
     private static func prState(_ s: Wire.PRState) -> PullRequest.State {
         switch s {
         case .draft: .draft
-        case .open, .closed: .open
+        case .open: .open
+        case .closed: .closed
         case .merged: .merged
         }
     }

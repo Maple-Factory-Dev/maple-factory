@@ -92,6 +92,7 @@ struct PullRequestCard: View {
         case .draft: ("Draft", "circle.dashed", Theme.textMuted)
         case .open: ("Open", "arrow.triangle.pull", Theme.State.merged)
         case .merged: ("Merged", "arrow.triangle.merge", Theme.State.planning)
+        case .closed: ("Closed", "xmark.circle", Theme.State.cancelled)
         }
         return HStack(spacing: 4) {
             Image(systemName: icon).font(.system(size: 9.5, weight: .semibold))

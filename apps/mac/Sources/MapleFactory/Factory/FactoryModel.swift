@@ -227,7 +227,7 @@ struct FactoryTask: Identifiable {
 }
 
 struct PullRequest {
-    enum State { case draft, open, merged }
+    enum State { case draft, open, merged, closed }
 
     var number: Int
     var state: State
