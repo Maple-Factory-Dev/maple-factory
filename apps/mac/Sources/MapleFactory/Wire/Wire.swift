@@ -1063,6 +1063,18 @@ public enum Wire {
         }
     }
 
+    /// A newer maple-server than the factory runs, and how this factory gets it.
+    public struct ServerUpdate: Codable, Hashable, Sendable {
+        public var version: String
+        /// One sentence: merge the update pull request in the factory's repo, or run `maple update`.
+        public var how: String
+
+        public init(version: String, how: String) {
+            self.version = version
+            self.how = how
+        }
+    }
+
     /// Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.
     public struct FollowUp: Codable, Hashable, Sendable {
         public var repo: String
@@ -3066,9 +3078,13 @@ public enum Wire {
         public var repos: [OrgRepo]
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
+        /// This factory's maple-server version.
+        public var serverVersion: String?
+        /// A newer maple-server, when there is one (told to admins only).
+        public var serverUpdate: ServerUpdate?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -3084,6 +3100,8 @@ public enum Wire {
             self.intake = intake
             self.repos = repos
             self.runnerLatest = runnerLatest
+            self.serverVersion = serverVersion
+            self.serverUpdate = serverUpdate
             self.protocolVersion = protocolVersion
         }
 
@@ -3104,6 +3122,8 @@ public enum Wire {
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
+            serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
+            serverUpdate = try c.decodeIfPresent(ServerUpdate.self, forKey: .serverUpdate)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }

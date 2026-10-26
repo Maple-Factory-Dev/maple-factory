@@ -796,6 +796,15 @@ pub struct OrgRepo {
     pub source: RepoSource,
 }
 
+/// A newer maple-server than the factory runs, and how this factory gets it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerUpdate {
+    pub version: String,
+    /// One sentence: merge the update pull request in the factory's repo, or run `maple update`.
+    pub how: String,
+}
+
 /// Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1747,6 +1756,12 @@ pub enum ServerToClient {
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
+        /// This factory's maple-server version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        server_version: Option<String>,
+        /// A newer maple-server, when there is one (told to admins only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        server_update: Option<ServerUpdate>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]

@@ -3,13 +3,15 @@
 import type { Env } from "./env.ts";
 import type { Member } from "./wire.ts";
 import { authConfigured } from "./auth.ts";
+import { SERVER_VERSION } from "./version.ts";
+import type { ServerUpdate } from "./wire.ts";
 
 export const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-export function home(request: Request, env: Env, me: Member | null): Response {
+export function home(request: Request, env: Env, me: Member | null, update: ServerUpdate | null = null): Response {
   const org = escape(env.GITHUB_ORG || "this factory");
   const body = me
-    ? `<p>Signed in as <b>${escape(me.login)}</b> (${escape(me.role)}) in ${org}.</p>
+    ? `${updateNotice(update)}<p>Signed in as <b>${escape(me.login)}</b> (${escape(me.role)}) in ${org}.</p>
        <p><a href="/app">Open the factory</a>: your inbox, plans to approve and changes to review.</p>
        <p><button id="add">Add a machine</button></p><pre id="out"></pre>
        <script>
@@ -41,6 +43,13 @@ export function taskLink(id: string): Response {
     </script>`);
 }
 
+/** For admins: a newer maple-server is out, and how this factory gets it. */
+export function updateNotice(update: ServerUpdate | null): string {
+  if (!update) return "";
+  const how = escape(update.how).replace(/`([^`]+)`/g, "<code>$1</code>");
+  return `<p class="notice"><b>maple-server ${escape(update.version)} is out</b> (this factory runs ${escape(SERVER_VERSION)}). ${how}</p>`;
+}
+
 export function page(title: string, body: string): Response {
   const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>${escape(title)}</title>
@@ -64,6 +73,7 @@ export function page(title: string, body: string): Response {
   .choices button { width: 100%; height: 100%; text-align: left; padding: 12px 14px; display: grid; gap: 2px; }
   .choices button span { color: var(--text); opacity: .7; font-size: 13px; }
   code { font-size: 13px; }
+  .notice { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
   pre { white-space: pre-wrap; font-size: 13px; }
 </style>
 <main><h1>Maple Factory</h1>${body}</main>`;

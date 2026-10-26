@@ -234,7 +234,8 @@ function writeConfig(dir, shared, factory) {
     workers_dev: true,
     d1_databases: [{ binding: "DB", database_name: factory.name, database_id: factory.databaseId, migrations_dir: "migrations" }],
     r2_buckets: [{ binding: "RELEASES", bucket_name: factory.bucket }],
-    vars: { GITHUB_ORG: factory.org, GITHUB_ALLOWED_LOGINS: (factory.allow ?? []).join(","), RELEASE_CHANNEL: factory.channel },
+    // MAPLE_DEPLOY tells the factory it updates with `maple update`, for its update notice.
+    vars: { GITHUB_ORG: factory.org, GITHUB_ALLOWED_LOGINS: (factory.allow ?? []).join(","), RELEASE_CHANNEL: factory.channel, MAPLE_DEPLOY: "installer" },
     ...(factory.domain ? { routes: [{ pattern: factory.domain, custom_domain: true }] } : {}),
   };
   const file = join(dir, "wrangler.json");

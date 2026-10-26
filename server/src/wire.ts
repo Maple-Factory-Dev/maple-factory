@@ -427,6 +427,13 @@ export interface OrgRepo {
   source: RepoSource;
 }
 
+/** A newer maple-server than the factory runs, and how this factory gets it. */
+export interface ServerUpdate {
+  version: string;
+  /** One sentence: merge the update pull request in the factory's repo, or run `maple update`. */
+  how: string;
+}
+
 /** Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved. */
 export interface FollowUp {
   repo: string;
@@ -1269,6 +1276,10 @@ export interface ServerToClient_Snapshot {
   repos: OrgRepo[];
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
+  /** This factory's maple-server version. */
+  serverVersion?: string | null;
+  /** A newer maple-server, when there is one (told to admins only). */
+  serverUpdate?: ServerUpdate | null;
   protocolVersion: number;
 }
 

@@ -14,6 +14,7 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
+import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
 interface Client {
   member: Member;
@@ -275,6 +276,8 @@ export class OrgHub extends DurableObject<Env> {
           intake: this.intake.list(),
           repos: this.store.repos(),
           runnerLatest: await this.runnerLatest(),
+          serverVersion: SERVER_VERSION,
+          serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
           protocolVersion: PROTOCOL_VERSION,
         });
         // The app's repos change on GitHub's side; read them again when they're an hour old.

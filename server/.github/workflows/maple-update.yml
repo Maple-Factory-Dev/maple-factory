@@ -1,0 +1,57 @@
+# Keeps this factory on the latest maple-server. Once a day (or when run from Actions), if
+# maplefactory.dev's feed has a newer release than package.json, scripts/update.mjs copies that
+# release's server/ from Maple-Factory-Dev/maple-factory over this repo, keeping this deployment's own
+# values, and this opens a pull request for it. Merging it redeploys the factory (migrations first).
+#
+# (In Maple-Factory-Dev/maple-factory this file sits in server/, where GitHub doesn't run it; the
+# Deploy to Cloudflare button copies server/ to the root of the new repo, where it does.)
+name: Maple Factory update
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency: maple-update
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: update
+        run: node scripts/update.mjs
+      - if: steps.update.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.update.outputs.version }}
+          PREVIOUS: ${{ steps.update.outputs.previous }}
+          COMPARE: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.repository.default_branch }}...maple-update/${{ steps.update.outputs.version }}?expand=1
+        run: |
+          branch="maple-update/$VERSION"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "$branch is already there; nothing new to open."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "Update Maple Factory to maple-server $VERSION"
+          git push origin "$branch"
+          body="maple-server $PREVIOUS → $VERSION, from Maple-Factory-Dev/maple-factory (tag server-v$VERSION). This deployment's own values in wrangler.jsonc and package.json are kept. Merging redeploys the factory; its D1 migrations run first."
+          if ! gh pr create --title "Update Maple Factory to $VERSION" --body "$body" --head "$branch"; then
+            gh issue create --title "Maple Factory $VERSION is ready to merge" --body "$body
+
+          GitHub Actions isn't allowed to open pull requests in this repo, so open it yourself: $COMPARE
+
+          (To let it next time: Settings → Actions → General → Allow GitHub Actions to create and approve pull requests.)"
+          fi

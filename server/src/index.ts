@@ -12,6 +12,7 @@ import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
 import { handleSetup } from "./setup.ts";
+import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
 export { MachineHub } from "./machine-hub.ts";
 export { OrgHub } from "./org-hub.ts";
@@ -36,7 +37,7 @@ export default {
     if (path === "/healthz") {
       // What the apps need before signing in: the protocol, the org, and how to sign in here.
       const signIn = env.DEV_LOGIN && isLocal(request) ? "dev" : authConfigured(env) ? "github" : "unconfigured";
-      return Response.json({ ok: true, protocol: PROTOCOL_VERSION, org: env.GITHUB_ORG || null, signIn, devLogin: signIn === "dev" ? env.DEV_LOGIN : null });
+      return Response.json({ ok: true, version: SERVER_VERSION, protocol: PROTOCOL_VERSION, org: env.GITHUB_ORG || null, signIn, devLogin: signIn === "dev" ? env.DEV_LOGIN : null });
     }
 
     // Runners: enroll with a code, then connect with their own token.
@@ -68,7 +69,7 @@ export default {
     if (path === "/dev/token" && request.method === "POST") return devToken(request, env);
 
     const me = await currentMember(request, env);
-    if (path === "/") return home(request, env, me);
+    if (path === "/") return home(request, env, me, me?.role === "admin" ? await serverUpdate(env) : null);
     if (!me) return text("Sign in first.", 401);
     if (!sameOrigin(request)) return text("Bad origin.", 403);
 

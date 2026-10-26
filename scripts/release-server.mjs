@@ -11,6 +11,9 @@
 //   migrations/ D1 migrations, applied in order before the new Worker goes live
 //   config.json what every deploy shares from server/wrangler.jsonc: compatibility, Durable Objects
 //               and their migrations. The installer adds the account's own parts (name, D1 id, domain, vars).
+//
+// A feed release is also tagged server-v<version> on GitHub, first: factories from the Deploy button
+// update from that tag's source (server/scripts/update.mjs), so server/ has to be committed and pushed.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -43,6 +46,17 @@ const where = destination();
 const key = releaseKey(["runner/src/update.rs", "installer/maple.mjs"]);
 const server = join(root, "server");
 const version = JSON.parse(readFileSync(join(server, "package.json"), "utf8")).version;
+if (where.to === "feed") {
+  const git = (...argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" }).trim();
+  const tag = `server-v${version}`;
+  if (git("status", "--porcelain", "--", "server")) throw new Error("server/ has uncommitted changes; the release is tagged from what's committed.");
+  git("fetch", "-q", "origin");
+  if (git("branch", "-r", "--contains", "HEAD") === "") throw new Error("Push this commit first: the button's factories update from it on GitHub.");
+  if (git("ls-remote", "--tags", "origin", tag)) throw new Error(`${tag} is already released; bump server/package.json's version.`);
+  git("tag", "-a", tag, "-m", `maple-server ${version}`);
+  git("push", "-q", "origin", tag);
+  console.log(`Tagged ${tag}.`);
+}
 const dev = parseJsonc(readFileSync(join(server, "wrangler.jsonc"), "utf8"));
 
 const stage = mkdtempSync(join(tmpdir(), `maple-server-${version}-`));

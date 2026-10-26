@@ -67,7 +67,8 @@ own runner builds in the factory's bucket take precedence.
 ```sh
 node scripts/release-runner.mjs --new-key                    # once; the key lives in ~/.config/maple-factory/, back it up
 SIGN_IDENTITY=… node scripts/release-runner.mjs --to feed [--channel beta]   # every target (Linux needs Docker)
-node scripts/release-server.mjs --to feed [--channel beta]   # the server bundle `maple install` deploys
+node scripts/release-server.mjs --to feed [--channel beta]   # the server bundle `maple install` deploys; tags server-v<version>,
+                                                            # which button factories' update workflow pulls
 node scripts/release-runner.mjs --to dir:/tmp/feed           # or a local folder laid out like the feed
 ```
 

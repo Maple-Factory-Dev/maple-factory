@@ -48,6 +48,9 @@ import Security
     private(set) var repos: [Wire.OrgRepo] = []
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
+    /// This factory's maple-server version, and a newer one when there is (admins only).
+    private(set) var serverVersion: String?
+    private(set) var serverUpdate: Wire.ServerUpdate?
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
@@ -205,6 +208,8 @@ import Security
             intakeRequests = snapshot.intake
             repos = snapshot.repos
             runnerLatest = snapshot.runnerLatest
+            serverVersion = snapshot.serverVersion
+            serverUpdate = snapshot.serverUpdate
             rebuild()
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):

@@ -89,6 +89,14 @@ struct AccountSettings: View {
                     LabeledContent("Factory", value: client.workspaceName)
                     LabeledContent("Address", value: server.absoluteString)
                     LabeledContent("Status", value: client.status == .live ? "Connected" : "Reconnecting…")
+                    if let version = client.serverVersion { LabeledContent("Server", value: "maple-server \(version)") }
+                }
+                if let update = client.serverUpdate {
+                    SettingsCard {
+                        Label("maple-server \(update.version) is out", systemImage: "arrow.down.circle")
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.State.awaitingApproval)
+                        Text(LocalizedStringKey(update.how)).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
                 }
                 Button("Sign Out", role: .destructive) { client.signOut() }
             } else {

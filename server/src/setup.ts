@@ -20,7 +20,8 @@
 import type { Env } from "./env.ts";
 import { authConfigured, cookie, readCookie } from "./auth.ts";
 import { apiBase } from "./github.ts";
-import { escape, page } from "./page.ts";
+import { escape, page, updateNotice } from "./page.ts";
+import { serverUpdate } from "./version.ts";
 import { saveSettings } from "./settings.ts";
 import { audit, isLocal, publicOrigin, randomToken, sha256, sign, text, verify } from "./util.ts";
 
@@ -92,7 +93,7 @@ export async function handleSetup(request: Request, env: Env): Promise<Response 
   }
   if (authConfigured(env)) {
     const who = env.GITHUB_OWNER_TYPE === "User" ? `<b>${escape(org!)}</b> signs` : `members of <b>${escape(org!)}</b> sign`;
-    return page("Maple Factory", `<p>This factory is set up: ${who} in with GitHub.</p><p><a href="/auth/login">Sign in</a></p>`);
+    return page("Maple Factory", `${updateNotice(await serverUpdate(env))}<p>This factory is set up: ${who} in with GitHub.</p><p><a href="/auth/login">Sign in</a></p>`);
   }
   if (!org) {
     return page("Set up Maple Factory", `<p>This factory doesn't know its GitHub organization yet.</p>

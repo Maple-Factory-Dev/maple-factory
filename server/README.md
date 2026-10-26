@@ -16,7 +16,11 @@ Either way, you end up with the factory at a URL in your account and finish at i
 
 - **The button** (above, or maplefactory.dev/deploy, which asks for R2 first) copies this folder into a
   repo of yours, creates the D1 database, R2 bucket and Durable Objects, asks for `GITHUB_ORG`, and
-  deploys with Workers Builds (`npm run deploy` applies the D1 migrations first). Updates come from pushes to your copy of the repo.
+  deploys with Workers Builds (`npm run deploy` applies the D1 migrations first). Your copy has nothing
+  tying it back here, so its **Maple Factory update** workflow (`.github/workflows/maple-update.yml`) checks
+  maplefactory.dev's feed once a day and, when there's a newer maple-server, opens a pull request that
+  brings in that release (`scripts/update.mjs`, keeping your wrangler.jsonc values); merging it redeploys.
+  If GitHub won't let Actions open pull requests in your repo, it opens an issue with the link instead.
 - **`npx maple-factory install`** deploys the signed release from maplefactory.dev instead, with a
   custom domain if you give it one, and `maple update` moves it to the next stable or beta release.
   See [installer/](../installer).
@@ -35,6 +39,9 @@ app owned by `GITHUB_ORG` is accepted, and once sign-in works, `/setup` changes 
 
 Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `SESSION_SECRET`) take precedence over what `/setup` stored.
+
+Admins see when a newer maple-server is out, and how this factory gets it, on the home page, `/setup` and
+the Mac app's Account settings. `/healthz` says which version is running.
 
 ## Runners
 
