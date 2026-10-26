@@ -17,6 +17,7 @@ export const SETTING_KEYS = [
   "GITHUB_APP_PRIVATE_KEY",
   "GITHUB_WEBHOOK_SECRET",
   "GITHUB_OWNER_TYPE",
+  "PUBLIC_URL",
   "SESSION_SECRET",
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];

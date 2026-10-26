@@ -51,6 +51,19 @@ export function page(title: string, body: string): Response {
   main { max-width: 34rem; padding: 24px 16px; }
   a, button { color: var(--accent); font: inherit; }
   button { background: none; border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 8px 16px; }
+  h2 { font-size: 17px; margin: 32px 0 4px; display: flex; align-items: center; gap: 10px; }
+  .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; }
+  .note { opacity: .7; font-size: 13px; }
+  form { margin: 14px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { flex: 1; min-width: 12rem; font: inherit; color: inherit; background: transparent; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: 8px; padding: 6px 10px; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 14px 0; }
+  .choices form { margin: 0; }
+  .choices button { width: 100%; height: 100%; text-align: left; padding: 12px 14px; display: grid; gap: 2px; }
+  .choices button span { color: var(--text); opacity: .7; font-size: 13px; }
+  code { font-size: 13px; }
   pre { white-space: pre-wrap; font-size: 13px; }
 </style>
 <main><h1>Maple Factory</h1>${body}</main>`;

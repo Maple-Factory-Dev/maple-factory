@@ -16,6 +16,10 @@ import { handleSetup } from "./setup.ts";
 export { MachineHub } from "./machine-hub.ts";
 export { OrgHub } from "./org-hub.ts";
 
+/** Pages people open in a browser. Once the factory has a PUBLIC_URL, these move there from its other
+ *  addresses (its workers.dev one), since GitHub sign-in only comes back to that one. */
+const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*)?$/;
+
 const isUpgrade = (request: Request) => request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
 export default {
@@ -23,6 +27,11 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     await applySettings(env);
+
+    if (env.PUBLIC_URL && request.method === "GET" && !isLocal(request) && PAGES.test(path) && !isUpgrade(request)) {
+      const home = new URL(env.PUBLIC_URL);
+      if (home.host !== url.host) return Response.redirect(`${home.origin}${path}${url.search}`, 302);
+    }
 
     if (path === "/healthz") {
       // What the apps need before signing in: the protocol, the org, and how to sign in here.
