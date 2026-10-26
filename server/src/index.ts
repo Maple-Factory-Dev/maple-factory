@@ -9,6 +9,9 @@ import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
 import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
 import { PROTOCOL_VERSION } from "./wire.ts";
 import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
+import { release } from "./releases.ts";
+import { applySettings } from "./settings.ts";
+import { handleSetup } from "./setup.ts";
 
 export { MachineHub } from "./machine-hub.ts";
 export { OrgHub } from "./org-hub.ts";
@@ -19,6 +22,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+    await applySettings(env);
 
     if (path === "/healthz") {
       // What the apps need before signing in: the protocol, the org, and how to sign in here.
@@ -37,11 +41,7 @@ export default {
       return machineHub(env, id).fetch(new Request("https://hub/runner", forward));
     }
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
-    if (path.startsWith("/releases/")) {
-      const object = await env.RELEASES.get(path.slice("/releases/".length));
-      if (!object) return text("Not found.", 404);
-      return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", etag: object.httpEtag } });
-    }
+    if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 
     const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,5}-\d+)$/);
     if (link) return taskLink(link[1]);
@@ -52,6 +52,8 @@ export default {
     if (path === "/integrations/jira" && request.method === "POST") return jiraWebhook(request, env, url);
     if (path.startsWith("/api/intake") && intakeKey(request, env)) return (await intakeApi(request, env, path, null))!;
 
+    const setup = await handleSetup(request, env);
+    if (setup) return setup;
     const auth = await handleAuth(request, env);
     if (auth) return auth;
     if (path === "/dev/token" && request.method === "POST") return devToken(request, env);

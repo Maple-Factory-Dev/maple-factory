@@ -1,10 +1,11 @@
 {
   "name": "@maple/server",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler d1 migrations apply maple --local && wrangler dev --port ${MAPLE_PORT:-8788}",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "node --no-warnings=ExperimentalWarning --test test/*.test.ts"
   },
@@ -12,5 +13,21 @@
     "@cloudflare/workers-types": "^5.20261011.1",
     "typescript": "^7.0.2",
     "wrangler": "^4.149.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "GITHUB_ORG": {
+        "description": "Your GitHub organization's login (the `acme` in github.com/acme). Its members can sign in; after deploying, an owner opens `/setup` to create the GitHub App."
+      },
+      "RELEASE_CHANNEL": {
+        "description": "`stable`, or `beta` for runner releases before they're stable."
+      },
+      "DB": {
+        "description": "The factory's database: members, machines and settings."
+      },
+      "RELEASES": {
+        "description": "The factory's files in R2. **R2 must be switched on in this account first** ([R2 in the dashboard](https://dash.cloudflare.com/?to=/:account/r2/overview)), or this deploy fails."
+      }
+    }
   }
 }

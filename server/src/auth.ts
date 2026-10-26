@@ -28,13 +28,13 @@ function cookieName(url: URL, name: string) {
   return url.protocol === "https:" ? `__Host-maple_${name}` : `maple_${name}`;
 }
 
-function cookie(url: URL, name: string, value: string, maxAge: number) {
+export function cookie(url: URL, name: string, value: string, maxAge: number) {
   const secure = url.protocol === "https:";
   // Lax so the session survives GitHub's redirect back to us; state-changing APIs check Origin.
   return `${cookieName(url, name)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
 
-function readCookie(request: Request, name: string): string | undefined {
+export function readCookie(request: Request, name: string): string | undefined {
   const want = cookieName(new URL(request.url), name);
   for (const part of (request.headers.get("cookie") ?? "").split(/;\s*/)) {
     const i = part.indexOf("=");
@@ -145,7 +145,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
     if (!sameOrigin(request)) return text("Bad origin.", 403);
     return new Response(null, { status: 204, headers: { "set-cookie": cookie(url, "session", "", 0) } });
   }
-  if (!authConfigured(env)) return text("GitHub sign-in isn't set up on this factory yet. Run `maple install` again.", 503);
+  if (!authConfigured(env)) return text(`GitHub sign-in isn't set up on this factory yet. An org owner can finish it at ${url.origin}/setup.`, 503);
 
   // Web: OAuth redirect.
   if (url.pathname === "/auth/login") {

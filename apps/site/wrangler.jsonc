@@ -1,0 +1,10 @@
+{
+  // maplefactory.dev: `npx wrangler deploy` from apps/site. The bucket holds the release feed.
+  "name": "maplefactory-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-01",
+  // The site's files are served as they are; only /releases/ runs the Worker.
+  "assets": { "directory": ".", "binding": "ASSETS", "run_worker_first": ["/releases/*"] },
+  "r2_buckets": [{ "binding": "FEED", "bucket_name": "maplefactory-releases" }],
+  "routes": [{ "pattern": "maplefactory.dev", "custom_domain": true }]
+}

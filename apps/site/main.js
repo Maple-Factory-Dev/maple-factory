@@ -119,25 +119,4 @@ if (card) {
   }
 }
 
-// Waitlist form. Posts to /api/waitlist (a Pages Function, not written yet).
-const form = document.querySelector('.access-form');
-const note = document.querySelector('.form-note');
-form?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const button = form.querySelector('button');
-  button.disabled = true;
-  try {
-    const res = await fetch(form.action, { method: 'POST', body: new FormData(form) });
-    if (!res.ok) throw new Error(res.statusText);
-    form.hidden = true;
-    note.classList.remove('err');
-    note.textContent = 'You’re on the list. We’ll write when the sap’s running.';
-  } catch {
-    note.classList.add('err');
-    note.textContent = 'That didn’t go through. Please try again in a moment.';
-    button.disabled = false;
-  }
-  note.hidden = false;
-});
-
 document.getElementById('year').textContent = new Date().getFullYear();

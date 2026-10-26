@@ -17,6 +17,7 @@
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
+//   POST /app-manifests/:code/conversions                /setup's new app; code `app-<owner>` makes one owned by <owner>
 //
 // and, for the test driver: GET /_log, and POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
@@ -134,6 +135,14 @@ createServer((req, res) => {
       return send(res, 200, { runs: list });
     }
 
+    if (req.method === "POST" && (m = url.pathname.match(/^\/app-manifests\/app-([\w-]+)\/conversions$/))) {
+      const owner = m[1];
+      return send(res, 201, {
+        id: 4242, slug: `maple-factory-${owner}`, owner: { login: owner, type: "Organization" },
+        client_id: "Iv23fakeclient", client_secret: "fake-client-secret", webhook_secret: "fake-webhook-secret",
+        pem: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
+      });
+    }
     if (req.method === "GET" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/installation$/))) {
       const why = verifyJwt(req.headers.authorization);
       if (why) return send(res, 401, { message: `A JSON web token could not be decoded (${why})` });

@@ -1,6 +1,7 @@
 {
-  // The development config. `maple install` writes a deployment's own config (account, D1 id,
-  // domain, org) from this one; nothing here is specific to an org.
+  // The config for local dev and for the Deploy to Cloudflare button, which provisions the D1 database
+  // and Durable Objects from it and asks for GITHUB_ORG. `maple install` writes a deployment's own
+  // config (account, D1 id, domain, org) from this one; nothing here is specific to an org.
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "maple-factory",
   "main": "src/index.ts",
@@ -23,13 +24,17 @@
       "migrations_dir": "migrations"
     }
   ],
-  // Runner releases, mirrored from maplefactory.dev by the installer and served at /releases/.
+  // The factory's files. R2 has to be switched on in the account first: maplefactory.dev/deploy asks
+  // before the button, and `maple install` stops and asks. Runner releases put here (an org's own
+  // builds) win over maplefactory.dev's feed (src/releases.ts).
   "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "maple-releases" }],
   "vars": {
     // The GitHub organization whose members may sign in (its login, e.g. "atlas-co").
     "GITHUB_ORG": "",
-    // Local dev only: requests to localhost are this GitHub login, as an admin, without signing in.
-    "DEV_LOGIN": ""
+    // "stable", or "beta" for runner releases before they're stable.
+    "RELEASE_CHANNEL": "stable"
   }
-  // Secrets (wrangler secret put, or `maple install`): GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, SESSION_SECRET.
+  // The GitHub App (GITHUB_APP_ID, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_PRIVATE_KEY,
+  // GITHUB_WEBHOOK_SECRET) and SESSION_SECRET are made by /setup and kept in D1; Worker secrets of the
+  // same names win. Local dev: .dev.vars, with DEV_LOGIN to skip signing in on localhost.
 }

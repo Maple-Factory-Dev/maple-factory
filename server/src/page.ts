@@ -4,7 +4,7 @@ import type { Env } from "./env.ts";
 import type { Member } from "./wire.ts";
 import { authConfigured } from "./auth.ts";
 
-const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+export const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 export function home(request: Request, env: Env, me: Member | null): Response {
   const org = escape(env.GITHUB_ORG || "this factory");
@@ -23,7 +23,7 @@ export function home(request: Request, env: Env, me: Member | null): Response {
        </script>`
     : authConfigured(env)
       ? `<p>Members of ${org} sign in with GitHub.</p><p><a href="/auth/login">Sign in with GitHub</a></p>`
-      : `<p>GitHub sign-in isn't set up yet. Run <code>maple install</code> to finish setting up this factory.</p>`;
+      : `<p>GitHub sign-in isn't set up yet.</p><p><a href="/setup">Finish setting up this factory</a> (an owner of ${org} on GitHub).</p>`;
   return page("Maple Factory", body);
 }
 
@@ -41,7 +41,7 @@ export function taskLink(id: string): Response {
     </script>`);
 }
 
-function page(title: string, body: string): Response {
+export function page(title: string, body: string): Response {
   const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>${escape(title)}</title>
 <style>

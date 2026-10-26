@@ -597,7 +597,7 @@ struct OnboardingView: View {
                     }
                     if !Task.isCancelled { throw FactoryClient.ClientError.message("The code expired. Try again.") }
                 default:
-                    throw FactoryClient.ClientError.message("An admin needs to finish setting up GitHub sign-in (`maple install`).")
+                    throw FactoryClient.ClientError.message("An owner of the GitHub org needs to finish setting up this factory: open its /setup page in a browser.")
                 }
             } catch is CancellationError {
             } catch {

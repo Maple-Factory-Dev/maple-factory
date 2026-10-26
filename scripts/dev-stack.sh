@@ -11,7 +11,8 @@ mkdir -p "$LOGS"
 
 case "${1:-up}" in
 up)
-  [ -f "$ROOT/server/.dev.vars" ] || cp "$ROOT/server/.dev.vars.example" "$ROOT/server/.dev.vars"
+  # Not a .dev.vars.example: the Deploy to Cloudflare button would ask for everything in one.
+  [ -f "$ROOT/server/.dev.vars" ] || printf 'DEV_LOGIN=%s\nGITHUB_ORG=your-org\n' "${DEV_LOGIN:-$(whoami)}" >"$ROOT/server/.dev.vars"
   (cd "$ROOT/server" && npx wrangler d1 migrations apply maple --local >/dev/null)
   (cd "$ROOT/server" && nohup npx wrangler dev --port "$PORT" >"$LOGS/server.log" 2>&1 &)
   for _ in $(seq 1 40); do curl -sf "localhost:$PORT/healthz" >/dev/null && break; sleep 0.5; done

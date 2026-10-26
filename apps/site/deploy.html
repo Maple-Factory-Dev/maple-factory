@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deploy Maple Factory</title>
+  <meta name="description" content="Deploy your own Maple Factory to your Cloudflare account: turn on R2, deploy, and finish at your factory's /setup.">
+  <meta name="theme-color" content="#faf5ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b0e1f" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+  <script>
+    try { var t = localStorage.getItem('mf-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Maple Factory home">
+        <picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="30" height="30"></picture>
+        <span>Maple Factory</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#process">How it works</a>
+        <a href="/#install">Install</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>
+          <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="deploy" aria-labelledby="deploy-title">
+      <div class="wrap deploy-inner">
+        <p class="kicker">Deploy</p>
+        <h1 id="deploy-title">Your factory, in your Cloudflare account.</h1>
+        <p class="deploy-lede">Three steps, a few minutes. Everything runs in your account, on your domain.</p>
+
+        <ol class="deploy-steps">
+          <li>
+            <h2>Turn on R2</h2>
+            <p>The factory keeps runner releases and files in R2, Cloudflare’s object storage. It has to be switched on once per account before anything can use it. It’s free to start, though Cloudflare asks for a payment method.</p>
+            <p><a class="btn btn-ghost" href="https://dash.cloudflare.com/?to=/:account/r2/overview" target="_blank" rel="noopener">Open R2 in Cloudflare <span aria-hidden="true">→</span></a></p>
+            <p class="deploy-note">Already using R2 in this account? You’re set.</p>
+          </li>
+          <li>
+            <h2>Deploy</h2>
+            <p>Cloudflare copies the factory into a repo of yours, creates its database, storage and Durable Objects, and asks for your GitHub organization.</p>
+            <p><a class="btn btn-primary" href="https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2FMaple-Factory-Dev%2Fmaple-factory%2Ftree%2Fmain%2Fserver">Deploy to Cloudflare</a></p>
+          </li>
+          <li>
+            <h2>Finish at /setup</h2>
+            <p>Open <code>https://&lt;your factory&gt;/setup</code> as an owner of the GitHub organization. GitHub creates the factory’s app, your team signs in, and you add machines from the Mac app.</p>
+          </li>
+        </ol>
+
+        <p class="deploy-alt">Rather use the terminal? <code>npx maple-factory install</code> does all three, turns R2 on with you if it isn’t, and keeps the factory on signed stable or beta releases.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <p class="foot-brand"><picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="22" height="22" loading="lazy"></picture> Maple Factory</p>
+      <p class="foot-note">Set in <a href="https://afomera.dev/fonts">Atlas</a>. Boiled down in small batches.</p>
+      <p class="foot-copy">© <span id="year">2026</span> Maple Factory</p>
+    </div>
+  </footer>
+</body>
+</html>

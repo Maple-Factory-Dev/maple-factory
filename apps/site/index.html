@@ -41,7 +41,7 @@
           <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>
           <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
         </button>
-        <a class="btn btn-sm btn-primary" href="#access">Early access</a>
+        <a class="btn btn-sm btn-primary" href="#install">Get started</a>
       </div>
     </div>
   </header>
@@ -56,7 +56,7 @@
           <h1 class="reveal">Your agents write plenty.<br><em>Ship only the good stuff.</em></h1>
           <p class="lede reveal">Maple Factory turns your team’s agent sessions into a production line. Every task gets a plan you approve, a build on one of your machines, an independent review and green CI before it touches <code>main</code>. You steer from a native Mac app, or your phone.</p>
           <div class="cta-row reveal">
-            <a class="btn btn-primary" href="#access">Request early access</a>
+            <a class="btn btn-primary" href="#install">Get started</a>
             <a class="btn btn-ghost" href="#process">See how it works <span aria-hidden="true">→</span></a>
           </div>
           <p class="fine reveal">Runs in your Cloudflare account, on your Macs, on the subscriptions you already pay for.</p>
@@ -263,6 +263,7 @@
             <li>Runners connect out, so there’s no firewall to open</li>
             <li>Signed updates on a stable or beta channel</li>
           </ul>
+          <p class="install-alt"><a class="btn btn-ghost" href="/deploy">Deploy to Cloudflare <span aria-hidden="true">→</span></a> <span>Rather click? Deploy from the button, then finish at your factory’s /setup.</span></p>
         </div>
         <div class="console reveal" aria-label="Example install session">
           <div class="win-bar"><i></i><i></i><i></i><span>zsh</span></div>
@@ -283,13 +284,11 @@
       <div class="wrap access-inner reveal">
         <picture class="access-icon"><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="The Maple Factory icon: a glowing maple leaf rising from a bowl" width="512" height="512" loading="lazy"></picture>
         <h2 id="access-title">Make something worth pouring.</h2>
-        <p>Maple Factory is in early access. Leave your email and we’ll be in touch when there’s room for your team.</p>
-        <form class="access-form" action="/api/waitlist" method="post">
-          <label class="sr" for="email">Work email</label>
-          <input id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" required>
-          <button class="btn btn-primary" type="submit">Request access</button>
-        </form>
-        <p class="form-note" role="status" hidden></p>
+        <p>Set up a factory in your own Cloudflare account and put your team’s agents to work.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#install">Get started</a>
+          <a class="btn btn-ghost" href="/deploy">Deploy to Cloudflare <span aria-hidden="true">→</span></a>
+        </div>
       </div>
     </section>
   </main>

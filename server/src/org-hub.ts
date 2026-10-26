@@ -12,6 +12,8 @@ import { toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
+import { release } from "./releases.ts";
+import { applySettings } from "./settings.ts";
 
 interface Client {
   member: Member;
@@ -53,10 +55,12 @@ export class OrgHub extends DurableObject<Env> {
 
   /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again. */
   async alarm() {
+    await applySettings(this.env);
     await this.engine.pollCI();
   }
 
   async fetch(request: Request): Promise<Response> {
+    await applySettings(this.env);
     const url = new URL(request.url);
     switch (url.pathname) {
       case "/connect": {
@@ -153,12 +157,12 @@ export class OrgHub extends DurableObject<Env> {
   /** Every enrolled machine, live where its hub has reported. */
   private latest: { version: string | null; at: number } | null = null;
 
-  /** The newest released runner, from the releases bucket's manifest; read again every ten minutes. */
+  /** The newest released runner, from the releases manifest (the org's bucket, else the feed); read again every ten minutes. */
   private async runnerLatest(): Promise<string | null> {
     if (this.latest && Date.now() - this.latest.at < 600_000) return this.latest.version;
     let version: string | null = null;
     try {
-      const manifest = await this.env.RELEASES.get("maple-runner/latest.json");
+      const manifest = await release(this.env, "maple-runner/latest.json");
       version = manifest ? ((await manifest.json()) as { version?: string }).version ?? null : null;
     } catch {}
     this.latest = { version, at: Date.now() };
@@ -243,6 +247,7 @@ export class OrgHub extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     if (typeof raw !== "string") return;
+    await applySettings(this.env);
     const client = ws.deserializeAttachment() as Client;
     const msg = JSON.parse(raw) as ClientMessage;
     switch (msg.type) {

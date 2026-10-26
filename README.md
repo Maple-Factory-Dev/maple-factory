@@ -9,12 +9,14 @@ web and phone access, Tailscale) and fixing what didn't (sessions dying for no c
 ```
 apps/mac/     SwiftUI app: the factory (goals, tasks, review, machines, requests, usage), live against a server; the design mockup when signed out
 runner/       maple-runner (Rust): sessions in tmux, dials out to the server. From ao-runner 0.23.0
-server/       Cloudflare Worker: OrgHub + MachineHub Durable Objects, D1, R2
+server/       Cloudflare Worker: OrgHub + MachineHub Durable Objects, D1, R2; the factory each org deploys
+installer/    `maple` (npm: maple-factory): install and update a factory in an org's Cloudflare account
+apps/site/    maplefactory.dev: the site, the signed release feed (/releases/) and /deploy
 protocol/     schema.ts → generated Rust, TypeScript and Swift types (npm run gen)
 assets/       app icon source
 ```
 
-Planned: `apps/web/` (companion), `installer/` (`maple install`).
+Planned: `apps/web/` (companion).
 scripts/dev-stack.sh runs a local factory to click around in.
 
 ## Develop
@@ -39,17 +41,43 @@ End-to-end tests for each piece are in server/test (each says what it needs at t
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
 Runner tests: `cd runner && cargo test`.
 
-## Runner releases and install
+## Deploying a factory
+
+Each org runs its own factory in its own Cloudflare account, one of two ways:
+
+- the **Deploy to Cloudflare** button (maplefactory.dev/deploy, or server/README.md), which builds `server/`
+  from the public repo into a copy of the org's own. R2 has to be switched on in the account first, and
+  the button can't check, so /deploy asks before it sends anyone on; or
+- **`npx maple-factory install`**, which deploys the signed server release from the feed and updates it
+  with `maple update` on the stable or beta channel. When R2 is off (Cloudflare's error 10042) it links
+  to the dashboard and waits.
+
+Both finish at the factory's `/setup`, where an owner of the GitHub org creates the factory's GitHub App
+from a manifest; its credentials are kept in D1 (server/src/settings.ts). See server/README.md.
+
+## Releases
+
+maplefactory.dev serves one signed feed at `/releases/` (apps/site/worker.js, from the
+`maplefactory-releases` bucket): `maple-runner/` and `maple-server/`, each with `latest.json` (stable)
+and `beta.json`, signed with the release key. Factories pass the runner feed through at their own
+`/releases/` (server/src/releases.ts), so runners need nothing from maplefactory.dev directly; an org's
+own runner builds in the factory's bucket take precedence.
+
+```sh
+node scripts/release-runner.mjs --new-key                    # once; the key lives in ~/.config/maple-factory/, back it up
+SIGN_IDENTITY=… node scripts/release-runner.mjs --to feed [--channel beta]   # every target (Linux needs Docker)
+node scripts/release-server.mjs --to feed [--channel beta]   # the server bundle `maple install` deploys
+node scripts/release-runner.mjs --to dir:/tmp/feed           # or a local folder laid out like the feed
+```
+
+`--to factory` uploads to one factory's own bucket instead, and `--local` to `wrangler dev`'s. The site deploys with `cd apps/site && npx wrangler deploy`.
+
+## Runner install
 
 Adding a machine is one line from Machines → Add machine: `curl -fsSL https://<factory>/install.sh | sh -s -- CODE`.
 The script picks the build for the machine (macOS or Linux, arm64 or x86_64), checks it against the
 release manifest's sha256, enrolls the machine and starts the runner at login (launchd or systemd).
 Runners then update themselves, trusting only manifests signed with the release key.
-
-```sh
-node scripts/release-runner.mjs --new-key       # once; the key lives in ~/.config/maple-factory/, back it up
-node scripts/release-runner.mjs [--local]       # build, sign and upload every target (Linux needs Docker for cross)
-```
 
 On a Mac it's one click instead: Add machine → Add this Mac runs the same steps with the runner and
 tmux the app carries (`Contents/Helpers`, universal; tmux is built without Homebrew by

@@ -1,45 +1,27 @@
 #!/usr/bin/env node
-// Builds maple-runner for each target, signs a manifest for them and uploads both to the releases
-// bucket, where `/install.sh` and every runner's self-update find them:
+// Builds maple-runner for each target, signs a manifest for them and uploads both, where `/install.sh`
+// and every runner's self-update find them (scripts/feed.mjs says where --to can send it):
 //
-//   node scripts/release-runner.mjs [--local] [--targets aarch64-apple-darwin,…] [--notes "…"]
+//   node scripts/release-runner.mjs --to feed [--channel beta] [--targets aarch64-apple-darwin,…] [--notes "…"]
+//   node scripts/release-runner.mjs --to factory | --local | --to dir:PATH
 //   node scripts/release-runner.mjs --new-key        # once: makes the signing key, prints its public half
 //
-// The private key lives at ~/.config/maple-factory/release-key.pem (MAPLE_RELEASE_KEY to move it),
-// never in the repo; runner/src/update.rs builds in the public half. Without that key a stolen
-// Worker or bucket can't push a runner anyone will run, so keep a copy somewhere safe.
-// --local uploads to `wrangler dev`'s bucket instead of the real one. Linux targets build in Docker
-// (the official rust image), so it needs to be running.
+// Linux targets build in Docker (the official rust image), so it needs to be running.
 
 import { execFileSync } from "node:child_process";
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const keyPath = process.env.MAPLE_RELEASE_KEY ?? join(homedir(), ".config/maple-factory/release-key.pem");
-const args = process.argv.slice(2);
-const flag = (name) => args.includes(name);
-const option = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-
-/** The raw 32-byte public key, base64url without padding: what RELEASE_PUBLIC_KEY holds. */
-const publicHalf = (key) => Buffer.from(createPublicKey(key).export({ format: "jwk" }).x, "base64url").toString("base64url");
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { destination, flag, newKey, option, publish, releaseKey, root } from "./feed.mjs";
 
 if (flag("--new-key")) {
-  if (existsSync(keyPath)) throw new Error(`${keyPath} already exists; releases signed with it would stop verifying if it changed.`);
-  const { privateKey } = generateKeyPairSync("ed25519");
-  mkdirSync(dirname(keyPath), { recursive: true, mode: 0o700 });
-  writeFileSync(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-  console.log(`Wrote ${keyPath}. Back it up; put this in runner/src/update.rs as RELEASE_PUBLIC_KEY:\n${publicHalf(privateKey)}`);
+  newKey();
   process.exit(0);
 }
 
-if (!existsSync(keyPath)) throw new Error(`No signing key at ${keyPath}. Make one with --new-key.`);
-const key = createPrivateKey(readFileSync(keyPath));
-const built = readFileSync(join(root, "runner/src/update.rs"), "utf8").match(/RELEASE_PUBLIC_KEY: &str = "([^"]+)"/)?.[1];
-if (built !== publicHalf(key)) throw new Error(`runner/src/update.rs has RELEASE_PUBLIC_KEY ${built}, but ${keyPath} is ${publicHalf(key)}; runners wouldn't trust this release.`);
+const where = destination();
+const key = releaseKey(["runner/src/update.rs"]);
+if (where.to === "feed" && !process.env.SIGN_IDENTITY) throw new Error("The feed's macOS runners are signed with the Developer ID: set SIGN_IDENTITY.");
 
 const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" }).match(/^host: (.+)$/m)[1];
 const targets = (option("--targets") ?? "aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu").split(",");
@@ -70,15 +52,5 @@ for (const target of targets) {
   uploads.push([path, file, "application/octet-stream"]);
 }
 
-const out = join(tmpdir(), `maple-release-${version}`);
-mkdirSync(out, { recursive: true });
-const manifestFile = join(out, "latest.json");
-writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
-writeFileSync(`${manifestFile}.sig`, sign(null, readFileSync(manifestFile), key).toString("base64") + "\n");
-// Binaries first, so the manifest never points at something that isn't there yet.
-uploads.push(["maple-runner/latest.json.sig", `${manifestFile}.sig`, "text/plain"], ["maple-runner/latest.json", manifestFile, "application/json"]);
-for (const [path, file, type] of uploads) {
-  run("npx", ["wrangler", "r2", "object", "put", `maple-releases/${path}`, "--file", file, "--content-type", type, flag("--local") ? "--local" : "--remote"], { cwd: join(root, "server") });
-}
-chmodSync(manifestFile, 0o644);
-console.log(`\nReleased maple-runner ${version} for ${targets.join(", ")}${flag("--local") ? " (local bucket)" : ""}.`);
+const names = await publish("maple-runner", manifest, uploads, key, where);
+console.log(`\nReleased maple-runner ${version} for ${targets.join(", ")} to ${where.to} (${names.map((n) => `${n}.json`).join(", ")}).`);

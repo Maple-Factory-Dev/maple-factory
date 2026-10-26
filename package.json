@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "server"
+    "server",
+    "installer"
   ],
   "scripts": {
     "gen": "node protocol/gen.ts",
     "gen:check": "node protocol/gen.ts --check",
     "dev": "npm run dev --workspace server",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }

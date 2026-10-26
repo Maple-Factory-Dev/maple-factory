@@ -1,0 +1,14 @@
+{
+  "name": "maple-factory",
+  "version": "0.1.0",
+  "description": "Set up and update a Maple Factory in your own Cloudflare account.",
+  "homepage": "https://maplefactory.dev",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": { "maple": "maple.mjs" },
+  "files": ["maple.mjs", "README.md"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "wrangler": "^4.152.0"
+  }
+}
