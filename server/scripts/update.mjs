@@ -79,7 +79,8 @@ async function main() {
   if (!from) {
     const manifest = config.vars?.RELEASE_CHANNEL === "beta" ? "beta.json" : "latest.json";
     const res = await fetch(`${FEED}/maple-server/${manifest}`);
-    if (!res.ok) throw new Error(`The feed has no maple-server release (${res.status}).`);
+    if (res.status === 404) return console.log("The feed has no maple-server release yet; nothing to do.");
+    if (!res.ok) throw new Error(`The feed didn't answer (${res.status}).`);
     version = (await res.json()).version;
     if (!older(pkg.version, version)) return console.log(`maple-server ${pkg.version} is the latest; nothing to do.`);
     const tmp = mkdtempSync(join(tmpdir(), "maple-update-"));
