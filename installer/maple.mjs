@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // maple: sets up and updates a Maple Factory in an org's own Cloudflare account.
 //
-//   npx maple-factory install [--org acme] [--name maple-factory] [--domain factory.acme.dev] [--channel beta] [--account ID]
-//   npx maple-factory update [--name maple-factory] [--force]
+//   npx maple-factory install [--org acme] [--allow octocat,hubot] [--name maple-factory] [--domain factory.acme.dev] [--channel beta] [--account ID]
+//   npx maple-factory update [--name maple-factory] [--allow octocat,hubot] [--force]
 //   npx maple-factory status [--name maple-factory]
 //   npx maple-factory token          # a link that makes the Cloudflare API token install needs
 //
@@ -15,6 +15,9 @@
 // Worker (with a custom domain, if you give one) and opens /setup, where an owner of the GitHub org
 // makes the factory's GitHub App. What it made is remembered in
 // ~/.config/maple-factory/factories/<name>.json, so update knows where to deploy; the token never is.
+//
+// --allow lists GitHub logins who may sign in besides the org's members (or the account's owner); update
+// --allow changes it, and --allow '' empties it. It's kept with the rest, since every deploy sets the vars.
 //
 // CLOUDFLARE_API_TOKEN skips the token prompt. MAPLE_FEED (or --feed) points at another feed.
 
@@ -36,6 +39,7 @@ const { positionals, values: opts } = parseArgs({
   allowPositionals: true,
   options: {
     org: { type: "string" },
+    allow: { type: "string" },
     name: { type: "string", default: "maple-factory" },
     domain: { type: "string" },
     channel: { type: "string" },
@@ -210,6 +214,15 @@ async function unpack(release, dir) {
   return JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
 }
 
+/** --allow's logins, checked and tidied; null if it wasn't given. */
+function allowList() {
+  if (opts.allow === undefined) return null;
+  const logins = opts.allow.split(/[\s,]+/).filter(Boolean);
+  const bad = logins.find((l) => !/^[A-Za-z0-9-]{1,39}$/.test(l));
+  if (bad) fail(`${bad} isn't a GitHub login.`);
+  return logins;
+}
+
 /** The deployment's wrangler config: the release's shared parts plus this org's. */
 function writeConfig(dir, shared, factory) {
   const { version: _version, ...rest } = shared;
@@ -221,7 +234,7 @@ function writeConfig(dir, shared, factory) {
     workers_dev: true,
     d1_databases: [{ binding: "DB", database_name: factory.name, database_id: factory.databaseId, migrations_dir: "migrations" }],
     r2_buckets: [{ binding: "RELEASES", bucket_name: factory.bucket }],
-    vars: { GITHUB_ORG: factory.org, RELEASE_CHANNEL: factory.channel },
+    vars: { GITHUB_ORG: factory.org, GITHUB_ALLOWED_LOGINS: (factory.allow ?? []).join(","), RELEASE_CHANNEL: factory.channel },
     ...(factory.domain ? { routes: [{ pattern: factory.domain, custom_domain: true }] } : {}),
   };
   const file = join(dir, "wrangler.json");
@@ -301,7 +314,9 @@ async function install() {
   const gh = await fetch(`https://api.github.com/users/${org}`, { headers: { "user-agent": "maple-factory" } });
   if (gh.status === 404) fail(`GitHub has no organization or user called ${org}.`);
   const personal = gh.ok && (await gh.json()).type === "User";
-  step("GitHub org", `${org}${personal ? " (personal account: only you sign in)" : ""} ${ok("ok")}`);
+  step("GitHub org", `${org}${personal ? " (personal account: you're its admin)" : ""} ${ok("ok")}`);
+  const allow = allowList() ?? [];
+  if (allow.length) step("Also allowed", allow.join(", "));
 
   const domain = opts.domain ?? (process.stdin.isTTY ? await ask("Custom domain (blank for workers.dev):", { fallback: "" }) : "");
   if (domain && !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) fail(`${domain} isn't a domain name.`);
@@ -319,7 +334,7 @@ async function install() {
 
   const db = await database(token, account.id, name);
   step("Database", `${name} ${ok(db.created ? "created" : "found")}`);
-  const factory = { name, accountId: account.id, accountName: account.name, databaseId: db.id, bucket: name, org, channel, domain: domain || null, version: release.version };
+  const factory = { name, accountId: account.id, accountName: account.name, databaseId: db.id, bucket: name, org, allow, channel, domain: domain || null, version: release.version };
 
   deploy(token, factory, dir, shared);
   // A new factory's cookie key. Not over an existing one: everyone would be signed out.
@@ -355,7 +370,7 @@ async function dryRun(name) {
   step("Release", `maple-server ${release.version} (${channel}) ${ok("verified")}`);
   const dir = join(serverDir(name), "..", `${name}.dry-run`);
   const shared = await unpack(release, dir);
-  const factory = { name, accountId: "0".repeat(32), databaseId: "00000000-0000-0000-0000-000000000000", bucket: name, org: opts.org, channel, domain: opts.domain ?? null };
+  const factory = { name, accountId: "0".repeat(32), databaseId: "00000000-0000-0000-0000-000000000000", bucket: name, org: opts.org, allow: allowList() ?? [], channel, domain: opts.domain ?? null };
   const config = writeConfig(dir, shared, factory);
   wrangler("dry-run", factory.accountId, ["deploy", "--dry-run", "-c", config]);
   console.log(`\n${ok("The deploy checks out")}; it's in ${dir}.`);
@@ -365,7 +380,9 @@ async function update() {
   const factory = load(opts.name);
   const channel = opts.channel ?? factory.channel;
   const release = await latestServer(channel);
-  if (release.version === factory.version && channel === factory.channel && !opts.force) {
+  const allow = allowList() ?? factory.allow ?? [];
+  const sameAllow = allow.join(",") === (factory.allow ?? []).join(",");
+  if (release.version === factory.version && channel === factory.channel && sameAllow && !opts.force) {
     console.log(`${factory.name} is on maple-server ${release.version}, the latest ${channel} release.`);
     return;
   }
@@ -374,7 +391,8 @@ async function update() {
   const dir = serverDir(factory.name);
   const shared = await unpack(release, dir);
   // Factories set up before the server had a bucket get one now.
-  const next = { ...factory, channel, version: release.version, bucket: factory.bucket ?? factory.name };
+  const next = { ...factory, channel, allow, version: release.version, bucket: factory.bucket ?? factory.name };
+  if (!sameAllow) step("Also allowed", allow.length ? allow.join(", ") : "(nobody)");
   if (!factory.bucket) step("Storage", `${next.bucket} ${ok((await bucket(token, factory.accountId, next.bucket)).created ? "created" : "found")}`);
   deploy(token, next, dir, shared);
   save({ ...next, updatedAt: new Date().toISOString() });
@@ -387,6 +405,7 @@ async function status() {
   step("Factory", `${factory.name} in ${factory.accountName ?? factory.accountId}`);
   step("URL", factory.url ?? "(none yet)");
   step("Org", factory.org);
+  if (factory.allow?.length) step("Also allowed", factory.allow.join(", "));
   step("Server", `${factory.version} (${factory.channel})${release && release.version !== factory.version ? `, ${release.version} available: maple update` : ""}`);
   const health = factory.url ? await healthy(factory.url, 5) : null;
   step("Health", health ? `${ok("ok")}, sign-in ${health.signIn}` : "not answering");
@@ -394,8 +413,8 @@ async function status() {
 
 const usage = `maple: set up and update a Maple Factory in your Cloudflare account
 
-  maple install [--org ORG] [--name maple-factory] [--domain DOMAIN] [--channel stable|beta] [--account ID]
-  maple update [--name maple-factory] [--channel stable|beta] [--force]
+  maple install [--org ORG] [--allow LOGIN,...] [--name maple-factory] [--domain DOMAIN] [--channel stable|beta] [--account ID]
+  maple update [--name maple-factory] [--allow LOGIN,...] [--channel stable|beta] [--force]
   maple status [--name maple-factory]
   maple token        a link that makes the Cloudflare API token install needs
 `;

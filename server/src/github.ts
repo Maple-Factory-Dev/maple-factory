@@ -10,7 +10,7 @@
 import type { Env } from "./env.ts";
 import type { OrgRepo } from "./wire.ts";
 
-const API = "https://api.github.com";
+export const API = "https://api.github.com";
 const USER_AGENT = "maple-factory";
 
 export interface GitHubApp {

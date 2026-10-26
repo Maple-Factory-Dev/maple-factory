@@ -1,9 +1,10 @@
 // Who may use this factory: members of one GitHub organization (or, when GITHUB_ORG is someone's
-// personal account, just them). The web signs in with GitHub's
+// personal account, just them), and anyone in GITHUB_ALLOWED_LOGINS, who signs in as a member. The web signs in with GitHub's
 // OAuth redirect and gets a signed cookie; the apps use GitHub's device flow and get a bearer
 // token. Membership is checked with GitHub at every sign-in, and roles and teams come from there.
 
 import type { Env } from "./env.ts";
+import { API, apiBase } from "./github.ts";
 import type { Member } from "./wire.ts";
 import { audit, isLocal, randomToken, sha256, sign, text, verify } from "./util.ts";
 
@@ -53,6 +54,18 @@ export function sameOrigin(request: Request): boolean {
   return !origin || origin === new URL(request.url).origin;
 }
 
+/** GITHUB_ALLOWED_LOGINS, lowercased. */
+function allowedLogins(env: Env): Set<string> {
+  return new Set((env.GITHUB_ALLOWED_LOGINS ?? "").split(/[\s,]+/).filter(Boolean).map((l) => l.toLowerCase()));
+}
+
+/** Whether a signed-in member still may: a personal factory checks its owner and list on every request, so
+ *  taking someone off the list signs them out. (An org's members are checked at sign-in.) */
+function stillAllowed(env: Env, login: string): boolean {
+  if (env.GITHUB_OWNER_TYPE !== "User") return true;
+  return login.toLowerCase() === env.GITHUB_ORG.toLowerCase() || allowedLogins(env).has(login.toLowerCase());
+}
+
 async function memberRow(env: Env, login: string) {
   return env.DB.prepare("SELECT * FROM members WHERE login = ?").bind(login).first<MemberRow>();
 }
@@ -64,7 +77,7 @@ export async function currentMember(request: Request, env: Env): Promise<Member 
     const row = await env.DB.prepare(
       `SELECT m.* FROM app_tokens t JOIN members m ON m.login = t.login WHERE t.token_hash = ? AND t.expires_at > ?`,
     ).bind(await sha256(bearer), Date.now()).first<MemberRow>();
-    if (!row) return null;
+    if (!row || !stillAllowed(env, row.login)) return null;
     await env.DB.prepare("UPDATE app_tokens SET last_used = ? WHERE token_hash = ?").bind(Date.now(), await sha256(bearer)).run();
     return toMember(row);
   }
@@ -72,7 +85,7 @@ export async function currentMember(request: Request, env: Env): Promise<Member 
     const session = await verify<{ login: string; exp: number }>(readCookie(request, "session"), env.SESSION_SECRET);
     if (session) {
       const row = await memberRow(env, session.login);
-      if (row) return toMember(row);
+      if (row && stillAllowed(env, row.login)) return toMember(row);
     }
   }
   if (env.DEV_LOGIN && isLocal(request)) {
@@ -91,8 +104,8 @@ interface Identity {
   avatar_url: string | null;
 }
 
-async function github<T>(token: string, path: string): Promise<{ status: number; body: T | null }> {
-  const res = await fetch(`https://api.github.com${path}`, {
+async function github<T>(env: Env, token: string, path: string): Promise<{ status: number; body: T | null }> {
+  const res = await fetch(`${apiBase(env.GITHUB_API_URL)}${path}`, {
     headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": UA },
   });
   return { status: res.status, body: (await res.json().catch(() => null)) as T | null };
@@ -102,30 +115,37 @@ type Verdict = { ok: true; member: Member } | { ok: false; status: number; messa
 
 /** Checks a GitHub user token against the org, and records the member if they're in. */
 async function admit(env: Env, token: string): Promise<Verdict> {
-  const me = await github<Identity>(token, "/user");
+  const me = await github<Identity>(env, token, "/user");
   if (!me.body?.login) return { ok: false, status: 502, message: "GitHub didn't say who you are." };
   const org = env.GITHUB_ORG;
-  // A personal account's factory: its owner, and nobody else. (No org shares a login with a user.)
+  // A personal account's factory: its owner is its admin. (No org shares a login with a user.)
   if (me.body.login.toLowerCase() === org.toLowerCase()) {
     await upsertMember(env, me.body, "admin", []);
     return { ok: true, member: toMember((await memberRow(env, me.body.login))!) };
   }
-  if (env.GITHUB_OWNER_TYPE === "User") {
+  const listed = allowedLogins(env).has(me.body.login.toLowerCase());
+  if (env.GITHUB_OWNER_TYPE !== "User") {
+    const membership = await github<{ state?: string; role?: string }>(env, token, `/user/memberships/orgs/${encodeURIComponent(org)}`);
+    if (membership.status === 200 && membership.body?.state === "active") {
+      const teams = await github<Array<{ slug: string; organization?: { login?: string } }>>(env, token, "/user/teams?per_page=100");
+      const slugs = (teams.body ?? []).filter((t) => t.organization?.login?.toLowerCase() === org.toLowerCase()).map((t) => t.slug);
+      await upsertMember(env, me.body, membership.body.role === "admin" ? "admin" : "member", slugs);
+      return { ok: true, member: toMember((await memberRow(env, me.body.login))!) };
+    }
+    if (!listed) {
+      await audit(env, `github:${me.body.login}`, "auth.denied", null, { org, status: membership.status });
+      const hint = membership.status === 403
+        ? ` If you are a member, the GitHub App needs read access to organization members, and ${org} must approve it.`
+        : "";
+      return { ok: false, status: 403, message: `${me.body.login} isn't an active member of ${org}.${hint}` };
+    }
+  }
+  if (!listed) {
     await audit(env, `github:${me.body.login}`, "auth.denied", null, { org, personal: true });
-    return { ok: false, status: 403, message: `This factory is ${org}'s own: only ${org} can sign in.` };
+    return { ok: false, status: 403, message: `This factory is ${org}'s own: ${me.body.login} isn't on its list of who may sign in (GITHUB_ALLOWED_LOGINS).` };
   }
-  const membership = await github<{ state?: string; role?: string }>(token, `/user/memberships/orgs/${encodeURIComponent(org)}`);
-  if (membership.status !== 200 || membership.body?.state !== "active") {
-    await audit(env, `github:${me.body.login}`, "auth.denied", null, { org, status: membership.status });
-    const hint = membership.status === 403
-      ? ` If you are a member, the GitHub App needs read access to organization members, and ${org} must approve it.`
-      : "";
-    return { ok: false, status: 403, message: `${me.body.login} isn't an active member of ${org}.${hint}` };
-  }
-  const teams = await github<Array<{ slug: string; organization?: { login?: string } }>>(token, "/user/teams?per_page=100");
-  const slugs = (teams.body ?? []).filter((t) => t.organization?.login?.toLowerCase() === org.toLowerCase()).map((t) => t.slug);
-  const role = membership.body.role === "admin" ? "admin" : "member";
-  await upsertMember(env, me.body, role, slugs);
+  await audit(env, `github:${me.body.login}`, "auth.allowed_login", null, { org });
+  await upsertMember(env, me.body, "member", []);
   return { ok: true, member: toMember((await memberRow(env, me.body.login))!) };
 }
 
@@ -137,8 +157,10 @@ async function upsertMember(env: Env, who: Identity, role: string, teams: string
   ).bind(who.login, who.id, who.name, who.avatar_url, role, JSON.stringify(teams), Date.now()).run();
 }
 
+/** A sign-in's code (or device code) for a user token. A local test server stands in for github.com too. */
 async function exchange(env: Env, params: Record<string, string>) {
-  const res = await fetch("https://github.com/login/oauth/access_token", {
+  const base = apiBase(env.GITHUB_API_URL);
+  const res = await fetch(base === API ? "https://github.com/login/oauth/access_token" : `${base}/login/oauth/access_token`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json", "user-agent": UA },
     body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, ...params }),

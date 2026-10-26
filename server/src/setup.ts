@@ -4,8 +4,8 @@
 // in D1 (settings.ts). The app is both the sign-in (its OAuth client) and the bot that pushes
 // branches and opens pull requests.
 //
-// GITHUB_ORG can also be someone's personal account: then the app is theirs, and they're the only one
-// who signs in. /setup asks GitHub which it is, and keeps the answer (GITHUB_OWNER_TYPE).
+// GITHUB_ORG can also be someone's personal account: then the app is theirs, and only they (and the
+// logins in GITHUB_ALLOWED_LOGINS) sign in. /setup asks GitHub which it is, and keeps the answer (GITHUB_OWNER_TYPE).
 //
 // Anyone can open /setup before it's done, but only someone who may create apps on GITHUB_ORG can
 // finish it: the app GitHub hands back must be owned by that account, or it's refused. Once sign-in is
@@ -98,7 +98,7 @@ export async function handleSetup(request: Request, env: Env): Promise<Response 
     const body = owner === "User"
       ? `<p>Last step: a GitHub App on your account, <b>${escape(org)}</b>. It signs you in and opens, checks and merges
         tasks' pull requests. GitHub shows what it can do before you create it.</p>
-        <p>Sign in to GitHub as ${escape(org)}. This factory is just for you: nobody else can sign in.</p>
+        <p>Sign in to GitHub as ${escape(org)}. This factory is yours: nobody else can sign in unless you list them in <code>GITHUB_ALLOWED_LOGINS</code>.</p>
         ${form("User", "Create the GitHub App")}`
       : owner === "Organization"
         ? `<p>Last step: a GitHub App for <b>${escape(org)}</b>. It signs your team in and opens, checks and merges

@@ -16,6 +16,8 @@ export interface Env {
   GITHUB_APP_SLUG?: string;
   /** "User" when GITHUB_ORG is someone's personal account (from /setup); otherwise it's an organization. */
   GITHUB_OWNER_TYPE?: string;
+  /** GitHub logins let in besides the org's members (or the personal account's owner), comma or space separated. */
+  GITHUB_ALLOWED_LOGINS?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   /** Verifies the app's webhooks (check runs, statuses, pull requests) at /integrations/github. */
   GITHUB_WEBHOOK_SECRET?: string;

@@ -32,6 +32,9 @@
     // The GitHub organization whose members may sign in (its login, e.g. "atlas-co"), or a personal
     // account's username, for a factory only that person signs in to.
     "GITHUB_ORG": "",
+    // GitHub logins who may sign in besides the org's members (or the personal account's owner), comma
+    // separated, e.g. "octocat, hubot". They sign in as members.
+    "GITHUB_ALLOWED_LOGINS": "",
     // "stable", or "beta" for runner releases before they're stable.
     "RELEASE_CHANNEL": "stable"
   }

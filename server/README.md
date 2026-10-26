@@ -22,7 +22,12 @@ Either way, you end up with the factory at a URL in your account and finish at i
   See [installer/](../installer).
 
 Then an owner of the GitHub org opens `https://<factory>/setup`. (`GITHUB_ORG` can also be your own
-username: the app is then yours, and you're the only one who can sign in.) GitHub creates the factory's GitHub App
+username: the app is then yours, and you're its admin.)
+
+`GITHUB_ALLOWED_LOGINS` lets other GitHub logins in as members, comma separated (`octocat, hubot`): collaborators
+on your own account's factory, or people outside the org. With the button it's in your copy's wrangler.jsonc;
+with `maple install`, pass `--allow` (and `maple update --allow` to change it). On a personal account's factory,
+taking someone off signs them out at once; on an org's, it takes effect when they next sign in, like leaving the org. GitHub creates the factory's GitHub App
 from a manifest (sign-in, task branches and pull requests) and hands its credentials back. They're
 kept in D1, since a Worker can't set its own secrets. After installing the app, tick **Enable Device
 Flow** in its settings for the Mac app's sign-in; GitHub doesn't allow that from a manifest. Only an
