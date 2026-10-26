@@ -32,12 +32,13 @@
     // The GitHub organization whose members may sign in (its login, e.g. "atlas-co"), or a personal
     // account's username, for a factory only that person signs in to.
     "GITHUB_ORG": "",
-    // GitHub logins who may sign in besides the org's members (or the personal account's owner), comma
-    // separated, e.g. "octocat, hubot". They sign in as members.
-    "GITHUB_ALLOWED_LOGINS": "",
     // "stable", or "beta" for runner releases before they're stable.
     "RELEASE_CHANNEL": "stable"
-  }
+  },
+  // Every var above is a required field in the Deploy to Cloudflare form, so optional ones aren't listed:
+  // GITHUB_ALLOWED_LOGINS (other GitHub logins who may sign in, comma separated) is added in the dashboard
+  // (Worker → Settings → Variables and Secrets), and this keeps it when a push redeploys.
+  "keep_vars": true
   // The GitHub App (GITHUB_APP_ID, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_PRIVATE_KEY,
   // GITHUB_WEBHOOK_SECRET) and SESSION_SECRET are made by /setup and kept in D1; Worker secrets of the
   // same names win. Local dev: .dev.vars, with DEV_LOGIN to skip signing in on localhost.
