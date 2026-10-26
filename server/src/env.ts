@@ -14,6 +14,8 @@ export interface Env {
   GITHUB_APP_ID?: string;
   /** The app's URL name (github.com/apps/<slug>), which /setup records for its links. */
   GITHUB_APP_SLUG?: string;
+  /** "User" when GITHUB_ORG is someone's personal account (from /setup); otherwise it's an organization. */
+  GITHUB_OWNER_TYPE?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   /** Verifies the app's webhooks (check runs, statuses, pull requests) at /integrations/github. */
   GITHUB_WEBHOOK_SECRET?: string;

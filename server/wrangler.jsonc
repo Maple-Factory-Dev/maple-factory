@@ -29,7 +29,8 @@
   // builds) win over maplefactory.dev's feed (src/releases.ts).
   "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "maple-releases" }],
   "vars": {
-    // The GitHub organization whose members may sign in (its login, e.g. "atlas-co").
+    // The GitHub organization whose members may sign in (its login, e.g. "atlas-co"), or a personal
+    // account's username, for a factory only that person signs in to.
     "GITHUB_ORG": "",
     // "stable", or "beta" for runner releases before they're stable.
     "RELEASE_CHANNEL": "stable"

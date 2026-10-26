@@ -3,7 +3,7 @@
 //
 //   node server/test/fake-github.mjs --port 18803 --public-key app.pub.pem --installed acme/greeter \
 //     --remotes '/tmp/mfgh/remotes/{owner}/{repo}.git' --webhook-url http://localhost:8788/integrations/github \
-//     --webhook-secret dev-gh-secret [--ci test]
+//     --webhook-secret dev-gh-secret [--ci test] [--user afomera]
 //
 // Point the server at it with GITHUB_API_URL=http://localhost:18803 (only honored on localhost) and
 // the runner's pushes at the bare repos with MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL. It checks
@@ -18,6 +18,7 @@
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
 //   POST /app-manifests/:code/conversions                /setup's new app; code `app-<owner>` makes one owned by <owner>
+//   GET  /users/:login                                   a personal account for each --user, otherwise an organization
 //
 // and, for the test driver: GET /_log, and POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
@@ -40,10 +41,13 @@ const { values } = parseArgs({
     "webhook-url": { type: "string" },
     "webhook-secret": { type: "string", default: "" },
     ci: { type: "string", multiple: true, default: [] },
+    user: { type: "string", multiple: true, default: [] },
   },
 });
 
 const publicKey = createPublicKey(readFileSync(values["public-key"], "utf8"));
+const users = new Set(values.user.map((u) => u.toLowerCase()));
+const ownerType = (login) => (users.has(login.toLowerCase()) ? "User" : "Organization");
 const installed = new Map(values.installed.map((r, i) => [r.toLowerCase(), 1000 + i]));
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
@@ -138,10 +142,13 @@ createServer((req, res) => {
     if (req.method === "POST" && (m = url.pathname.match(/^\/app-manifests\/app-([\w-]+)\/conversions$/))) {
       const owner = m[1];
       return send(res, 201, {
-        id: 4242, slug: `maple-factory-${owner}`, owner: { login: owner, type: "Organization" },
+        id: 4242, slug: `maple-factory-${owner}`, owner: { login: owner, type: ownerType(owner) },
         client_id: "Iv23fakeclient", client_secret: "fake-client-secret", webhook_secret: "fake-webhook-secret",
         pem: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
       });
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/users\/([\w-]+)$/))) {
+      return send(res, 200, { login: m[1], type: ownerType(m[1]) });
     }
     if (req.method === "GET" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/installation$/))) {
       const why = verifyJwt(req.headers.authorization);

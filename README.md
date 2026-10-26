@@ -52,7 +52,8 @@ Each org runs its own factory in its own Cloudflare account, one of two ways:
   with `maple update` on the stable or beta channel. When R2 is off (Cloudflare's error 10042) it links
   to the dashboard and waits.
 
-Both finish at the factory's `/setup`, where an owner of the GitHub org creates the factory's GitHub App
+Both finish at the factory's `/setup`, where an owner of the GitHub org (or the person, when `GITHUB_ORG` is
+a personal account and the factory is just theirs) creates the factory's GitHub App
 from a manifest; its credentials are kept in D1 (server/src/settings.ts). See server/README.md.
 
 ## Releases

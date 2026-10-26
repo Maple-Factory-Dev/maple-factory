@@ -21,7 +21,8 @@ Either way, you end up with the factory at a URL in your account and finish at i
   custom domain if you give it one, and `maple update` moves it to the next stable or beta release.
   See [installer/](../installer).
 
-Then an owner of the GitHub org opens `https://<factory>/setup`. GitHub creates the factory's GitHub App
+Then an owner of the GitHub org opens `https://<factory>/setup`. (`GITHUB_ORG` can also be your own
+username: the app is then yours, and you're the only one who can sign in.) GitHub creates the factory's GitHub App
 from a manifest (sign-in, task branches and pull requests) and hands its credentials back. They're
 kept in D1, since a Worker can't set its own secrets. After installing the app, tick **Enable Device
 Flow** in its settings for the Mac app's sign-in; GitHub doesn't allow that from a manifest. Only an

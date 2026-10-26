@@ -17,7 +17,7 @@
   "cloudflare": {
     "bindings": {
       "GITHUB_ORG": {
-        "description": "Your GitHub organization's login (the `acme` in github.com/acme). Its members can sign in; after deploying, an owner opens `/setup` to create the GitHub App."
+        "description": "Your GitHub organization's login (the `acme` in github.com/acme), whose members can sign in, or your own username for a factory just for you. After deploying, open `/setup` (as an owner of the org, or as yourself) to create the GitHub App."
       },
       "RELEASE_CHANNEL": {
         "description": "`stable`, or `beta` for runner releases before they're stable."

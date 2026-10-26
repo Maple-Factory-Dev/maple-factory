@@ -296,11 +296,12 @@ async function install() {
   const account = await chooseAccount(token, opts.account);
   step("Cloudflare", `${account.name} ${ok("ok")}`);
 
-  const org = opts.org ?? (await ask("GitHub organization (the acme in github.com/acme):"));
-  if (!/^[A-Za-z0-9-]{1,39}$/.test(org)) fail(`${org || "That"} isn't a GitHub organization login.`);
-  const gh = await fetch(`https://api.github.com/orgs/${org}`, { headers: { "user-agent": "maple-factory" } });
-  if (gh.status === 404) fail(`GitHub has no organization called ${org}.`);
-  step("GitHub org", `${org} ${ok("ok")}`);
+  const org = opts.org ?? (await ask("GitHub organization, or your username for a factory just for you (the acme in github.com/acme):"));
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(org)) fail(`${org || "That"} isn't a GitHub login.`);
+  const gh = await fetch(`https://api.github.com/users/${org}`, { headers: { "user-agent": "maple-factory" } });
+  if (gh.status === 404) fail(`GitHub has no organization or user called ${org}.`);
+  const personal = gh.ok && (await gh.json()).type === "User";
+  step("GitHub org", `${org}${personal ? " (personal account: only you sign in)" : ""} ${ok("ok")}`);
 
   const domain = opts.domain ?? (process.stdin.isTTY ? await ask("Custom domain (blank for workers.dev):", { fallback: "" }) : "");
   if (domain && !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) fail(`${domain} isn't a domain name.`);
@@ -340,7 +341,7 @@ async function install() {
   }
   console.log(`\n${ok(`Your factory is up → ${url}`)}`);
   if (health.signIn !== "github") {
-    console.log(`\nLast step, in the browser: create its GitHub App (you need to be an owner of ${org}):\n  ${url}/setup`);
+    console.log(`\nLast step, in the browser: create its GitHub App (${personal ? `signed in to GitHub as ${org}` : `you need to be an owner of ${org}`}):\n  ${url}/setup`);
     openInBrowser(`${url}/setup`);
   }
   console.log(`\nThen sign in from the Mac app (Connect to a factory → ${url}) and add machines from Machines → Add machine.`);

@@ -1,4 +1,5 @@
-// Who may use this factory: members of one GitHub organization. The web signs in with GitHub's
+// Who may use this factory: members of one GitHub organization (or, when GITHUB_ORG is someone's
+// personal account, just them). The web signs in with GitHub's
 // OAuth redirect and gets a signed cookie; the apps use GitHub's device flow and get a bearer
 // token. Membership is checked with GitHub at every sign-in, and roles and teams come from there.
 
@@ -104,6 +105,15 @@ async function admit(env: Env, token: string): Promise<Verdict> {
   const me = await github<Identity>(token, "/user");
   if (!me.body?.login) return { ok: false, status: 502, message: "GitHub didn't say who you are." };
   const org = env.GITHUB_ORG;
+  // A personal account's factory: its owner, and nobody else. (No org shares a login with a user.)
+  if (me.body.login.toLowerCase() === org.toLowerCase()) {
+    await upsertMember(env, me.body, "admin", []);
+    return { ok: true, member: toMember((await memberRow(env, me.body.login))!) };
+  }
+  if (env.GITHUB_OWNER_TYPE === "User") {
+    await audit(env, `github:${me.body.login}`, "auth.denied", null, { org, personal: true });
+    return { ok: false, status: 403, message: `This factory is ${org}'s own: only ${org} can sign in.` };
+  }
   const membership = await github<{ state?: string; role?: string }>(token, `/user/memberships/orgs/${encodeURIComponent(org)}`);
   if (membership.status !== 200 || membership.body?.state !== "active") {
     await audit(env, `github:${me.body.login}`, "auth.denied", null, { org, status: membership.status });
@@ -145,7 +155,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
     if (!sameOrigin(request)) return text("Bad origin.", 403);
     return new Response(null, { status: 204, headers: { "set-cookie": cookie(url, "session", "", 0) } });
   }
-  if (!authConfigured(env)) return text(`GitHub sign-in isn't set up on this factory yet. An org owner can finish it at ${url.origin}/setup.`, 503);
+  if (!authConfigured(env)) return text(`GitHub sign-in isn't set up on this factory yet. An owner can finish it at ${url.origin}/setup.`, 503);
 
   // Web: OAuth redirect.
   if (url.pathname === "/auth/login") {

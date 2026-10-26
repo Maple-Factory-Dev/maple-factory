@@ -22,8 +22,8 @@ export function home(request: Request, env: Env, me: Member | null): Response {
          };
        </script>`
     : authConfigured(env)
-      ? `<p>Members of ${org} sign in with GitHub.</p><p><a href="/auth/login">Sign in with GitHub</a></p>`
-      : `<p>GitHub sign-in isn't set up yet.</p><p><a href="/setup">Finish setting up this factory</a> (an owner of ${org} on GitHub).</p>`;
+      ? `<p>${env.GITHUB_OWNER_TYPE === "User" ? `${org} signs` : `Members of ${org} sign`} in with GitHub.</p><p><a href="/auth/login">Sign in with GitHub</a></p>`
+      : `<p>GitHub sign-in isn't set up yet.</p><p><a href="/setup">Finish setting up this factory</a> (as ${org}, or an owner of it, on GitHub).</p>`;
   return page("Maple Factory", body);
 }
 
