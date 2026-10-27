@@ -37,6 +37,10 @@ struct MapleFactoryApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: launchWidth, height: 1000)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updater.shared.checkForUpdates() }
+                    .disabled(!Updater.shared.canCheck)
+            }
             CommandGroup(after: .sidebar) {
                 Button(state.showInspector ? "Hide Task Panel" : "Show Task Panel") {
                     withAnimation(.snappy(duration: 0.25)) { state.showInspector.toggle() }
@@ -83,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Running from `swift run` has no bundle, so promote to a regular foreground app.
         NSApp.setActivationPolicy(.regular)
         NSApp.applicationIconImage = MapleIcon.dockImage
-        NSApp.applicationIconImage = MapleIcon.dockImage
+        Updater.shared.start()
         NSApp.activate(ignoringOtherApps: true)
         // macOS restores the last window frame, so `-width` resizes after the window exists.
         let width = UserDefaults.standard.double(forKey: "width")

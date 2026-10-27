@@ -95,9 +95,10 @@ final class AppState {
         withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
     }
 
-    func finishOnboarding() {
+    /// `workspace`: the factory just joined, or the demo's when there's none.
+    func finishOnboarding(workspace: String = "Studio Workspace") {
         withAnimation(.easeInOut(duration: 0.45)) { showOnboarding = false }
-        showToast("Welcome to Studio Workspace", icon: "hand.wave.fill")
+        showToast("Welcome to \(workspace)", icon: "hand.wave.fill")
     }
 
     // MARK: Layout

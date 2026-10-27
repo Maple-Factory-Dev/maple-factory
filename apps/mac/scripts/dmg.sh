@@ -10,9 +10,8 @@ set -eu
 unset CDPATH
 
 here="$(dirname "$(dirname "$(realpath "$0")")")"
-root="$(dirname "$(dirname "$here")")"
 app="$("$here/scripts/bundle.sh" release | tail -1)"
-version="$(git -C "$root" describe --tags --always 2>/dev/null || echo 0.0.0)"
+version="$(plutil -extract version raw "$here/version.json")"
 dmg="$here/build/Maple-Factory-$version.dmg"
 
 stage="$(mktemp -d)"

@@ -3,7 +3,8 @@
 # Info.plist that registers maplefactory:// (task links from the factory's /t/<id> pages open the app),
 # and in Contents/Helpers the runner and tmux, universal, which "Add this Mac" installs.
 #   apps/mac/scripts/bundle.sh [debug|release]      → apps/mac/build/Maple Factory.app
-# Signs ad hoc unless SIGN_IDENTITY names a Developer ID ("Developer ID Application: …").
+# Signs ad hoc unless SIGN_IDENTITY names a Developer ID ("Developer ID Application: …"). The version
+# is version.json's (scripts/release.mjs bumps it); Sparkle checks UPDATES_URL/appcast.xml for newer ones.
 set -eu
 unset CDPATH
 
@@ -14,13 +15,19 @@ cd "$here"
 
 swift build -c "$config"
 bin="$(swift build -c "$config" --show-bin-path)"
-version="$(git -C "$root" describe --tags --always 2>/dev/null || echo 0.0.0)"
+version="$(plutil -extract version raw "$here/version.json")"
+build="$(plutil -extract build raw "$here/version.json")"
+updates="${UPDATES_URL:-https://updates.maplefactory.dev}"
 
 app="$here/build/Maple Factory.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/MapleFactory" "$app/Contents/MacOS/MapleFactory"
 for bundle in "$bin"/*.bundle; do cp -R "$bundle" "$app/Contents/Resources/"; done
+# Sparkle, where the binary looks for it. ditto keeps the framework's symlinks.
+mkdir -p "$app/Contents/Frameworks"
+ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
+install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/MapleFactory"
 
 # The runner for both architectures, and a tmux that needs nothing from Homebrew.
 mkdir -p "$app/Contents/Helpers"
@@ -53,9 +60,13 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
-  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${build}</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>SUFeedURL</key><string>${updates}/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>g9Kk8H1vNiqHXzA8sI6+55GCkZ2vc321tJOsbbNDdCY=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>21600</integer>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -67,11 +78,16 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Inside out: the helpers, then the app.
-for helper in "$app/Contents/Helpers/"*; do
-  codesign --force --sign "${SIGN_IDENTITY:--}" ${SIGN_IDENTITY:+--options runtime --timestamp} "$helper"
-done
-codesign --force --sign "${SIGN_IDENTITY:--}" ${SIGN_IDENTITY:+--options runtime --timestamp} "$app"
+# Inside out: the helpers, Sparkle's (as its docs order them), the framework, then the app.
+sign() { codesign --force --sign "${SIGN_IDENTITY:--}" ${SIGN_IDENTITY:+--options runtime --timestamp} "$@"; }
+for helper in "$app/Contents/Helpers/"*; do sign "$helper"; done
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+sign "$sparkle/Versions/B/XPCServices/Installer.xpc"
+sign --preserve-metadata=entitlements "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+sign "$sparkle/Versions/B/Autoupdate"
+sign "$sparkle/Versions/B/Updater.app"
+sign "$sparkle"
+sign "$app"
 # Tell Launch Services about it, so maplefactory:// links open this copy.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
 echo "$app"

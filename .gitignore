@@ -6,3 +6,5 @@ node_modules/
 .dev.vars
 .wrangler/
 apps/mac/build/
+# Release credentials for the Mac app; see apps/mac/.env.release.example.
+apps/mac/.env.release

@@ -300,7 +300,7 @@ struct OnboardingView: View {
 
             PrimaryWideButton(title: "Open workspace", icon: "arrow.right", enabled: true) {
                 if signedIn != nil { state.destination = .machines }
-                state.finishOnboarding()
+                state.finishOnboarding(workspace: signedIn != nil ? client.workspaceName : "Studio Workspace")
             }
             .keyboardShortcut(.defaultAction)
         }

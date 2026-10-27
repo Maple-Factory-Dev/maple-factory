@@ -6,7 +6,7 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case account, repos, people, runner
+        case account, repos, people, runner, updates
 
         var title: String {
             switch self {
@@ -14,6 +14,7 @@ struct OrgSettingsView: View {
             case .repos: "Repositories"
             case .people: "People"
             case .runner: "Runner"
+            case .updates: "Updates"
             }
         }
 
@@ -23,6 +24,7 @@ struct OrgSettingsView: View {
             case .repos: "shippingbox"
             case .people: "person.2"
             case .runner: "laptopcomputer"
+            case .updates: "arrow.down.circle"
             }
         }
     }
@@ -37,7 +39,7 @@ struct OrgSettingsView: View {
                 Section("Factory") {
                     ForEach([Pane.account, .repos, .people], id: \.self) { row($0) }
                 }
-                Section("This Mac") { row(.runner) }
+                Section("This Mac") { row(.runner); row(.updates) }
             }
             .listStyle(.sidebar)
             .frame(width: 190)
@@ -49,6 +51,7 @@ struct OrgSettingsView: View {
                 case .repos: RepositoriesSettings()
                 case .people: PeopleSettings()
                 case .runner: ScrollView { RunnerSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                case .updates: ScrollView { UpdateSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -105,6 +108,48 @@ struct AccountSettings: View {
         }
         .font(.system(size: 13))
         .padding(20)
+    }
+}
+
+/// The app's own updates: which releases it takes, and checking now.
+struct UpdateSettings: View {
+    @Bindable private var updater = Updater.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Updates", detail: "Maple Factory updates itself from maplefactory.dev. Runners and the factory's server update on their own.")
+            SettingsCard {
+                LabeledContent("Version", value: updater.version)
+                if updater.available {
+                    Toggle("Check for updates automatically", isOn: $updater.automaticChecks)
+                    Picker("Channel", selection: $updater.channel) {
+                        ForEach(Updater.Channel.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    if updater.channel == .beta {
+                        Text("Beta gets prereleases as well as releases. Going back to Stable keeps the beta you have until a release passes it.")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                    HStack {
+                        Button("Check Now") { updater.checkForUpdates() }.disabled(!updater.canCheck)
+                        Spacer()
+                        Text(status).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                } else {
+                    Text("This build doesn't update itself (it isn't a release build).")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+    }
+
+    private var status: String {
+        switch updater.result {
+        case .some(.some(let version)): return "\(version) is available"
+        case .some(.none): return "Up to date"
+        case .none: return updater.lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet"
+        }
     }
 }
 
