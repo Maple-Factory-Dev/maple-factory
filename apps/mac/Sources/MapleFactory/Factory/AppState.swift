@@ -43,6 +43,8 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
+    /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
+    var confirmingCancel: String? = nil
     /// Starts as it was left (in a full-width window), so a closed task panel stays closed.
     var showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true {
         // A narrow window hides and floats it on its own; only choices in a full-width one stick.
@@ -797,7 +799,10 @@ final class AppState {
             client.send(.taskCancel(.init(id: id)))
             return
         }
-        update(id) { $0.state = .cancelled }
+        update(id) { task in
+            task.state = .cancelled
+            if task.pr?.state == .open || task.pr?.state == .draft { task.pr?.state = .closed }
+        }
     }
 
     func retry(_ id: String) {
@@ -1292,6 +1297,10 @@ final class AppState {
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
+            // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
+            case "cancelask": confirmingCancel = parts[1]
+            case "cancel": confirmingCancel = nil; cancel(parts[1])
+            case "retry": retry(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)

@@ -59,6 +59,7 @@ struct TaskOwnership: View {
 
 /// The ⋯ menu on a task: Retry and Cancel task…, with Cancel's confirmation. Nothing on a merged task.
 struct TaskActionsMenu<Label: View>: View {
+    @Environment(AppState.self) private var appState
     let task: FactoryTask
     @ViewBuilder var label: Label
     @State private var confirmCancel = false
@@ -74,7 +75,10 @@ struct TaskActionsMenu<Label: View>: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Task actions")
-            .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
+            .cancelTaskConfirmation(task: task, isPresented: Binding(
+                get: { confirmCancel || appState.confirmingCancel == task.id },
+                set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
+            ))
         }
     }
 }
