@@ -338,9 +338,9 @@ pub enum RiskLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PromptChoice {
-    /// Allow it (the menu's 1).
+    /// Allow it once (the menu's 1).
     Yes,
-    /// Deny it (the menu's 2).
+    /// Deny it (Esc: the menu's No isn't always 2).
     No,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]

@@ -64,7 +64,7 @@ export class MachineHub extends DurableObject<Env> {
       case "/input": {
         // The factory typing into a session: steering, answers. Text, then Enter on its own, so a
         // TUI that treats a fast paste-plus-return as a newline still submits. With `keys`, the text
-        // is sent as typed keys, nothing added: a permission menu's "1".
+        // is sent as typed keys, nothing added: a permission menu's "1" or Esc.
         const { session, text, keys } = (await request.json()) as { session: string; text: string; keys?: boolean };
         const runner = this.runner();
         if (!runner) return new Response("That machine is offline.", { status: 409 });

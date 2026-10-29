@@ -612,7 +612,7 @@ struct PermissionPromptCard: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { answer(choice) }
-        .help(choice == .yes ? "Allow it in the session (1)" : "Deny it in the session (2)")
+        .help(choice == .yes ? "Allow it once in the session (1)" : "Deny it in the session (Esc)")
     }
 
     private func answer(_ choice: Wire.PromptChoice) {

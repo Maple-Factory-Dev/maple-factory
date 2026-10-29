@@ -94,7 +94,7 @@ export const enums: Record<string, Enum> = {
   PRState: { values: { draft: "Draft.", open: "Open.", merged: "Merged.", closed: "Closed without merging." } },
   CheckStatus: { values: { queued: "Queued.", running: "Running.", passed: "Passed.", failed: "Failed." } },
   RiskLevel: { values: { low: "Low.", medium: "Medium.", high: "High." } },
-  PromptChoice: { values: { yes: "Allow it (the menu's 1).", no: "Deny it (the menu's 2)." } },
+  PromptChoice: { values: { yes: "Allow it once (the menu's 1).", no: "Deny it (Esc: the menu's No isn't always 2)." } },
   RepoSource: { values: { github: "Granted to the GitHub App.", manual: "Added by an admin." } },
   AgentState: {
     doc: "What a session's agent is doing, from its hooks.",

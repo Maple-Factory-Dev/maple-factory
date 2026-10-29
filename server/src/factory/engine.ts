@@ -322,7 +322,9 @@ export class Engine {
         const permission = activity?.state === "waiting" ? (activity.question as { permission?: { tool?: string } } | null)?.permission : undefined;
         if (!activity || !permission) fail(`Its ${w.role} isn't waiting on a permission prompt.`);
         if (this.answered.get(w.session) === activity!.at) fail("That prompt has already been answered.");
-        const ok = await this.press(task, msg.choice === "yes" ? "1" : "2");
+        // 1 is always "Yes" (once). No is whichever number comes last ("2. Yes, and don't ask again" can
+        // sit before it), so it's Esc, Claude's own way out of the menu, which denies the tool call.
+        const ok = await this.press(task, msg.choice === "yes" ? "1" : "\x1b");
         if (!ok) fail(`${machine?.name ?? w.machine} is offline.`);
         this.answered.set(w.session, activity!.at);
         this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${permission!.tool ?? "it"}`);

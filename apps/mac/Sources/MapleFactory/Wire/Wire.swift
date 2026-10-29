@@ -1003,9 +1003,9 @@ public enum Wire {
     }
 
     public enum PromptChoice: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
-        /// Allow it (the menu's 1).
+        /// Allow it once (the menu's 1).
         case yes
-        /// Deny it (the menu's 2).
+        /// Deny it (Esc: the menu's No isn't always 2).
         case no
         /// A value this build doesn't know yet; newer servers may send them.
         case other(String)
