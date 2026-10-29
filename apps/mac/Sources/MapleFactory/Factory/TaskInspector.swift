@@ -20,6 +20,7 @@ struct TaskInspector: View {
                 Text(task.id)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.textMuted)
+                if let risk = appState.risk(for: task) { RiskBadge(level: risk.level) }
                 if let viewer = task.viewers.first {
                     ViewerPill(viewer: viewer).padding(.leading, 4)
                 }
@@ -27,9 +28,17 @@ struct TaskInspector: View {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
-                    .onTapGesture { appState.openFocus(task.id) }
+                    .onTapGesture(perform: openFull)
                     .help("Open full view (⌘↩)")
-                Image(systemName: "ellipsis").padding(.leading, 4)
+                Button(action: appState.closeTaskPanel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close (Esc)")
             }
             .font(.system(size: 13))
             .foregroundStyle(Theme.textMuted)
@@ -37,7 +46,7 @@ struct TaskInspector: View {
             .frame(height: 46)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(task.title)
                             .font(.system(size: 17, weight: .semibold))
@@ -47,26 +56,14 @@ struct TaskInspector: View {
                     }
                     SinceLastViewedBanner(task: task, compact: true)
                     PipelineStepper(state: task.state)
+                    // What needs attention now comes first; the rest is a line each, opening the full view.
                     if task.liveLog != nil, task.state == .planning || task.state == .building { LiveStrip(task: task) }
                     if let question = task.question, task.hand == nil { QuestionBlock(task: task, question: question) }
                     if let hand = task.hand { InspectorHandCallout(task: task, hand: hand) }
-                    if let review = task.autoReview, let round = review.current {
-                        TaskSection(title: "Automated review") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text("Round \(round.number) of \(review.maxRounds)")
-                                        .font(.system(size: 12.5, weight: .medium))
-                                        .foregroundStyle(Theme.text)
-                                    Spacer()
-                                    VerdictPill(verdict: round.verdict)
-                                }
-                                RoundTrack(review: review)
-                                Text(review.summary)
-                                    .font(.system(size: 12.5))
-                                    .foregroundStyle(Theme.textMuted)
-                                    .lineLimit(4)
-                            }
-                        }
+                    if task.state == .awaitingApproval { ApprovalBlock(task: task, onRequestChanges: requestChanges) }
+                    if task.state == .reviewing { ReviewActions(task: task, onRequestChanges: requestChanges) }
+                    if !requests.isEmpty {
+                        TaskSection(title: "Changes requested") { ChangeRequestList(task: task, requests: requests) }
                     }
                     if !task.brief.isEmpty {
                         TaskSection(title: "Brief") {
@@ -74,20 +71,27 @@ struct TaskInspector: View {
                                 .font(Theme.uiFont)
                                 .foregroundStyle(Theme.text.opacity(0.88))
                                 .lineSpacing(4)
+                                .lineLimit(4)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    if !task.plan.isEmpty { PlanSection(task: task) }
-                    if !task.doneWhen.isEmpty { DoneWhenSection(task: task) }
-                    if let risk = appState.risk(for: task) { RiskBox(task: task, risk: risk) }
-                    if let pr = task.pr { PullRequestCard(task: task, pr: pr) }
-                    if task.state == .awaitingApproval { ApprovalBlock(task: task, onRequestChanges: requestChanges) }
-                    if task.state == .reviewing { ReviewActions(task: task, onRequestChanges: requestChanges) }
-                    if !requests.isEmpty {
-                        TaskSection(title: "Changes requested") { ChangeRequestList(task: task, requests: requests) }
+                    if hasSummaries {
+                        PeekGroup {
+                            if !task.plan.isEmpty { PeekRow(icon: "list.number", title: planTitle, detail: planDetail, action: openFull) }
+                            if !task.doneWhen.isEmpty {
+                                PeekRow(icon: "checkmark.seal", title: "Done when", detail: doneWhenDetail, action: openFull) {
+                                    if collectingProof { ProofMeter(criteria: task.doneWhen) }
+                                }
+                            }
+                            if let review = task.autoReview, let round = review.current {
+                                PeekRow(icon: "eye", title: "Review", detail: "round \(round.number) of \(review.maxRounds)", action: openFull) {
+                                    VerdictPill(verdict: round.verdict)
+                                }
+                            }
+                            if let pr = task.pr { PullRequestRow(pr: pr, openFull: openFull) }
+                        }
                     }
-                    if !comments.isEmpty { TaskSection(title: "Discussion") { DiscussionList(comments: comments) } }
-                    if !task.activity.isEmpty { TaskSection(title: "Activity") { ActivityFeed(items: task.activity) } }
+                    if !comments.isEmpty { DiscussionPeek(comments: comments, openFull: openFull) }
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 20)
@@ -98,10 +102,50 @@ struct TaskInspector: View {
                 if appState.focusedTask != task.id { appState.markSeen(task.id) }
             }
 
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
+                Text("Open full view")
+                Spacer()
+                Text("⌘↩").foregroundStyle(Theme.textFaint)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: openFull)
+
             TaskComposer(task: task, mode: $mode, focused: $composerFocused)
                 .padding(16)
         }
     }
+
+    private var hasSummaries: Bool {
+        !task.plan.isEmpty || !task.doneWhen.isEmpty || task.autoReview?.current != nil || task.pr != nil
+    }
+
+    private var collectingProof: Bool { [.building, .reviewing, .merged].contains(task.state) }
+
+    private var planTitle: String {
+        switch task.state {
+        case .planning: "Draft plan"
+        case .building: "Progress"
+        default: "Plan"
+        }
+    }
+
+    private var planDetail: String {
+        let steps = task.plan.count == 1 ? "1 step" : "\(task.plan.count) steps"
+        guard task.state == .building else { return steps }
+        return "\(task.plan.filter { $0.progress == .done }.count) of \(steps)"
+    }
+
+    private var doneWhenDetail: String {
+        if collectingProof { return "\(task.proven) of \(task.doneWhen.count) proven" }
+        return task.doneWhen.count == 1 ? "1 check" : "\(task.doneWhen.count) checks"
+    }
+
+    private func openFull() { appState.openFocus(task.id) }
 
     private func requestChanges() {
         mode = .steer
