@@ -46,6 +46,8 @@ pub enum TaskState {
     Planning,
     /// The plan waits for its approvals.
     AwaitingApproval,
+    /// Parked for later, planned or not; nothing runs until someone picks it up.
+    Backlog,
     /// Approved: queued for a slot, or a builder is working.
     Building,
     /// Pushed: the review agent and people are reviewing it.
@@ -1980,9 +1982,14 @@ pub enum ClientMessage {
         /// The member's login.
         owner: String,
     },
-    /// Send a draft to planning.
+    /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     #[serde(rename = "task.plan")]
     TaskPlan {
+        id: String,
+    },
+    /// Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.
+    #[serde(rename = "task.backlog")]
+    TaskBacklog {
         id: String,
     },
     #[serde(rename = "task.comment")]
@@ -2000,6 +2007,7 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<String>,
     },
+    /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     #[serde(rename = "task.approvePlan")]
     TaskApprovePlan {
         id: String,

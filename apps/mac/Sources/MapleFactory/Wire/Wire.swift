@@ -113,6 +113,8 @@ public enum Wire {
         case planning
         /// The plan waits for its approvals.
         case awaitingApproval
+        /// Parked for later, planned or not; nothing runs until someone picks it up.
+        case backlog
         /// Approved: queued for a slot, or a builder is working.
         case building
         /// Pushed: the review agent and people are reviewing it.
@@ -125,13 +127,14 @@ public enum Wire {
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .building, .reviewing, .merged, .cancelled]
+        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged, .cancelled]
 
         public init(rawValue: String) {
             switch rawValue {
             case "drafting": self = .drafting
             case "planning": self = .planning
             case "awaitingApproval": self = .awaitingApproval
+            case "backlog": self = .backlog
             case "building": self = .building
             case "reviewing": self = .reviewing
             case "merged": self = .merged
@@ -145,6 +148,7 @@ public enum Wire {
             case .drafting: "drafting"
             case .planning: "planning"
             case .awaitingApproval: "awaitingApproval"
+            case .backlog: "backlog"
             case .building: "building"
             case .reviewing: "reviewing"
             case .merged: "merged"
@@ -3920,8 +3924,17 @@ public enum Wire {
         }
     }
 
-    /// Send a draft to planning.
+    /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     public struct ClientMessageTaskPlan: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.
+    public struct ClientMessageTaskBacklog: Codable, Hashable, Sendable {
         public var id: String
 
         public init(id: String) {
@@ -3954,6 +3967,7 @@ public enum Wire {
         }
     }
 
+    /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
         public var id: String
 
@@ -4147,6 +4161,7 @@ public enum Wire {
         case taskEdit(ClientMessageTaskEdit)
         case taskAssign(ClientMessageTaskAssign)
         case taskPlan(ClientMessageTaskPlan)
+        case taskBacklog(ClientMessageTaskBacklog)
         case taskComment(ClientMessageTaskComment)
         case taskSteer(ClientMessageTaskSteer)
         case taskApprovePlan(ClientMessageTaskApprovePlan)
@@ -4203,6 +4218,7 @@ public enum Wire {
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
             case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
+            case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
             case "task.approvePlan": self = .taskApprovePlan(try ClientMessageTaskApprovePlan(from: decoder))
@@ -4317,6 +4333,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskPlan(let body):
                 try c.encode("task.plan", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskBacklog(let body):
+                try c.encode("task.backlog", forKey: .type)
                 try body.encode(to: encoder)
             case .taskComment(let body):
                 try c.encode("task.comment", forKey: .type)
