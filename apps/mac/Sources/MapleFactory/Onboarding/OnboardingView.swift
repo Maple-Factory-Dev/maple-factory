@@ -15,6 +15,8 @@ struct OnboardingView: View {
     @State private var device: FactoryClient.DeviceCode?
     @State private var signedIn: FactoryClient.SignInResult?
     @State private var signInTask: Task<Void, Never>?
+    /// Went back to the workspace: anything still in flight lands nowhere.
+    @State private var cancelled = false
     /// `-onboardingAuto` and `-onboardingStep` play the scripted demo instead of talking to a server.
     private let demo = UserDefaults.standard.bool(forKey: "onboardingAuto") || UserDefaults.standard.string(forKey: "onboardingStep") != nil
 
@@ -65,6 +67,14 @@ struct OnboardingView: View {
                 Spacer(minLength: 24)
 
                 footer.padding(.bottom, 22)
+            }
+
+            if state.onboardingCanCancel && step != .ready {
+                backButton
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.top, 50)
+                    .padding(.leading, 24)
+                    .transition(.opacity)
             }
         }
         .ignoresSafeArea()
@@ -377,6 +387,32 @@ struct OnboardingView: View {
 
     // MARK: Pieces
 
+    /// Opened from the workspace by accident: back out without touching the connected factory. Escape too.
+    private var backButton: some View {
+        Button(action: goBack) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                Text("Back to \(client.workspaceName)")
+                Text("esc")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.textFaint)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.stroke))
+                    .padding(.leading, 3)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Theme.textMuted)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(Capsule().fill(Theme.fill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.cancelAction)
+        .help("Back to the workspace (Esc)")
+    }
+
     private var orgName: String {
         let org = signedIn?.org ?? health?.org ?? ""
         return org.isEmpty ? "Atlas Factory" : org
@@ -480,6 +516,12 @@ struct OnboardingView: View {
 
     // MARK: Flow
 
+    private func goBack() {
+        cancelled = true
+        signInTask?.cancel()
+        state.cancelOnboarding()
+    }
+
     private func connect() {
         let host = url.trimmingCharacters(in: .whitespaces)
         guard step == .url, !host.isEmpty else { return }
@@ -502,6 +544,7 @@ struct OnboardingView: View {
             withAnimation(.snappy(duration: 0.25)) { checks = [reach] }
             do {
                 let (found, took) = try await FactoryClient.probe(target)
+                guard !cancelled else { return }
                 let ms = Int(took.components.attoseconds / 1_000_000_000_000_000) + Int(took.components.seconds) * 1000
                 mark(reach.id, detail: "\(ms) ms")
                 let secure = Check(text: target.scheme == "https" ? "Secure connection" : "Local connection",
@@ -520,8 +563,10 @@ struct OnboardingView: View {
                 server = target
                 health = found
                 try? await Task.sleep(for: .milliseconds(700))
+                guard !cancelled else { return }
                 withAnimation(.snappy(duration: 0.35)) { step = .signIn }
             } catch {
+                guard !cancelled else { return }
                 fail(FactoryClient.describe(error))
             }
         }
@@ -610,6 +655,8 @@ struct OnboardingView: View {
     }
 
     private func finish(_ result: FactoryClient.SignInResult) {
+        // A sign-in that answers after going back mustn't swap out the factory still connected.
+        guard !cancelled else { return }
         var recent = UserDefaults.standard.stringArray(forKey: "recentFactories") ?? []
         recent.removeAll { $0 == url }
         recent.insert(url, at: 0)
