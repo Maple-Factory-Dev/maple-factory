@@ -1794,6 +1794,8 @@ final class AppState {
             // The Timeline's "Show merged" pill, and moving to another goal or page.
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
+            // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
+            case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

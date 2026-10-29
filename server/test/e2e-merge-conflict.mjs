@@ -1,7 +1,9 @@
-// A merge that fails: the task raises a "didn't merge" hand instead of getting stuck, the factory
-// doesn't retry on its own, "Try the merge again" retries once, Request changes with the hand open
-// hands it to a builder, and "Send it back to fix" starts a
+// A merge that fails. With "Fix merges automatically" off: the task raises a "didn't merge" hand
+// instead of getting stuck, the factory doesn't retry on its own, "Try the merge again" retries once,
+// Request changes with the hand open hands it to a builder, and "Send it back to fix" starts a
 // new builder in the same worktree that merges the base in, after which review runs again and it merges.
+// With it on: a conflicting merge goes straight back to a builder (no hand) and then merges, and one
+// that keeps failing raises the hand after 2 automatic tries.
 //   node server/test/e2e-merge-conflict.mjs http://localhost:8788 <repo folder>
 // Needs a real runner whose agents.toml has the `scripted` agent (test/scripted-agent.mjs), and a
 // local repo whose origin is a bare repo.
@@ -20,13 +22,15 @@ const feed = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `
 const tasks = new Map();
 const cwds = new Map(); // session id → its folder, from the machines' live sessions
 let goals = [];
+let policy = null;
 const errors = [];
 let poke = null;
 const sessions = (m) => { for (const s of m.sessions ?? []) cwds.set(s.session.id, s.session.cwd); };
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
-  if (m.type === "snapshot") { goals = m.goals; for (const t of m.tasks) tasks.set(t.id, t); m.machines.forEach(sessions); }
+  if (m.type === "snapshot") { goals = m.goals; policy = m.policy; for (const t of m.tasks) tasks.set(t.id, t); m.machines.forEach(sessions); }
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
+  if (m.type === "policy.updated") policy = m.policy;
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "machine.updated") sessions(m.machine);
   if (m.type === "error") errors.push(m.message);
@@ -50,7 +54,14 @@ const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
 
 await new Promise((r) => (feed.onopen = r));
 send({ type: "subscribe" });
-await wait("snapshot", () => tasks.size >= 0 && goals);
+await wait("snapshot", () => policy);
+const original = policy;
+const autoFix = async (on) => {
+  send({ type: "policy.save", policy: { ...policy, autoFixMerges: on } });
+  await wait(`autoFixMerges ${on}`, () => policy.autoFixMerges === on);
+  step(`Fix merges automatically: ${on ? "on" : "off"}`);
+};
+await autoFix(false);
 
 const prefix = `M${Date.now() % 100000}`.slice(0, 6);
 send({ type: "goal.save", goal: { id: "", name: `Merge ${prefix}`, prefix, color: "#2EA043", summary: "Merge conflict test", lead: "", folder, base: "main" } });
@@ -68,13 +79,16 @@ step(`${id} building in ${worktree}`);
 
 // Someone else lands a hello.txt on main meanwhile: the task's branch no longer merges cleanly.
 const origin = git("-C", folder, "remote", "get-url", "origin");
-const other = mkdtempSync(join(tmpdir(), "mf-conflict-"));
-git("clone", "--quiet", origin, other);
-writeFileSync(join(other, "hello.txt"), `hello from main (${prefix})\n`);
-git("-C", other, "add", "hello.txt");
-git("-C", other, "-c", "user.name=Other", "-c", "user.email=other@maple.invalid", "commit", "--quiet", "-m", "Someone else's hello.txt");
-git("-C", other, "push", "--quiet", "origin", "HEAD:main");
-rmSync(other, { recursive: true, force: true });
+const conflict = (text) => {
+  const other = mkdtempSync(join(tmpdir(), "mf-conflict-"));
+  git("clone", "--quiet", origin, other);
+  writeFileSync(join(other, "hello.txt"), text);
+  git("-C", other, "add", "hello.txt");
+  git("-C", other, "-c", "user.name=Other", "-c", "user.email=other@maple.invalid", "commit", "--quiet", "-m", "Someone else's hello.txt");
+  git("-C", other, "push", "--quiet", "origin", "HEAD:main");
+  rmSync(other, { recursive: true, force: true });
+};
+conflict(`hello from main (${prefix})\n`);
 step("pushed a conflicting hello.txt to origin main");
 
 t = await wait("review passed", () => tasks.get(id)?.autoReview?.rounds.at(-1)?.verdict === "passed" && tasks.get(id), 120000);
@@ -138,6 +152,60 @@ t = await wait("merged", () => tasks.get(id)?.state === "merged" && tasks.get(id
 const hello = git("-C", origin, "show", "main:hello.txt");
 if (!hello.includes(id) || !hello.includes("hello from main")) throw new Error(`origin's main has ${JSON.stringify(hello)}`);
 step(`merged; origin main hello.txt keeps both sides: ${JSON.stringify(hello.split("\n"))}`);
-console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}`);
+console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
+
+// 6. Fix merges automatically, on: a task whose branch won't merge goes back to a builder with no hand.
+await autoFix(true);
+const build = async (n, what) => {
+  const id = `${prefix}-${n}`;
+  send({ type: "task.create", goal: goal.id, title: what, brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+  await wait(`${id} plan`, () => tasks.get(id)?.state === "awaitingApproval", 60000);
+  send({ type: "task.approvePlan", id });
+  await wait(`${id} builder`, () => tasks.get(id)?.worker?.role === "builder");
+  return id;
+};
+const autoFixed = (t) => t.events.filter((e) => /^couldn't merge: .*; sent it back to fix the merge \(try \d of 2\)$/.test(e.text));
+const id2 = await build(2, "Say hello, fixed automatically");
+conflict(`hello from main again (${prefix}-2)\n`);
+step(`${id2} building; pushed a conflicting hello.txt to origin main`);
+t = await wait(`${id2} sent back`, () => { const t = tasks.get(id2); return t && autoFixed(t).length === 1 && t.state === "building" && t; }, 180000);
+if (t.hand) throw new Error(`it's building with a ${t.hand.reason} hand up`);
+const fix = t.changes.at(-1);
+if (fix.author !== "factory" || fix.anchor !== "Didn't merge into main") throw new Error(`its change request is ${JSON.stringify(fix)}`);
+step(`the merge failed and it went back to building on its own, no hand: "${autoFixed(t)[0].text.slice(0, 110)}…"`);
+step(`with ${fix.id} from ${fix.author}: ${fix.text.split(" (")[0]}… [${fix.anchor}]`);
+t = await wait(`${id2} merged`, () => tasks.get(id2)?.state === "merged" && tasks.get(id2), 180000);
+if (t.events.some((e) => e.text.startsWith("stopped and needs a hand"))) throw new Error("a hand was raised on the way");
+step(`${id2} merged after 1 automatic fix, with no hand raised`);
+console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
+
+// 7. A merge that keeps failing (main moves again each time the builder fixes it): 2 automatic tries, then the hand.
+const id3 = await build(3, "Say hello, never merging");
+let pushes = 1;
+conflict(`hello from main, take ${pushes} (${prefix}-3)\n`);
+step(`${id3} building; pushed a conflicting hello.txt to origin main`);
+for (let n = 1; n <= 2; n++) {
+  t = await wait(`${id3} try ${n}`, () => { const t = tasks.get(id3); return t && autoFixed(t).length === n && t.state === "building" && t.changes.length === n && t; }, 180000);
+  if (t.hand) throw new Error(`try ${n} came with a ${t.hand.reason} hand`);
+  const c = t.changes.at(-1);
+  step(`try ${n}: sent back to fix the merge with ${c.id}, no hand`);
+  await wait(`${c.id} applied`, () => tasks.get(id3)?.changes.find((x) => x.id === c.id)?.status === "applied", 120000);
+  // The builder has merged main in; main moves again before the factory merges.
+  conflict(`hello from main, take ${++pushes} (${prefix}-3)\n`);
+  step(`${c.id} applied; pushed another conflicting hello.txt to origin main`);
+}
+t = await wait(`${id3} hand`, () => tasks.get(id3)?.hand?.reason === "mergeFailed" && tasks.get(id3), 180000);
+if (autoFixed(t).length !== 2) throw new Error(`it tried ${autoFixed(t).length} automatic fixes`);
+if (!t.hand.summary.endsWith("(after 2 tries)")) throw new Error(`the hand says ${JSON.stringify(t.hand.summary)}`);
+step(`after 2 automatic tries the hand is up: ${t.hand.summary.split("\n")[0]}`);
+step(`its options: ${t.hand.options.map((o) => o.title + (o.recommended ? " (recommended)" : "")).join(" · ")}`);
+await pause(5000);
+if (tasks.get(id3).state !== "reviewing" || autoFixed(tasks.get(id3)).length !== 2) throw new Error(`it's ${tasks.get(id3).state} after ${autoFixed(tasks.get(id3)).length} tries`);
+step("5s later: still reviewing with the hand up; no third try");
+console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
+send({ type: "task.cancel", id: id3 });
+
+send({ type: "policy.save", policy: original });
+await wait("policy restored", () => (policy.autoFixMerges !== false) === (original.autoFixMerges !== false));
 feed.close();
 process.exit(0);

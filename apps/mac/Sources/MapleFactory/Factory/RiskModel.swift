@@ -51,6 +51,8 @@ struct RiskPolicy {
     var planApprovals: [RiskLevel: Int] = [.low: 1, .medium: 1, .high: 2]
     var finalReviews: [RiskLevel: Int] = [.low: 0, .medium: 1, .high: 2]
     var autoMerge: [RiskLevel: Bool] = [.low: true, .medium: false, .high: false]
+    /// An approved change that won't merge goes back to a builder to fix before anyone's asked.
+    var autoFixMerges = true
 
     func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
         guard let footprint = task.footprint else { return nil }

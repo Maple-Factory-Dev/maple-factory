@@ -269,6 +269,7 @@ import SwiftUI
             policy.finalReviews[level] = p.finalReviews[key].map(Int.init) ?? policy.finalReviews[level]
             policy.autoMerge[level] = p.autoMerge[key] ?? policy.autoMerge[level]
         }
+        policy.autoFixMerges = p.autoFixMerges ?? true
         return policy
     }
 
@@ -278,7 +279,8 @@ import SwiftUI
             maxFiles: UInt32(policy.maxFiles), maxLines: UInt32(policy.maxLines),
             areas: policy.sensitiveAreas.map { Wire.SensitiveArea(name: $0.name, paths: $0.paths, level: wireLevel($0.level), enabled: $0.enabled) },
             planApprovals: keyed(policy.planApprovals), finalReviews: keyed(policy.finalReviews),
-            autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) })
+            autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
+            autoFixMerges: policy.autoFixMerges
         )
     }
 

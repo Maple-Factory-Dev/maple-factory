@@ -1087,6 +1087,9 @@ pub struct RiskPolicy {
     pub final_reviews: BTreeMap<String, u32>,
     #[serde(default)]
     pub auto_merge: BTreeMap<String, bool>,
+    /// When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_fix_merges: Option<bool>,
 }
 
 /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.

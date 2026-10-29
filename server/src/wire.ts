@@ -572,6 +572,8 @@ export interface RiskPolicy {
   planApprovals: Record<string, number>;
   finalReviews: Record<string, number>;
   autoMerge: Record<string, boolean>;
+  /** When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on. */
+  autoFixMerges?: boolean | null;
 }
 
 /** Text added to every factory session's prompt, by role: the org's, then a goal's after it. */
