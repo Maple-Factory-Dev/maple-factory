@@ -1796,6 +1796,8 @@ final class AppState {
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
+            case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
