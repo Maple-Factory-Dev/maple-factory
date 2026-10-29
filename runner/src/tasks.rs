@@ -191,7 +191,23 @@ async fn merge(dir: &Path, m: &Merge) -> Result<String> {
     git(dir, &["checkout", "--quiet", "--detach", &format!("origin/{}", m.base)], None).await?;
     git(dir, &["merge", "--no-ff", "--quiet", "-m", &m.title, &m.branch], None).await.map_err(|e| anyhow!("It doesn't merge cleanly into {}: {e}", m.base))?;
     git(dir, &["push", "--quiet", "origin", &format!("HEAD:refs/heads/{}", m.base)], None).await?;
-    Ok(git(dir, &["rev-parse", "HEAD"], None).await?.trim().to_string())
+    let commit = git(dir, &["rev-parse", "HEAD"], None).await?.trim().to_string();
+    delete_merged_branch(dir, m).await;
+    Ok(commit)
+}
+
+/// The merged branch off origin, but only while it's still the tip that merged: one that moved is kept.
+/// Best-effort: the merge stands whatever happens here.
+async fn delete_merged_branch(dir: &Path, m: &Merge) {
+    let deleted = async {
+        let tip = git(dir, &["rev-parse", "--verify", &format!("refs/heads/{}", m.branch)], None).await?;
+        let lease = format!("--force-with-lease=refs/heads/{}:{}", m.branch, tip.trim());
+        git(dir, &["push", "--quiet", &lease, "origin", "--delete", &m.branch], None).await
+    };
+    match deleted.await {
+        Ok(_) => tracing::info!("task {}: deleted branch {} on origin", m.task_id, m.branch),
+        Err(e) => tracing::warn!("task {}: kept branch {} on origin: {e:#}", m.task_id, m.branch),
+    }
 }
 
 /// Runs a cleanup and answers with `task.cleaned`.
@@ -1058,6 +1074,37 @@ mod tests {
         assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
         assert_eq!(sh(&wt, &["status", "--porcelain"]), "");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The no-App merge deletes the merged branch on origin, but keeps one that moved after it was merged.
+    #[tokio::test]
+    async fn a_merge_deletes_the_branch_on_origin_unless_it_moved() {
+        let root = tmp("merge-deletes");
+        let bare = root.join("remotes/widgets.git");
+        let (cwd, wt) = worktree(&root, &bare).await;
+        sh(&wt, &["push", "--quiet", "origin", "agent/fix-1a2b"]);
+        let m = Merge { task_id: "t1".into(), cwd: cwd.clone(), branch: "agent/fix-1a2b".into(), base: "main".into(), title: "Fix it".into() };
+        let merged = merge_and_switch_back(&wt, &m).await.unwrap();
+        assert_eq!(sh(&bare, &["rev-parse", "main"]), merged);
+        assert_eq!(sh(&bare, &["branch", "--list", "agent/*"]), "");
+
+        // Someone pushes to the branch after the runner last saw it: the merge stands, the branch stays.
+        sh(&wt, &["push", "--quiet", "origin", "agent/fix-1a2b"]);
+        commit_on(&bare, "agent/fix-1a2b");
+        let moved = sh(&bare, &["rev-parse", "agent/fix-1a2b"]);
+        commit(&wt, "c.txt", "more\n", "more of the builder's work");
+        let m = Merge { title: "Fix it again".into(), ..m };
+        let merged = merge_and_switch_back(&wt, &m).await.unwrap();
+        assert_eq!(sh(&bare, &["rev-parse", "main"]), merged);
+        assert_eq!(sh(&bare, &["rev-parse", "agent/fix-1a2b"]), moved);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A commit on `branch` in the bare repo `bare`, as another machine's push would make.
+    fn commit_on(bare: &Path, branch: &str) {
+        let tip = sh(bare, &["rev-parse", branch]);
+        let c = sh(bare, &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", &format!("{tip}^{{tree}}"), "-p", &tip, "-m", "someone else's push"]);
+        sh(bare, &["update-ref", &format!("refs/heads/{branch}"), &c]);
     }
 
     /// Retry on another machine: studio-mac's runner commits what the builder left as WIP and pushes

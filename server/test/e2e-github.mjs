@@ -4,8 +4,9 @@
 // runner MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL pointing at the fake's bare repos; the repo folder's
 // origin is https://github.com/acme/greeter.git; the fake runs with `--ci test`.
 // Checks: the runner fetches and pushes with app tokens, the PR opens on GitHub, auto-merge waits for
-// CI, a failed check blocks it until it's run again, the merge is GitHub's squash, and a cancelled
-// task's PR is closed with a comment.
+// CI, a failed check blocks it until it's run again, the merge is GitHub's squash and deletes the
+// task's branch on GitHub (but not one that moved after the merge), and a cancelled task's PR is
+// closed with a comment.
 
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
@@ -82,6 +83,12 @@ const hello = execFileSync("git", ["--git-dir", origin, "show", "main:hello.txt"
 const subject = execFileSync("git", ["--git-dir", origin, "log", "-1", "--format=%s", "main"], { encoding: "utf8" }).trim();
 if (!hello.includes(id)) throw new Error(`main has ${JSON.stringify(hello)}`);
 step(`main has hello.txt from a squash: "${subject}"`);
+const branchOnGitHub = (branch) => execFileSync("git", ["--git-dir", origin, "for-each-ref", "--format=%(refname)", `refs/heads/${branch}`], { encoding: "utf8" }).trim();
+t = await wait("branch deleted", () => tasks.get(id)?.events.find((e) => /branch .* on GitHub/.test(e.text)) && tasks.get(id));
+const deleted = t.events.find((e) => /branch .* on GitHub/.test(e.text)).text;
+if (deleted !== `deleted branch ${t.pr.branch} on GitHub`) throw new Error(`after the merge: ${deleted}`);
+if (branchOnGitHub(t.pr.branch)) throw new Error(`${t.pr.branch} is still on GitHub`);
+step(`${deleted}, and the remote has no ${t.pr.branch} now`);
 
 // A cancelled task's pull request closes on GitHub.
 send({ type: "task.create", goal: goal.id, title: "Wave on GitHub", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
@@ -101,4 +108,19 @@ step(`cancelling ${id2} closed pull request #${t2.pr.number} on GitHub`);
 await new Promise((r) => setTimeout(r, 15000));
 if (tasks.get(id2).state !== "cancelled") throw new Error(`${id2} came back as ${tasks.get(id2).state} after it was cancelled`);
 step(`${id2} stayed cancelled`);
+
+// A branch someone pushes to after the merge stays on GitHub; the task is merged all the same.
+send({ type: "task.create", goal: goal.id, title: "Wave again on GitHub", brief: "Add wave.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+const id3 = `${prefix}-3`;
+await wait("plan 3", () => tasks.get(id3)?.state === "awaitingApproval", 60000);
+send({ type: "task.approvePlan", id: id3 });
+let t3 = await wait("pull request 3", () => tasks.get(id3)?.pr?.url && tasks.get(id3), 90000);
+await fetch(`${gh}/_moveOnMerge`, { method: "POST", body: JSON.stringify({ owner: "acme", repo: "greeter", branch: t3.pr.branch }) });
+t3 = await wait("review 3 passed", () => tasks.get(id3)?.autoReview?.rounds.at(-1)?.verdict === "passed" && tasks.get(id3), 120000);
+await fetch(`${gh}/_checks`, { method: "POST", body: JSON.stringify({ owner: "acme", repo: "greeter", sha: t3.pr.head, runs: [{ name: "test", conclusion: "success" }] }) });
+t3 = await wait("kept branch", () => tasks.get(id3)?.events.find((e) => /branch .* on GitHub/.test(e.text)) && tasks.get(id3), 30000);
+const kept = t3.events.find((e) => /branch .* on GitHub/.test(e.text)).text;
+if (t3.state !== "merged" || kept !== `kept branch ${t3.pr.branch} on GitHub (it moved after the merge)`) throw new Error(`${id3} is ${t3.state}: ${kept}`);
+if (!branchOnGitHub(t3.pr.branch)) throw new Error(`${t3.pr.branch} was deleted though it moved`);
+step(`${id3} merged; ${kept}`);
 process.exit(0);
