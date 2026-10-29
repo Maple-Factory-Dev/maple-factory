@@ -395,6 +395,33 @@ struct InboxItem: Identifiable {
 enum Destination: Hashable {
     case inbox, myTasks, activity, scratchpad, usage, needsHand, machines, intake, allGoals
     case goal(String)
+
+    /// The pages that aren't goals, by the names `-destination` takes.
+    private static let pages: [String: Destination] = [
+        "inbox": .inbox, "mytasks": .myTasks, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage,
+        "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals,
+    ]
+
+    /// Stored form: `goal:<name>` for a goal, so a goal named "inbox" isn't the Inbox; the page's name otherwise.
+    var encoded: String {
+        if case .goal(let name) = self { return "goal:\(name)" }
+        return Self.pages.first { $0.value == self }!.key
+    }
+
+    init?(encoded: String) {
+        if encoded.hasPrefix("goal:") {
+            self = .goal(String(encoded.dropFirst(5)))
+        } else if let page = Self.pages[encoded] {
+            self = page
+        } else {
+            return nil
+        }
+    }
+
+    /// A `-destination` argument: a page's name, else a goal's.
+    init(argument: String) {
+        self = Self.pages[argument] ?? .goal(argument)
+    }
 }
 
 struct Note: Identifiable {
