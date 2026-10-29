@@ -45,8 +45,9 @@ struct FactorySidebar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     sectionHeader("Goals") { if client.isSignedIn { state.goalSheet = .new } }
                     VStack(spacing: 2) {
+                        if state.isLoadingFactory { GoalsSkeleton().frame(maxWidth: .infinity, alignment: .leading) }
                         // Only the goals you follow; the rest (and archived ones) are a click away in All goals.
-                        ForEach(state.sidebarGoals) { goal in
+                        ForEach(state.isLoadingFactory ? [] : state.sidebarGoals) { goal in
                             goalRow(goal).opacity(state.isFollowing(goal) ? 1 : 0.6)
                         }
                         if !FactoryData.goals.isEmpty {
@@ -58,7 +59,7 @@ struct FactorySidebar: View {
                             .foregroundStyle(Theme.textMuted)
                             .onTapGesture { state.destination = .allGoals }
                         }
-                        if client.isSignedIn && client.goals.isEmpty {
+                        if client.isSignedIn && client.hasSnapshot && client.goals.isEmpty {
                             row(selected: false) {
                                 Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
                                 Text("New goal")
