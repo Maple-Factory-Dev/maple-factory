@@ -30,9 +30,9 @@ final class Updater: NSObject {
     }
 
     var channel: Channel {
-        get { access(keyPath: \.channel); return Channel(rawValue: UserDefaults.standard.string(forKey: "updateChannel") ?? "") ?? .stable }
+        get { access(keyPath: \.channel); return Channel(rawValue: AppDefaults.string(forKey: "updateChannel") ?? "") ?? .stable }
         set {
-            withMutation(keyPath: \.channel) { UserDefaults.standard.set(newValue.rawValue, forKey: "updateChannel") }
+            withMutation(keyPath: \.channel) { AppDefaults.set(newValue.rawValue, forKey: "updateChannel") }
             result = nil // "up to date" was about the other channel
         }
     }

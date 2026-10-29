@@ -57,16 +57,16 @@ import Security
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
-        get { _ = picksChanged; return UserDefaults.standard.stringArray(forKey: picksKey) }
-        set { UserDefaults.standard.set(newValue, forKey: picksKey); picksChanged += 1 }
+        get { _ = picksChanged; return AppDefaults.stringArray(forKey: picksKey) }
+        set { AppDefaults.set(newValue, forKey: picksKey); picksChanged += 1 }
     }
     private var picksChanged = 0
     private var picksKey: String { "sidebarPeople.\(serverKey)" }
 
     /// The order this person put their sidebar goals in, by goal id, per factory; nil until they move one.
     var goalOrder: [String]? {
-        get { _ = goalOrderChanged; return UserDefaults.standard.stringArray(forKey: goalOrderKey) }
-        set { UserDefaults.standard.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
+        get { _ = goalOrderChanged; return AppDefaults.stringArray(forKey: goalOrderKey) }
+        set { AppDefaults.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
     }
     private var goalOrderChanged = 0
     private var goalOrderKey: String { "sidebarGoalOrder.\(serverKey)" }
@@ -126,11 +126,11 @@ import Security
     }
 
     init() {
-        if let saved = UserDefaults.standard.string(forKey: "factoryURL"), let url = URL(string: saved),
+        if let saved = AppDefaults.string(forKey: "factoryURL"), let url = URL(string: saved),
            let token = Keychain.read(account: saved) {
             server = url
             self.token = token
-            org = UserDefaults.standard.string(forKey: "factoryOrg") ?? ""
+            org = AppDefaults.string(forKey: "factoryOrg") ?? ""
         }
         // A socket can die quietly while the Mac sleeps or the app sits in the background; catch up
         // with a fresh snapshot rather than leave every list as it was.
@@ -157,15 +157,15 @@ import Security
         token = result.token
         me = result.member
         org = result.org
-        UserDefaults.standard.set(result.server.absoluteString, forKey: "factoryURL")
-        UserDefaults.standard.set(result.org, forKey: "factoryOrg")
+        AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
+        AppDefaults.set(result.org, forKey: "factoryOrg")
         Keychain.write(result.token, account: result.server.absoluteString)
         connect()
     }
 
     func signOut() {
         if let server { Keychain.delete(account: server.absoluteString) }
-        UserDefaults.standard.removeObject(forKey: "factoryURL")
+        AppDefaults.removeObject(forKey: "factoryURL")
         disconnect()
         server = nil
         token = nil
@@ -782,7 +782,7 @@ enum Keychain {
     private static func isDev(_ account: String) -> Bool { account.hasPrefix("http://") }
 
     static func read(account: String) -> String? {
-        if isDev(account) { return (UserDefaults.standard.dictionary(forKey: devKey) as? [String: String])?[account] }
+        if isDev(account) { return (AppDefaults.dictionary(forKey: devKey) as? [String: String])?[account] }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
             kSecAttrAccount as String: account, kSecReturnData as String: true,
@@ -795,9 +795,9 @@ enum Keychain {
     static func write(_ value: String, account: String) {
         delete(account: account)
         if isDev(account) {
-            var tokens = UserDefaults.standard.dictionary(forKey: devKey) as? [String: String] ?? [:]
+            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
             tokens[account] = value
-            UserDefaults.standard.set(tokens, forKey: devKey)
+            AppDefaults.set(tokens, forKey: devKey)
             return
         }
         let item: [String: Any] = [
@@ -809,9 +809,9 @@ enum Keychain {
 
     static func delete(account: String) {
         if isDev(account) {
-            var tokens = UserDefaults.standard.dictionary(forKey: devKey) as? [String: String] ?? [:]
+            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
             tokens[account] = nil
-            UserDefaults.standard.set(tokens, forKey: devKey)
+            AppDefaults.set(tokens, forKey: devKey)
             return
         }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]

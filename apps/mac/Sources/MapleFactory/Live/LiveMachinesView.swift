@@ -183,7 +183,7 @@ struct LiveMachinesView: View {
 
     /// `-liveSession first` opens the first live session, for screenshots.
     private func openFromLaunchArgs() {
-        guard UserDefaults.standard.string(forKey: "liveSession") == "first" else { return }
+        guard AppDefaults.string(forKey: "liveSession") == "first" else { return }
         Task { @MainActor in
             for _ in 0..<40 {
                 if let machine = client.machines.first(where: { !$0.sessions.isEmpty }), let first = machine.sessions.first {

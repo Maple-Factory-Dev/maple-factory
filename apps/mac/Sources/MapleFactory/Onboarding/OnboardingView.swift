@@ -18,7 +18,7 @@ struct OnboardingView: View {
     /// Went back to the workspace: anything still in flight lands nowhere.
     @State private var cancelled = false
     /// `-onboardingAuto` and `-onboardingStep` play the scripted demo instead of talking to a server.
-    private let demo = UserDefaults.standard.bool(forKey: "onboardingAuto") || UserDefaults.standard.string(forKey: "onboardingStep") != nil
+    private let demo = AppDefaults.bool(forKey: "onboardingAuto") || AppDefaults.string(forKey: "onboardingStep") != nil
 
     enum Step: Int { case url, connecting, signIn, authorizing, ready }
 
@@ -31,7 +31,7 @@ struct OnboardingView: View {
 
     init() {
         // `-onboardingStep signin|ready` jumps ahead, for screenshots and demos.
-        let start: Step = switch UserDefaults.standard.string(forKey: "onboardingStep") {
+        let start: Step = switch AppDefaults.string(forKey: "onboardingStep") {
         case "signin": .signIn
         case "authorizing": .authorizing
         case "ready": .ready
@@ -81,7 +81,7 @@ struct OnboardingView: View {
         .onAppear {
             // `-onboardingURL localhost:8788` fills in a real address and connects; add
             // `-onboardingContinue YES` to sign in too. For screenshots of the real flow.
-            if let address = UserDefaults.standard.string(forKey: "onboardingURL") {
+            if let address = AppDefaults.string(forKey: "onboardingURL") {
                 url = address
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(0.8))
@@ -89,7 +89,7 @@ struct OnboardingView: View {
                 }
             }
             // `-onboardingAuto YES` plays the flow at demo pace and stops on Ready, so every step can be seen.
-            guard UserDefaults.standard.bool(forKey: "onboardingAuto") else { return }
+            guard AppDefaults.bool(forKey: "onboardingAuto") else { return }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(1.2))
                 for character in "maple.atlas.dev" {
@@ -101,7 +101,7 @@ struct OnboardingView: View {
             }
         }
         .onChange(of: step) {
-            guard step == .signIn, UserDefaults.standard.bool(forKey: "onboardingAuto") || UserDefaults.standard.bool(forKey: "onboardingContinue") else { return }
+            guard step == .signIn, AppDefaults.bool(forKey: "onboardingAuto") || AppDefaults.bool(forKey: "onboardingContinue") else { return }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))
                 signIn()
@@ -435,7 +435,7 @@ struct OnboardingView: View {
     }
 
     private var recents: [String] {
-        let saved = UserDefaults.standard.stringArray(forKey: "recentFactories") ?? []
+        let saved = AppDefaults.stringArray(forKey: "recentFactories") ?? []
         return Array((saved + (demo ? ["maple.atlas.dev"] : ["localhost:8788"])).reduce(into: [String]()) { list, item in
             if !list.contains(item) { list.append(item) }
         }.prefix(3))
@@ -657,10 +657,10 @@ struct OnboardingView: View {
     private func finish(_ result: FactoryClient.SignInResult) {
         // A sign-in that answers after going back mustn't swap out the factory still connected.
         guard !cancelled else { return }
-        var recent = UserDefaults.standard.stringArray(forKey: "recentFactories") ?? []
+        var recent = AppDefaults.stringArray(forKey: "recentFactories") ?? []
         recent.removeAll { $0 == url }
         recent.insert(url, at: 0)
-        UserDefaults.standard.set(Array(recent.prefix(5)), forKey: "recentFactories")
+        AppDefaults.set(Array(recent.prefix(5)), forKey: "recentFactories")
         client.signIn(result)
         signedIn = result
         withAnimation(.snappy(duration: 0.4)) { step = .ready }

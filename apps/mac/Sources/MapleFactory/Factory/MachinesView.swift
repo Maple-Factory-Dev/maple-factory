@@ -67,7 +67,7 @@ struct MachinesView: View {
             .frame(maxWidth: 1160, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .defaultScrollAnchor(UserDefaults.standard.string(forKey: "scroll") == "bottom" ? .bottom : .top)
+        .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
     }
 
     private func stat(_ value: String, _ label: String, color: Color) -> some View {

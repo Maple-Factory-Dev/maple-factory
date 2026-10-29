@@ -51,8 +51,8 @@ final class AppState {
     /// written on every toggle while the panel opened by default, so it's true for most people.
     private static let panelKey = "taskPanelOpen"
     private static var panelLeftOpen: Bool {
-        UserDefaults.standard.removeObject(forKey: "taskPanel")
-        return UserDefaults.standard.bool(forKey: panelKey)
+        AppDefaults.removeObject(forKey: "taskPanel")
+        return AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
@@ -79,14 +79,14 @@ final class AppState {
     /// ×, Esc or clicking the open card again; in a full-width window the close sticks across launches.
     func closeTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector = false }
-        if !isCompact { UserDefaults.standard.set(false, forKey: AppState.panelKey) }
+        if !isCompact { AppDefaults.set(false, forKey: AppState.panelKey) }
     }
 
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
     /// (in a full-width window; a narrow one hides and floats the panel on its own).
     func toggleTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
-        if !isCompact { UserDefaults.standard.set(showInspector, forKey: AppState.panelKey) }
+        if !isCompact { AppDefaults.set(showInspector, forKey: AppState.panelKey) }
     }
 
     // MARK: Machines
@@ -132,10 +132,10 @@ final class AppState {
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
     /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
-    var showOnboarding = UserDefaults.standard.bool(forKey: "onboarding") || UserDefaults.standard.bool(forKey: "onboardingAuto")
-        || UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    var showOnboarding = AppDefaults.bool(forKey: "onboarding") || AppDefaults.bool(forKey: "onboardingAuto")
+        || AppDefaults.bool(forKey: "onboardingFromWorkspace")
     /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
-    var onboardingCanCancel = UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    var onboardingCanCancel = AppDefaults.bool(forKey: "onboardingFromWorkspace")
 
     func startOnboarding() {
         onboardingCanCancel = true
@@ -157,9 +157,9 @@ final class AppState {
 
     var windowWidth: CGFloat = 1600
     /// Icon rail instead of the full sidebar. Narrow windows force it on; the full sidebar then floats over the content.
-    var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    var sidebarCollapsed = AppDefaults.bool(forKey: "sidebarCollapsed")
     /// What the user picked at full width, restored when the window widens again.
-    private var sidebarPreference = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    private var sidebarPreference = AppDefaults.bool(forKey: "sidebarCollapsed")
 
     /// Around half a laptop screen: the inspector floats and the sidebar becomes a rail.
     var isCompact: Bool { windowWidth < 1180 }
@@ -182,7 +182,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = UserDefaults.standard.bool(forKey: AppState.panelKey)
+                showInspector = AppDefaults.bool(forKey: AppState.panelKey)
             }
         }
     }
@@ -191,7 +191,7 @@ final class AppState {
         withAnimation(.snappy(duration: 0.25)) { sidebarCollapsed.toggle() }
         if !isCompact {
             sidebarPreference = sidebarCollapsed
-            UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed")
+            AppDefaults.set(sidebarCollapsed, forKey: "sidebarCollapsed")
         }
     }
 
@@ -406,8 +406,8 @@ final class AppState {
     /// Inbox, Needs a hand and Activity show the goals you follow unless you ask for all of them.
     enum GoalScope: String { case following, all }
 
-    var goalScope: GoalScope = GoalScope(rawValue: UserDefaults.standard.string(forKey: "goalScope") ?? "") ?? .following {
-        didSet { UserDefaults.standard.set(goalScope.rawValue, forKey: "goalScope") }
+    var goalScope: GoalScope = GoalScope(rawValue: AppDefaults.string(forKey: "goalScope") ?? "") ?? .following {
+        didSet { AppDefaults.set(goalScope.rawValue, forKey: "goalScope") }
     }
 
     private var followedGoalNames: Set<String> { Set(FactoryData.goals.filter(isFollowing).map(\.name)) }
@@ -972,7 +972,7 @@ final class AppState {
 
     /// Demo scripts only: holds a mock action in flight for a moment, so its busy state can be seen.
     private func afterDemoDelay(_ id: String, _ kind: InFlight.Kind, _ apply: @escaping () -> Void) -> Bool {
-        guard UserDefaults.standard.string(forKey: "actions") != nil else { return false }
+        guard AppDefaults.string(forKey: "actions") != nil else { return false }
         guard beginInFlight(id, kind) else { return true }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.2))
@@ -1314,7 +1314,7 @@ final class AppState {
 
     /// Launch arguments like `-destination inbox -layout timeline -inspector NO` jump straight to a view.
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
@@ -1347,7 +1347,8 @@ final class AppState {
             isComposing = true
         }
         if let script = defaults.string(forKey: "actions") {
-            Task { @MainActor in await self.play(script) }
+            scriptFinished = false
+            Task { @MainActor in await self.play(script); self.scriptFinished = true }
         }
     }
 
@@ -1363,9 +1364,13 @@ final class AppState {
         }
     }
 
+    /// False while an `-actions` script is still playing, so a headless run waits for it.
+    @ObservationIgnored private(set) var scriptFinished = true
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
     /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
+    /// Headless (`-snapshot`), `shot:approved` renders the window to approved.png between actions.
     private func play(_ script: String) async {
         for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             try? await Task.sleep(for: .seconds(1))
@@ -1386,6 +1391,7 @@ final class AppState {
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
+            case "shot": await Headless.shot(parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
