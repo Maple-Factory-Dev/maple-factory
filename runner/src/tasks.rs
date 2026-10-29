@@ -156,17 +156,28 @@ pub struct Merge {
 
 /// Runs a merge and answers with `task.merged`. The worktree goes back to the task's branch either way.
 pub async fn run_merge(sessions: Sessions, m: Merge) {
-    let dir = expand_home(&m.cwd);
-    let merged = merge(&dir, &m).await;
-    // A conflicted merge blocks the checkout until it's aborted.
-    if merged.is_err() {
-        let _ = git(&dir, &["merge", "--abort"], None).await;
-    }
-    let _ = git(&dir, &["checkout", "--quiet", &m.branch], None).await;
+    let merged = merge_and_switch_back(&expand_home(&m.cwd), &m).await;
     sessions.emit(match merged {
         Ok(commit) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None },
         Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) },
     });
+}
+
+/// `merge`, then the worktree back on the task's branch, so a Retry doesn't find it detached.
+async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<String> {
+    let merged = merge(dir, m).await;
+    // A conflicted merge blocks the checkout until it's aborted.
+    if merged.is_err() {
+        let _ = git(dir, &["merge", "--abort"], None).await;
+    }
+    if let Err(e) = git(dir, &["checkout", "--quiet", &m.branch], None).await {
+        tracing::warn!("task {}: couldn't switch {} back to {} after the merge ({e:#}); resetting and trying again", m.task_id, m.cwd, m.branch);
+        let _ = git(dir, &["reset", "--quiet", "--merge"], None).await;
+        if let Err(e) = git(dir, &["checkout", "--quiet", &m.branch], None).await {
+            tracing::warn!("task {}: {} is left detached, not on {}: {e:#}", m.task_id, m.cwd, m.branch);
+        }
+    }
+    merged
 }
 
 async fn merge(dir: &Path, m: &Merge) -> Result<String> {
