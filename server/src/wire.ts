@@ -525,6 +525,8 @@ export interface Task {
   queueRank?: number | null;
   /** Don't start its next session before this (ms); cleared once that session starts. */
   startAt?: number | null;
+  /** Its next session skips the wait for a free slot; cleared once it starts. */
+  force?: boolean | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -1252,6 +1254,8 @@ export interface ClientMessage_TaskQueue {
   startAt?: number | null;
   /** Start it as soon as there's room. */
   clearSchedule?: boolean | null;
+  /** Start its next session now, over the machine's slot count. */
+  force?: boolean | null;
 }
 
 /** Run the pull request's failed CI checks again. */
