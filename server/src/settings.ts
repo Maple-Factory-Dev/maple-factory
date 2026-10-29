@@ -19,6 +19,8 @@ export const SETTING_KEYS = [
   "GITHUB_OWNER_TYPE",
   "PUBLIC_URL",
   "SESSION_SECRET",
+  // Written once (secrets.ts), never by saveSettings: a new one would make every stored secret unreadable.
+  "SECRETS_KEY",
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
