@@ -1042,7 +1042,9 @@ export class Engine {
       this.event(task, "factory", `couldn't merge: ${why}`);
       this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge: ${why}`, taskId: task.id });
       // A person picks the way forward; nothing retries it on its own.
-      this.raise(task, "factory", "mergeFailed", `It didn't merge into ${task.pr.base}: ${why}`, [
+      // The runner's message already says it didn't merge; GitHub's may not.
+      const summary = /merge/i.test(why) ? why : `It didn't merge into ${task.pr.base}: ${why}`;
+      this.raise(task, "factory", "mergeFailed", summary, [
         { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: true },
         { title: MERGE_RETRY, detail: "Merge it again as it is.", recommended: false },
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
@@ -1435,7 +1437,7 @@ export class Engine {
       return this.startMerge(task, who, "tried the merge again");
     }
     const base = task.pr?.base ?? this.store.private(task.id).base ?? "main";
-    const why = hand.summary.replace(/^It didn't merge into [^:]+: /, "");
+    const why = hand.summary.replace(/^It didn't merge into [^:]+: /, "").replace(/\s+/g, " ").trim();
     const change: ChangeRequest = {
       id: `C${task.changes.length + 1}`,
       author: who,

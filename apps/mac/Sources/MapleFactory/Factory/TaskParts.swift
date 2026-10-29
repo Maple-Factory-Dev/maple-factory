@@ -354,6 +354,9 @@ struct ReviewActions: View {
         let risk = state.risk(for: task)
         let level = risk?.level.title.lowercased() ?? "this"
         let (icon, text, color): (String, String, Color) = {
+            if task.hand?.reason == .mergeFailed {
+                return ("hand.raised", "Nothing merges it again until someone picks a way forward.", Theme.textMuted)
+            }
             if !gate.autoReviewReady {
                 switch task.autoReview?.current?.verdict {
                 case .changesRequested?:
