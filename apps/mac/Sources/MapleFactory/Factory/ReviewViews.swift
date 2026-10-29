@@ -482,6 +482,146 @@ struct HandRaiseCard: View {
     }
 }
 
+// MARK: Permission prompts
+
+/// The agent stopped at a permission prompt in its session: what it wants to run, and Yes / No that
+/// answer it there. With no `prompt` (a plain waiting message), only the message and Open session.
+struct PermissionPromptCard: View {
+    @Environment(FactoryClient.self) private var client
+    let task: FactoryTask
+    let role: String
+    let prompt: PermissionPrompt?
+    let message: String?
+    let onOpenSession: () -> Void
+    /// The answer sent, until the activity moves on and this card goes.
+    @State private var sent: Wire.PromptChoice?
+
+    private let color = Theme.State.awaitingApproval
+
+    /// `-actions 'prompt:<task>:yes'` presses a button, for demo videos.
+    static let demoAnswer = Notification.Name("PermissionPromptCard.demoAnswer")
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 5) {
+                Image(systemName: "hand.raised.fill").font(.system(size: 10.5, weight: .semibold))
+                Text("\(role.capitalized) is waiting on you")
+            }
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill(color.opacity(0.12)))
+
+            if let prompt {
+                Text("Wants to run \(prompt.tool): \(prompt.summary)")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = prompt.detail {
+                    ScrollView {
+                        Text(detail)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(maxHeight: 160)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Theme.fillSubtle)
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+                    )
+                }
+                if let warning = prompt.warning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(message ?? "It's waiting for you in its session.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                if prompt != nil {
+                    answerButton("Yes", choice: .yes, filled: true)
+                    answerButton("No", choice: .no, filled: false)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 5) {
+                    Image(systemName: "terminal").font(.system(size: 10.5))
+                    Text("Open session")
+                }
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Theme.fill)
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+                )
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onOpenSession)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Theme.cardBG)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color.opacity(0.35)))
+        )
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12)
+                .fill(color)
+                .frame(width: 3)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoAnswer)) { note in
+            guard prompt != nil, note.userInfo?["task"] as? String == task.id else { return }
+            answer(note.userInfo?["choice"] as? String == "no" ? .no : .yes)
+        }
+        // A server refusal or a lost keypress: the buttons come back rather than spinning forever.
+        .task(id: sent) {
+            guard sent != nil else { return }
+            try? await Task.sleep(for: .seconds(10))
+            sent = nil
+        }
+    }
+
+    private func answerButton(_ title: String, choice: Wire.PromptChoice, filled: Bool) -> some View {
+        let busy = sent == choice
+        return HStack(spacing: 6) {
+            if busy { ProgressView().controlSize(.mini) }
+            Text(title)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(filled ? Theme.onAccent : Theme.text)
+        .padding(.horizontal, 14)
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(filled ? AnyShapeStyle(Theme.accent.opacity(sent == nil || busy ? 1 : 0.4)) : AnyShapeStyle(Theme.fill))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(filled ? Color.clear : Theme.stroke))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { answer(choice) }
+        .help(choice == .yes ? "Allow it once in the session (1)" : "Deny it in the session (Esc)")
+    }
+
+    private func answer(_ choice: Wire.PromptChoice) {
+        guard sent == nil else { return }
+        sent = choice
+        client.answerPrompt(taskID: task.id, choice: choice)
+    }
+}
+
 /// Every task where an agent stopped and asked for a human.
 struct NeedsHandView: View {
     @Environment(AppState.self) private var state

@@ -9,7 +9,7 @@ struct TaskLiveTerminal: View {
     @State private var link: TerminalLink.State = .connecting
 
     private var machine: Wire.Machine? { client.machines.first { $0.id == worker.machine } }
-    private var activity: Wire.Activity? { machine?.sessions.first { $0.session.id == worker.session }?.activity ?? nil }
+    private var activity: Wire.Activity? { client.workerActivity(for: worker) }
 
     var body: some View {
         VStack(spacing: 0) {

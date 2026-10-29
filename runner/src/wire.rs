@@ -337,6 +337,18 @@ pub enum RiskLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum PromptChoice {
+    /// Allow it once (the menu's 1).
+    Yes,
+    /// Deny it (Esc: the menu's No isn't always 2).
+    No,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum RepoSource {
     /// Granted to the GitHub App.
     Github,
@@ -1771,6 +1783,12 @@ pub enum ClientMessage {
     TaskAnswer {
         id: String,
         text: String,
+    },
+    /// Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.
+    #[serde(rename = "task.answerPrompt")]
+    TaskAnswerPrompt {
+        id: String,
+        choice: PromptChoice,
     },
     #[serde(rename = "task.resolveHand")]
     TaskResolveHand {

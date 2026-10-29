@@ -6,7 +6,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.ts";
-import type { LiveSession, Machine, RunnerMessage, ServerToRunner, SessionEnd } from "./wire.ts";
+import type { Activity, LiveSession, Machine, RunnerMessage, ServerToRunner, SessionEnd } from "./wire.ts";
 import { offlineMachine, machineRow } from "./machines.ts";
 import { orgHub } from "./util.ts";
 
@@ -61,10 +61,20 @@ export class MachineHub extends DurableObject<Env> {
         await this.publish({ ...(await this.machine()), name: await request.text() });
         return new Response(null, { status: 204 });
       }
+      case "/activity": {
+        // The factory's word on a session's activity until the runner's next: Claude sends no hook when
+        // its permission prompt is denied, so the denied prompt would otherwise stay up.
+        const { session, activity } = (await request.json()) as { session: string; activity: Activity };
+        const machine = await this.machine();
+        if (!machine.sessions.some((s) => s.session.id === session)) return new Response("No such session.", { status: 404 });
+        await this.publish({ ...machine, sessions: machine.sessions.map((s) => (s.session.id === session ? { ...s, activity } : s)) });
+        return new Response(null, { status: 204 });
+      }
       case "/input": {
         // The factory typing into a session: steering, answers. Text, then Enter on its own, so a
-        // TUI that treats a fast paste-plus-return as a newline still submits.
-        const { session, text } = (await request.json()) as { session: string; text: string };
+        // TUI that treats a fast paste-plus-return as a newline still submits. With `keys`, the text
+        // is sent as typed keys, nothing added: a permission menu's "1" or Esc.
+        const { session, text, keys } = (await request.json()) as { session: string; text: string; keys?: boolean };
         const runner = this.runner();
         if (!runner) return new Response("That machine is offline.", { status: 409 });
         const frame = (bytes: Uint8Array) => {
@@ -73,6 +83,10 @@ export class MachineHub extends DurableObject<Env> {
           out.set(bytes, 16);
           return out;
         };
+        if (keys) {
+          runner.send(frame(new TextEncoder().encode(text)));
+          return new Response(null, { status: 204 });
+        }
         runner.send(frame(new TextEncoder().encode(`\x1b[200~${text}\x1b[201~`)));
         await new Promise((r) => setTimeout(r, 400));
         runner.send(frame(new Uint8Array([13])));

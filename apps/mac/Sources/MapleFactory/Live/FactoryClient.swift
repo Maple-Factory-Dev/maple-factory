@@ -977,3 +977,41 @@ extension FactoryClient {
         machines.first { $0.id == id }?.name ?? id
     }
 }
+
+extension FactoryClient {
+    /// What the task's worker session is doing, from its machine's live sessions: nil when there's no
+    /// worker, its machine isn't known, or the machine doesn't list that session.
+    func workerActivity(for worker: FactoryTask.Worker?) -> Wire.Activity? {
+        Self.workerActivity(for: worker, in: machines)
+    }
+
+    static func workerActivity(for worker: FactoryTask.Worker?, in machines: [Wire.Machine]) -> Wire.Activity? {
+        guard let worker else { return nil }
+        return machines.first { $0.id == worker.machine }?.sessions.first { $0.session.id == worker.session }?.activity ?? nil
+    }
+
+    /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
+    func answerPrompt(taskID: String, choice: Wire.PromptChoice) {
+        send(.taskAnswerPrompt(.init(id: taskID, choice: choice)))
+    }
+}
+
+/// What a waiting agent wants permission for, from the runner's `question.permission`.
+struct PermissionPrompt: Equatable {
+    let tool: String
+    let summary: String
+    let detail: String?
+    let warning: String?
+}
+
+extension Wire.Activity {
+    /// The permission prompt it's stopped at, when it's waiting on one.
+    var permission: PermissionPrompt? {
+        guard state == .waiting, case .object(let q)? = question, case .object(let p)? = q["permission"], case .string(let tool)? = p["tool"] else { return nil }
+        let text = { (key: String) -> String? in
+            if case .string(let s)? = p[key], !s.isEmpty { return s }
+            return nil
+        }
+        return PermissionPrompt(tool: tool, summary: text("summary") ?? tool, detail: text("detail"), warning: text("warning"))
+    }
+}

@@ -68,6 +68,9 @@ export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","pa
 export type RiskLevel = "low" | "medium" | "high";
 export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
 
+export type PromptChoice = "yes" | "no";
+export const PromptChoiceValues: readonly PromptChoice[] = ["yes","no"];
+
 export type RepoSource = "github" | "manual";
 export const RepoSourceValues: readonly RepoSource[] = ["github","manual"];
 
@@ -1217,6 +1220,13 @@ export interface ClientMessage_TaskAnswer {
   text: string;
 }
 
+/** Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question. */
+export interface ClientMessage_TaskAnswerPrompt {
+  type: "task.answerPrompt";
+  id: string;
+  choice: PromptChoice;
+}
+
 export interface ClientMessage_TaskResolveHand {
   type: "task.resolveHand";
   id: string;
@@ -1293,8 +1303,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";

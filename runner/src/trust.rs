@@ -31,7 +31,7 @@ pub fn watch(sessions: Sessions, id: Uuid) {
             tokio::time::sleep(Duration::from_secs(3)).await;
             let Ok(screen) = sessions.capture(id, 40).await else { return };
             if is_trust_prompt(&screen) {
-                sessions.set_activity(id, Activity::Waiting(Some(PROMPT_WAITING.into())), None, None);
+                sessions.set_activity(id, Activity::Waiting(Some(PROMPT_WAITING.into())), None, None, None);
                 return;
             }
         }

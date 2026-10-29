@@ -108,6 +108,10 @@ pub struct AgentState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub question: Option<serde_json::Value>,
     pub at: u64,
+    /// The last tool Claude was about to use, as a permission payload (`hooks::permission`): what a
+    /// bare "needs your permission" notification is about when the PermissionRequest hook didn't say.
+    #[serde(skip)]
+    pub pending_tool: Option<serde_json::Value>,
 }
 
 /// Messages the runner sends.

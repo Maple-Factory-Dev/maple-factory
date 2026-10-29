@@ -94,6 +94,7 @@ export const enums: Record<string, Enum> = {
   PRState: { values: { draft: "Draft.", open: "Open.", merged: "Merged.", closed: "Closed without merging." } },
   CheckStatus: { values: { queued: "Queued.", running: "Running.", passed: "Passed.", failed: "Failed." } },
   RiskLevel: { values: { low: "Low.", medium: "Medium.", high: "High." } },
+  PromptChoice: { values: { yes: "Allow it once (the menu's 1).", no: "Deny it (Esc: the menu's No isn't always 2)." } },
   RepoSource: { values: { github: "Granted to the GitHub App.", manual: "Added by an admin." } },
   AgentState: {
     doc: "What a session's agent is doing, from its hooks.",
@@ -758,6 +759,10 @@ export const unions: Record<string, Union> = {
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
       "task.approvePlan": { fields: { id: "string" } },
       "task.answer": { doc: "Answer the agent's question.", fields: { id: "string", text: "string" } },
+      "task.answerPrompt": {
+        doc: "Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.",
+        fields: { id: "string", choice: "PromptChoice" },
+      },
       "task.resolveHand": { fields: { id: "string", option: "string?", note: "string" } },
       "task.approveChanges": { fields: { id: "string" } },
       "task.merge": { fields: { id: "string" } },

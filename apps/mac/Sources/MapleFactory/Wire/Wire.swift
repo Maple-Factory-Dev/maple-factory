@@ -1002,6 +1002,46 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum PromptChoice: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Allow it once (the menu's 1).
+        case yes
+        /// Deny it (Esc: the menu's No isn't always 2).
+        case no
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PromptChoice] = [.yes, .no]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "yes": self = .yes
+            case "no": self = .no
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .yes: "yes"
+            case .no: "no"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PromptChoice, b: PromptChoice) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum RepoSource: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Granted to the GitHub App.
         case github
@@ -3589,6 +3629,17 @@ public enum Wire {
         }
     }
 
+    /// Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.
+    public struct ClientMessageTaskAnswerPrompt: Codable, Hashable, Sendable {
+        public var id: String
+        public var choice: PromptChoice
+
+        public init(id: String, choice: PromptChoice) {
+            self.id = id
+            self.choice = choice
+        }
+    }
+
     public struct ClientMessageTaskResolveHand: Codable, Hashable, Sendable {
         public var id: String
         public var option: String?
@@ -3743,6 +3794,7 @@ public enum Wire {
         case taskSteer(ClientMessageTaskSteer)
         case taskApprovePlan(ClientMessageTaskApprovePlan)
         case taskAnswer(ClientMessageTaskAnswer)
+        case taskAnswerPrompt(ClientMessageTaskAnswerPrompt)
         case taskResolveHand(ClientMessageTaskResolveHand)
         case taskApproveChanges(ClientMessageTaskApproveChanges)
         case taskMerge(ClientMessageTaskMerge)
@@ -3795,6 +3847,7 @@ public enum Wire {
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
             case "task.approvePlan": self = .taskApprovePlan(try ClientMessageTaskApprovePlan(from: decoder))
             case "task.answer": self = .taskAnswer(try ClientMessageTaskAnswer(from: decoder))
+            case "task.answerPrompt": self = .taskAnswerPrompt(try ClientMessageTaskAnswerPrompt(from: decoder))
             case "task.resolveHand": self = .taskResolveHand(try ClientMessageTaskResolveHand(from: decoder))
             case "task.approveChanges": self = .taskApproveChanges(try ClientMessageTaskApproveChanges(from: decoder))
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
@@ -3909,6 +3962,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskAnswer(let body):
                 try c.encode("task.answer", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskAnswerPrompt(let body):
+                try c.encode("task.answerPrompt", forKey: .type)
                 try body.encode(to: encoder)
             case .taskResolveHand(let body):
                 try c.encode("task.resolveHand", forKey: .type)
