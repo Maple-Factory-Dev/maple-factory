@@ -126,11 +126,11 @@ struct TaskFocusView: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: mainWidth + railWidth + 120, alignment: .leading)
                 .frame(maxWidth: .infinity)
-                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos.
+                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort` at its effort.
                 .task {
-                    guard AppDefaults.string(forKey: "scroll") == "doneWhen" else { return }
+                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
-                    proxy.scrollTo("doneWhen", anchor: .top)
+                    proxy.scrollTo(target, anchor: target == "effort" ? .bottom : .top)
                 }
               }
             }
@@ -374,7 +374,7 @@ struct TaskFocusView: View {
             if let risk { railCard { RiskBox(task: task, risk: risk) } }
 
             railCard { details }
-            if let effort = task.effort { railCard { EffortSection(task: task, effort: effort) } }
+            if let effort = task.effort { railCard { EffortSection(task: task, effort: effort) }.id("effort") }
 
             if !touchedFiles.isEmpty {
                 TaskSection(title: "Files in plan") {
