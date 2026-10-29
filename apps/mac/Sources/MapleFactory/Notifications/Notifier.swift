@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 import UserNotifications
 
 /// macOS banners for when a task newly needs you and the app is in the background. Snoozing and
@@ -41,6 +42,7 @@ import UserNotifications
 
     /// `swift run` has no bundle, and UNUserNotificationCenter traps without one.
     private var available: Bool { Bundle.main.bundleIdentifier != nil }
+    private let log = Logger(subsystem: "dev.maplefactory.app", category: "notifications")
     private var asked = false
     private var expiry: Timer?
 
@@ -53,7 +55,7 @@ import UserNotifications
 
     /// Called once at launch: takes the banners' clicks and defines their buttons.
     func start() {
-        guard available else { return }
+        guard available else { return log.info("No bundle (swift run): notifications are off") }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         let open = UNNotificationAction(identifier: Self.openAction, title: "Open", options: [.foreground])
@@ -90,7 +92,11 @@ import UserNotifications
     }
 
     func notify(task: Wire.Task, reason: Reason) {
-        guard available, isOn, !NSApp.isActive else { return }
+        // Why a banner didn't come: `log stream --predicate 'category == "notifications"'`.
+        guard available else { return log.info("\(task.id): no banner, not a bundled app") }
+        guard isOn else { return log.info("\(task.id): no banner, \(self.statusText)") }
+        guard !NSApp.isActive else { return log.info("\(task.id): no banner, the app is frontmost") }
+        log.info("\(task.id): banner, \(reason.text)")
         Task { await post(task: task, reason: reason) }
     }
 
