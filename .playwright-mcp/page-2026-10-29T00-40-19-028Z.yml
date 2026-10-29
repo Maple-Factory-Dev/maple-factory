@@ -1,0 +1,50 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - link "Maple Factory home" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e7]: Maple Factory
+      - navigation "Primary" [ref=e8]:
+        - link "How it works" [ref=e9] [cursor=pointer]:
+          - /url: /#process
+        - link "Install" [ref=e10] [cursor=pointer]:
+          - /url: /#install
+        - link "Download" [ref=e11] [cursor=pointer]:
+          - /url: /download
+      - button "Switch theme" [ref=e13] [cursor=pointer]
+  - main [ref=e17]:
+    - region [ref=e18]:
+      - generic [ref=e19]:
+        - paragraph [ref=e20]: Download
+        - heading "Maple Factory for Mac." [level=1] [ref=e21]
+        - paragraph [ref=e22]: Your factory’s inbox, plans to approve and changes to review, and the runner that puts this Mac to work. It keeps itself up to date.
+        - paragraph [ref=e23]:
+          - link "Download for macOS" [ref=e24] [cursor=pointer]:
+            - /url: /download/mac
+        - paragraph [ref=e25]: macOS 15 or later, on Apple silicon. Notarized by Apple.
+        - list [ref=e26]:
+          - listitem [ref=e27]:
+            - heading "Install" [level=2] [ref=e28]
+            - paragraph [ref=e29]: Open the disk image and drag Maple Factory to Applications.
+          - listitem [ref=e30]:
+            - heading "Connect to your factory" [level=2] [ref=e31]
+            - paragraph [ref=e32]:
+              - text: Open the app, enter your factory’s address and sign in with GitHub. No factory yet?
+              - link "Deploy one" [ref=e33] [cursor=pointer]:
+                - /url: /deploy
+              - text: ", or look around the demo workspace first."
+          - listitem [ref=e34]:
+            - heading "Add this Mac" [level=2] [ref=e35]
+            - paragraph [ref=e36]: From Machines, add this Mac and it starts taking sessions in the background, starting at login. Your teammates add theirs the same way.
+        - paragraph [ref=e37]: Updates arrive on their own, every few hours, or from Maple Factory › Check for Updates…. Want prereleases? Settings › Updates › Beta.
+  - contentinfo [ref=e38]:
+    - generic [ref=e39]:
+      - paragraph [ref=e40]: Maple Factory
+      - paragraph [ref=e42]:
+        - text: Set in
+        - link "Atlas" [ref=e43] [cursor=pointer]:
+          - /url: https://afomera.dev/fonts
+        - text: . Boiled down in small batches.
+      - paragraph [ref=e44]: © 2026 Maple Factory

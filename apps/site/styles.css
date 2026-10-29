@@ -432,7 +432,9 @@ section { position: relative; }
 .deploy-steps h2 { font-size: 24px; }
 .deploy-steps p { margin: 10px 0 0; color: var(--ink-2); }
 .deploy-steps p:has(.btn) { margin-top: 18px; }
-.deploy-note { font-size: 14.5px; }
+.deploy-note { font-size: 14.5px; color: var(--ink-2); }
+.download-cta { margin: 32px 0 10px; }
+.access .access-mac { margin-top: 20px; font-size: 15px; }
 .deploy-alt { margin-top: 32px; color: var(--ink-2); font-size: 15.5px; }
 @media (max-width: 560px) {
   .deploy { padding: 56px 0 80px; }
