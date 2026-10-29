@@ -772,9 +772,14 @@ final class AppState {
         showToast("Copied \(id)", icon: "number")
     }
 
-    func copyBranch(_ id: String) {
+    /// Its git branch: the real one when live, a made-up one in the mockup.
+    func branch(of id: String) -> String? {
         let task = task(id)
-        guard let branch = task.gitBranch ?? task.pr?.branch else { return }
+        return task.gitBranch ?? task.pr?.branch ?? (isLive ? nil : task.mockBranch)
+    }
+
+    func copyBranch(_ id: String) {
+        guard let branch = branch(of: id) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(branch, forType: .string)
         showToast("Copied \(branch)", icon: "arrow.triangle.branch")

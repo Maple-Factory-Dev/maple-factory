@@ -95,7 +95,6 @@ struct TaskActionButtons: View {
     @Binding var rename: Bool
 
     private var open: Bool { task.state != .merged && task.state != .cancelled }
-    private var branch: String? { task.gitBranch ?? task.pr?.branch }
 
     var body: some View {
         if task.state != .merged {
@@ -121,7 +120,7 @@ struct TaskActionButtons: View {
         if let pr = task.pr, !pr.isLocal {
             Button { appState.openPullRequest(task.id) } label: { Label("Open pull request", systemImage: "arrow.up.right.square") }
         }
-        if branch != nil {
+        if appState.branch(of: task.id) != nil {
             Button { appState.copyBranch(task.id) } label: { Label("Copy branch name", systemImage: "arrow.triangle.branch") }
         }
         Button { appState.copyID(task.id) } label: { Label("Copy ID", systemImage: "number") }

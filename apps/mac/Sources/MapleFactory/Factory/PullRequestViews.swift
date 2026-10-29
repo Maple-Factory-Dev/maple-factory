@@ -35,7 +35,7 @@ struct PullRequestCard: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 10.5))
-                Text(pr.branch ?? branch).lineLimit(1).truncationMode(.middle)
+                Text(pr.branch ?? task.mockBranch).lineLimit(1).truncationMode(.middle)
                 Image(systemName: "arrow.right").font(.system(size: 8.5, weight: .semibold))
                 Text(pr.base ?? "main")
             }
@@ -76,15 +76,6 @@ struct PullRequestCard: View {
                 }
             }
         }
-    }
-
-    private var branch: String {
-        let slug = task.title.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .prefix(3)
-            .joined(separator: "-")
-        return "\(task.id.lowercased())-\(slug)"
     }
 
     private func checkRow(_ check: CICheck) -> some View {

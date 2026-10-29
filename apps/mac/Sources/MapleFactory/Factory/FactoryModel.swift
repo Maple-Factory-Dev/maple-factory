@@ -393,3 +393,15 @@ struct ComposeDraft {
 enum GoalLayout: String, CaseIterable {
     case board = "Board", list = "List", timeline = "Timeline"
 }
+
+extension FactoryTask {
+    /// The mockup's branch name for it: its ID and the first words of its title.
+    var mockBranch: String {
+        let slug = title.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .prefix(3)
+            .joined(separator: "-")
+        return "\(id.lowercased())-\(slug)"
+    }
+}
