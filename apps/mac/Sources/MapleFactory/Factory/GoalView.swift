@@ -130,7 +130,6 @@ struct FlowBar: View {
                     .fixedSize()
                 }
             }
-            .frame(maxWidth: 620, alignment: .leading)
             .font(.system(size: 11.5))
             .foregroundStyle(Theme.textMuted)
         }
