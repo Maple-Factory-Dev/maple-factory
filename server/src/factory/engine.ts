@@ -354,7 +354,12 @@ export class Engine {
       case "task.retry": {
         if (task.state === "merged") fail("It's already merged.");
         if (task.state === "drafting") fail("It hasn't started yet; send it to planning.");
+        const goal = this.store.goal(task.goal);
+        if (goal?.archived) fail(`${goal.name} is archived; unarchive it to pick this back up.`);
         const priv = this.store.private(task.id);
+        // Archived with "clean up": its worktree is gone, so a new session would start in nothing.
+        if (priv.discard || priv.cleaned) fail("Its worktree was cleaned up when its goal was archived.");
+        if (task.state === "awaitingApproval") fail("Nothing is running; its plan is waiting for approval. Request changes to plan it again.");
         if (priv.merging) fail("It's merging now.");
         if (priv.finishing) fail("It's pushing its work now; retry once that's done.");
         // Its first session hasn't said where its worktree is yet; a new one would make it again.
@@ -370,10 +375,8 @@ export class Engine {
             : !task.plan.length ? "planning"
             : task.approvals.length >= task.approvalsNeeded ? "building"
             : "awaitingApproval";
-          if (task.pr?.state === "closed") await this.reopenPull(task, who);
-        } else if (was === "awaitingApproval") {
-          task.state = "planning";
-          task.approvals = [];
+          // A pull request GitHub won't reopen is forgotten: building again pushes and opens a new one.
+          if (task.pr?.state === "closed" && !(await this.reopenPull(task, who))) task.state = "building";
         }
         if (task.state === "reviewing") {
           // A new automated-review round on what's pushed.
@@ -387,7 +390,7 @@ export class Engine {
         task.hand = null;
         task.question = null;
         task.waiting = null;
-        this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0, discard: false, cleaned: false });
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
         this.event(task, who, was === "cancelled" ? `picked it back up (${task.state})` : task.state === "reviewing" ? "ran its review again" : "retried it");
         this.save(task);
         await this.pump();
@@ -1105,20 +1108,24 @@ export class Engine {
   }
 
   /** Reopens a cancelled task's closed pull request. When GitHub won't (its branch is gone, say),
-   *  the task forgets it, so its next push opens a new one. */
-  private async reopenPull(task: Task, who: string) {
+   *  the task forgets it and this says false, so the task builds again and its push opens a new one. */
+  private async reopenPull(task: Task, who: string): Promise<boolean> {
     const pr = task.pr!;
     const app = githubApp(this.env);
     const gh = this.store.private(task.id).gh;
-    pr.state = "open";
-    if (!app || !gh || !pr.url) return;
+    if (!app || !gh || !pr.url) {
+      pr.state = "open";
+      return true;
+    }
     try {
       await reopenPullRequest(app, gh.owner, gh.repo, pr.number, `${who} picked ${task.id} back up in Maple Factory.`);
+      pr.state = "open";
       this.event(task, "factory", `reopened pull request #${pr.number}`);
+      return true;
     } catch (e) {
-      this.event(task, "factory", `couldn't reopen pull request #${pr.number} (${(e as Error).message}); the next push opens a new one`);
-      pr.url = null;
-      pr.number = Number(this.store.nextId("PR").split("-")[1]);
+      this.event(task, "factory", `couldn't reopen pull request #${pr.number} (${(e as Error).message}); it builds again and opens a new one`);
+      task.pr = null;
+      return false;
     }
   }
 
@@ -1423,6 +1430,8 @@ export class Engine {
   private async startMerge(task: Task, who: string, text = "merged it") {
     const priv = this.store.private(task.id);
     const app = githubApp(this.env);
+    // A repo on GitHub merges through its pull request, never around it and its CI.
+    if (app && priv.gh && !task.pr?.url) fail("Its pull request isn't open on GitHub; it can't be merged without one.");
     if (app && priv.gh && task.pr?.url) {
       // On GitHub: squash-merge the pull request, pinned to the head that was reviewed.
       this.store.savePrivate(task.id, { ...priv, merging: true });

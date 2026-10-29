@@ -4,7 +4,8 @@
 // Checks: cancelling in planning, awaitingApproval, building and reviewing ends the session (and
 // closes the pull request); Retry starts a new planner or builder in place of a running one, runs
 // review again in reviewing, and brings a cancelled task back where it was, reopening its pull
-// request; a merged task can't be retried or cancelled.
+// request (or building again, when GitHub won't reopen it); a merged task can't be retried or
+// cancelled.
 
 const [base = "http://localhost:8788", folder = "/tmp/mfgh/greeter", gh = "http://localhost:18803"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -95,6 +96,7 @@ send({ type: "task.retry", id: b });
 t = await wait(`${b} back`, () => tasks.get(b)?.state === "awaitingApproval" && tasks.get(b));
 if (!t.plan.length || t.worker) throw new Error(`${b} came back without its plan, or running`);
 step(`${b}: Retry brought it back awaiting approval of its plan (v${t.planVersion}), nothing running`);
+step(`${b}: Retry while it awaits approval is refused: "${await refused("retry", { type: "task.retry", id: b }, /waiting for approval/)}"`);
 send({ type: "task.approvePlan", id: b });
 t = await wait("builder", () => tasks.get(b)?.state === "building" && tasks.get(b).worker && tasks.get(b), 60000);
 const b1 = t.worker.session;
@@ -131,6 +133,18 @@ const said = (await fake()).log.filter((l) => l.path.endsWith(`/issues/${number}
 if (!/picked .* back up/.test(said.at(-1) ?? "")) throw new Error(`comments on #${number}: ${JSON.stringify(said)}`);
 step(`${c}: Retry reopened #${number} ("${said.at(-1)}") and started review round ${t.autoReview.rounds.length}`);
 await cancel(c);
+for (let i = 0; i < 20 && (await pullState(number)) !== "closed"; i++) await new Promise((r) => setTimeout(r, 300));
+// Its branch deleted on GitHub: the pull request can't be reopened, so it builds again and opens a new one.
+await fetch(`${gh}/_deleteBranch`, { method: "POST", body: JSON.stringify({ owner: "acme", repo: "greeter", branch: t.pr.branch }) });
+send({ type: "task.retry", id: c });
+t = await wait(`${c} building again`, () => { const x = tasks.get(c); return x?.state === "building" && x.worker?.role === "builder" && x; }, 60000);
+if (t.pr) throw new Error(`${c} kept the pull request GitHub wouldn't reopen: ${JSON.stringify(t.pr)}`);
+if ((await pullState(number)) !== "closed") throw new Error(`#${number} isn't closed`);
+step(`${c}: GitHub wouldn't reopen #${number} (its branch was deleted), so Retry sent it back to building`);
+t = await wait(`${c} new pull request`, () => { const x = tasks.get(c); return x?.state === "reviewing" && x.pr?.url && x.pr.number !== number && x; }, 120000);
+if ((await pullState(t.pr.number)) !== "open") throw new Error(`#${t.pr.number} isn't open`);
+step(`${c}: its builder pushed again and opened #${t.pr.number}`);
+await cancel(c);
 
 // ---- merged ----
 const d = create("Merge it", "Add hello.txt with a greeting.");
@@ -142,4 +156,9 @@ await wait("merged", () => tasks.get(d)?.state === "merged", 60000);
 step(`${d}: merged`);
 step(`${d}: Retry is refused: "${await refused("retry", { type: "task.retry", id: d }, /merged/)}"`);
 step(`${d}: Cancel is refused: "${await refused("cancel", { type: "task.cancel", id: d }, /finished/)}"`);
+
+// ---- archived ----
+send({ type: "goal.archive", id: goal.id, archived: true });
+await wait("archived", () => goals.find((g) => g.id === goal.id)?.archived);
+step(`${a}: Retry in an archived goal is refused: "${await refused("retry", { type: "task.retry", id: a }, /archived/)}"`);
 process.exit(0);
