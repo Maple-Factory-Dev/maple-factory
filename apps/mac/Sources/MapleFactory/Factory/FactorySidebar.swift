@@ -291,18 +291,35 @@ struct UpdateFooter: View {
         if phase.showsInFooter {
             VStack(spacing: 0) {
                 Rectangle().fill(Theme.stroke).frame(height: 1)
-                HStack(alignment: .center, spacing: 9) {
-                    Image(systemName: phase.icon)
-                        .font(.system(size: 13))
-                        .foregroundStyle(iconColor(phase))
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 4) {
+                // The buttons sit on the title's line, so the line under it has the footer's whole width
+                // (the version and its What's new link don't fit beside them).
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center, spacing: 9) {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 13))
+                            .foregroundStyle(iconColor(phase))
+                            .frame(width: 16)
                         Text(phase.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
-                            .onTapGesture { if case .available = phase, let url = updater.releaseNotesURL { NSWorkspace.shared.open(url) } }
-                            .help(updater.releaseNotesURL == nil ? phase.title : "See what's new")
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            if let action = phase.action, let label = phase.buttonLabel {
+                                button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
+                            }
+                            if phase.isDismissible {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .frame(width: 16, height: 16)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { updater.dismiss() }
+                                    .help("Not now")
+                            }
+                        }
+                    }
+                    Group {
                         if phase.isBusy {
                             HStack(spacing: 6) {
                                 if let progress = phase.progress {
@@ -319,28 +336,30 @@ struct UpdateFooter: View {
                             .controlSize(.mini)
                             .tint(Theme.accent)
                         } else if let detail = phase.detail {
-                            Text(detail)
-                                .font(.system(size: 11))
-                                .foregroundStyle(Theme.textMuted)
-                                .lineLimit(1)
-                                .help(detail)
+                            HStack(spacing: 0) {
+                                Text(detail)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .lineLimit(1)
+                                    .help(detail)
+                                if phase.showsReleaseNotesLink, let url = updater.releaseNotesURL {
+                                    Text(" · ")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Theme.textMuted)
+                                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Theme.accent)
+                                        .lineLimit(1)
+                                        .fixedSize()
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { NSWorkspace.shared.open(url) }
+                                        .pointerStyle(.link)
+                                        .help("See the release notes")
+                                }
+                            }
                         }
                     }
-                    Spacer(minLength: 0)
-                    HStack(spacing: 4) {
-                        if let action = phase.action, let label = phase.buttonLabel {
-                            button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
-                        }
-                        if phase.isDismissible {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Theme.textMuted)
-                                .frame(width: 16, height: 16)
-                                .contentShape(Rectangle())
-                                .onTapGesture { updater.dismiss() }
-                                .help("Not now")
-                        }
-                    }
+                    .padding(.leading, 25)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
