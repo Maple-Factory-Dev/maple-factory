@@ -207,6 +207,11 @@ struct ContentView: View {
         .onAppear { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: state.destination) { if state.sidebarFloating { state.toggleSidebar() } }
+        // Only checks you start reach up to date (Sparkle's showUpdateNotFound), so background checks stay quiet.
+        .onChange(of: Updater.shared.phase) { _, phase in
+            guard phase == .upToDate else { return }
+            state.showToast(UpdatePhase.upToDateToast, icon: "checkmark.circle.fill", color: Theme.approve)
+        }
         .onChange(of: client.notice) { _, notice in
             guard let notice else { return }
             state.serverRefused(notice)
