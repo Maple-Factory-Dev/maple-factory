@@ -481,8 +481,10 @@ export const structs: Record<string, Struct> = {
       finalReviews: "map<u32>",
       autoMerge: "map<bool>",
       autoFixMerges: "bool?",
+      autoMerges: "bool?",
     },
     fieldDocs: {
+      autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
       maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
       planApprovals: "By risk level (low, medium, high).",
