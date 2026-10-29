@@ -139,14 +139,29 @@ enum Headless {
     }
 
     /// `-frames N` at `-fps`: frame-0001.png… while the script plays, for scripts/headless.sh video.
+    /// At 1x and encoded off the main actor, so the clock, not the PNG encoder, sets the pace.
     private func record(frames: Int) async {
         guard frames > 0 else { return }
-        let interval = 1 / max(number("fps", 10), 1)
+        let interval = Duration.seconds(1 / max(number("fps", 10), 1))
+        let clock = ContinuousClock()
+        var next = clock.now
+        var writes: [Task<String?, Never>] = []
         for index in 1...frames {
-            guard !finished else { return }
-            if let image = render() { write(image, to: String(format: "frame-%04d", index)) }
-            try? await Task.sleep(for: .seconds(interval))
+            guard !finished else { break }
+            if let image = render(scale: 1)?.cgImage {
+                let url = dir.appendingPathComponent(String(format: "frame-%04d.png", index))
+                writes.append(Task.detached { Self.writePNG(image, to: url) ? url.path : nil })
+            }
+            next += interval
+            try? await clock.sleep(until: next)
         }
+        for write in writes { if let path = await write.value { files.append(path) } }
+    }
+
+    private nonisolated static func writePNG(_ image: CGImage, to url: URL) -> Bool {
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return false }
+        CGImageDestinationAddImage(destination, image, nil)
+        return CGImageDestinationFinalize(destination)
     }
 
     /// `<name>.png`, or `<name>-light.png` and `<name>-dark.png` for `-appearance both`.
@@ -167,12 +182,22 @@ enum Headless {
         }
     }
 
-    private func render() -> NSBitmapImageRep? {
+    /// The window's content as a bitmap: at the screen's scale, or `scale` (1 for video frames).
+    private func render(scale: CGFloat? = nil) -> NSBitmapImageRep? {
         guard let window, let view = window.contentView else { return nil }
         if window.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) { Headless.hide(window) }
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        let rep: NSBitmapImageRep?
+        if let scale {
+            rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * scale), pixelsHigh: Int(view.bounds.height * scale),
+                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)
+            rep?.size = view.bounds.size
+        } else {
+            rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        }
+        guard let rep else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
         return rep
     }
