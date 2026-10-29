@@ -30,7 +30,7 @@ struct SinceLastViewedBanner: View {
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(changes.prefix(compact ? 3 : 8).enumerated()), id: \.offset) { _, change in
+                    ForEach(Array(changes.prefix(compact ? 1 : 8).enumerated()), id: \.offset) { _, change in
                         HStack(spacing: 8) {
                             if let who = FactoryData.identity(named: change.who) {
                                 AgentAvatar(agent: who, size: 18)
@@ -46,8 +46,8 @@ struct SinceLastViewedBanner: View {
                                 .foregroundStyle(Theme.textFaint)
                         }
                     }
-                    if compact, changes.count > 3 {
-                        Text("+\(changes.count - 3) more")
+                    if compact, changes.count > 1 {
+                        Text("+\(changes.count - 1) more")
                             .font(.system(size: 11.5))
                             .foregroundStyle(Theme.textMuted)
                     }

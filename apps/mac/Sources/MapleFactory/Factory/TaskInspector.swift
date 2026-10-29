@@ -12,6 +12,7 @@ struct TaskInspector: View {
     }
 
     private var requests: [ChangeRequest] { appState.changeRequests(for: task) }
+    private var openRequests: [ChangeRequest] { requests.filter { $0.status != .applied } }
     private var comments: [Comment] { task.comments + appState.postedComments[task.id, default: []] }
 
     var body: some View {
@@ -63,8 +64,9 @@ struct TaskInspector: View {
                     if let hand = task.hand { InspectorHandCallout(task: task, hand: hand) }
                     if task.state == .awaitingApproval { ApprovalBlock(task: task, onRequestChanges: requestChanges) }
                     if task.state == .reviewing { ReviewActions(task: task, onRequestChanges: requestChanges) }
-                    if !requests.isEmpty {
-                        TaskSection(title: "Changes requested") { ChangeRequestList(task: task, requests: requests) }
+                    // Only what's still waiting; applied requests are history, kept in the full view.
+                    if !openRequests.isEmpty {
+                        TaskSection(title: "Changes requested") { ChangeRequestList(task: task, requests: openRequests) }
                     }
                     if !task.brief.isEmpty {
                         TaskSection(title: "Brief") {
