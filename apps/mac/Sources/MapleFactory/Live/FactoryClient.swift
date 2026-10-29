@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Security
 
@@ -447,6 +448,92 @@ import Security
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
         diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+    }
+
+    /// A file pasted or dropped into a brief or note, as the factory keeps it (`POST /api/attachments`).
+    struct Attachment: Decodable {
+        let id: String
+        let name: String
+        let mime: String
+        let size: Int
+        /// `/attachments/<id>/<name>`: what the note links to.
+        let path: String
+    }
+
+    /// The factory's limit for one attachment.
+    nonisolated static let maxAttachment = 25 * 1024 * 1024
+
+    func upload(data: Data, filename: String, mime: String) async throws -> Attachment {
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        guard data.count <= Self.maxAttachment else { throw ClientError.message("It's over 25 MB.") }
+        var components = URLComponents(url: server.appending(path: "/api/attachments"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [.init(name: "name", value: filename)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        return try await Self.load(request)
+    }
+
+    /// Attachments fetched this run, by path; they never change once stored.
+    private static let attachmentCache = NSCache<NSString, NSData>()
+
+    /// An attachment's bytes (`/attachments/…`), with this app's token: AsyncImage can't send one.
+    func attachment(_ path: String) async throws -> Data {
+        if let cached = Self.attachmentCache.object(forKey: path as NSString) { return cached as Data }
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        guard Self.attachmentLink(path) != nil, let url = URL(string: path, relativeTo: server)?.absoluteURL else {
+            throw ClientError.message("Not an attachment.")
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw ClientError.message(status == 404 ? "It isn't there anymore." : "The server answered \(status).") }
+        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString)
+        return data
+    }
+
+    /// `/attachments/<uuid>/<name>`, as the server's LINK pattern has it: its id and name, or nil for
+    /// anything else (`..`, other server paths), so the token never goes elsewhere.
+    nonisolated static func attachmentLink(_ path: String) -> (id: String, name: String)? {
+        guard let match = path.wholeMatch(of: /\/attachments\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([\w.\-]{1,120})/),
+              !match.2.contains(".."), !match.2.hasPrefix(".") else { return nil }
+        return (String(match.1), String(match.2))
+    }
+
+    /// Opened in their app with a click; anything else (scripts, .command, .app, .jar…) is only shown in Finder.
+    nonisolated static let safeToOpen: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "pdf",
+                                                      "txt", "log", "md", "json", "csv", "mp4", "mov", "webm"]
+
+    /// Saves an attachment to a temporary folder, quarantined like a browser download, then opens it in
+    /// its app if it's a known-safe type or shows it in Finder otherwise.
+    func open(attachment path: String) async {
+        do {
+            guard let link = Self.attachmentLink(path) else { throw ClientError.message("Not an attachment.") }
+            let data = try await attachment(path)
+            let folder = FileManager.default.temporaryDirectory.appending(path: "maple-attachments/\(link.id)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appending(path: link.name)
+            try data.write(to: file)
+            Self.quarantine(file)
+            if Self.safeToOpen.contains(file.pathExtension.lowercased()) {
+                NSWorkspace.shared.open(file)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            }
+        } catch {
+            notice = Self.describe(error)
+        }
+    }
+
+    /// Marks a file as downloaded (`com.apple.quarantine`), so Gatekeeper checks it before it runs.
+    nonisolated static func quarantine(_ file: URL) {
+        let stamp = String(format: "0083;%08x;Maple Factory;", Int(Date().timeIntervalSince1970))
+        _ = file.withUnsafeFileSystemRepresentation { path in
+            stamp.withCString { setxattr(path, "com.apple.quarantine", $0, strlen($0), 0, 0) }
+        }
     }
 
     private func api<T: Decodable>(_ path: String, method: String = "GET") async throws -> T {

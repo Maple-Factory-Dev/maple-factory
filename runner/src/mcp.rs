@@ -1252,6 +1252,14 @@ pub async fn forward(sessions: &Sessions, request: &Value) -> Value {
         Err(_) => Err("The control plane didn't answer within 60s.".into()),
     };
     PENDING.lock().unwrap().remove(&req_id);
+    // A task's attachments are links on the control plane; the agent gets local files to open.
+    let reply = match (tool, reply) {
+        ("get_task", Ok(mut result)) => {
+            crate::attachments::add_to_task(&mut result).await;
+            Ok(result)
+        }
+        (_, reply) => reply,
+    };
     answer(reply)
 }
 
