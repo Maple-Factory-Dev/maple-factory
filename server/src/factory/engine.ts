@@ -59,6 +59,8 @@ const CI_POLL_MS = 30_000;
 // The ways forward on a "didn't merge" hand (the clients pick them by title).
 const MERGE_FIX = "Send it back to fix";
 const MERGE_RETRY = "Try the merge again";
+/** Times the factory sends a task that didn't merge back to fix it before asking a person. */
+const MERGE_FIX_TRIES = 2;
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
 
@@ -1182,11 +1184,24 @@ export class Engine {
     this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false });
     if (!msg.ok) {
       const why = msg.message ?? "no reason given";
+      // With the policy's say-so, a builder fixes it (a few times at most) before a person is asked.
+      const tries = this.store.private(task.id).mergeFixes ?? 0;
+      const autoFix = this.store.policy().autoFixMerges !== false;
+      if (autoFix && tries < MERGE_FIX_TRIES) {
+        const n = tries + 1;
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeFixes: n });
+        this.event(task, "factory", `couldn't merge: ${why}; sent it back to fix the merge (try ${n} of ${MERGE_FIX_TRIES})`);
+        this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge; a builder is fixing it (try ${n} of ${MERGE_FIX_TRIES}).`, taskId: task.id });
+        this.save(task);
+        this.hooks.waitUntil(this.sendBackToFixMerge(task, "factory", why));
+        return;
+      }
       this.event(task, "factory", `couldn't merge: ${why}`);
       this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge: ${why}`, taskId: task.id });
-      // A person picks the way forward; nothing retries it on its own.
+      // A person picks the way forward.
       // The runner's message already says it didn't merge; GitHub's may not.
-      const summary = /merge/i.test(why) ? why : `It didn't merge into ${task.pr.base}: ${why}`;
+      const gaveUp = autoFix ? ` (after ${MERGE_FIX_TRIES} tries)` : "";
+      const summary = (/merge/i.test(why) ? why : `It didn't merge into ${task.pr.base}: ${why}`) + gaveUp;
       this.raise(task, "factory", "mergeFailed", summary, [
         { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: true },
         { title: MERGE_RETRY, detail: "Merge it again as it is.", recommended: false },
@@ -1203,7 +1218,7 @@ export class Engine {
     this.intake.forTask(task, `${task.id} is merged into ${task.pr.base}. Thanks for asking!`);
     this.save(task);
     this.hooks.broadcast({ type: "toast", text: `${task.id} merged into ${task.pr.base}.`, taskId: task.id });
-    this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null });
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null, mergeFixes: 0 });
     this.hooks.waitUntil(this.cleanup(task));
     // Tasks waiting on this one ("after") can build now.
     if (this.store.tasks().some((t) => t.after.includes(task.id))) this.hooks.waitUntil(this.pump());
@@ -1665,8 +1680,16 @@ export class Engine {
       await this.cancel(task, who);
       return this.pump();
     }
+    const why = hand.summary.replace(/^It didn't merge into [^:]+: /, "").replace(/ \(after \d+ tries\)$/, "");
+    this.event(task, who, "sent it back to fix the merge");
+    await this.sendBackToFixMerge(task, who, why, note);
+  }
+
+  /** A task that didn't merge goes back to a builder with a change request to bring the branch up to
+   *  date and resolve the conflicts; review and approvals run again on what it pushes. */
+  private async sendBackToFixMerge(task: Task, who: string, why: string, note = "") {
     const base = task.pr?.base ?? this.store.private(task.id).base ?? "main";
-    const why = hand.summary.replace(/^It didn't merge into [^:]+: /, "").replace(/\s+/g, " ").trim();
+    why = why.replace(/\s+/g, " ").trim();
     const change: ChangeRequest = {
       id: `C${task.changes.length + 1}`,
       author: who,
@@ -1677,7 +1700,6 @@ export class Engine {
       timing: null,
     };
     task.changes.push(change);
-    this.event(task, who, "sent it back to fix the merge");
     await this.backToBuilding(task);
     this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
     this.save(task);
