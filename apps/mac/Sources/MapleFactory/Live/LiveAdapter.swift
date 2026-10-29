@@ -31,6 +31,15 @@ import SwiftUI
         }
     }
 
+    /// Who a steer reaches when no session is running: a reviewing steer goes back to the builder.
+    static func stageAgent(_ state: Wire.TaskState) -> Agent? {
+        switch state {
+        case .planning, .awaitingApproval: role("planner")
+        case .building, .reviewing: role("builder")
+        default: nil
+        }
+    }
+
     /// "now", "4m", "2h", "3d": how the mockup labels times.
     static func ago(_ ms: UInt64) -> String {
         let seconds = max(0, Date().timeIntervalSince1970 - Double(ms) / 1000)
@@ -62,7 +71,8 @@ import SwiftUI
 
         var task = FactoryTask(id: t.id, goal: goalName, title: t.title, state: state(t.state),
                                detail: detail(t), span: start...max(start + 1, day(t.updatedAt) + 1), updated: ago(t.updatedAt))
-        task.agent = t.worker.map { role($0.role.rawValue) }
+        // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
+        task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
         task.owner = who(t.owner)
         task.machine = t.machine
