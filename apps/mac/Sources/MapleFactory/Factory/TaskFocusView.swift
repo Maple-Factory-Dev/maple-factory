@@ -284,11 +284,7 @@ struct TaskFocusView: View {
 
             if !task.brief.isEmpty, task.spec == nil {
                 TaskSection(title: "Brief") {
-                    Text(task.brief)
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.text.opacity(0.9))
-                        .lineSpacing(6)
-                        .fixedSize(horizontal: false, vertical: true)
+                    MarkdownPreview(source: task.brief, baseSize: 14)
                 }
             }
 

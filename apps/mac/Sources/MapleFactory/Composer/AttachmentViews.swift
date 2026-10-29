@@ -188,6 +188,8 @@ struct MarkdownTextView: NSViewRepresentable {
 struct LinkedImage: View {
     let alt: String
     let path: String
+    /// Fill the column instead of showing at most the image's own width (capped at 720pt).
+    var fillsWidth = false
     @Environment(FactoryClient.self) private var client: FactoryClient?
     @State private var image: NSImage?
     @State private var failed: String?
@@ -200,7 +202,7 @@ struct LinkedImage: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: min(image.size.width, 720), alignment: .leading)
+                    .frame(maxWidth: fillsWidth ? .infinity : min(image.size.width, 720), alignment: .leading)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
                     .help(alt)
