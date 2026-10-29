@@ -97,7 +97,7 @@ When every step is done and every item is proven, call \`finish\` with a short s
 
 export function reviewerPrompt(task: Task, goal: Goal | null, base: string): string {
   const done = task.doneWhen
-    .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
+    .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
   const previous = task.autoReview?.findings.filter((f) => f.status === "open") ?? [];
   return `You are the review agent for a software factory task. You review; you do not change code.
@@ -113,7 +113,7 @@ ${done}
 ${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}
 Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/${base}..HEAD\`). Answer three things:
 1. Did it do the ask? One check per part of the brief: met, partial or missed.
-2. Are the proofs real? One check per Done when item: does the evidence actually show it?
+2. Are the proofs real? One check per Done when item: does the evidence actually show it? An ATTESTED item was signed off by a person themselves: accept it as proven, don't flag its proof as not real.
 3. Code: bugs, missing cases, risky changes.
 
 Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
