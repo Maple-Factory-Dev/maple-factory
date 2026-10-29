@@ -8,6 +8,7 @@ struct TaskListView: View {
     @SwiftUI.State private var collapsed: Set<TaskState> = []
     /// The task whose row's context menu asked to cancel it.
     @SwiftUI.State private var cancelling: FactoryTask?
+    @SwiftUI.State private var renaming: FactoryTask?
     /// The task whose row's context menu asked to schedule it.
     @SwiftUI.State private var scheduling: String?
 
@@ -31,6 +32,7 @@ struct TaskListView: View {
         }
         .scrollIndicators(.never)
         .cancelTaskConfirmation(task: cancelling ?? FactoryTask.none, isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }))
+        .renameTask(task: renaming ?? FactoryTask.none, isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }))
     }
 
     private func sectionHeader(_ taskState: TaskState, count: Int) -> some View {
@@ -122,6 +124,7 @@ struct TaskListView: View {
         .taskClicks(task.id)
         .contextMenu {
             TaskActionButtons(task: task, confirmCancel: Binding(get: { cancelling?.id == task.id }, set: { cancelling = $0 ? task : nil }),
+                              rename: Binding(get: { renaming?.id == task.id }, set: { renaming = $0 ? task : nil }),
                               schedule: { scheduling = task.id })
         }
         .popover(isPresented: Binding(get: { scheduling == task.id }, set: { if !$0 { scheduling = nil } }), arrowEdge: .bottom) {

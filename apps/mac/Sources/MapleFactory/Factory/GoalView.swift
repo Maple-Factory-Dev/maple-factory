@@ -269,7 +269,7 @@ struct BoardColumns: View {
     }
 }
 
-/// A card on the board, with its actions on right-click (the queue's, Retry and Cancel…).
+/// A card on the board, with its actions on right-click (the queue's, Retry, Cancel…, Rename… and the rest).
 private struct BoardCard: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
@@ -278,6 +278,7 @@ private struct BoardCard: View {
     /// A card dropped on this one, to go ahead of it.
     var onDrop: ((String) -> Void)? = nil
     @State private var confirmCancel = false
+    @State private var rename = false
     @State private var scheduling = false
     @State private var targeted = false
 
@@ -285,9 +286,10 @@ private struct BoardCard: View {
         let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position)
             .taskClicks(task.id)
             .contextMenu {
-                TaskActionButtons(task: task, confirmCancel: $confirmCancel, schedule: { scheduling = true })
+                TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
             }
             .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
+            .renameTask(task: task, isPresented: $rename)
             .popover(isPresented: Binding(get: { scheduling || state.schedulingTask == task.id },
                                           set: { if !$0 { scheduling = false; state.schedulingTask = nil } }),
                      arrowEdge: .trailing) { SchedulePopover(task: task) }
