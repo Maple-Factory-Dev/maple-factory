@@ -91,4 +91,50 @@ struct UpdatePhaseTests {
     @Test func releaseNotesLinkSaysWhatsNew() {
         #expect(UpdatePhase.releaseNotesLinkLabel == "What's new")
     }
+
+    // MARK: The update toast
+
+    @Test func toastShowsFromOfferToRelaunch() {
+        for phase in all {
+            switch phase {
+            case .available, .downloading, .extracting, .installing, .readyToRelaunch: #expect(phase.showsUpdateToast)
+            default: #expect(!phase.showsUpdateToast)
+            }
+        }
+    }
+
+    @Test func toastCopy() {
+        #expect(UpdatePhase.updateToastTitle(version: "0.2.0") == "Maple Factory 0.2.0 is available")
+        #expect(UpdatePhase.updateToastButtonLabel == "Update & Restart")
+        #expect(UpdatePhase.downloading(received: 50, expected: 200).updateToastProgressLabel == "Downloading 25%")
+        #expect(UpdatePhase.downloading(received: 50, expected: 0).updateToastProgressLabel == "Downloading…")
+        #expect(UpdatePhase.extracting(fraction: 0.4).updateToastProgressLabel == "Preparing 40%")
+        #expect(UpdatePhase.installing.updateToastProgressLabel == "Installing…")
+        #expect(UpdatePhase.readyToRelaunch(version: "0.2.0").updateToastProgressLabel == "Restarting…")
+        #expect(UpdatePhase.available(version: "0.2.0").updateToastProgressLabel == nil)
+    }
+
+    @MainActor @Test func toastNeedsAnOfferedVersion() {
+        #expect(!Updater.showsToast(phase: .downloading(received: 1, expected: 2), offered: nil, dismissed: nil))
+        #expect(Updater.showsToast(phase: .downloading(received: 1, expected: 2), offered: "0.2.0", dismissed: nil))
+        #expect(!Updater.showsToast(phase: .upToDate, offered: "0.2.0", dismissed: nil))
+    }
+
+    @MainActor @Test func dismissingHidesOnlyThatVersion() {
+        let offer = UpdatePhase.available(version: "0.2.0")
+        #expect(!Updater.showsToast(phase: offer, offered: "0.2.0", dismissed: "0.2.0"))
+        #expect(!Updater.showsToast(phase: .readyToRelaunch(version: "0.2.0"), offered: "0.2.0", dismissed: "0.2.0"))
+        // A newer release toasts again.
+        #expect(Updater.showsToast(phase: .available(version: "0.2.1"), offered: "0.2.1", dismissed: "0.2.0"))
+    }
+
+    @MainActor @Test func updateAndRestartRelaunchesOnceReady() {
+        let ready = UpdatePhase.readyToRelaunch(version: "0.2.0")
+        #expect(Updater.relaunchesAutomatically(at: ready, relaunchWhenReady: true))
+        // The footer's Update still waits for its Relaunch.
+        #expect(!Updater.relaunchesAutomatically(at: ready, relaunchWhenReady: false))
+        for phase in all where phase != ready {
+            #expect(!Updater.relaunchesAutomatically(at: phase, relaunchWhenReady: true))
+        }
+    }
 }

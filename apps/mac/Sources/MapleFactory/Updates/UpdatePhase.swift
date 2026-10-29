@@ -70,6 +70,33 @@ enum UpdatePhase: Equatable {
         }
     }
 
+    // MARK: The update toast
+
+    /// Whether the update toast at the top of the window has something to say: an update on offer,
+    /// on its way in, or ready to relaunch. Updater only shows it once an update has been offered.
+    var showsUpdateToast: Bool {
+        switch self {
+        case .available, .downloading, .extracting, .installing, .readyToRelaunch: true
+        default: false
+        }
+    }
+
+    static func updateToastTitle(version: String) -> String { "Maple Factory \(version) is available" }
+
+    /// The toast's one button, which downloads, installs and relaunches without asking again.
+    static let updateToastButtonLabel = "Update & Restart"
+
+    /// What the toast says in place of its button once Update & Restart has been clicked.
+    var updateToastProgressLabel: String? {
+        switch self {
+        case .downloading: progress.map { "Downloading \(Int(($0 * 100).rounded(.down)))%" } ?? "Downloading…"
+        case .extracting: progress.map { "Preparing \(Int(($0 * 100).rounded(.down)))%" } ?? "Preparing…"
+        case .installing: "Installing…"
+        case .readyToRelaunch: "Restarting…"
+        default: nil
+        }
+    }
+
     var title: String {
         switch self {
         case .idle: ""

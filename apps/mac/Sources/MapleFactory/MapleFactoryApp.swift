@@ -200,13 +200,21 @@ struct ContentView: View {
             .onChange(of: geo.size.width) { _, width in state.windowResized(to: width) }
         }
         .overlay(alignment: .top) {
-            if let toast = state.toast {
-                ToastView(toast: toast)
-                    .padding(.top, 66)
-                    .padding(.leading, state.sidebarSpace)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .id(toast.id)
+            // An update on offer stays up until it's answered; passing toasts show beneath it.
+            VStack(spacing: 8) {
+                if Updater.shared.showsToast {
+                    UpdateToastView()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                if let toast = state.toast {
+                    ToastView(toast: toast)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .id(toast.id)
+                }
             }
+            .padding(.top, 66)
+            .padding(.leading, state.sidebarSpace)
+            .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
         .background(VisualEffect(material: .sidebar))
         .ignoresSafeArea()

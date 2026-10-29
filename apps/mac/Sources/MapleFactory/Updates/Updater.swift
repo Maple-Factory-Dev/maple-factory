@@ -28,6 +28,28 @@ final class Updater: NSObject {
     private(set) var result: String??
     /// Where an update is right now, for the sidebar footer; idle hides it.
     private(set) var phase: UpdatePhase = .idle
+    /// The version the current update offered, which the toast names through download and install.
+    private(set) var offeredVersion: String?
+    /// The version whose toast × put away: its footer stays, and a newer version toasts again.
+    private(set) var toastDismissedVersion: String?
+    /// Update & Restart was clicked, so ready to relaunch relaunches without a second click.
+    private(set) var relaunchWhenReady = false
+
+    /// Whether the update toast is up at the top of the window.
+    var showsToast: Bool {
+        Self.showsToast(phase: phase, offered: offeredVersion, dismissed: toastDismissedVersion)
+    }
+
+    static func showsToast(phase: UpdatePhase, offered: String?, dismissed: String?) -> Bool {
+        guard phase.showsUpdateToast, let offered else { return false }
+        return offered != dismissed
+    }
+
+    /// Whether arriving at this phase should relaunch by itself: only ready to relaunch, after Update & Restart.
+    static func relaunchesAutomatically(at phase: UpdatePhase, relaunchWhenReady: Bool) -> Bool {
+        guard relaunchWhenReady, case .readyToRelaunch = phase else { return false }
+        return true
+    }
 
     /// Background checks run hourly. Set on every start too, so installs that saved the old
     /// six-hour interval pick it up.
@@ -56,11 +78,7 @@ final class Updater: NSObject {
     @ObservationIgnored private var demoInstall = false
 
     func start() {
-        switch ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"] {
-        case "1": return playDemo()
-        case "uptodate": return playUpToDateDemo()
-        default: break
-        }
+        if startDemo() { return }
         guard updater == nil, Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
         let driver = SidebarUserDriver { [weak self] in self?.show($0) }
         let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
@@ -82,6 +100,15 @@ final class Updater: NSObject {
                 MainActor.assumeIsolated { self?.lastChecked = updater.lastUpdateCheckDate }
             },
         ]
+    }
+
+    /// Plays the update `MAPLE_UPDATE_DEMO` asks for, if any, instead of Sparkle.
+    @discardableResult func startDemo() -> Bool {
+        switch ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"] {
+        case "1": playDemo(); return true
+        case "uptodate": playUpToDateDemo(); return true
+        default: return false
+        }
     }
 
     func checkForUpdates() { updater?.checkForUpdates() }
@@ -120,13 +147,40 @@ final class Updater: NSObject {
         if demo != nil { stopDemo() } else { driver?.relaunch() }
     }
 
+    /// The toast's button: download and install, then relaunch as soon as Sparkle is ready.
+    func updateAndRestart() {
+        relaunchWhenReady = true
+        if case .readyToRelaunch = phase { return relaunch() }
+        install()
+    }
+
+    /// The toast's ×: hides it for this version only, leaving the footer and Sparkle's reminder be.
+    func dismissToast() {
+        toastDismissedVersion = offeredVersion
+    }
+
     func dismiss() {
         if demo != nil { stopDemo() } else if phase.clearsItself { phase = .idle } else { driver?.dismiss() }
     }
 
     private func show(_ phase: UpdatePhase) {
         self.phase = phase
+        switch phase {
+        case let .available(version), let .readyToRelaunch(version): offeredVersion = version
+        case .idle, .failed, .upToDate: relaunchWhenReady = false
+        default: break
+        }
         clearing?.cancel()
+        if Self.relaunchesAutomatically(at: phase, relaunchWhenReady: relaunchWhenReady) {
+            // The toast reads Restarting… for a beat before the app goes.
+            let beat: Double = demo == nil ? 0.4 : 2
+            clearing = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(beat))
+                guard !Task.isCancelled, let self, self.phase == phase else { return }
+                self.relaunch()
+            }
+            return
+        }
         guard phase.clearsItself else { return }
         clearing = Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
@@ -149,9 +203,8 @@ final class Updater: NSObject {
             }
             await step(.checking, for: 2)
             await step(.available(version: "0.2.0"))
-            // Update moves it on; left alone it goes ahead after a few seconds anyway.
-            for _ in 0..<40 {
-                if self?.demoInstall ?? true { break }
+            // Waits for Update (the footer) or Update & Restart (the toast), like a real offer.
+            while !(self?.demoInstall ?? true), !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             let size: UInt64 = 48_000_000
