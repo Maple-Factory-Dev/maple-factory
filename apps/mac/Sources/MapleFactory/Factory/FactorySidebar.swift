@@ -301,8 +301,6 @@ struct UpdateFooter: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
-                            .onTapGesture { if case .available = phase, let url = updater.releaseNotesURL { NSWorkspace.shared.open(url) } }
-                            .help(updater.releaseNotesURL == nil ? phase.title : "See what's new")
                         if phase.isBusy {
                             HStack(spacing: 6) {
                                 if let progress = phase.progress {
@@ -319,11 +317,27 @@ struct UpdateFooter: View {
                             .controlSize(.mini)
                             .tint(Theme.accent)
                         } else if let detail = phase.detail {
-                            Text(detail)
-                                .font(.system(size: 11))
-                                .foregroundStyle(Theme.textMuted)
-                                .lineLimit(1)
-                                .help(detail)
+                            HStack(spacing: 0) {
+                                Text(detail)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .lineLimit(1)
+                                    .help(detail)
+                                if phase.showsReleaseNotesLink, let url = updater.releaseNotesURL {
+                                    Text(" · ")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Theme.textMuted)
+                                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Theme.accent)
+                                        .lineLimit(1)
+                                        .fixedSize()
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { NSWorkspace.shared.open(url) }
+                                        .pointerStyle(.link)
+                                        .help("See the release notes")
+                                }
+                            }
                         }
                     }
                     Spacer(minLength: 0)
