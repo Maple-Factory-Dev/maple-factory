@@ -224,3 +224,9 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
   h1 { font-size: 22px; }
   .mockup-frame { height: 320px; }
 }
+
+/* A Done when item's screenshot or recording (MF-44). */
+.proof-img { display: block; width: fit-content; max-width: min(100%, 560px); margin-top: 8px; }
+.proof-img img, .proof-video { display: block; max-width: min(100%, 560px); max-height: 420px; border: 1px solid var(--stroke); border-radius: 8px; background: var(--fill); }
+.proof-video { margin-top: 8px; width: 100%; background: #000; }
+.proof-file { display: inline-block; margin-top: 8px; font-size: 13px; }

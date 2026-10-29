@@ -414,6 +414,12 @@ function mount(next, keepCompose) {
       if (old) slot.replaceWith(old);
     }
   }
+  // A proof's image or video stays the same element, so a video keeps playing through updates.
+  const media = new Map([...main.querySelectorAll("[data-media]")].map((el) => [el.dataset.media, el]));
+  for (const slot of next.querySelectorAll("[data-media]")) {
+    const old = media.get(slot.dataset.media);
+    if (old) slot.replaceWith(old);
+  }
   main.replaceChildren(next);
   if (active && active !== document.activeElement && main.contains(active)) {
     active.focus({ preventScroll: true });
@@ -662,7 +668,26 @@ function doneItem(d) {
     h("span", { class: `mark ${ok ? "ok" : d.status === "failed" ? "bad" : "wait"}` }, ok ? "✓" : d.status === "failed" ? "✕" : "○"),
     h("div", { style: "flex:1;min-width:0" }, d.text,
       d.evidence && h("div", { class: "muted", style: "font-size:13.5px" }, d.evidence.attested ? `Attested by @${d.evidence.by}${d.evidence.reason ? ` — ${d.evidence.reason}` : ""}` : d.evidence.summary),
-      d.evidence?.output?.length > 0 && h("pre", { class: "out" }, [d.evidence.command && `$ ${d.evidence.command}`, ...d.evidence.output].filter(Boolean).join("\n"))));
+      d.evidence?.output?.length > 0 && h("pre", { class: "out" }, [d.evidence.command && `$ ${d.evidence.command}`, ...d.evidence.output].filter(Boolean).join("\n")),
+      d.evidence?.file && proofFile(d.evidence)));
+}
+
+/** `/attachments/<uuid>/<name>`, the shape the server keeps a proof's file under (attachments.ts). */
+const ATTACHMENT = /^\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[\w.\-]{1,120}$/;
+
+/** The screenshot or recording the runner uploaded: shown in place, or a chip to open it if it won't load. */
+function proofFile(e) {
+  const src = e.file;
+  if (!ATTACHMENT.test(src)) return null;
+  const file = src.split("/").pop();
+  const chip = () => h("a", { class: "proof-file", href: src, target: "_blank", rel: "noopener noreferrer", title: `Open ${file}` }, file, h("span", { class: "muted" }, " ↗"));
+  if (e.kind === "video" || /\.(mp4|mov|webm|m4v)$/i.test(file)) {
+    const video = h("video", { class: "proof-video", src, controls: true, preload: "metadata", playsinline: true, "data-media": src, onerror: () => video.replaceWith(chip()) });
+    return video;
+  }
+  const link = h("a", { class: "proof-img", href: src, target: "_blank", rel: "noopener noreferrer", title: "Open full size", "data-media": src },
+    h("img", { src, alt: e.summary, loading: "lazy", onerror: () => link.replaceWith(chip()) }));
+  return link;
 }
 
 function timeline(t) {
