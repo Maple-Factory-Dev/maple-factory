@@ -109,7 +109,9 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
     wrap.classList.toggle("previewing", on);
     write.classList.toggle("on", !on);
     look.classList.toggle("on", on);
-    if (!on) {
+    // Focus stays inside, so the app's re-renders keep this editor (and Preview) as it is.
+    if (on) look.focus();
+    else {
       box.focus();
       box.setSelectionRange(...saved);
     }
