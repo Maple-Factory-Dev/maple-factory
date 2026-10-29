@@ -1,7 +1,7 @@
 // The whole factory loop against `wrangler dev` and a real runner whose agents.toml has the
 // `scripted` agent (test/scripted-agent.mjs):
 //   node server/test/e2e-factory.mjs http://localhost:8788 <machine> <repo folder>
-// Makes a goal on a local repo (whose origin is a bare repo), then a task, and drives it through
+// Checks an 11-letter prefix is refused, makes a goal with an 8-letter prefix on a local repo (whose origin is a bare repo), then a task, and drives it through
 // planning, approval, building (where a person attests to both Done when items, and the agent's
 // later proof leaves them be), two review rounds, human review and merge, checking origin's main.
 
@@ -40,7 +40,16 @@ await new Promise((r) => (feed.onopen = r));
 send({ type: "subscribe" });
 await wait("snapshot", () => tasks.size >= 0 && true);
 
-const prefix = `E${Date.now() % 100000}`.slice(0, 6);
+// Prefixes run to 10 letters or digits; an 11th is refused.
+send({ type: "goal.save", goal: { id: "", name: "E2E too long", prefix: "ABCDEFGHIJK", color: "#2EA043", summary: "", lead: "", folder, base: "main" } });
+await new Promise((r) => setTimeout(r, 500));
+const refusal = "A goal's prefix is 1–10 letters or digits, starting with a letter.";
+if (!errors.includes(refusal)) throw new Error(`an 11-letter prefix wasn't refused: ${JSON.stringify(errors)}`);
+errors.length = 0;
+step(`ABCDEFGHIJK refused: ${refusal}`);
+
+// Longer than the old 6, like PLATFORM: its tasks are PLATF123-1.
+const prefix = `PLATF${String(Date.now() % 1000).padStart(3, "0")}`;
 send({ type: "goal.save", goal: { id: "", name: `E2E ${prefix}`, prefix, color: "#2EA043", summary: "End-to-end test", lead: "", folder, base: "main" } });
 await new Promise((r) => setTimeout(r, 500));
 const goals = await (async () => {
