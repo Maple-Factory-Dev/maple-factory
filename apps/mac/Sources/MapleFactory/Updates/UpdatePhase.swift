@@ -17,6 +17,9 @@ enum UpdatePhase: Equatable {
     /// The toast a check you started shows when there's nothing new (the footer stays out of it).
     static let upToDateToast = "You're up to date — thanks for staying up to date"
 
+    /// The link beside the version line that opens the release's notes.
+    static let releaseNotesLinkLabel = "What's new"
+
     /// What the footer's one button does next.
     enum Action: Equatable { case install, cancel, relaunch, retry }
 
@@ -55,6 +58,14 @@ enum UpdatePhase: Equatable {
     var isDismissible: Bool {
         switch self {
         case .available, .failed: true
+        default: false
+        }
+    }
+
+    /// Whether the footer offers the release notes: while an update is on offer or waiting to relaunch.
+    var showsReleaseNotesLink: Bool {
+        switch self {
+        case .available, .readyToRelaunch: true
         default: false
         }
     }
