@@ -130,7 +130,7 @@ struct MarkdownTextView: NSViewRepresentable {
         @objc func demoPaste() {
             guard let view, view.window != nil else { return }
             view.window?.makeFirstResponder(view)
-            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+            view.paste(nil)
         }
 
         init(_ parent: MarkdownTextView) { self.parent = parent }
