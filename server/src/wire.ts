@@ -296,6 +296,8 @@ export interface Comment {
   anchor?: string | null;
   /** Where it came in from, e.g. "Slack #requests". */
   via?: string | null;
+  /** Logins of the org members this comment @mentions, worked out by the server. Never the author. */
+  mentions?: string[] | null;
 }
 
 /** Steering: someone redirecting the planner or builder mid-flight. */

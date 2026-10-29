@@ -691,6 +691,9 @@ pub struct Comment {
     /// Where it came in from, e.g. "Slack #requests".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via: Option<String>,
+    /// Logins of the org members this comment @mentions, worked out by the server. Never the author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mentions: Option<Vec<String>>,
 }
 
 /// Steering: someone redirecting the planner or builder mid-flight.

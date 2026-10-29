@@ -288,8 +288,12 @@ export const structs: Record<string, Struct> = {
     fields: { text: "string", proof: "ProofKind", status: "ProofStatus", evidence: "Evidence?" },
   },
   Comment: {
-    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?" },
-    fieldDocs: { author: "A login, or an agent like \"planner\".", via: "Where it came in from, e.g. \"Slack #requests\"." },
+    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?" },
+    fieldDocs: {
+      author: "A login, or an agent like \"planner\".",
+      via: "Where it came in from, e.g. \"Slack #requests\".",
+      mentions: "Logins of the org members this comment @mentions, worked out by the server. Never the author.",
+    },
   },
   ChangeRequest: {
     doc: "Steering: someone redirecting the planner or builder mid-flight.",

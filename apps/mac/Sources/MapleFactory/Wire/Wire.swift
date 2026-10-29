@@ -1599,14 +1599,17 @@ public enum Wire {
         public var anchor: String?
         /// Where it came in from, e.g. "Slack #requests".
         public var via: String?
+        /// Logins of the org members this comment @mentions, worked out by the server. Never the author.
+        public var mentions: [String]?
 
-        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil) {
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil) {
             self.id = id
             self.author = author
             self.text = text
             self.at = at
             self.anchor = anchor
             self.via = via
+            self.mentions = mentions
         }
     }
 
