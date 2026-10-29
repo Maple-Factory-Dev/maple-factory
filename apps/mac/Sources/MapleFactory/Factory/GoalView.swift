@@ -35,8 +35,11 @@ struct GoalView: View {
             HStack(spacing: 6) {
                 Image(systemName: "scope").foregroundStyle(goal.color)
                 Text("Goal")
-                Text("·")
-                Text("Due \(FactoryData.dueLabel(goal))")
+                if let due = FactoryData.dueLabel(goal) {
+                    Text("·")
+                    Text(FactoryData.isOverdue(goal) ? "Due \(due) · overdue" : "Due \(due)")
+                        .foregroundStyle(FactoryData.isOverdue(goal) ? Theme.State.cancelled : Theme.textMuted)
+                }
                 if let team = goal.team {
                     Text("·")
                     Text("@\(team)").foregroundStyle(Theme.text)
