@@ -402,7 +402,8 @@ mod tests {
 
     #[test]
     fn manifests_as_the_release_script_writes_them() {
-        let m = Manifest::parse(br#"{"version":"0.38.0","published_at":"2026-10-29T22:56:07.917Z","notes":"Runner updates show their progress.","targets":{}}"#).unwrap();
+        let json = br#"{"version":"0.38.0","published_at":"2026-10-29T22:56:07.917Z","notes":"Runner updates show their progress.","targets":{}}"#;
+        let m = Manifest::parse(json).unwrap();
         assert_eq!(m.published_at.as_deref(), Some("2026-10-29T22:56:07.917Z"));
         assert_eq!(m.notes.as_deref(), Some("Runner updates show their progress."));
     }
