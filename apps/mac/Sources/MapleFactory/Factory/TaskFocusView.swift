@@ -374,6 +374,7 @@ struct TaskFocusView: View {
             if let risk { railCard { RiskBox(task: task, risk: risk) } }
 
             railCard { details }
+            if let effort = task.effort { railCard { EffortSection(task: task, effort: effort) } }
 
             if !touchedFiles.isEmpty {
                 TaskSection(title: "Files in plan") {
@@ -405,6 +406,7 @@ struct TaskFocusView: View {
                     Text(goal.name)
                 }
             }
+            detailRow("Effort") { EffortPicker(task: task) }
             if let repo = task.repo {
                 detailRow("Repo") { Text(repo).font(.system(size: 12, design: .monospaced)) }
             }
