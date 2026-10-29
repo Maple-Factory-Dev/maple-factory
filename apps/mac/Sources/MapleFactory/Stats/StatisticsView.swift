@@ -12,28 +12,38 @@ struct StatisticsView: View {
     private var summary: Wire.StatsSummary? { state.isLive ? client.stats.flatMap { $0.days == UInt32(days) ? $0 : nil } : .sample }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                header
-                if !isAdmin {
-                    StatsCard {
-                        Text("Only admins can see statistics.")
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(Theme.textMuted)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    header
+                    if !isAdmin {
+                        StatsCard {
+                            Text("Only admins can see statistics.")
+                                .font(.system(size: 13.5))
+                                .foregroundStyle(Theme.textMuted)
+                        }
+                    } else if let summary {
+                        content(summary)
+                    } else {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 200)
                     }
-                } else if let summary {
-                    content(summary)
-                } else {
-                    ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 200)
+                }
+                .padding(.horizontal, narrow ? 24 : 40)
+                .padding(.vertical, 30)
+                .frame(maxWidth: 1120, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
+            .defaultScrollAnchor(.top)
+            .task(id: days) { if state.isLive && isAdmin { client.loadStats(days: days) } }
+            // `-statsSection cost` opens on the Cost card, for screenshots.
+            .onChange(of: summary == nil, initial: true) {
+                guard summary != nil, let section = AppDefaults.string(forKey: "statsSection") else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(0.3))
+                    proxy.scrollTo(section, anchor: .top)
                 }
             }
-            .padding(.horizontal, narrow ? 24 : 40)
-            .padding(.vertical, 30)
-            .frame(maxWidth: 1120, alignment: .leading)
-            .frame(maxWidth: .infinity)
         }
-        .defaultScrollAnchor(.top)
-        .task(id: days) { if state.isLive && isAdmin { client.loadStats(days: days) } }
     }
 
     private var header: some View {
@@ -88,7 +98,7 @@ struct StatisticsView: View {
             BarList(title: "Session ends and restarts", note: "\(t.restarts) restarted", rows: s.restartsByCause, label: endCause, trailing: { _ in nil })
         }
 
-        costCard(s)
+        costCard(s).id("cost")
 
         if !s.goals.isEmpty { goalTable(s.goals) }
         if !s.agents.isEmpty { agentTable(s.agents) }
