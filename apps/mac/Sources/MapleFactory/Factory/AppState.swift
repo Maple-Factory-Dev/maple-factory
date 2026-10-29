@@ -81,15 +81,16 @@ final class AppState {
     private static let panelKey = "taskPanelOpen"
     private static var panelLeftOpen: Bool {
         AppDefaults.removeObject(forKey: "taskPanel")
-        return AppDefaults.bool(forKey: panelKey)
+        return TaskOpening.stored() == .panel && AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
     /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
     var openedTask: String? { showInspector ? selectedTask : nil }
 
-    /// A card or row was clicked: show it in the task panel.
+    /// A card or row was clicked: show it in the task panel, or the full view when the panel is off.
     func openTask(_ id: String) {
+        guard taskPanelEnabled else { return openFocus(id) }
         withAnimation(.snappy(duration: 0.25)) {
             selectedTask = id
             showInspector = true
@@ -98,8 +99,15 @@ final class AppState {
 
     /// What a click on a card or row does: the full task view by default, or a peek in the panel.
     var taskOpening = TaskOpening.stored() {
-        didSet { AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key) }
+        didSet {
+            AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key)
+            // Nothing can toggle the panel once it's off, so one that's open would be stuck.
+            if !taskPanelEnabled && showInspector { closeTaskPanel() }
+        }
     }
+
+    /// The task panel exists only with "Peek in the side panel"; otherwise its toolbar button and menu item are off.
+    var taskPanelEnabled: Bool { taskOpening == .panel }
 
     nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
 
@@ -127,6 +135,7 @@ final class AppState {
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
     /// (in a full-width window; a narrow one hides and floats the panel on its own).
     func toggleTaskPanel() {
+        guard taskPanelEnabled else { return }
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
         if !isCompact { AppDefaults.set(showInspector, forKey: AppState.panelKey) }
     }
@@ -271,7 +280,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = AppDefaults.bool(forKey: AppState.panelKey)
+                showInspector = taskPanelEnabled && AppDefaults.bool(forKey: AppState.panelKey)
             }
         }
     }
