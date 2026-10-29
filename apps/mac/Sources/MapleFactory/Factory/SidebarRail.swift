@@ -74,7 +74,7 @@ struct SidebarRail: View {
                     divider
 
                     if client.isSignedIn {
-                        ForEach(client.machines, id: \.id) { machine in
+                        ForEach(client.sidebarMachines, id: \.id) { machine in
                             item(machine.name,
                                  detail: "\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")",
                                  selected: state.destination == .machines && state.focusedTask == nil,
@@ -83,7 +83,7 @@ struct SidebarRail: View {
                                     Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                                         .font(.system(size: 14))
                                         .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.textFaint)
-                                    LivePips(machine: machine, size: 4)
+                                    LivePips(machine: machine, size: 4, sharedOnly: machine.owner != client.me?.login)
                                 }
                             }
                             .onTapGesture { state.closeFocus(); state.destination = .machines }

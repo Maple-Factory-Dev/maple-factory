@@ -86,7 +86,7 @@ struct FactorySidebar: View {
                     if client.isSignedIn {
                         sectionHeader("Machines") { state.closeFocus(); state.destination = .machines }
                         VStack(spacing: 2) {
-                            ForEach(client.machines, id: \.id) { machine in liveMachineRow(machine) }
+                            ForEach(client.sidebarMachines, id: \.id) { machine in liveMachineRow(machine) }
                         }
                     } else {
                         sectionHeader("Machines") { state.machineSheet = .new }
@@ -212,7 +212,9 @@ struct FactorySidebar: View {
     }
 
     private func liveMachineRow(_ machine: Wire.Machine) -> some View {
-        row(selected: state.destination == .machines && state.focusedTask == nil) {
+        let mine = machine.owner == client.me?.login
+        let owner = LiveAdapter.person(machine.owner, members: client.members)
+        return row(selected: state.destination == .machines && state.focusedTask == nil) {
             Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                 .font(.system(size: 12))
                 .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.State.cancelled)
@@ -220,14 +222,18 @@ struct FactorySidebar: View {
             Text(machine.name)
                 .lineLimit(1)
                 .foregroundStyle(machine.online ? Theme.text.opacity(0.8) : Theme.textMuted)
+            if !mine {
+                AgentAvatar(agent: owner, size: 13)
+            }
             Spacer()
             if !machine.online {
                 Image(systemName: "wifi.slash").font(.system(size: 10)).foregroundStyle(Theme.State.cancelled)
             }
-            LivePips(machine: machine, size: 6)
+            LivePips(machine: machine, size: 6, sharedOnly: !mine)
         }
         .onTapGesture { state.closeFocus(); state.destination = .machines }
-        .help("\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")")
+        .help(mine ? "Yours · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")"
+              : "Shared by \(owner.firstName) · \(machine.online ? "\(LivePips.sharedCount(machine, tasks: client.tasks)) team slots" : "offline")")
     }
 
     private func agentRow(_ agent: Agent, state taskState: TaskState, task: String) -> some View {
