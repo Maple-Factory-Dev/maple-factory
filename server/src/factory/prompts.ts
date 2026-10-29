@@ -4,6 +4,9 @@
 import type { Goal, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
 
+/** The anchor on a change request made because the branch didn't merge: "Didn't merge into <base>". */
+export const MERGE_ANCHOR = "Didn't merge into";
+
 const plain = (task: Task) => `${task.id} · ${task.title}`;
 
 function brief(task: Task, goal: Goal | null) {

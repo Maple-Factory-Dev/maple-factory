@@ -12,7 +12,7 @@ import type {
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { Store, type TaskSession } from "./store.ts";
-import { builderPrompt, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
@@ -51,6 +51,9 @@ const TRUST_HAND = "Claude Code is asking whether to trust its folder";
 
 /** How often CI is read again while a pull request's checks are still running. */
 const CI_POLL_MS = 30_000;
+// The ways forward on a "didn't merge" hand (the clients pick them by title).
+const MERGE_FIX = "Send it back to fix";
+const MERGE_RETRY = "Try the merge again";
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
 
@@ -280,10 +283,7 @@ export class Engine {
         }
         if (task.state === "reviewing") {
           // A person's request for changes: the builder takes it, and review starts over on what it pushes.
-          await this.closeWorker(task, "cancelled");
-          if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
-          task.reviews = [];
-          task.state = "building";
+          await this.backToBuilding(task);
           this.save(task);
           await this.pump();
           return;
@@ -317,6 +317,7 @@ export class Engine {
       case "task.resolveHand": {
         const hand = task.hand ?? fail("Nobody's asking for a hand.");
         const option = msg.option ? hand.options.find((o) => o.title === msg.option) : undefined;
+        if (hand.reason === "mergeFailed") return this.resolveMergeFailed(task, who, option?.title ?? null, msg.note.trim());
         task.hand = null;
         const decision = [option ? `Go with: ${option.title} — ${option.detail}` : null, msg.note.trim() || null].filter(Boolean).join("\n");
         if (decision) task.comments.push({ id: crypto.randomUUID(), author: who, text: decision, at: now(), anchor: `Hand: ${hand.summary}`, via: null });
@@ -338,6 +339,7 @@ export class Engine {
       }
       case "task.merge": {
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
+        if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
@@ -1036,8 +1038,15 @@ export class Engine {
     task.liveLog = null;
     this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false });
     if (!msg.ok) {
-      this.event(task, "factory", `couldn't merge: ${msg.message ?? "no reason given"}`);
-      this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge: ${msg.message ?? "no reason given"}`, taskId: task.id });
+      const why = msg.message ?? "no reason given";
+      this.event(task, "factory", `couldn't merge: ${why}`);
+      this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge: ${why}`, taskId: task.id });
+      // A person picks the way forward; nothing retries it on its own.
+      this.raise(task, "factory", "mergeFailed", `It didn't merge into ${task.pr.base}: ${why}`, [
+        { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: true },
+        { title: MERGE_RETRY, detail: "Merge it again as it is.", recommended: false },
+        { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
+      ]);
       this.save(task);
       return;
     }
@@ -1369,7 +1378,7 @@ export class Engine {
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return;
     if (task.pr.checks.some((c) => c.status !== "passed")) return; // CI first
     const a = this.assessment(task);
-    if (!a.autoMerge || this.store.private(task.id).merging) return;
+    if (!a.autoMerge || this.store.private(task.id).merging || task.hand?.reason === "mergeFailed") return;
     await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {});
   }
 
@@ -1408,16 +1417,60 @@ export class Engine {
     await audit(this.env, who, "task.merged", task.id);
   }
 
+  /** A person's pick on a "didn't merge" hand. Its task is reviewing with no session, so the
+   *  generic resolve (type into the session, or pump) wouldn't move it. */
+  private async resolveMergeFailed(task: Task, who: string, option: string | null, note: string) {
+    const hand = task.hand!;
+    // A note with no pick is guidance for the builder.
+    const pick = option ?? (note ? MERGE_FIX : fail("Pick a way forward."));
+    task.hand = null;
+    task.comments.push({ id: crypto.randomUUID(), author: who, text: [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), at: now(), anchor: `Hand: ${hand.summary}`, via: null });
+    this.event(task, who, `picked "${pick}"`);
+    if (pick === "Cancel it") {
+      await this.cancel(task, who);
+      return this.pump();
+    }
+    if (pick === MERGE_RETRY) {
+      this.save(task);
+      return this.startMerge(task, who, "tried the merge again");
+    }
+    const base = task.pr?.base ?? this.store.private(task.id).base ?? "main";
+    const why = hand.summary.replace(/^It didn't merge into [^:]+: /, "");
+    const change: ChangeRequest = {
+      id: `C${task.changes.length + 1}`,
+      author: who,
+      text: `The branch doesn't merge into ${base} (${why}). Fetch origin/${base}, merge it into the branch, resolve every conflict, keep the tests passing and push.${note ? ` ${note}` : ""}`,
+      at: now(),
+      anchor: `${MERGE_ANCHOR} ${base}`,
+      status: "queued",
+      timing: null,
+    };
+    task.changes.push(change);
+    this.event(task, who, "sent it back to fix the merge");
+    await this.backToBuilding(task);
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
+    this.save(task);
+    await this.pump();
+  }
+
+  /** A reviewing task goes back to its builder: review and approvals start over on what it pushes. */
+  private async backToBuilding(task: Task) {
+    await this.closeWorker(task, "cancelled");
+    if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
+    task.reviews = [];
+    task.state = "building";
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
 
-  private raise(task: Task, role: Role | string, reason: Hand["reason"], summary: string) {
+  private raise(task: Task, role: Role | string, reason: Hand["reason"], summary: string, options?: Hand["options"]) {
     task.hand = {
       reason,
       summary,
       at: now(),
       assignee: task.owner,
-      options: [
+      options: options ?? [
         { title: "Retry", detail: "Start it again where it left off.", recommended: true },
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
       ],
