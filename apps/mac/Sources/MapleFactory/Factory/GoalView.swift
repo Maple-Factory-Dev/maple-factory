@@ -139,7 +139,11 @@ struct BoardColumns: View {
     @Environment(AppState.self) private var state
     let tasks: [FactoryTask]
 
+    /// Whether columns are cut off past the trailing edge, so the board fades there.
+    @State private var moreTrailing = false
+
     var body: some View {
+        // In a narrow window the columns overflow: a scrollbar shows and the cut-off edge fades.
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(TaskState.allCases) { taskState in
@@ -148,8 +152,22 @@ struct BoardColumns: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
-        .scrollIndicators(.never)
+        .scrollIndicators(.automatic)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentSize.width - geometry.visibleRect.maxX > 1
+        } action: { _, more in
+            withAnimation(.easeOut(duration: 0.15)) { moreTrailing = more }
+        }
+        .mask {
+            HStack(spacing: 0) {
+                Rectangle()
+                LinearGradient(colors: [.black, .black.opacity(moreTrailing ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 24)
+            }
+        }
     }
 
     private func column(_ taskState: TaskState) -> some View {
@@ -177,7 +195,7 @@ struct BoardColumns: View {
             // A column hugs its cards until they outgrow the window, then scrolls on its own.
             ViewThatFits(in: .vertical) {
                 cards(columnTasks)
-                ScrollView { cards(columnTasks) }.scrollIndicators(.never)
+                ScrollView { cards(columnTasks).padding(.trailing, 6) }.scrollIndicators(.automatic)
             }
 
             if columnTasks.isEmpty {
