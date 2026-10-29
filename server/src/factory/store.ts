@@ -19,6 +19,8 @@ export interface TaskPrivate {
   merging?: boolean;
   /// Who started the last merge ("factory" for an auto-merge), for its stats.
   mergeBy?: string | null;
+  /** The head it was last noted as waiting for a person to merge (autoMerges off), so it's said once per head. */
+  pendingMerge?: string | null;
   /** Times the factory sent it back to fix a merge on its own (autoFixMerges). */
   mergeFixes?: number;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.

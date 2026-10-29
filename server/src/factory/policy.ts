@@ -16,6 +16,7 @@ export const DEFAULT_POLICY: RiskPolicy = {
   finalReviews: { low: 0, medium: 1, high: 2 },
   autoMerge: { low: true, medium: false, high: false },
   autoFixMerges: true,
+  autoMerges: true,
 };
 
 const ORDER: RiskLevel[] = ["low", "medium", "high"];
@@ -45,7 +46,8 @@ export function assess(task: Task, policy: RiskPolicy, acceptance: RiskAcceptanc
     areas: areas.map((a) => a.name),
     approvals: policy.planApprovals[level] ?? 1,
     reviews: accepted ? 0 : (policy.finalReviews[level] ?? 1),
-    autoMerge: accepted || (policy.autoMerge[level] ?? false),
+    // Off for the whole org beats both the level's checkbox and a goal's acceptance.
+    autoMerge: policy.autoMerges !== false && (accepted || (policy.autoMerge[level] ?? false)),
     accepted,
   };
 }

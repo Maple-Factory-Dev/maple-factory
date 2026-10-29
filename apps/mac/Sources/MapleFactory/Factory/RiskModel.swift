@@ -53,6 +53,8 @@ struct RiskPolicy {
     var autoMerge: [RiskLevel: Bool] = [.low: true, .medium: false, .high: false]
     /// An approved change that won't merge goes back to a builder to fix before anyone's asked.
     var autoFixMerges = true
+    /// Off for the whole factory: nothing merges on its own, whatever the levels or a goal's acceptance say.
+    var autoMerges = true
 
     func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
         guard let footprint = task.footprint else { return nil }
@@ -76,8 +78,8 @@ struct RiskPolicy {
             overLines: overLines,
             approvals: planApprovals[level, default: 1],
             reviews: accepted ? 0 : finalReviews[level, default: 1],
-            autoMerge: accepted || autoMerge[level, default: false],
-            acceptance: accepted ? acceptance : nil,
+            autoMerge: autoMerges && (accepted || autoMerge[level, default: false]),
+            acceptance: accepted && autoMerges ? acceptance : nil,
             suggestedSplit: overFiles || overLines
                 ? max(Int((Double(footprint.files) / Double(maxFiles)).rounded(.up)),
                       Int((Double(footprint.lines) / Double(maxLines)).rounded(.up)))

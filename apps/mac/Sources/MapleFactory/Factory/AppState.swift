@@ -487,6 +487,13 @@ final class AppState {
         policy.assess(task, acceptance: acceptances[task.goal])
     }
 
+    /// Reviewed, proven and green, but a person merges it: the board's Pending merge column.
+    func pendingMerge(_ task: FactoryTask) -> Bool {
+        guard task.state == .reviewing, task.hand == nil, !autoMerging.contains(task.id) else { return false }
+        let gate = mergeGate(for: task)
+        return gate.canMerge && !gate.autoMerge
+    }
+
     func mergeGate(for task: FactoryTask) -> MergeGate {
         let risk = risk(for: task)
         let failedProofs = task.doneWhen.filter { $0.status == .failed }.count
@@ -1834,6 +1841,8 @@ final class AppState {
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
+            case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

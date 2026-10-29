@@ -574,6 +574,8 @@ export interface RiskPolicy {
   autoMerge: Record<string, boolean>;
   /** When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on. */
   autoFixMerges?: boolean | null;
+  /** When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on. */
+  autoMerges?: boolean | null;
 }
 
 /** Text added to every factory session's prompt, by role: the org's, then a goal's after it. */

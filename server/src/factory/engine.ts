@@ -1598,12 +1598,14 @@ export class Engine {
       if (task.state === "merged" || task.state === "cancelled" || !task.risk) continue;
       const before = `${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}`;
       this.applyPolicy(task);
-      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` === before) continue;
-      this.save(task, false);
-      if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
-        await this.approved(task, "queued it for building (the policy needs fewer approvals now)");
-        this.save(task);
+      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` !== before) {
+        this.save(task, false);
+        if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
+          await this.approved(task, "queued it for building (the policy needs fewer approvals now)");
+          this.save(task);
+        }
       }
+      // Even with its level unchanged: turning autoMerges back on merges what was waiting.
       await this.autoMerge(task);
     }
     await this.pump();
@@ -1615,7 +1617,19 @@ export class Engine {
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return;
     if (task.pr.checks.some((c) => c.status !== "passed")) return; // CI first
     const a = this.assessment(task);
-    if (!a.autoMerge || this.store.private(task.id).merging || task.hand?.reason === "mergeFailed") return;
+    const priv = this.store.private(task.id);
+    if (priv.merging || task.hand?.reason === "mergeFailed") return;
+    if (!a.autoMerge) {
+      // Ready, but the org merges by hand: say so once per head, so it isn't mistaken for stuck.
+      const head = task.pr.head ?? task.pr.branch;
+      if (this.store.policy().autoMerges === false && priv.pendingMerge !== head) {
+        this.store.savePrivate(task.id, { ...priv, pendingMerge: head });
+        this.event(task, "factory", "is ready; waiting for a person to merge it (auto-merge is off)");
+        this.save(task);
+        this.hooks.broadcast({ type: "toast", text: `${task.id} is ready to merge; it's waiting for you.`, taskId: task.id });
+      }
+      return;
+    }
     await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {});
   }
 
