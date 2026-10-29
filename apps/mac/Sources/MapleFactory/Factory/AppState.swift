@@ -1699,6 +1699,8 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
+            // The goal sheet's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
+            case "goalfill": NotificationCenter.default.post(name: GoalSheet.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // A video proof's play button on screen, clicked: `play:video`.

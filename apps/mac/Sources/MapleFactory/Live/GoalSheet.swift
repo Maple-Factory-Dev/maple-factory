@@ -27,6 +27,9 @@ struct GoalSheet: View {
     enum Source: String, CaseIterable { case folder = "A folder on my machines", repo = "A GitHub repo" }
     enum Field { case name, prefix, code }
 
+    /// `-actions 'goalfill:prefix:PLATFORM; goalfill:create'` types into a field or clicks Create, for demo videos.
+    static let demoFill = Notification.Name("GoalSheet.demoFill")
+
     private static let colors: [(name: String, hex: String)] = [
         ("Green", "#2EA043"), ("Blue", "#3B82F6"), ("Violet", "#8B5CF6"), ("Amber", "#F59E0B"), ("Pink", "#EC4899"), ("Teal", "#14B8A6"),
     ]
@@ -270,6 +273,17 @@ struct GoalSheet: View {
             client.notice = nil
         }
         .onDisappear { if saving { stopSaving() } }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoFill)) { note in
+            let value = note.userInfo?["value"] as? String ?? ""
+            switch note.userInfo?["field"] as? String {
+            case "name": name = value
+            case "prefix": prefix = value.uppercased(); prefixEdited = true; touched.insert(.prefix)
+            case "folder": source = .folder; folder = value
+            case "repo": source = .repo; repo = value
+            case "create": save()
+            default: break
+            }
+        }
     }
 
     /// The goal this sheet sent: the one being edited, or a new one with its name and prefix.
