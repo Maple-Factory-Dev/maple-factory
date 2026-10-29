@@ -69,6 +69,8 @@ enum Headless {
     /// Called by AppDelegate: hides the app and starts the driver.
     @MainActor static func start(state: AppState, client: FactoryClient) {
         NSApp.setActivationPolicy(.accessory)
+        // Never Sparkle, but MAPLE_UPDATE_DEMO's fake update can still be recorded.
+        Updater.shared.startDemo()
         Snapshotter.shared = Snapshotter(state: state, client: client)
         Snapshotter.shared?.run()
     }

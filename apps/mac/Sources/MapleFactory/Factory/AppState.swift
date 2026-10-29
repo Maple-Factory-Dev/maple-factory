@@ -1657,6 +1657,9 @@ final class AppState {
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
+            // The update toast's buttons (with MAPLE_UPDATE_DEMO=1), and a passing toast to show beneath it.
+            case "update": parts[1] == "dismiss" ? Updater.shared.dismissToast() : Updater.shared.updateAndRestart()
+            case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
             case "ui":

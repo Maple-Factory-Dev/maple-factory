@@ -78,11 +78,7 @@ final class Updater: NSObject {
     @ObservationIgnored private var demoInstall = false
 
     func start() {
-        switch ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"] {
-        case "1": return playDemo()
-        case "uptodate": return playUpToDateDemo()
-        default: break
-        }
+        if startDemo() { return }
         guard updater == nil, Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
         let driver = SidebarUserDriver { [weak self] in self?.show($0) }
         let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
@@ -104,6 +100,15 @@ final class Updater: NSObject {
                 MainActor.assumeIsolated { self?.lastChecked = updater.lastUpdateCheckDate }
             },
         ]
+    }
+
+    /// Plays the update `MAPLE_UPDATE_DEMO` asks for, if any, instead of Sparkle.
+    @discardableResult func startDemo() -> Bool {
+        switch ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"] {
+        case "1": playDemo(); return true
+        case "uptodate": playUpToDateDemo(); return true
+        default: return false
+        }
     }
 
     func checkForUpdates() { updater?.checkForUpdates() }
