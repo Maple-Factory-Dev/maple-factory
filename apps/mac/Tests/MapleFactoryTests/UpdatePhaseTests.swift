@@ -71,4 +71,11 @@ struct UpdatePhaseTests {
         #expect(UpdatePhase.readyToRelaunch(version: "0.2.0").detail == "Relaunch for 0.2.0")
         #expect(UpdatePhase.failed(message: "The feed is down").detail == "The feed is down")
     }
+
+    @Test func upToDateIsAToastNotAFooterCard() {
+        #expect(UpdatePhase.upToDateToast == "You're up to date — thanks for staying up to date")
+        #expect(UpdatePhase.upToDate.clearsItself)
+        #expect(UpdatePhase.upToDate.action == nil)
+        #expect(all.filter { !$0.showsInFooter } == [.idle, .upToDate])
+    }
 }
