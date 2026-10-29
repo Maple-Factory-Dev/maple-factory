@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 extension AppState {
@@ -228,8 +229,10 @@ struct EvidenceView: View {
         switch evidence {
         case let .terminal(command, output): TerminalProof(command: command, output: output)
         case let .tests(suite, passed, failed): TestsProof(suite: suite, passed: passed, failed: failed)
-        case let .screenshot(caption): MediaProof(caption: caption, duration: nil)
-        case let .video(caption, duration): MediaProof(caption: caption, duration: duration)
+        case let .screenshot(caption, file?): ScreenshotProof(caption: caption, path: file)
+        case let .video(caption, _, file?): VideoProof(caption: caption, path: file)
+        case let .screenshot(caption, nil): MediaProof(caption: caption, duration: nil)
+        case let .video(caption, duration, nil): MediaProof(caption: caption, duration: duration)
         case let .attested(by, reason, when): AttestedProof(by: by, reason: reason, when: when)
         }
     }
@@ -327,6 +330,175 @@ private struct TestsProof: View {
 }
 
 /// A stand-in thumbnail for screenshot and video proofs: a tiny browser window with a login form.
+/// The screenshot a runner uploaded (`/attachments/…`), fetched with the app's token; a click opens it full size.
+private struct ScreenshotProof: View {
+    let caption: String
+    let path: String
+    @Environment(FactoryClient.self) private var client: FactoryClient?
+    @State private var image: NSImage?
+    @State private var failed: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let image {
+                Button {
+                    Task { await client?.open(attachment: path) }
+                } label: {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+                        .frame(maxWidth: min(image.size.width, 380), alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .help("Open full size")
+            } else {
+                ProofLoading(failed: failed)
+            }
+            ProofCaption(icon: "photo", caption: caption)
+        }
+        .task(id: path) {
+            do {
+                guard let client else { throw FactoryClient.ClientError.message("Not signed in.") }
+                guard let loaded = NSImage(data: try await client.attachment(path)) else { throw FactoryClient.ClientError.message("Not an image.") }
+                image = loaded
+            } catch {
+                failed = FactoryClient.describe(error)
+            }
+        }
+    }
+}
+
+/// The screen recording a runner uploaded: its first frame and length, and it plays in place on a click.
+private struct VideoProof: View {
+    let caption: String
+    let path: String
+    @Environment(FactoryClient.self) private var client: FactoryClient?
+    @State private var file: URL?
+    @State private var poster: NSImage?
+    @State private var duration: String?
+    @State private var player: AVPlayer?
+    @State private var failed: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let player {
+                VideoPlayer(player: player)
+                    .aspectRatio(aspect, contentMode: .fit)
+                    .frame(maxWidth: 380)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+            } else if let file {
+                Button {
+                    let player = AVPlayer(url: file)
+                    self.player = player
+                    player.play()
+                } label: {
+                    ZStack {
+                        if let poster {
+                            Image(nsImage: poster).resizable().aspectRatio(contentMode: .fit)
+                        } else {
+                            Color(hex: 0x1A1E27).aspectRatio(16 / 10, contentMode: .fit)
+                        }
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .shadow(radius: 6)
+                        if let duration {
+                            Text(duration)
+                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(Capsule().fill(.black.opacity(0.6)))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                                .padding(6)
+                        }
+                    }
+                    .frame(maxWidth: 380)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Play")
+            } else {
+                ProofLoading(failed: failed)
+            }
+            ProofCaption(icon: "video", caption: caption)
+        }
+        .task(id: path) { await load() }
+        .onDisappear { player?.pause() }
+    }
+
+    private var aspect: CGFloat {
+        guard let poster, poster.size.height > 0 else { return 16 / 10 }
+        return poster.size.width / poster.size.height
+    }
+
+    /// AVFoundation plays files, not bytes: the upload goes to a temporary file first.
+    private func load() async {
+        do {
+            guard let client else { throw FactoryClient.ClientError.message("Not signed in.") }
+            guard let link = FactoryClient.attachmentLink(path) else { throw FactoryClient.ClientError.message("Not an attachment.") }
+            let data = try await client.attachment(path)
+            let folder = FileManager.default.temporaryDirectory.appending(path: "maple-proofs/\(link.id)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appending(path: link.name)
+            try data.write(to: url)
+            let asset = AVURLAsset(url: url)
+            let length = try? await asset.load(.duration)
+            if let length, length.isNumeric { duration = Self.clock(length.seconds) }
+            let frames = AVAssetImageGenerator(asset: asset)
+            frames.appliesPreferredTrackTransform = true
+            frames.maximumSize = CGSize(width: 760, height: 760)
+            if let frame = try? await frames.image(at: .zero).image {
+                poster = NSImage(cgImage: frame, size: NSSize(width: frame.width, height: frame.height))
+            }
+            file = url
+        } catch {
+            failed = FactoryClient.describe(error)
+        }
+    }
+
+    /// `0:42`, `12:05`.
+    static func clock(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+/// While a proof file loads, or why it couldn't.
+private struct ProofLoading: View {
+    let failed: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if failed != nil { Image(systemName: "exclamationmark.triangle") } else { ProgressView().controlSize(.small) }
+            Text(failed.map { "Couldn't load the proof: \($0)" } ?? "Loading the proof…")
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.textMuted)
+        .frame(maxWidth: 380, minHeight: 60, alignment: .leading)
+    }
+}
+
+private struct ProofCaption: View {
+    let icon: String
+    let caption: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+            Text(caption).lineLimit(1)
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(Theme.textMuted)
+    }
+}
+
+/// Demo data's stand-in for a screenshot or video: a drawn window, since there's no file.
 private struct MediaProof: View {
     let caption: String
     let duration: String?
