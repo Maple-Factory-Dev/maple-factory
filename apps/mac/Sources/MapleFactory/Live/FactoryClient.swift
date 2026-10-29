@@ -56,6 +56,8 @@ import Security
     private(set) var prompts: Wire.PromptAdditions?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
+    /// Every repo's secrets: names and who changed them when, never a value.
+    private(set) var secrets: [Wire.RepoSecret] = []
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
     /// This factory's maple-server version, and a newer one when there is (admins only).
@@ -249,6 +251,7 @@ import Security
         prompts = nil
         acceptances = []
         repos = []
+        secrets = []
         runnerLatest = nil
         serverVersion = nil
         serverUpdate = nil
@@ -363,6 +366,7 @@ import Security
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             intakeRequests = snapshot.intake
             repos = snapshot.repos
+            secrets = snapshot.secrets
             runnerLatest = snapshot.runnerLatest
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
@@ -429,6 +433,8 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+        case .secretsUpdated(let update):
+            secrets = update.secrets
         case .promptsUpdated(let update):
             prompts = update.prompts
         case .policyUpdated(let update):

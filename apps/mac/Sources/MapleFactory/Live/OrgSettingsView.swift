@@ -6,13 +6,14 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case general, account, repos, people, prompts, merging, runner, notifications, updates
+        case general, account, repos, secrets, people, prompts, merging, runner, notifications, updates
 
         var title: String {
             switch self {
             case .general: "General"
             case .account: "Account"
             case .repos: "Repositories"
+            case .secrets: "Secrets"
             case .people: "People"
             case .prompts: "Prompts"
             case .merging: "Merging"
@@ -27,6 +28,7 @@ struct OrgSettingsView: View {
             case .general: "gearshape"
             case .account: "person.crop.circle"
             case .repos: "shippingbox"
+            case .secrets: "key"
             case .people: "person.2"
             case .prompts: "text.bubble"
             case .merging: "arrow.triangle.merge"
@@ -46,7 +48,7 @@ struct OrgSettingsView: View {
             List(selection: pane) {
                 row(.general)
                 Section("Factory") {
-                    ForEach([Pane.account, .repos, .people, .prompts, .merging], id: \.self) { row($0) }
+                    ForEach([Pane.account, .repos, .secrets, .people, .prompts, .merging], id: \.self) { row($0) }
                 }
                 Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
             }
@@ -54,11 +56,12 @@ struct OrgSettingsView: View {
             .frame(width: 190)
             Divider()
             Group {
-                // Repositories and People are lists, which scroll themselves.
+                // Repositories, Secrets and People are lists, which scroll themselves.
                 switch Pane(rawValue: tab) ?? .repos {
                 case .general: ScrollView { GeneralSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .account: ScrollView { AccountSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .repos: RepositoriesSettings()
+                case .secrets: SecretsSettings()
                 case .people: PeopleSettings()
                 case .prompts: ScrollView { PromptSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .merging: ScrollView { MergingSettings().frame(maxWidth: .infinity, alignment: .topLeading) }

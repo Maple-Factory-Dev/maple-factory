@@ -1840,6 +1840,10 @@ final class AppState {
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
+            // `secret:add` opens Settings › Secrets' Add sheet (with `-window settings-sheet`).
+            case "secret" where parts.count > 3 && parts[1] == "save":
+                NotificationCenter.default.post(name: SecretsSettings.demoSave, object: nil, userInfo: ["name": parts[2], "value": parts.dropFirst(3).joined(separator: ":")])
+            case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
