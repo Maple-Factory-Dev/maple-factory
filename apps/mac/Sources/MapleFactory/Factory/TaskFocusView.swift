@@ -19,7 +19,7 @@ struct TaskFocusView: View {
         self.task = task
         _mode = State(initialValue: task.isSteerable ? .steer : .comment)
         // `-tab diff` opens straight onto the diff, handy for screenshots and demos.
-        let start: Tab = switch UserDefaults.standard.string(forKey: "tab") {
+        let start: Tab = switch AppDefaults.string(forKey: "tab") {
         case "diff": .diff
         case "session": .session
         default: .overview
@@ -128,14 +128,14 @@ struct TaskFocusView: View {
                 .frame(maxWidth: .infinity)
                 // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos.
                 .task {
-                    guard UserDefaults.standard.string(forKey: "scroll") == "doneWhen" else { return }
+                    guard AppDefaults.string(forKey: "scroll") == "doneWhen" else { return }
                     try? await Task.sleep(for: .milliseconds(300))
                     proxy.scrollTo("doneWhen", anchor: .top)
                 }
               }
             }
             // `-scroll bottom` opens at the timeline, handy for screenshots.
-            .defaultScrollAnchor(UserDefaults.standard.string(forKey: "scroll") == "bottom" ? .bottom : .top)
+            .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
             .onDisappear { appState.markSeen(task.id) }
 
             HStack(alignment: .bottom, spacing: 40) {

@@ -5,8 +5,12 @@ import AppKit
 struct MapleFactoryApp: App {
     /// `-width 820` opens a narrow window, e.g. to check the half-screen layout.
     private let launchWidth: CGFloat = {
-        let width = UserDefaults.standard.double(forKey: "width")
+        let width = AppDefaults.double(forKey: "width")
         return width > 0 ? width : 1600
+    }()
+    private let launchHeight: CGFloat = {
+        let height = AppDefaults.double(forKey: "height")
+        return height > 0 ? height : 1000
     }()
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -20,6 +24,7 @@ struct MapleFactoryApp: App {
         state.client = client
         _client = State(initialValue: client)
         _state = State(initialValue: state)
+        if Headless.isOn { AppDelegate.headless = (state, client) }
     }
 
     var body: some Scene {
@@ -31,11 +36,14 @@ struct MapleFactoryApp: App {
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .task { client.connect() }
                 .frame(minWidth: 720, minHeight: 620)
+                // Every @AppStorage reads the headless run's own suite when there is one.
+                .defaultAppStorage(AppDefaults)
+                .background { if Headless.isOn { HeadlessWindow() } }
         }
         // Links never make a window of their own; the one there (or the one launch opens) takes them.
         .handlesExternalEvents(matching: [])
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: launchWidth, height: 1000)
+        .defaultSize(width: launchWidth, height: launchHeight)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updater.shared.checkForUpdates() }
@@ -78,12 +86,21 @@ struct MapleFactoryApp: App {
             OrgSettingsView()
                 .environment(state)
                 .environment(client)
+                .defaultAppStorage(AppDefaults)
         }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// What a `-snapshot` run drives; set by the app before launch finishes.
+    @MainActor static var headless: (AppState, FactoryClient)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Headless: no Dock icon, no activation, no updates or banners; the user keeps the screen.
+        if let (state, client) = Self.headless {
+            Headless.start(state: state, client: client)
+            return
+        }
         // Running from `swift run` has no bundle, so promote to a regular foreground app.
         NSApp.setActivationPolicy(.regular)
         NSApp.applicationIconImage = MapleIcon.dockImage
@@ -91,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.shared.start()
         NSApp.activate(ignoringOtherApps: true)
         // macOS restores the last window frame, so `-width` resizes after the window exists.
-        let width = UserDefaults.standard.double(forKey: "width")
+        let width = AppDefaults.double(forKey: "width")
         if width > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 guard let window = NSApp.windows.first(where: \.isVisible) else { return }
@@ -331,6 +348,23 @@ extension ContentView {
         case .goal(let name): GoalView(name: name)
         }
     }
+}
+
+/// Moves a headless run's window off screen as soon as it has one, before it's ever drawn on screen.
+struct HeadlessWindow: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewWillMove(toWindow window: NSWindow?) {
+            super.viewWillMove(toWindow: window)
+            if let window { Headless.hide(window) }
+        }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { Headless.hide(window) }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {}
 }
 
 /// Bridges NSVisualEffectView so the sidebar picks up the desktop wallpaper behind the window.

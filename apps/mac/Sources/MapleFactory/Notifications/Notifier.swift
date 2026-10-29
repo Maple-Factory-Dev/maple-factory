@@ -29,11 +29,11 @@ import UserNotifications
     private static let openAction = "open"
     private static let snoozeAction = "snooze"
 
-    var enabled = UserDefaults.standard.object(forKey: "notifyEnabled") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(enabled, forKey: "notifyEnabled") }
+    var enabled = AppDefaults.object(forKey: "notifyEnabled") as? Bool ?? true {
+        didSet { AppDefaults.set(enabled, forKey: "notifyEnabled") }
     }
-    var snoozedUntil: Date? = UserDefaults.standard.object(forKey: "notifySnoozedUntil") as? Date {
-        didSet { UserDefaults.standard.set(snoozedUntil, forKey: "notifySnoozedUntil") }
+    var snoozedUntil: Date? = AppDefaults.object(forKey: "notifySnoozedUntil") as? Date {
+        didSet { AppDefaults.set(snoozedUntil, forKey: "notifySnoozedUntil") }
     }
     /// macOS said no, so the settings can point at System Settings.
     private(set) var denied = false
