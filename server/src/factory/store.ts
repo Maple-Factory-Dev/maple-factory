@@ -95,9 +95,21 @@ export class Store {
   }
 
   statEvents(since = 0): StatEvent[] {
-    return this.sql.exec<{ id: string; at: number; kind: string; task: string; goal: string; role: string | null; actor: string | null; detail: string }>(
-      "SELECT * FROM stats_events WHERE at >= ? ORDER BY at", since,
-    ).toArray().map((r) => ({ ...r, kind: r.kind as StatEvent["kind"], detail: JSON.parse(r.detail) }));
+    return this.statRows("SELECT * FROM stats_events WHERE at >= ? ORDER BY at", since);
+  }
+
+  /** The review rounds `tasks` had before `before`: a merge's earlier rounds, for review rounds per merge. */
+  statRoundsBefore(tasks: string[], before: number): StatEvent[] {
+    if (!tasks.length) return [];
+    return this.statRows(
+      "SELECT * FROM stats_events WHERE kind = 'review.round' AND at < ? AND task IN (SELECT value FROM json_each(?)) ORDER BY at",
+      before, JSON.stringify(tasks),
+    );
+  }
+
+  private statRows(query: string, ...args: (string | number)[]): StatEvent[] {
+    return this.sql.exec<{ id: string; at: number; kind: string; task: string; goal: string; role: string | null; actor: string | null; detail: string }>(query, ...args)
+      .toArray().map((r) => ({ ...r, kind: r.kind as StatEvent["kind"], detail: JSON.parse(r.detail) }));
   }
 
   /** Once: the history tasks from before `stats_events` show, worked out from their documents. */

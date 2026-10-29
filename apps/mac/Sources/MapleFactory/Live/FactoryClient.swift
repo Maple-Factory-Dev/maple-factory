@@ -601,14 +601,13 @@ import Security
         return request
     }
 
-    /// Each task's diff as last fetched, and the change it was fetched for.
-    private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
-
-    /// Fetches a task's diff unless the one held is for the same change (`key`).
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
         send(.statsGet(.init(days: UInt32(days), goal: goal)))
     }
+
+    /// Each task's diff as last fetched, and the change it was fetched for.
+    private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
 
     /// Agent time per goal over the last week (`GET /api/usage/goals`).
     struct GoalTime: Decodable {
@@ -623,6 +622,7 @@ import Security
         (try? await api("/api/usage/goals")) ?? []
     }
 
+    /// Fetches a task's diff unless the one held is for the same change (`key`).
     func loadDiff(task id: String, key: String) async {
         guard diffs[id]?.key != key, let server, let token else { return }
         var request = URLRequest(url: server.appending(path: "/api/tasks/\(id)/diff"))

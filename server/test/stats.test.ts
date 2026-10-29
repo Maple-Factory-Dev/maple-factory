@@ -138,6 +138,9 @@ test("backfill infers plan versions, approvals, hands, steers, review rounds and
       { who: "planner", text: "revised the plan (v2)", at: NOW - 3 * DAY + 2 * H },
       { who: "ann", text: "approved the plan", at: NOW - 3 * DAY + 3 * H },
       { who: "builder", text: "raised a hand", at: NOW - 2 * DAY },
+      { who: "reviewer", text: "stopped and needs a hand: 5 review rounds and it still has open findings.", at: NOW - 2 * DAY + 10 },
+      { who: "factory", text: "stopped and needs a hand: It didn't merge into main: conflicts", at: NOW - 2 * DAY + 20 },
+      { who: "builder", text: "stopped and needs a hand: Its builder exited before it reported back (code 1).", at: NOW - 2 * DAY + 30 },
       { who: "factory", text: "auto-merged it (low risk)", at: NOW - DAY },
       { who: "factory", text: "merged into main (abc1234)", at: NOW - DAY + 5 },
     ],
@@ -152,6 +155,8 @@ test("backfill infers plan versions, approvals, hands, steers, review rounds and
   assert.deepEqual(inferred.filter((e) => e.kind === "plan.submitted").map((e) => e.detail.version), [1, 2]);
   assert.equal(inferred.find((e) => e.kind === "plan.approved")!.detail.version, 2);
   assert.equal(inferred.find((e) => e.kind === "merged")!.detail.auto, true);
+  // Each hand's reason comes from its wording; an agent's raise_hand doesn't say, so it's unknown.
+  assert.deepEqual(inferred.filter((e) => e.kind === "hand.raised").map((e) => e.detail.reason), ["unknown", "reviewLoop", "mergeFailed", "sessionEnded"]);
   assert.equal(inferred.find((e) => e.kind === "merged")!.detail.cycleMs, 2 * DAY + 5);
 
   // The store backfills once, guarded by its kv flag.
@@ -173,6 +178,20 @@ test("backfill infers plan versions, approvals, hands, steers, review rounds and
   assert.equal(s.totals.reviewRounds, 2);
   assert.equal(s.totals.reviewRoundsPerMerge, 2);
   assert.equal(s.totals.steers, 1);
-  assert.equal(s.totals.handsRaised, 1);
+  assert.equal(s.totals.handsRaised, 4);
   assert.deepEqual(s.findingsByKind, [{ key: "code", count: 1, medianMs: null }]);
+});
+
+test("the store reads a window, plus the earlier review rounds of only the tasks it names", () => {
+  const store = new Store(sqlStorage());
+  const add = (kind: StatEvent["kind"], task: string, at: number) => store.recordStat({ at, kind, task, goal: "g1", role: null, actor: null, detail: {} });
+  add("review.round", "A-1", NOW - 40 * DAY);
+  add("review.round", "B-1", NOW - 40 * DAY);
+  add("hand.raised", "A-1", NOW - 40 * DAY);
+  add("review.round", "A-1", NOW - 2 * DAY);
+  add("merged", "A-1", NOW - DAY);
+  const since = NOW - 30 * DAY;
+  assert.deepEqual(store.statEvents(since).map((e) => e.kind), ["review.round", "merged"]);
+  assert.deepEqual(store.statRoundsBefore(["A-1"], since).map((e) => [e.task, e.kind]), [["A-1", "review.round"]]);
+  assert.deepEqual(store.statRoundsBefore([], since), []);
 });

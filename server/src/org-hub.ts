@@ -167,7 +167,13 @@ export class OrgHub extends DurableObject<Env> {
   /** The statistics over the last `days` (7, 30 or 90; anything else reads as 30). */
   private stats(days: number, goal?: string | null) {
     const window = [7, 30, 90].includes(days) ? days : 30;
-    return summarize(this.store.statEvents(), this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals() });
+    const at = Date.now();
+    const since = at - window * 86_400_000;
+    // The window's rows, and the earlier review rounds of the tasks it merged (rounds per merge counts them all).
+    const recent = this.store.statEvents(since);
+    const merged = [...new Set(recent.filter((e) => e.kind === "merged").map((e) => e.task))];
+    const events = [...this.store.statRoundsBefore(merged, since), ...recent];
+    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at });
   }
 
   /** Every enrolled machine, live where its hub has reported. */

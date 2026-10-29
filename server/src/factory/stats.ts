@@ -48,8 +48,7 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
       version = plan[1] ? Number(plan[1]) : 1;
       add(e.at, "plan.submitted", "planner", null, { version });
     } else if (e.text === "approved the plan") add(e.at, "plan.approved", null, e.who, { version: version || 1 });
-    else if (e.text === "raised a hand") add(e.at, "hand.raised", e.who, null, { reason: "needsInput" });
-    else if (e.text.startsWith("stopped and needs a hand: ")) add(e.at, "hand.raised", e.who, null, { reason: "sessionEnded" });
+    else if (e.text === "raised a hand" || e.text.startsWith("stopped and needs a hand: ")) add(e.at, "hand.raised", e.who, null, { reason: handReason(task, e) });
     else if (e.text.startsWith("asked: ")) add(e.at, "question.asked", e.who, null);
     else if (/^(allowed|denied) /.test(e.text)) add(e.at, "prompt.answered", null, e.who, { choice: e.text.startsWith("allowed") ? "yes" : "no" });
     else if (/ended \(.+\); starting it again$/.test(e.text)) add(e.at, "session.restarted", null, null, { cause: "unknown" });
@@ -74,6 +73,18 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
   }
   if (task.state === "cancelled") add(task.updatedAt, "cancelled", null, null, {});
   return out;
+}
+
+/** Why an older hand went up: the task's own hand if it's the one still up, else what its event's wording shows. */
+function handReason(task: Task, e: { who: string; text: string; at: number }): string {
+  if (task.hand && Math.abs(task.hand.at - e.at) < 1000) return task.hand.reason;
+  const summary = e.text.replace(/^stopped and needs a hand: /, "");
+  if (summary === e.text) return "unknown"; // an agent's raise_hand: its reason isn't in the event
+  if (e.who === "factory") return "mergeFailed";
+  if (/review rounds and it still has open findings/.test(summary)) return "reviewLoop";
+  if (/^Pushing failed|asking whether to trust its folder/.test(summary)) return "needsInput";
+  if (/couldn't start on|keeps ending|login on .* expired|hit its usage limit|ended its .* session|exited before it reported back/.test(summary)) return "sessionEnded";
+  return "unknown";
 }
 
 export interface SummarizeOptions {

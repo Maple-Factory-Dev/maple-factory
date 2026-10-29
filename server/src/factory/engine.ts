@@ -69,8 +69,6 @@ const fail = (message: string): never => {
 
 export class Engine {
   private drafts: Drafts;
-  /** Who the app command being applied is from, and the option they picked on a hand: for the stats a save records. */
-  private acting: { who: string; option?: string | null } | null = null;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake) {
     this.drafts = new Drafts(store, {
@@ -86,16 +84,7 @@ export class Engine {
   // Apps
 
   /** A command from an app. Throws FactoryError with a message for the person. */
-  async command(msg: ClientMessage, ctx: Ctx): Promise<void> {
-    this.acting = { who: ctx.member.login };
-    try {
-      return await this.apply(msg, ctx);
-    } finally {
-      this.acting = null;
-    }
-  }
-
-  private async apply(msg: ClientMessage, { member }: Ctx): Promise<void> {
+  async command(msg: ClientMessage, { member }: Ctx): Promise<void> {
     const who = member.login;
     switch (msg.type) {
       case "draft.start":
@@ -356,9 +345,8 @@ export class Engine {
       case "task.resolveHand": {
         const hand = task.hand ?? fail("Nobody's asking for a hand.");
         const option = msg.option ? hand.options.find((o) => o.title === msg.option) : undefined;
-        this.acting = { who, option: option?.title ?? null };
         if (hand.reason === "mergeFailed") return this.resolveMergeFailed(task, who, option?.title ?? null, msg.note.trim());
-        task.hand = null;
+        this.lowerHand(task, who, option?.title ?? null);
         const decision = [option ? `Go with: ${option.title} — ${option.detail}` : null, msg.note.trim() || null].filter(Boolean).join("\n");
         if (decision) task.comments.push({ id: crypto.randomUUID(), author: who, text: decision, at: now(), anchor: `Hand: ${hand.summary}`, via: null });
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
@@ -470,7 +458,7 @@ export class Engine {
           task.autoReview = review;
           task.reviews = [];
         }
-        task.hand = null;
+        this.lowerHand(task, who);
         task.question = null;
         task.waiting = null;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
@@ -894,7 +882,7 @@ export class Engine {
           return null;
         }
         if (!trusting && task.hand?.summary.startsWith(TRUST_HAND)) {
-          task.hand = null;
+          this.lowerHand(task, "factory");
           this.event(task, s.role, "carried on once its folder was trusted");
           this.save(task);
         }
@@ -1209,7 +1197,7 @@ export class Engine {
     if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
     task.waiting = null;
     task.question = null;
-    task.hand = null;
+    this.lowerHand(task, who);
     this.event(task, who, why);
     this.save(task);
     await audit(this.env, who, "task.cancelled", task.id);
@@ -1371,6 +1359,7 @@ export class Engine {
           const x = obj(o);
           return { title: str(x.title, "options[].title"), detail: String(x.detail ?? ""), recommended: x.recommended === true };
         });
+        this.lowerHand(task, "factory");
         task.hand = { reason, summary: str(a.summary, "summary"), at: now(), assignee: task.owner, options };
         this.event(task, s.role, "raised a hand");
         this.stat(task, "hand.raised", { reason }, null, s.role);
@@ -1623,7 +1612,7 @@ export class Engine {
     const pick = option ?? (note ? MERGE_FIX : fail("Pick a way forward."));
     if (pick !== "Cancel it" && task.state !== "reviewing") fail("It's not waiting to merge any more.");
     const picked = () => {
-      task.hand = null;
+      this.lowerHand(task, who, pick);
       task.comments.push({ id: crypto.randomUUID(), author: who, text: [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), at: now(), anchor: `Hand: ${hand.summary}`, via: null });
     };
     if (pick === MERGE_RETRY) {
@@ -1663,7 +1652,7 @@ export class Engine {
   private async backToBuilding(task: Task) {
     // A "didn't merge" hand is moot once the builder has it; left up, it would keep the pump away.
     if (task.hand?.reason === "mergeFailed") {
-      task.hand = null;
+      this.lowerHand(task, "factory");
       this.event(task, "factory", "cleared the didn't-merge hand: the builder takes it from here");
     }
     await this.closeWorker(task, "cancelled");
@@ -1676,6 +1665,7 @@ export class Engine {
   // Helpers
 
   private raise(task: Task, role: Role | string, reason: Hand["reason"], summary: string, options?: Hand["options"]) {
+    this.lowerHand(task, "factory"); // replaced by this one
     task.hand = {
       reason,
       summary,
@@ -1739,7 +1729,7 @@ export class Engine {
     const carried = commit ?? task.pr?.head ?? null;
     this.store.savePrivate(task.id, { ...priv, worktree: null, repoDir: null, restarts: 0, finishing: false, movedFrom: { machine: from, commit: carried } });
     task.machine = null;
-    task.hand = null;
+    this.lowerHand(task, who);
     task.question = null;
     task.waiting = null;
     task.liveLog = null;
@@ -1816,12 +1806,16 @@ export class Engine {
     this.store.recordStat({ at: now(), kind, task: task.id, goal: task.goal, role, actor, detail });
   }
 
+  /** Takes a task's hand down (answered, retried, cancelled, or replaced by another), recording how long it was up,
+   *  who took it down and the option they picked. */
+  private lowerHand(task: Task, who: string, option: string | null = null) {
+    const hand = task.hand;
+    if (!hand) return;
+    task.hand = null;
+    this.stat(task, "hand.resolved", { reason: hand.reason, openMs: now() - hand.at, option }, who);
+  }
+
   private save(task: Task, touch = true) {
-    // A hand that came down (answered, retried, cancelled, or replaced by another): how long it was up.
-    const was = this.store.task(task.id)?.hand;
-    if (was && task.hand?.at !== was.at) {
-      this.stat(task, "hand.resolved", { reason: was.reason, openMs: now() - was.at, option: this.acting?.option ?? null }, this.acting?.who ?? "factory");
-    }
     if (touch) task.updatedAt = now();
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
