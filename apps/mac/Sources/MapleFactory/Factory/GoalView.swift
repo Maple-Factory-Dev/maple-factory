@@ -273,7 +273,9 @@ private struct BoardCard: View {
                 TaskActionButtons(task: task, confirmCancel: $confirmCancel, schedule: { scheduling = true })
             }
             .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
-            .popover(isPresented: $scheduling, arrowEdge: .trailing) { SchedulePopover(task: task) }
+            .popover(isPresented: Binding(get: { scheduling || state.schedulingTask == task.id },
+                                          set: { if !$0 { scheduling = false; state.schedulingTask = nil } }),
+                     arrowEdge: .trailing) { SchedulePopover(task: task) }
             // Where a dropped card lands: a line above this one.
             .overlay(alignment: .top) {
                 if targeted {

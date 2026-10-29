@@ -45,6 +45,8 @@ final class AppState {
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
+    /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
+    var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
@@ -888,22 +890,29 @@ final class AppState {
 
     /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
     func queue(_ id: String, before: String?) {
+        let rank = rank(for: id, before: before)
         if let client, isLive {
+            // Reordered here at once, as the factory will: no wait for its echo after a drop.
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.queueRank = rank } }
             client.send(.taskQueue(.init(id: id, before: before)))
             return
         }
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.queueRank = rank
+                joinQueue(&task)
+            }
+        }
+    }
+
+    /// The rank that puts `id` ahead of `before` ("top": the front; none: the back), as the factory works it out.
+    private func rank(for id: String, before: String?) -> Double {
         let line = queueOrder.filter { $0.id != id }
         let target = before == "top" ? line.first : line.first { $0.id == before }
-        let rank: Double
         if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
-            rank = at > 0 ? (line[at - 1].queueRank + target.queueRank) / 2 : target.queueRank - 1
-        } else {
-            rank = (line.map(\.queueRank).max() ?? 0) + 1
+            return at > 0 ? (line[at - 1].queueRank + target.queueRank) / 2 : target.queueRank - 1000
         }
-        update(id) { task in
-            task.queueRank = rank
-            joinQueue(&task)
-        }
+        return (line.map(\.queueRank).max() ?? 0) + 1
     }
 
     func moveToTop(_ id: String) { queue(id, before: "top") }
@@ -924,6 +933,13 @@ final class AppState {
     /// Clears its schedule and puts it at the front.
     func startNow(_ id: String) {
         if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
             client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true)))
             return
         }
@@ -1430,6 +1446,17 @@ final class AppState {
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
             case "retry": retry(parts[1])
+            // The queue: Move to top / bottom, a card dropped on another (`drop:<id>:<before>`),
+            // Schedule… with a quick pick (`scheduleask:<id>`, then `schedule:<id>:tonight`), Start now.
+            case "top": moveToTop(parts[1])
+            case "bottom": moveToBottom(parts[1])
+            case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "scheduleask": schedulingTask = parts[1]
+            case "schedule":
+                schedulingTask = nil
+                let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
+                schedule(parts[1], at: pick.date())
+            case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
