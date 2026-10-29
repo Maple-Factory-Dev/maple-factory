@@ -12,6 +12,10 @@ enum MarkdownBlock {
     case code([String])
     case paragraph(String)
     case rule
+    /// A line that's just `![alt](path)`: an attachment, or an image on the web.
+    case image(alt: String, path: String)
+    /// A line that's just `[name](/attachments/…)`: a file attached to the note.
+    case file(name: String, path: String)
 
     static func parse(_ source: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
@@ -45,6 +49,18 @@ enum MarkdownBlock {
 
             if line.isEmpty { flush(); continue }
             if line == "---" { flush(); blocks.append(.rule); continue }
+            if let link = line.wholeMatch(of: /(!?)\[([^\]]*)\]\((\S*)\)/) {
+                if !link.1.isEmpty {
+                    flush()
+                    blocks.append(.image(alt: String(link.2), path: String(link.3)))
+                    continue
+                }
+                if link.3.hasPrefix("/attachments/") {
+                    flush()
+                    blocks.append(.file(name: String(link.2), path: String(link.3)))
+                    continue
+                }
+            }
 
             if let hashes = line.firstIndex(where: { $0 != "#" }), line.hasPrefix("#"),
                line[hashes] == " " {
@@ -197,6 +213,10 @@ struct MarkdownPreview: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .rule:
             Hairline()
+        case let .image(alt, path):
+            LinkedImage(alt: alt, path: path)
+        case let .file(name, path):
+            AttachmentChip(name: name, path: path)
         }
     }
 
@@ -222,7 +242,8 @@ struct MarkdownEditor: View {
     var minHeight: CGFloat = 320
 
     @State private var previewing = false
-    @State private var selection: TextSelection? = nil
+    @State private var selection = NSRange(location: 0, length: 0)
+    @Environment(FactoryClient.self) private var client: FactoryClient?
 
     private enum Format {
         case heading, bold, italic, code, link, bullet, numbered, task, quote, mention
@@ -257,13 +278,11 @@ struct MarkdownEditor: View {
                                 .padding(.vertical, 14)
                                 .allowsHitTesting(false)
                         }
-                        TextEditor(text: $text, selection: $selection)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(Theme.text)
-                            .scrollContentBackground(.hidden)
-                            .lineSpacing(4)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 12)
+                        // Signed in, pasted and dropped files go up to the factory; the mockup keeps
+                        // the text view's own paste.
+                        MarkdownTextView(text: $text, selection: $selection, upload: client.flatMap { client in
+                            client.isSignedIn ? { file in try await client.upload(data: file.data, filename: file.name, mime: file.mime) } : nil
+                        })
                     }
                 }
             }
@@ -285,7 +304,13 @@ struct MarkdownEditor: View {
         .background(Theme.cardBG)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPreview)) { _ in previewing = true }
     }
+
+    /// `-actions "paste:editor; preview:editor"` (AppState.play): paste the clipboard the way ⌘V does,
+    /// and open Preview, for recordings.
+    static let demoPaste = Notification.Name("MarkdownEditor.demoPaste")
+    static let demoPreview = Notification.Name("MarkdownEditor.demoPreview")
 
     private func tab(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Text(title)
@@ -332,10 +357,7 @@ struct MarkdownEditor: View {
 
     /// Wraps the selection (or inserts at the cursor) the way GitHub's issue editor does.
     private func apply(_ format: Format) {
-        let range: Range<String.Index> = {
-            if case let .selection(range)? = selection?.indices { return range }
-            return text.endIndex..<text.endIndex
-        }()
+        let range = Range(selection, in: text) ?? text.endIndex..<text.endIndex
         let selected = String(text[range])
         let atLineStart = range.lowerBound == text.startIndex || text[text.index(before: range.lowerBound)] == "\n"
         let lineBreak = atLineStart ? "" : "\n"
@@ -353,8 +375,8 @@ struct MarkdownEditor: View {
         case .mention: "@"
         }
 
-        let start = text.distance(from: text.startIndex, to: range.lowerBound)
+        let start = NSRange(range, in: text).location
         text.replaceSubrange(range, with: replacement)
-        selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: start + replacement.count))
+        selection = NSRange(location: start + (replacement as NSString).length, length: 0)
     }
 }

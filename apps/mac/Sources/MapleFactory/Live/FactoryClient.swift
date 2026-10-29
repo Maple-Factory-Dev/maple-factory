@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Security
 
@@ -444,6 +445,66 @@ import Security
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
         diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+    }
+
+    /// A file pasted or dropped into a brief or note, as the factory keeps it (`POST /api/attachments`).
+    struct Attachment: Decodable {
+        let id: String
+        let name: String
+        let mime: String
+        let size: Int
+        /// `/attachments/<id>/<name>`: what the note links to.
+        let path: String
+    }
+
+    /// The factory's limit for one attachment.
+    nonisolated static let maxAttachment = 25 * 1024 * 1024
+
+    func upload(data: Data, filename: String, mime: String) async throws -> Attachment {
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        guard data.count <= Self.maxAttachment else { throw ClientError.message("It's over 25 MB.") }
+        var components = URLComponents(url: server.appending(path: "/api/attachments"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [.init(name: "name", value: filename)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        return try await Self.load(request)
+    }
+
+    /// Attachments fetched this run, by path; they never change once stored.
+    private static let attachmentCache = NSCache<NSString, NSData>()
+
+    /// An attachment's bytes (`/attachments/…`), with this app's token: AsyncImage can't send one.
+    func attachment(_ path: String) async throws -> Data {
+        if let cached = Self.attachmentCache.object(forKey: path as NSString) { return cached as Data }
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        guard path.hasPrefix("/attachments/"), let url = URL(string: path, relativeTo: server)?.absoluteURL else {
+            throw ClientError.message("Not an attachment.")
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw ClientError.message(status == 404 ? "It isn't there anymore." : "The server answered \(status).") }
+        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString)
+        return data
+    }
+
+    /// Saves an attachment to a temporary folder and opens it in its app.
+    func open(attachment path: String) async {
+        do {
+            let data = try await attachment(path)
+            let parts = path.split(separator: "/").suffix(2)
+            let folder = FileManager.default.temporaryDirectory.appending(path: "maple-attachments/\(parts.first ?? "file")")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appending(path: String(parts.last ?? "file"))
+            try data.write(to: file)
+            NSWorkspace.shared.open(file)
+        } catch {
+            notice = Self.describe(error)
+        }
     }
 
     private func api<T: Decodable>(_ path: String, method: String = "GET") async throws -> T {
