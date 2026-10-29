@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Turns the factory's tasks and goals (as the server sends them) into the models the views were
 /// designed around, so a signed-in app shows real work in the same board, list and task screens.
-enum LiveAdapter {
+@MainActor enum LiveAdapter {
     static let palette: [Color] = [
         Color(light: 0xD9488F, dark: 0xF07AB4), Color(light: 0xE0662F, dark: 0xFF8A5B), Color(light: 0x2F80ED, dark: 0x5EA2FF),
         Color(light: 0x1F9D6B, dark: 0x3CCB8F), Color(light: 0x8B5CF6, dark: 0xA98BFF), Color(light: 0xC2410C, dark: 0xF59E0B),
