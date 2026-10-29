@@ -43,13 +43,37 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
-    /// Starts as it was left (in a full-width window), so a closed task panel stays closed.
-    var showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true {
-        // A narrow window hides and floats it on its own; only choices in a full-width one stick.
-        didSet { if !isCompact { UserDefaults.standard.set(showInspector, forKey: "taskPanel") } }
+    /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
+    var showInspector = UserDefaults.standard.bool(forKey: "taskPanel")
+    /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
+    var selectedTask = "ATL-147"
+
+    /// A card or row was clicked: show it in the task panel.
+    func openTask(_ id: String) {
+        withAnimation(.snappy(duration: 0.25)) {
+            selectedTask = id
+            showInspector = true
+        }
     }
-    var selectedTask = "ATL-147" {
-        didSet { if isCompact, focusedTask == nil { showInspector = true } }
+
+    /// Clicking the task already open in the panel closes the panel; any other task opens.
+    func toggleTask(_ id: String) {
+        if showInspector, selectedTask == id {
+            closeTaskPanel()
+        } else {
+            openTask(id)
+        }
+    }
+
+    func closeTaskPanel() {
+        withAnimation(.snappy(duration: 0.25)) { showInspector = false }
+    }
+
+    /// The toolbar toggle and the menu item: the one choice that sticks across launches
+    /// (in a full-width window; a narrow one hides and floats the panel on its own).
+    func toggleTaskPanel() {
+        withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
+        if !isCompact { UserDefaults.standard.set(showInspector, forKey: "taskPanel") }
     }
 
     // MARK: Machines
@@ -135,7 +159,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true
+                showInspector = UserDefaults.standard.bool(forKey: "taskPanel")
             }
         }
     }
@@ -683,8 +707,8 @@ final class AppState {
         }
     }
 
-    /// The inspector shows a task from the goal on screen: when the selection belongs elsewhere (or is
-    /// gone), it moves to the goal's first unfinished task.
+    /// The selection follows the goal on screen: when it belongs elsewhere (or is gone), it moves to the
+    /// goal's first unfinished task. This only picks what the panel would show; it never opens the panel.
     func keepSelectionInGoal() {
         if destination == .inbox {
             if !myInbox.contains(where: { $0.taskID == selectedTask }), let first = myInbox.first { selectedTask = first.taskID }
