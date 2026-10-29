@@ -59,6 +59,10 @@ import Security
     /// This factory's maple-server version, and a newer one when there is (admins only).
     private(set) var serverVersion: String?
     private(set) var serverUpdate: Wire.ServerUpdate?
+    /// The last statistics asked for (admins only).
+    private(set) var stats: Wire.StatsSummary?
+    /// Admins see Statistics; signed out, the mockup shows it.
+    var canSeeStats: Bool { !isSignedIn || me?.role == "admin" }
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
@@ -420,6 +424,8 @@ import Security
             policy = update.policy
             acceptances = update.acceptances
             rebuild()
+        case .stats(let reply):
+            stats = reply.summary
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
@@ -599,6 +605,11 @@ import Security
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
 
     /// Fetches a task's diff unless the one held is for the same change (`key`).
+    /// The factory's statistics over the last `days`; the answer lands in `stats`.
+    func loadStats(days: Int, goal: String? = nil) {
+        send(.statsGet(.init(days: UInt32(days), goal: goal)))
+    }
+
     /// Agent time per goal over the last week (`GET /api/usage/goals`).
     struct GoalTime: Decodable {
         struct TaskTime: Decodable { let id: String; let ms: Double }
