@@ -141,8 +141,9 @@ struct DoneCriterion: Identifiable {
     enum Status { case pending, proving, proven, failed }
 
     enum Evidence {
-        case screenshot(caption: String)
-        case video(caption: String, duration: String)
+        /// `file`: the runner's upload, `/attachments/<id>/<name>`; nil for demo data, which draws a placeholder.
+        case screenshot(caption: String, file: String? = nil)
+        case video(caption: String, duration: String, file: String? = nil)
         case terminal(command: String, output: [String])
         case tests(suite: String, passed: Int, failed: Int)
         /// A person signed it off themselves instead of the agent proving it.

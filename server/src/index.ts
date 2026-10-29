@@ -1,7 +1,7 @@
 // maple-factory server: one org's factory, in that org's own Cloudflare account.
 
 import type { Env } from "./env.ts";
-import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment } from "./attachments.ts";
+import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
 import { installScript } from "./install.ts";
@@ -52,6 +52,8 @@ export default {
       return machineHub(env, id).fetch(new Request("https://hub/runner", forward));
     }
     if (path.startsWith("/runner/attachments/") && request.method === "GET") return serveRunnerAttachment(request, env, path.slice("/runner/attachments/".length));
+    const proof = /^\/runner\/proof\/([^/]+)$/.exec(path);
+    if (proof && request.method === "PUT") return uploadProof(request, env, proof[1]);
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 

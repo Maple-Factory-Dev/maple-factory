@@ -11,6 +11,7 @@ import type {
   ServerToRunner, SessionEnd, Task,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
+import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, REPO, taskRepo } from "./repos.ts";
@@ -1344,7 +1345,11 @@ export class Engine {
       }
 
       case "prove": {
-        const item = task.doneWhen[num(a.item) - 1] ?? fail(`There's no item ${a.item}; Done when has ${task.doneWhen.length}.`);
+        // The runner's own `prove` names the item `criterion`; the factory's names it `item`.
+        const which = a.item ?? a.criterion;
+        const item = task.doneWhen[num(which) - 1] ?? fail(`There's no item ${which}; Done when has ${task.doneWhen.length}.`);
+        // The runner uploaded the file (PUT /runner/proof/<task>) and put `{key, name, type, bytes}` in its place.
+        const key = a.file && typeof a.file === "object" ? (a.file as { key?: unknown }).key : null;
         const evidence: Evidence = {
           kind: proofKind(a.kind ?? item.proof),
           summary: str(a.summary, "summary"),
@@ -1352,7 +1357,7 @@ export class Engine {
           output: arr(a.output).map(String).slice(-60),
           passed: a.passed != null ? num(a.passed) : null,
           failed: a.failed != null ? num(a.failed) : null,
-          file: null,
+          file: isAttachmentKey(key) ? key : null,
           by: "builder",
           at: now(),
         };

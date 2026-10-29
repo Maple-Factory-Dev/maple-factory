@@ -315,13 +315,13 @@ import SwiftUI
         }
     }
 
-    private static func evidence(_ e: Wire.Evidence) -> DoneCriterion.Evidence {
+    static func evidence(_ e: Wire.Evidence) -> DoneCriterion.Evidence {
         if e.attested == true { return .attested(by: e.by, reason: e.reason, when: ago(e.at)) }
         return switch e.kind {
         case .tests: .tests(suite: e.summary, passed: Int(e.passed ?? 0), failed: Int(e.failed ?? 0))
         case .terminal, .other: .terminal(command: e.command ?? e.summary, output: e.output.isEmpty ? [e.summary] : e.output)
-        case .screenshot: .screenshot(caption: e.summary)
-        case .video: .video(caption: e.summary, duration: "")
+        case .screenshot: .screenshot(caption: e.summary, file: e.file)
+        case .video: .video(caption: e.summary, duration: "", file: e.file)
         }
     }
 

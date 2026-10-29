@@ -277,7 +277,7 @@ export const structs: Record<string, Struct> = {
       reason: "string?",
     },
     fieldDocs: {
-      file: "An uploaded image or video's path under /api/files/.",
+      file: "An uploaded image or video's link, /attachments/<id>/<name> (members fetch it there).",
       by: "The agent's role, or the login of the person who attested.",
       attested: "A person signed it off themselves instead of the agent proving it.",
       reason: "Why they attested, if they said.",

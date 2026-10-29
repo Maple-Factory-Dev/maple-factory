@@ -1677,6 +1677,8 @@ final class AppState {
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
+            // A video proof's play button on screen, clicked: `play:video`.
+            case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             case "teamslots": setTeamSlots(parts[1], to: Int(parts[2]) ?? 1)

@@ -18,7 +18,9 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/MapleFactory",
-            resources: [.process("Resources")]
+            resources: [.process("Resources")],
+            // SwiftUI's VideoPlayer (video proofs) needs AVKit itself linked, or it can't load AVPlayerView.
+            linkerSettings: [.linkedFramework("AVKit")]
         ),
         .testTarget(
             name: "MapleFactoryTests",

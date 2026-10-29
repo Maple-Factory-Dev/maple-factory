@@ -1496,7 +1496,7 @@ public enum Wire {
         public var output: [String]
         public var passed: UInt32?
         public var failed: UInt32?
-        /// An uploaded image or video's path under /api/files/.
+        /// An uploaded image or video's link, /attachments/<id>/<name> (members fetch it there).
         public var file: String?
         /// The agent's role, or the login of the person who attested.
         public var by: String
