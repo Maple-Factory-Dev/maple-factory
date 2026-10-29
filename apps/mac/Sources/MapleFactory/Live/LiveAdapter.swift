@@ -140,6 +140,11 @@ import SwiftUI
         task.queued = queued(t)
         task.queueRank = t.queueRank ?? Double(t.createdAt)
         task.startAt = t.startAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        task.mergeAt = t.mergeAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        // The countdown started with the factory's "will auto-merge" event; its time sizes the drain.
+        if task.mergeAt != nil, let started = t.events.last(where: { $0.who == "factory" && $0.text.hasPrefix("will auto-merge") }) {
+            task.mergeFrom = Date(timeIntervalSince1970: Double(started.at) / 1000)
+        }
         return task
     }
 

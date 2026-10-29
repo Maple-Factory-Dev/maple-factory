@@ -374,6 +374,10 @@ final class AppState {
     var keptWhole: Set<String> = []
     /// Tasks the factory has picked up for auto-merge and is about to land.
     var autoMerging: Set<String> = []
+    /// Mockup: tasks whose auto-merge someone held, so the countdown doesn't start again.
+    var heldMerges: Set<String> = []
+    /// Mockup: how long an auto-merge counts down, like the factory's MERGE_GRACE_MS.
+    var mergeGrace: Duration = .seconds(10)
     var dismissedMentions: Set<String> = []
     var toast: Toast?
 
@@ -1491,6 +1495,7 @@ final class AppState {
             if !byFactory, beginInFlight(id, .merge) { client.send(.taskMerge(.init(id: id))) }
             return
         }
+        if !byFactory { update(id) { $0.mergeAt = nil } }
         if !byFactory, afterDemoDelay(id, .merge, { self.mergeInMockup(id, byFactory: false) }) { return }
         mergeInMockup(id, byFactory: byFactory)
     }
@@ -1630,22 +1635,56 @@ final class AppState {
         withAnimation(.snappy(duration: 0.25)) { _ = keptWhole.insert(id) }
     }
 
-    /// Finds reviewing tasks that now meet every gate and are allowed to auto-merge, and lands them.
+    /// Stops the auto-merge counting down on a task; a person merges it instead.
+    func holdMerge(_ id: String) {
+        if let client, isLive {
+            client.send(.taskHoldMerge(.init(id: id)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.25)) {
+            heldMerges.insert(id)
+            update(id) { task in
+                task.mergeAt = nil
+                task.mergeFrom = nil
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Held the auto-merge", when: "now"), at: 0)
+            }
+        }
+        showToast("Held the auto-merge on \(id); merge it when you're ready", icon: "hand.raised.fill")
+    }
+
+    /// Finds reviewing tasks that now meet every gate and are allowed to auto-merge, and counts each
+    /// down (`mergeAt`, as the factory does) before landing it, unless someone holds it first.
     func sweepForAutoMerge() {
         guard !isLive else { return }
-        for task in tasks where task.state == .reviewing && !autoMerging.contains(task.id) {
+        // A hold lasts while it waits to merge; sent back to build, it counts down again next time.
+        heldMerges = heldMerges.filter { id in tasks.contains { $0.id == id && $0.state == .reviewing } }
+        for task in tasks where task.state == .reviewing && task.mergeAt == nil && !autoMerging.contains(task.id) && !heldMerges.contains(task.id) {
             let gate = mergeGate(for: task)
             guard gate.canMerge, gate.autoMerge else { continue }
             let id = task.id
-            withAnimation(.snappy(duration: 0.25)) { _ = autoMerging.insert(id) }
+            let from = Date()
+            withAnimation(.snappy(duration: 0.25)) {
+                update(id) { task in
+                    task.mergeFrom = from
+                    task.mergeAt = from.addingTimeInterval(Double(mergeGrace.components.seconds) + Double(mergeGrace.components.attoseconds) / 1e18)
+                }
+            }
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1.8))
+                try? await Task.sleep(for: self.mergeGrace)
                 let current = self.task(id)
                 let gate = self.mergeGate(for: current)
-                guard self.autoMerging.contains(id), current.state == .reviewing, gate.canMerge, gate.autoMerge else {
-                    self.autoMerging.remove(id)
+                guard current.mergeAt != nil, current.state == .reviewing, gate.canMerge, gate.autoMerge else {
+                    self.update(id) { task in
+                        task.mergeAt = nil
+                        task.mergeFrom = nil
+                    }
                     return
                 }
+                self.update(id) { task in
+                    task.mergeAt = nil
+                    task.mergeFrom = nil
+                }
+                self.autoMerging.insert(id)
                 self.merge(id, byFactory: true)
             }
         }
