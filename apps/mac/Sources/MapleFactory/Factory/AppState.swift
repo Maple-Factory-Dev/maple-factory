@@ -58,6 +58,10 @@ final class AppState {
     var layout: GoalLayout = .board {
         didSet { focusedTask = nil }
     }
+    /// The goal Timeline hides merged tasks until this is on; it's one choice for every goal.
+    var timelineShowsMerged = AppDefaults.bool(forKey: "timelineShowsMerged") {
+        didSet { AppDefaults.set(timelineShowsMerged, forKey: "timelineShowsMerged") }
+    }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
@@ -178,7 +182,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "mockview", "onboardingStep"]
+                                        "timelineMerged", "mockview", "onboardingStep"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -1586,6 +1590,9 @@ final class AppState {
         let defaults = AppDefaults
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
+        }
+        if defaults.object(forKey: "timelineMerged") != nil {
+            timelineShowsMerged = defaults.bool(forKey: "timelineMerged")
         }
         if let argument = defaults.string(forKey: "destination") {
             destination = Destination(argument: argument)
