@@ -5,7 +5,7 @@ import Sparkle
 /// UpdatePhase, and the replies Sparkle hands over wait here until the footer's button answers them.
 @MainActor
 final class SidebarUserDriver: NSObject, SPUUserDriver {
-    private let show: (UpdatePhase) -> Void
+    private let onPhase: (UpdatePhase) -> Void
     private var phase: UpdatePhase = .idle
     private var version = ""
     private var expected: UInt64 = 0
@@ -19,12 +19,12 @@ final class SidebarUserDriver: NSObject, SPUUserDriver {
     private(set) var releaseNotesURL: URL?
 
     init(show: @escaping (UpdatePhase) -> Void) {
-        self.show = show
+        self.onPhase = show
     }
 
     private func move(to phase: UpdatePhase) {
         self.phase = phase
-        show(phase)
+        onPhase(phase)
     }
 
     // MARK: Answers from the footer
@@ -47,7 +47,7 @@ final class SidebarUserDriver: NSObject, SPUUserDriver {
 
     // MARK: SPUUserDriver
 
-    func showUpdatePermissionRequest(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
+    func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
         // SUEnableAutomaticChecks already says yes; this only comes up if a build ever leaves it out.
         reply(SUUpdatePermissionResponse(automaticUpdateChecks: true, sendSystemProfile: false))
     }
