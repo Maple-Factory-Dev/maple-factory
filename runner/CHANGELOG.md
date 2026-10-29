@@ -5,6 +5,14 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.39.0 — 2026-10-29
+
+Turn off auto-merges, and goal due dates.
+
+## 0.38.0 — 2026-10-29
+
+Take over or reassign a task.
+
 ## 0.37.0 — 2026-10-29
 
 Each session's cost, by role and by agent and model.

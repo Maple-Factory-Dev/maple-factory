@@ -38,12 +38,27 @@ struct TaskOwnership: View {
     let task: FactoryTask
     var avatarSize: CGFloat = 18
 
+    private var open: Bool { task.state != .merged && task.state != .cancelled }
+
     var body: some View {
         HStack(spacing: 8) {
             StateBadge(state: task.state)
             AgentAvatar(agent: task.owner, size: avatarSize)
-            Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
+            let name = Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
                 .foregroundStyle(Theme.text)
+            if open {
+                // Picks its owner: take it over, or (its owner, an admin) give it to a teammate.
+                Menu {
+                    TaskAssignButtons(task: task)
+                } label: {
+                    name
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Change who owns it")
+            } else {
+                name
+            }
             if let agent = task.agent {
                 Image(systemName: "arrow.right")
                     .font(.system(size: 9, weight: .semibold))
@@ -134,6 +149,8 @@ struct TaskActionButtons: View {
             Divider()
         }
         if open {
+            TaskAssignButtons(task: task)
+            Divider()
             Button { rename = true } label: { Label("Rename…", systemImage: "pencil") }
             Toggle(isOn: Binding(get: { task.shareable }, set: { appState.setShareable(task.id, $0) })) {
                 Label("Run on teammates' machines", systemImage: "person.3")
@@ -147,6 +164,33 @@ struct TaskActionButtons: View {
             Button { appState.copyBranch(task.id) } label: { Label("Copy branch name", systemImage: "arrow.triangle.branch") }
         }
         Button { appState.copyID(task.id) } label: { Label("Copy ID", systemImage: "number") }
+    }
+}
+
+/// Take it over (when it isn't yours) and, for its owner or an admin, Assign to ▸ the org's members.
+struct TaskAssignButtons: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+
+    private var mine: Bool { task.owner.github == FactoryData.me.github }
+
+    var body: some View {
+        if !mine, let me = FactoryData.me.github {
+            Button { appState.assign(task.id, to: me) } label: { Label("Take it over", systemImage: "person.crop.circle.badge.checkmark") }
+        }
+        if appState.canReassign(task.id) {
+            let others = FactoryData.people.filter { $0.github != nil && $0.github != task.owner.github }
+            Menu {
+                ForEach(others) { person in
+                    Button(person.github == FactoryData.me.github ? "\(person.name) (you)" : person.name) {
+                        appState.assign(task.id, to: person.github!)
+                    }
+                }
+            } label: {
+                Label("Assign to", systemImage: "person.badge.plus")
+            }
+            .disabled(others.isEmpty)
+        }
     }
 }
 
@@ -552,6 +596,9 @@ struct ReviewActions: View {
                     let round = gate.autoReviewRound.map { "round \($0)" } ?? "its first round"
                     return ("hourglass", "The factory's reviewer is on \(round). You can approve once it passes.", Theme.textMuted)
                 }
+            }
+            if !state.policy.autoMerges && gate.canMerge {
+                return ("hand.tap", "Ready. Nothing merges on its own in this factory, so a person merges.", Theme.textMuted)
             }
             if let acceptance = risk?.acceptance {
                 return ("bolt.shield", "\(acceptance.acceptedBy.firstName) accepted \(level) risk for \(task.goal). The factory merges once proofs and CI pass.", Theme.State.merged)

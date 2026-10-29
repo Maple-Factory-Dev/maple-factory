@@ -126,7 +126,9 @@ struct GoalTimeline: View {
             }
 
             marker(at: FactoryData.todayOffset, color: Theme.accent, dashed: false)
-            marker(at: goal.dueOffset, color: Theme.State.cancelled, dashed: true)
+            if let due = goal.dueOffset, (0..<FactoryData.timelineDays).contains(due) {
+                marker(at: due, color: Theme.State.cancelled, dashed: true)
+            }
         }
         .frame(width: CGFloat(FactoryData.timelineDays) * dayWidth, height: chartHeight, alignment: .topLeading)
     }

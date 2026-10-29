@@ -107,6 +107,9 @@ export class Engine {
         const goal = { ...msg.goal, prefix: msg.goal.prefix.trim().toUpperCase() };
         if (!/^[A-Z][A-Z0-9]{0,9}$/.test(goal.prefix)) fail("A goal's prefix is 1–10 letters or digits, starting with a letter.");
         if (!goal.name.trim()) fail("A goal needs a name.");
+        // Epoch ms, or none: an empty due means no due date.
+        goal.due ??= null;
+        if (goal.due !== null && !(Number.isSafeInteger(goal.due) && goal.due > 0)) fail("A goal's due date is a time in epoch milliseconds, or none.");
         if (!goal.id) goal.id = crypto.randomUUID();
         // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.
         if (!goal.lead?.trim()) goal.lead = who;
@@ -288,6 +291,23 @@ export class Engine {
         }
         if (!onlyEffort) this.event(task, who, "edited it");
         this.save(task);
+        await this.pump();
+        return;
+      }
+      case "task.assign": {
+        if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        const owner = msg.owner.trim().replace(/^@/, "");
+        if (owner.toLowerCase() === task.owner.toLowerCase()) fail(`${task.owner} already owns it.`);
+        const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === owner.toLowerCase()) ?? fail(`${owner} isn't in the org.`);
+        if (to.login !== who && task.owner !== who && member.role !== "admin") fail(`Only ${task.owner}, its owner, or an admin can give it to someone else; you can take it over yourself.`);
+        const was = task.owner;
+        task.owner = to.login;
+        // Its open hand is the owner's to resolve.
+        if (task.hand && task.hand.assignee === was) task.hand.assignee = to.login;
+        this.event(task, who, to.login === who ? "took it over" : `assigned it to @${to.login}`);
+        await audit(this.env, who, "task.assigned", task.id, { from: was, to: to.login });
+        this.save(task);
+        // What hasn't started yet goes to the new owner's machines; a running session keeps its machine (as a team slot).
         await this.pump();
         return;
       }
@@ -770,19 +790,22 @@ export class Engine {
         kind = "team";
       }
       if (!machine) {
+        // Named for its owner: a teammate reads it too, and it changes hands when the task does.
         const mine = machines.filter((m) => m.owner === task.owner);
-        if (!mine.length) return task.shareable ? "Waiting for a free team slot (you have no machines)." : "Waiting for one of your machines: add one under Machines.";
+        const theirs = `${task.owner}'s machines`;
+        if (!mine.length) return task.shareable ? `Waiting for a free team slot (${task.owner} has no machines).` : `Waiting for one of ${theirs}: add one under Machines.`;
         const online = mine.filter((m) => m.online);
-        if (!online.length) return task.shareable ? "Your machines are offline; waiting for them or a team slot." : "Waiting for one of your machines to come online.";
+        const listed = (ms: Machine[]) => ms.map((m) => m.name).join(", ");
+        if (!online.length) return task.shareable ? `${theirs} (${listed(mine)}) are offline; waiting for them or a team slot.` : `Waiting for one of ${theirs} (${listed(mine)}) to come online.`;
         const running = online.filter((m) => !this.store.settings(m.id).paused);
         if (!running.length) {
           const names = online.map((m) => m.name).join(", ");
           return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused.`;
         }
-        if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of your online machines has ${task.agent} installed.`;
+        if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of ${task.owner}'s online machines (${listed(running)}) has ${task.agent} installed.`;
         const capped = running.map((m) => this.overCap(m, task.agent, task.owner)).find(Boolean);
         if (capped && !running.some((m) => this.hasAgent(m, task.agent) && !this.overCap(m, task.agent, task.owner))) return capped;
-        return task.shareable ? "Waiting for a free slot on your machines or the team's." : "Waiting for a free slot on your machines.";
+        return `Waiting for a free slot on ${theirs} (${listed(running)})${task.shareable ? " or the team's" : ""}.`;
       }
     }
 
@@ -1578,12 +1601,14 @@ export class Engine {
       if (task.state === "merged" || task.state === "cancelled" || !task.risk) continue;
       const before = `${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}`;
       this.applyPolicy(task);
-      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` === before) continue;
-      this.save(task, false);
-      if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
-        await this.approved(task, "queued it for building (the policy needs fewer approvals now)");
-        this.save(task);
+      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` !== before) {
+        this.save(task, false);
+        if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
+          await this.approved(task, "queued it for building (the policy needs fewer approvals now)");
+          this.save(task);
+        }
       }
+      // Even with its level unchanged: turning autoMerges back on merges what was waiting.
       await this.autoMerge(task);
     }
     await this.pump();
@@ -1595,7 +1620,19 @@ export class Engine {
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return;
     if (task.pr.checks.some((c) => c.status !== "passed")) return; // CI first
     const a = this.assessment(task);
-    if (!a.autoMerge || this.store.private(task.id).merging || task.hand?.reason === "mergeFailed") return;
+    const priv = this.store.private(task.id);
+    if (priv.merging || task.hand?.reason === "mergeFailed") return;
+    if (!a.autoMerge) {
+      // Ready, but the org merges by hand: say so once per head, so it isn't mistaken for stuck.
+      const head = task.pr.head ?? task.pr.branch;
+      if (this.store.policy().autoMerges === false && priv.pendingMerge !== head) {
+        this.store.savePrivate(task.id, { ...priv, pendingMerge: head });
+        this.event(task, "factory", "is ready; waiting for a person to merge it (auto-merge is off)");
+        this.save(task);
+        this.hooks.broadcast({ type: "toast", text: `${task.id} is ready to merge; it's waiting for you.`, taskId: task.id });
+      }
+      return;
+    }
     await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {});
   }
 

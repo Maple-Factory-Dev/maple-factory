@@ -507,8 +507,10 @@ export const structs: Record<string, Struct> = {
       finalReviews: "map<u32>",
       autoMerge: "map<bool>",
       autoFixMerges: "bool?",
+      autoMerges: "bool?",
     },
     fieldDocs: {
+      autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
       maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
       planApprovals: "By risk level (low, medium, high).",
@@ -902,6 +904,11 @@ export const unions: Record<string, Union> = {
       "task.edit": {
         fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?" },
         fieldDocs: { effort: "Put it in this effort; an empty string takes it out." },
+      },
+      "task.assign": {
+        doc: "Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).",
+        fields: { id: "string", owner: "string" },
+        fieldDocs: { owner: "The member's login." },
       },
       "task.plan": { doc: "Send a draft to planning.", fields: { id: "string" } },
       "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },

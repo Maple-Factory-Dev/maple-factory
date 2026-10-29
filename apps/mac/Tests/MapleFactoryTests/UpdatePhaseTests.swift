@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MapleFactory
 
@@ -136,5 +137,27 @@ struct UpdatePhaseTests {
         for phase in all where phase != ready {
             #expect(!Updater.relaunchesAutomatically(at: phase, relaunchWhenReady: true))
         }
+    }
+
+    @Test func whatsNewOpensTheChangelogFromTheInstalledVersion() throws {
+        let notes = URL(string: "https://updates.maplefactory.dev/releases/0.1.26/notes.html")
+        let url = try #require(SidebarUserDriver.changelogURL(notes: notes, installed: "0.1.22", offered: "0.1.26"))
+        #expect(url.absoluteString == "https://updates.maplefactory.dev/changelog.html?from=0.1.22&to=0.1.26")
+        let query = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(query.contains(URLQueryItem(name: "from", value: "0.1.22")))
+        #expect(query.contains(URLQueryItem(name: "to", value: "0.1.26")))
+    }
+
+    @Test func changelogIsOnTheAppcastsHost() {
+        let notes = URL(string: "http://127.0.0.1:8759/releases/0.2.0/notes.html")
+        let url = SidebarUserDriver.changelogURL(notes: notes, installed: "0.1.9", offered: "0.2.0")
+        #expect(url?.absoluteString == "http://127.0.0.1:8759/changelog.html?from=0.1.9&to=0.2.0")
+    }
+
+    @Test func withoutAnInstalledVersionItsTheReleasesOwnNotes() {
+        let notes = URL(string: "https://updates.maplefactory.dev/releases/0.2.0/notes.html")
+        #expect(SidebarUserDriver.changelogURL(notes: notes, installed: nil, offered: "0.2.0") == notes)
+        #expect(SidebarUserDriver.changelogURL(notes: notes, installed: "", offered: "0.2.0") == notes)
+        #expect(SidebarUserDriver.changelogURL(notes: nil, installed: "0.1.0", offered: "0.2.0") == nil)
     }
 }

@@ -35,8 +35,11 @@ struct GoalView: View {
             HStack(spacing: 6) {
                 Image(systemName: "scope").foregroundStyle(goal.color)
                 Text("Goal")
-                Text("·")
-                Text("Due \(FactoryData.dueLabel(goal))")
+                if let due = FactoryData.dueLabel(goal) {
+                    Text("·")
+                    Text(FactoryData.isOverdue(goal) ? "Due \(due) · overdue" : "Due \(due)")
+                        .foregroundStyle(FactoryData.isOverdue(goal) ? Theme.State.cancelled : Theme.textMuted)
+                }
                 if let team = goal.team {
                     Text("·")
                     Text("@\(team)").foregroundStyle(Theme.text)
@@ -155,6 +158,7 @@ struct BoardColumns: View {
                 queueColumn
                 ForEach(TaskState.allCases.filter { $0 != .drafting }) { taskState in
                     column(taskState)
+                    if taskState == .reviewing { pendingColumn }
                 }
             }
             .animation(.snappy, value: populatedStates)
@@ -182,16 +186,19 @@ struct BoardColumns: View {
     static func isRail(count: Int) -> Bool { count == 0 }
 
     /// The states with cards in their own column; the board animates when this changes.
-    private var populatedStates: Set<TaskState> { Set(tasks.filter { !$0.queued }.map(\.state)) }
+    private var populatedStates: Set<String> {
+        Set(tasks.filter { !$0.queued }.map { state.pendingMerge($0) ? "pendingMerge" : $0.state.title })
+    }
 
-    /// Queued tasks wait in Queued until a session picks them up, not in their state's column.
+    /// Queued tasks wait in Queued until a session picks them up, not in their state's column;
+    /// ready reviewing tasks that a person merges wait in Pending merge.
     @ViewBuilder
     private func column(_ taskState: TaskState) -> some View {
-        let columnTasks = tasks.filter { $0.state == taskState && !$0.queued }
+        let columnTasks = tasks.filter { $0.state == taskState && !$0.queued && !state.pendingMerge($0) }
 
         Group {
             if Self.isRail(count: columnTasks.count) {
-                EmptyColumnRail(taskState: taskState)
+                EmptyColumnRail(icon: taskState.icon, title: taskState.title, color: taskState.color, hint: taskState.emptyHint)
             } else {
                 shell(icon: taskState.icon, title: taskState.title, color: taskState.color, tasks: columnTasks) {
                     ForEach(columnTasks) { task in
@@ -202,6 +209,27 @@ struct BoardColumns: View {
         }
         .transition(.opacity)
         .opacity(taskState == .cancelled ? 0.7 : 1)
+    }
+
+    /// Reviewed, proven and green, and waiting for a person: auto-merge is off for its risk level or the factory.
+    @ViewBuilder
+    private var pendingColumn: some View {
+        let pending = tasks.filter { !$0.queued && state.pendingMerge($0) }
+        let icon = "arrow.triangle.pull", title = "Pending merge", color = Theme.State.pendingMerge
+
+        Group {
+            if Self.isRail(count: pending.count) {
+                EmptyColumnRail(icon: icon, title: title, color: color,
+                                hint: "Tasks land here once they're proven, reviewed and green, and a person merges them.")
+            } else {
+                shell(icon: icon, title: title, color: color, tasks: pending) {
+                    ForEach(pending) { task in
+                        BoardCard(task: task, mergeButton: true)
+                    }
+                }
+            }
+        }
+        .transition(.opacity)
     }
 
     /// Every task waiting for a session, front of the queue first. Drag a card onto another to put
@@ -275,6 +303,8 @@ private struct BoardCard: View {
     let task: FactoryTask
     var position: Int? = nil
     var draggable = false
+    /// Pending merge's cards: Merge right on the card.
+    var mergeButton = false
     /// A card dropped on this one, to go ahead of it.
     var onDrop: ((String) -> Void)? = nil
     @State private var confirmCancel = false
@@ -283,7 +313,7 @@ private struct BoardCard: View {
     @State private var targeted = false
 
     var body: some View {
-        let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position)
+        let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position, mergeButton: mergeButton)
             .taskClicks(task.id)
             .contextMenu {
                 TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
@@ -405,18 +435,21 @@ struct ScheduleBadge: View {
 
 /// An empty column, kept as a quiet slot so the pipeline still reads left to right.
 private struct EmptyColumnRail: View {
-    let taskState: TaskState
+    let icon: String
+    let title: String
+    let color: Color
+    let hint: String
 
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: taskState.icon)
+            Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(taskState.color)
+                .foregroundStyle(color)
             Text("0")
                 .font(.system(size: 12).monospacedDigit())
                 .foregroundStyle(Theme.textFaint)
             // The title runs down the rail; it's laid out flat and turned, so it isn't clipped.
-            Text(taskState.title)
+            Text(title)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
@@ -433,7 +466,7 @@ private struct EmptyColumnRail: View {
                 .strokeBorder(Theme.stroke, lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
-        .help(taskState.emptyHint)
+        .help(hint)
     }
 }
 
@@ -462,6 +495,8 @@ struct TaskCard: View {
     let selected: Bool
     /// Its place in the Queued column.
     var position: Int? = nil
+    /// A Merge button under it, for Pending merge.
+    var mergeButton = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -538,6 +573,13 @@ struct TaskCard: View {
                 }
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Theme.State.awaitingApproval)
+            }
+
+            if mergeButton {
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isInFlight(task.id, .merge),
+                              busyTitle: "Merging…") {
+                    state.merge(task.id)
+                }
             }
         }
         .padding(12)

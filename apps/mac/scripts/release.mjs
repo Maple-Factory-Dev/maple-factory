@@ -127,17 +127,9 @@ function markdown(text) {
   return out.join("\n");
 }
 
-/** What Sparkle's update window shows: self-contained, since an external stylesheet that's slow
- *  or blocked there means a wall of plain text, and in both appearances, since the window follows the system's. */
-const notesPage = (r) => `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>${escape(r.title)}</title>
-<style>
-  :root { --bg: #fbf9f8; --fg: #3a3540; --strong: #24202a; --muted: #77707f; --rule: rgba(36, 32, 42, .1); --accent: #d24e26; }
+/** The notes' look, shared by notes.html and changelog.html. notes.html is signed, so changing a byte
+ *  here means signing every release again: add to the changelog's own style instead. */
+const NOTES_STYLE = `  :root { --bg: #fbf9f8; --fg: #3a3540; --strong: #24202a; --muted: #77707f; --rule: rgba(36, 32, 42, .1); --accent: #d24e26; }
   @media (prefers-color-scheme: dark) { :root { --bg: #18161c; --fg: #d6d2da; --strong: #fff; --muted: #9a94a2; --rule: rgba(255, 255, 255, .1); --accent: #ff7a48; } }
   body { margin: 0; padding: 20px 24px; background: var(--bg); color: var(--fg); font: 13px/1.6 system-ui, sans-serif; }
   header { border-bottom: 1px solid var(--rule); padding-bottom: 12px; margin-bottom: 16px; }
@@ -149,14 +141,97 @@ const notesPage = (r) => `<!doctype html>
   li { margin: 4px 0; }
   a { color: var(--accent); }
   code { background: var(--rule); border-radius: 4px; padding: 1px 4px; font-size: 12px; }
+`;
+/** A release's version, Beta badge and date, then its notes. */
+const releaseNotes = (r, tag = "h1") => `<header>
+  <${tag}>${escape(NAME)} ${escape(r.version)}${r.beta ? '<span class="badge">Beta</span>' : ""}</${tag}>
+  <div class="date">${escape(r.date)}</div>
+</header>
+${markdown(r.markdown)}`;
+
+/** What Sparkle's update window shows: self-contained, since an external stylesheet that's slow
+ *  or blocked there means a wall of plain text, and in both appearances, since the window follows the system's. */
+const notesPage = (r) => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>${escape(r.title)}</title>
+<style>
+${NOTES_STYLE}</style>
+</head>
+<body>
+${releaseNotes(r)}
+</body>
+</html>
+`;
+
+/** Narrows changelog.html to ?from=<installed>&to=<offered>: the releases after the one installed, up to
+ *  the one on offer, and betas only when either end is one. No params, or a version it doesn't know,
+ *  leaves every release showing, which is also what a reader with JS off sees. */
+const CHANGELOG_SCRIPT = `(() => {
+  const q = new URLSearchParams(location.search);
+  const sections = [...document.querySelectorAll("section[data-build]")];
+  const find = (v) => sections.find((s) => s.id === "v" + v);
+  const from = find(q.get("from")), to = find(q.get("to"));
+  if (!from || !to) return;
+  const lo = Number(from.dataset.build), hi = Number(to.dataset.build);
+  const betas = from.dataset.channel === "beta" || to.dataset.channel === "beta";
+  const shown = sections.filter((s) => {
+    const b = Number(s.dataset.build);
+    const keep = b > lo && b <= hi && (betas || s.dataset.channel !== "beta");
+    s.hidden = !keep;
+    return keep;
+  });
+  if (!shown.length) { sections.forEach((s) => (s.hidden = false)); return; }
+  const title = document.querySelector("#range h1");
+  const count = document.querySelector("#range .count");
+  if (shown.length === 1) {
+    title.innerHTML = shown[0].querySelector("h2").innerHTML;
+    count.textContent = shown[0].querySelector(".date").textContent;
+    shown[0].querySelector("header").hidden = true;
+  } else {
+    title.textContent = "Changes since " + q.get("from") + " \u00b7 " + shown.length + " releases";
+    count.textContent = shown.at(-1).id.slice(1) + " to " + shown[0].id.slice(1) + ", newest first";
+  }
+  document.querySelector("#range .all").hidden = false;
+  document.title = title.textContent.replace(/Beta$/, " (Beta)") + " \u00b7 ${NAME}";
+})();`;
+
+/** Every signed release's notes on one page, newest first, for someone skipping several releases:
+ *  the app links here with ?from=<installed>&to=<offered>. Not signed (Sparkle's window shows the
+ *  offered release's own notes.html), so it can change with every release. */
+const changelogPage = (releases) => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>${escape(NAME)} release notes</title>
+<style>
+${NOTES_STYLE}  body { max-width: 640px; margin: 0 auto; }
+  #range { border-bottom: 0; margin-bottom: 8px; }
+  #range .all { font-size: 12px; margin-top: 4px; }
+  section { padding: 16px 0 8px; }
+  section + section { border-top: 1px solid var(--rule); }
+  section header { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
+  section header h2 { font-size: 15px; margin: 0; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<header>
-  <h1>${escape(NAME)} ${escape(r.version)}${r.beta ? '<span class="badge">Beta</span>' : ""}</h1>
-  <div class="date">${escape(r.date)}</div>
+<header id="range">
+  <h1>${escape(NAME)} release notes</h1>
+  <div class="date count">${releases.length} release${releases.length === 1 ? "" : "s"}, newest first</div>
+  <div class="all" hidden><a href="?">Show all releases</a></div>
 </header>
-${markdown(r.markdown)}
+${releases.map((r) => `<section id="v${escape(r.version)}" data-build="${r.build}" data-channel="${r.channel}">
+${releaseNotes(r, "h2")}
+</section>`).join("\n")}
+<script>
+${CHANGELOG_SCRIPT}
+</script>
 </body>
 </html>
 `;
@@ -335,6 +410,7 @@ function cmdAppcast() {
   if (unsigned.length) console.log(`  not signed yet, so not in it: ${unsigned.map((r) => r.version).join(", ")}`);
   mkdirSync(SITE, { recursive: true });
   writeFileSync(join(SITE, "appcast.xml"), appcast(releases));
+  writeFileSync(join(SITE, "changelog.html"), changelogPage(releases.filter((r) => r.artifacts)));
   // Every signed release's notes, the same bytes they were signed as (the template changing would break their signatures).
   for (const r of releases.filter((r) => r.artifacts)) {
     const notes = join(r.siteDir, "notes.html");
@@ -343,6 +419,7 @@ function cmdAppcast() {
   }
   const signed = releases.filter((r) => r.artifacts);
   ok(`appcast.xml: ${signed.length} item${signed.length === 1 ? "" : "s"} (${signed.filter((r) => r.beta).length} beta)`);
+  ok(`changelog.html: ${signed.length} release${signed.length === 1 ? "" : "s"}`);
 }
 
 function cmdPublish() {
@@ -358,7 +435,12 @@ function cmdPublish() {
     run("aws", ["s3", "sync", join(SITE, "releases"), `s3://${bucket}/releases/`, ...endpoint, "--exclude", "*", "--include", pattern,
       "--content-type", type, "--cache-control", "public, max-age=31536000, immutable"]);
   }
-  // Briefly cached, so pulling a bad release or shipping a fix reaches everyone in minutes.
+  // Briefly cached, so pulling a bad release or shipping a fix reaches everyone in minutes. The
+  // changelog before the appcast, so an app offered the new release finds its notes there.
+  if (existsSync(join(SITE, "changelog.html"))) {
+    run("aws", ["s3", "cp", join(SITE, "changelog.html"), `s3://${bucket}/changelog.html`, ...endpoint,
+      "--content-type", "text/html; charset=utf-8", "--cache-control", "public, max-age=300"]);
+  }
   run("aws", ["s3", "cp", join(SITE, "appcast.xml"), `s3://${bucket}/appcast.xml`, ...endpoint,
     "--content-type", "application/xml; charset=utf-8", "--cache-control", "public, max-age=300"]);
 
@@ -367,6 +449,8 @@ function cmdPublish() {
   const feed = capture("curl", ["-fsS", `${updatesURL()}/appcast.xml`]);
   if (!feed.includes(`<sparkle:shortVersionString>${latest.version}<`)) fail(`${updatesURL()}/appcast.xml doesn't have ${latest.version} in it.`);
   capture("curl", ["-fsSI", latest.dmgURL]);
+  const changelog = capture("curl", ["-fsS", `${updatesURL()}/changelog.html`]);
+  if (!changelog.includes(`id="v${latest.version}"`)) fail(`${updatesURL()}/changelog.html doesn't have ${latest.version} in it.`);
   ok(`${latest.version} is live at ${updatesURL()}/appcast.xml`);
 }
 
@@ -404,7 +488,7 @@ if (!COMMANDS[command]) {
   notarize <version>  notarizes and staples the app
   dmg <version>       the DMG from the stapled app, signed, notarized and stapled
   sign <version>      notes.html, and the EdDSA signatures in release.json
-  appcast             build/updates-site/appcast.xml from every releases/*/release.json
+  appcast             build/updates-site/appcast.xml and changelog.html from every releases/*/release.json
   publish             uploads build/updates-site/ to R2 (the appcast last), and checks it's live
   ship <version>      all of these, asking before it starts and before it publishes`);
   process.exit(command ? 1 : 0);

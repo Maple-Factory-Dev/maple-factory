@@ -2338,8 +2338,10 @@ public enum Wire {
         public var autoMerge: [String: Bool]
         /// When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.
         public var autoFixMerges: Bool?
+        /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
+        public var autoMerges: Bool?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -2347,6 +2349,7 @@ public enum Wire {
             self.finalReviews = finalReviews
             self.autoMerge = autoMerge
             self.autoFixMerges = autoFixMerges
+            self.autoMerges = autoMerges
         }
 
         public init(from decoder: Decoder) throws {
@@ -2358,6 +2361,7 @@ public enum Wire {
             finalReviews = try c.decodeIfPresent([String: UInt32].self, forKey: .finalReviews) ?? [:]
             autoMerge = try c.decodeIfPresent([String: Bool].self, forKey: .autoMerge) ?? [:]
             autoFixMerges = try c.decodeIfPresent(Bool.self, forKey: .autoFixMerges)
+            autoMerges = try c.decodeIfPresent(Bool.self, forKey: .autoMerges)
         }
     }
 
@@ -4001,6 +4005,18 @@ public enum Wire {
         }
     }
 
+    /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
+    public struct ClientMessageTaskAssign: Codable, Hashable, Sendable {
+        public var id: String
+        /// The member's login.
+        public var owner: String
+
+        public init(id: String, owner: String) {
+            self.id = id
+            self.owner = owner
+        }
+    }
+
     /// Send a draft to planning.
     public struct ClientMessageTaskPlan: Codable, Hashable, Sendable {
         public var id: String
@@ -4226,6 +4242,7 @@ public enum Wire {
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
         case taskEdit(ClientMessageTaskEdit)
+        case taskAssign(ClientMessageTaskAssign)
         case taskPlan(ClientMessageTaskPlan)
         case taskComment(ClientMessageTaskComment)
         case taskSteer(ClientMessageTaskSteer)
@@ -4281,6 +4298,7 @@ public enum Wire {
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
+            case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
@@ -4390,6 +4408,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskEdit(let body):
                 try c.encode("task.edit", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskAssign(let body):
+                try c.encode("task.assign", forKey: .type)
                 try body.encode(to: encoder)
             case .taskPlan(let body):
                 try c.encode("task.plan", forKey: .type)

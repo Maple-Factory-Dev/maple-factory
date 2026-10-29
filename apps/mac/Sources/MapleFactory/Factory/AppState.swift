@@ -487,6 +487,13 @@ final class AppState {
         policy.assess(task, acceptance: acceptances[task.goal])
     }
 
+    /// Reviewed, proven and green, but a person merges it: the board's Pending merge column.
+    func pendingMerge(_ task: FactoryTask) -> Bool {
+        guard task.state == .reviewing, task.hand == nil, !autoMerging.contains(task.id) else { return false }
+        let gate = mergeGate(for: task)
+        return gate.canMerge && !gate.autoMerge
+    }
+
     func mergeGate(for task: FactoryTask) -> MergeGate {
         let risk = risk(for: task)
         let failedProofs = task.doneWhen.filter { $0.status == .failed }.count
@@ -1109,6 +1116,37 @@ final class AppState {
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
     }
 
+    // MARK: Owner
+
+    /// Whether you can give `id` to someone else: its owner or an admin can. Anyone can take a task over.
+    func canReassign(_ id: String) -> Bool {
+        guard let client, isLive else { return true }
+        return task(id).owner.github == FactoryData.me.github || client.me?.role == "admin"
+    }
+
+    /// Makes `login` the task's owner: its next sessions prefer their machines, and its open hand is theirs.
+    func assign(_ id: String, to login: String) {
+        let was = task(id).owner
+        guard login != was.github else { return }
+        let person = FactoryData.people.first { $0.github == login } ?? LiveAdapter.person(login, members: client?.members ?? [])
+        let mine = login == FactoryData.me.github
+        let change: (inout FactoryTask) -> Void = { task in
+            task.owner = person
+            if task.hand?.assignee.github == was.github { task.hand?.assignee = person }
+        }
+        if let client, isLive {
+            // The owner chip and its row change at once; the server's update confirms it.
+            client.expect(id, change)
+            client.send(.taskAssign(.init(id: id, owner: login)))
+        } else {
+            update(id) { task in
+                change(&task)
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: mine ? "Took it over" : "Assigned it to @\(login)", when: "now"), at: 0)
+            }
+        }
+        showToast(mine ? "You took over \(id)" : "Gave \(id) to \(person.firstName)", icon: "person.crop.circle.badge.checkmark")
+    }
+
     // MARK: Queue
 
     /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
@@ -1727,14 +1765,21 @@ final class AppState {
                 namingEffort = nil
                 setEffort(parts[1], effortDraft)
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
+            // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
+            case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
-            // The update toast's buttons (with MAPLE_UPDATE_DEMO=1), and a passing toast to show beneath it.
-            case "update": parts[1] == "dismiss" ? Updater.shared.dismissToast() : Updater.shared.updateAndRestart()
+            // The update toast's buttons and its What's new link (with MAPLE_UPDATE_DEMO=1), and a passing toast to show beneath it.
+            case "update":
+                switch parts[1] {
+                case "dismiss": Updater.shared.dismissToast()
+                case "notes": if let url = Updater.shared.releaseNotesURL { NSWorkspace.shared.open(url) }
+                default: Updater.shared.updateAndRestart()
+                }
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
@@ -1803,6 +1848,8 @@ final class AppState {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
+            // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
+            case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

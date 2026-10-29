@@ -1145,6 +1145,9 @@ pub struct RiskPolicy {
     /// When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_fix_merges: Option<bool>,
+    /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_merges: Option<bool>,
 }
 
 /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
@@ -2024,6 +2027,13 @@ pub enum ClientMessage {
         /// Put it in this effort; an empty string takes it out.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+    },
+    /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
+    #[serde(rename = "task.assign")]
+    TaskAssign {
+        id: String,
+        /// The member's login.
+        owner: String,
     },
     /// Send a draft to planning.
     #[serde(rename = "task.plan")]

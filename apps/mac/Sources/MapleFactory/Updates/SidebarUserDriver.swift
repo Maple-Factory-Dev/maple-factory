@@ -59,11 +59,28 @@ final class SidebarUserDriver: NSObject, SPUUserDriver {
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         version = appcastItem.displayVersionString
-        releaseNotesURL = appcastItem.fullReleaseNotesURL ?? appcastItem.releaseNotesURL ?? appcastItem.infoURL
+        let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        releaseNotesURL = Self.changelogURL(
+            notes: appcastItem.fullReleaseNotesURL ?? appcastItem.releaseNotesURL ?? appcastItem.infoURL,
+            installed: installed, offered: version
+        )
         cancellation = nil
         choice = reply
         // Already downloaded (or installing in the background) means all that's left is the relaunch.
         move(to: state.stage == .notDownloaded ? .available(version: version) : .readyToRelaunch(version: version))
+    }
+
+    /// Every release between the installed one and the one on offer, on the update site's changelog
+    /// (its host taken from the offered release's notes), so skipping a few releases doesn't hide what
+    /// changed in between. Just that release's notes when there's no installed version to start from.
+    nonisolated static func changelogURL(notes: URL?, installed: String?, offered: String) -> URL? {
+        guard let notes, let installed, !installed.isEmpty,
+              var parts = URLComponents(url: notes, resolvingAgainstBaseURL: false), parts.host != nil
+        else { return notes }
+        parts.path = "/changelog.html"
+        parts.queryItems = [URLQueryItem(name: "from", value: installed), URLQueryItem(name: "to", value: offered)]
+        parts.fragment = nil
+        return parts.url ?? notes
     }
 
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}

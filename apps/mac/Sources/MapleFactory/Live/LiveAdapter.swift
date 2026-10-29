@@ -57,8 +57,7 @@ import SwiftUI
     }
 
     static func goal(_ goal: Wire.Goal, members: [Wire.Member], following: Bool) -> Goal {
-        let due = goal.due.map(day) ?? (FactoryData.todayOffset + 21)
-        return Goal(name: goal.name, color: Color(hexString: goal.color) ?? Theme.State.building, dueOffset: due,
+        Goal(name: goal.name, color: Color(hexString: goal.color) ?? Theme.State.building, dueOffset: goal.due.map(day),
                     lead: person(goal.lead, members: members), summary: goal.summary, archived: goal.archived ?? false,
                     prefix: goal.prefix, team: goal.team, following: following)
     }
@@ -270,6 +269,7 @@ import SwiftUI
             policy.autoMerge[level] = p.autoMerge[key] ?? policy.autoMerge[level]
         }
         policy.autoFixMerges = p.autoFixMerges ?? true
+        policy.autoMerges = p.autoMerges ?? true
         return policy
     }
 
@@ -280,7 +280,8 @@ import SwiftUI
             areas: policy.sensitiveAreas.map { Wire.SensitiveArea(name: $0.name, paths: $0.paths, level: wireLevel($0.level), enabled: $0.enabled) },
             planApprovals: keyed(policy.planApprovals), finalReviews: keyed(policy.finalReviews),
             autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
-            autoFixMerges: policy.autoFixMerges
+            autoFixMerges: policy.autoFixMerges,
+            autoMerges: policy.autoMerges
         )
     }
 
