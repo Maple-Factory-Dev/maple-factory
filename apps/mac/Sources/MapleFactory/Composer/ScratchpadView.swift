@@ -86,6 +86,11 @@ struct ScratchpadView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Theme.fillSelected : .clear))
         .contentShape(Rectangle())
         .onTapGesture { state.selectedNote = note.id }
+        .contextMenu {
+            Button("Turn into Task") { state.startCompose(title: note.title, body: note.body, fromNote: note.id) }
+            Divider()
+            Button("Delete Note…", role: .destructive) { state.deletingNote = note.id }
+        }
     }
 }
 
