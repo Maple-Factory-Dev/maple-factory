@@ -795,8 +795,11 @@ import Security
         return (health, clock.now - start)
     }
 
+    /// `-devAs <login>` signs in as that member instead (made a plain member if they're new), for screenshots of what a non-admin sees.
     nonisolated static func devSignIn(_ server: URL) async throws -> SignInResult {
-        var request = URLRequest(url: server.appending(path: "/dev/token"))
+        var url = server.appending(path: "/dev/token")
+        if let login = AppDefaults.string(forKey: "devAs"), !login.isEmpty { url.append(queryItems: [URLQueryItem(name: "as", value: login)]) }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         var result: SignInResult = try await load(request)
         result.server = server
