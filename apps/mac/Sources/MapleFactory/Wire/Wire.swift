@@ -2017,8 +2017,12 @@ public enum Wire {
         /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
         public var after: [String]
         public var followUps: [FollowUp]
+        /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
+        public var queueRank: Double?
+        /// Don't start its next session before this (ms); cleared once that session starts.
+        public var startAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = []) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2059,6 +2063,8 @@ public enum Wire {
             self.repo = repo
             self.after = after
             self.followUps = followUps
+            self.queueRank = queueRank
+            self.startAt = startAt
         }
 
         public init(from decoder: Decoder) throws {
@@ -2103,6 +2109,8 @@ public enum Wire {
             repo = try c.decodeIfPresent(String.self, forKey: .repo)
             after = try c.decodeIfPresent([String].self, forKey: .after) ?? []
             followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
+            queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
+            startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
         }
     }
 
@@ -3613,6 +3621,24 @@ public enum Wire {
         }
     }
 
+    /// Reorder or schedule a task's place in the queue for sessions. A draft is sent to planning.
+    public struct ClientMessageTaskQueue: Codable, Hashable, Sendable {
+        public var id: String
+        /// Move it ahead of this task; "top": the front of the queue. None moves it to the back, unless startAt or clearSchedule is given (they keep its place).
+        public var before: String?
+        /// Hold it until then (ms).
+        public var startAt: UInt64?
+        /// Start it as soon as there's room.
+        public var clearSchedule: Bool?
+
+        public init(id: String, before: String? = nil, startAt: UInt64? = nil, clearSchedule: Bool? = nil) {
+            self.id = id
+            self.before = before
+            self.startAt = startAt
+            self.clearSchedule = clearSchedule
+        }
+    }
+
     /// Run the pull request's failed CI checks again.
     public struct ClientMessageTaskRerunChecks: Codable, Hashable, Sendable {
         public var id: String
@@ -3707,6 +3733,7 @@ public enum Wire {
         case taskMerge(ClientMessageTaskMerge)
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
+        case taskQueue(ClientMessageTaskQueue)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
         case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
@@ -3758,6 +3785,7 @@ public enum Wire {
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
+            case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
@@ -3881,6 +3909,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRetry(let body):
                 try c.encode("task.retry", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskQueue(let body):
+                try c.encode("task.queue", forKey: .type)
                 try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
