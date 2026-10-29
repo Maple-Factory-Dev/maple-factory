@@ -18,7 +18,7 @@ import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { Intake } from "./intake.ts";
-import { checks, closePullRequest, createPullRequest, reopenPullRequest, GitHubError, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
+import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -1453,8 +1453,13 @@ export class Engine {
       const pr = task.pr;
       this.hooks.waitUntil(
         mergePullRequest(app, priv.gh.owner, priv.gh.repo, pr.number, { sha: pr.head ?? null, title: `${task.id}: ${task.title}` })
-          .then((m) => this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: m.sha, message: null }))
-          .catch((e) => this.merged({ type: "task.merged", taskId: task.id, ok: false, commit: null, message: (e as Error).message })),
+          .then(
+            (m) => {
+              this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: m.sha, message: null });
+              return this.deleteMergedBranch(task.id, app, priv.gh!, pr);
+            },
+            (e) => this.merged({ type: "task.merged", taskId: task.id, ok: false, commit: null, message: (e as Error).message }),
+          ),
       );
       return;
     }
@@ -1473,6 +1478,27 @@ export class Engine {
     task.liveLog = "Merging…";
     this.save(task);
     await audit(this.env, who, "task.merged", task.id);
+  }
+
+  /** After the factory merged a pull request: deletes its agent/ branch on GitHub, if it's still the head
+   *  that merged. Best-effort: the merge stands whatever happens here. */
+  private async deleteMergedBranch(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
+    const branch = pr.branch;
+    if (!branch.startsWith("agent/") || branch === pr.base) return;
+    let text: string;
+    if (!pr.head) text = `kept branch ${branch} on GitHub (its merged head isn't known)`;
+    else {
+      try {
+        const r = await deleteBranch(app, gh.owner, gh.repo, branch, pr.head);
+        text = r === "moved" ? `kept branch ${branch} on GitHub (it moved after the merge)` : `deleted branch ${branch} on GitHub`;
+      } catch (e) {
+        text = `couldn't delete branch ${branch} on GitHub: ${(e as Error).message}`;
+      }
+    }
+    const task = this.store.task(taskId);
+    if (!task) return;
+    this.event(task, "factory", text);
+    this.save(task, false);
   }
 
   /** A person's pick on a "didn't merge" hand. Its task is reviewing with no session, so the
