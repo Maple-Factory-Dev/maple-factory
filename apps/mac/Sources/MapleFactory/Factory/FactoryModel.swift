@@ -132,6 +132,8 @@ struct DoneCriterion: Identifiable {
         case video(caption: String, duration: String)
         case terminal(command: String, output: [String])
         case tests(suite: String, passed: Int, failed: Int)
+        /// A person signed it off themselves instead of the agent proving it.
+        case attested(by: String, reason: String?, when: String)
     }
 
     let text: String
