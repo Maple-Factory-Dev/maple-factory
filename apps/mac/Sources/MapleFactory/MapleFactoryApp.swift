@@ -138,12 +138,12 @@ struct ContentView: View {
                     if opening.hand { state.focusedTask = opening.id }
                 }
                 .onChange(of: [state.destination.hashValue, state.tasks.count], initial: true) { state.keepSelectionInGoal() }
-                .onChange(of: client.factoryGoals.map(\.name), initial: true) { _, names in
-                    // The mock's starting goal isn't one of the workspace's: open the focused task's goal, or the first.
-                    guard client.isSignedIn, case .goal(let name) = state.destination, !names.isEmpty, !names.contains(name) else { return }
+                .onChange(of: client.hasSnapshot ? client.factoryGoals.map(\.name) : nil, initial: true) { _, names in
+                    // The mock's starting goal isn't one of the workspace's: open the focused task's goal, the first, or the inbox.
+                    guard client.isSignedIn, let names else { return }
                     let open = state.focusedTask
-                    let focused = open.map { state.task($0).goal }
-                    state.destination = .goal(focused.flatMap { names.contains($0) ? $0 : nil } ?? names[0])
+                    guard let next = AppState.destinationAfterSnapshot(state.destination, goals: names, focusedGoal: open.map { state.task($0).goal }) else { return }
+                    state.destination = next
                     state.focusedTask = open
                 }
         }
@@ -226,8 +226,14 @@ struct ContentView: View {
         VStack(spacing: 0) {
             FactoryTopBar()
             HStack(spacing: 0) {
-                mainContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Group {
+                    if state.isLoadingFactory {
+                        FactoryLoadingView().transition(.opacity)
+                    } else {
+                        mainContent.transition(.opacity)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if state.inspectorInline {
                     HStack(spacing: 0) {
                         Hairline(vertical: true)
@@ -239,6 +245,7 @@ struct ContentView: View {
             }
             .overlay(alignment: .trailing) { floatingInspector }
             .clipped()
+            .animation(.easeInOut(duration: 0.3), value: state.isLoadingFactory)
             Hairline()
             FactoryStatusBar()
         }
@@ -258,7 +265,7 @@ struct ContentView: View {
 
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
-        if state.isCompact, state.showInspector, state.focusedTask == nil, !state.isComposing,
+        if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing,
            ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(state.destination) {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
