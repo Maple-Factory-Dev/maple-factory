@@ -109,7 +109,7 @@ struct FactorySidebar: View {
 
             // Pinned under the scroll area, so it's always at the very bottom while an update is in play.
             UpdateFooter()
-                .animation(.easeOut(duration: 0.2), value: Updater.shared.phase.isVisible)
+                .animation(.easeOut(duration: 0.2), value: Updater.shared.phase.showsInFooter)
                 .padding(.horizontal, -12)
         }
         .padding(.horizontal, 12)
@@ -282,13 +282,13 @@ struct FactorySidebar: View {
 }
 
 /// Where an app update is, at the foot of the sidebar: checking, on offer, downloading, ready to relaunch.
-/// Nothing at all while there's no update in play.
+/// Nothing at all while there's no update in play (up to date is a toast instead).
 struct UpdateFooter: View {
     private var updater = Updater.shared
 
     var body: some View {
         let phase = updater.phase
-        if phase.isVisible {
+        if phase.showsInFooter {
             VStack(spacing: 0) {
                 Rectangle().fill(Theme.stroke).frame(height: 1)
                 HStack(alignment: .center, spacing: 9) {
@@ -351,7 +351,6 @@ struct UpdateFooter: View {
 
     private func iconColor(_ phase: UpdatePhase) -> Color {
         switch phase {
-        case .upToDate: Theme.approve
         case .failed: Theme.warning
         case .available, .readyToRelaunch: Theme.accent
         default: Theme.textMuted
