@@ -192,6 +192,20 @@ final class AppState {
         destination = .inbox
     }
 
+    /// Signs out of this factory: on to the next saved one, or, the last gone, connect to another
+    /// rather than fall into the mockup (which only a demo launch goes back to).
+    func signOut() {
+        guard let client else { return }
+        client.signOut()
+        if client.isSignedIn {
+            didSwitchFactory()
+        } else if !demoLaunch {
+            didSwitchFactory()
+            onboardingCanCancel = false
+            withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
+        }
+    }
+
     /// `workspace`: the factory just joined, or the demo's when there's none (only demo launches get there).
     func finishOnboarding(workspace: String = "Studio Workspace") {
         withAnimation(.easeInOut(duration: 0.45)) { showOnboarding = false }
@@ -1652,6 +1666,7 @@ final class AppState {
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
+                case "signout": signOut()
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")

@@ -76,15 +76,7 @@ struct MapleFactoryApp: App {
                 Button("Add New Factory…") { state.startOnboarding() }
                 if client.isSignedIn {
                     Button("Sign Out of \(client.workspaceName)") {
-                        client.signOut()
-                        if client.isSignedIn {
-                            state.didSwitchFactory()
-                        } else if !state.demoLaunch {
-                            // That was the last factory: connect to another rather than fall into the mockup.
-                            state.didSwitchFactory()
-                            state.onboardingCanCancel = false
-                            withAnimation(.easeInOut(duration: 0.35)) { state.showOnboarding = true }
-                        }
+                        state.signOut()
                     }
                 }
 
