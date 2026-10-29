@@ -149,6 +149,13 @@ import Security
         connect()
     }
 
+    /// Shows a change before the factory echoes it (a card dropped in the queue lands at once);
+    /// the task's next `task.updated` replaces it with what the factory did.
+    func expect(_ id: String, _ change: (inout FactoryTask) -> Void) {
+        guard let index = factoryTasks.firstIndex(where: { $0.id == id }) else { return }
+        change(&factoryTasks[index])
+    }
+
     // MARK: Session
 
     func signIn(_ result: SignInResult) {

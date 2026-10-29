@@ -39,7 +39,7 @@ const POLL: Duration = Duration::from_secs(2);
 /// How long the runner waits for the hub to answer one request.
 const HUB_TIMEOUT: Duration = Duration::from_secs(60);
 
-const NOT_IN_SESSION: &str = "The agents tools only work inside a session started by agents (the orchestrator). \
+const NOT_IN_SESSION: &str = "The agents tools only work inside a session your Maple Factory started. \
      This process has no MAPLE_SESSION_ID / MAPLE_HOOK_SOCKET in its environment.";
 
 // ---------------------------------------------------------------------------

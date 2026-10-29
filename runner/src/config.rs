@@ -1,8 +1,8 @@
 //! Enrollment and the runner's config file.
 //!
 //! `maple-runner enroll` trades a one-time code from the web UI for a long-lived runner
-//! token and saves it in `~/.config/maple/runner.json`. A plain `maple-runner` (and the
-//! installed service, which runs it with no arguments) then reads its server, name and
+//! token and saves it in `~/.config/maple/runner.json`. `maple-runner run` (and the
+//! installed service, which runs `maple-runner run` too) then reads its server, name and
 //! token from there, so nothing secret has to live in a launchd plist or systemd unit.
 
 use std::io::Write;

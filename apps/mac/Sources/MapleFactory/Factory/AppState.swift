@@ -45,6 +45,11 @@ final class AppState {
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
+    /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.
+    var attestingItem: String? = nil
+    var attestReason = ""
+    /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
+    var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
@@ -67,12 +72,25 @@ final class AppState {
         }
     }
 
-    /// Clicking the task already open in the panel closes the panel; any other task opens.
+    /// What a click on a card or row does: the full task view by default, or a peek in the panel.
+    var taskOpening = TaskOpening.stored() {
+        didSet { AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key) }
+    }
+
+    nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
+
+    /// In the panel mode, clicking the task already open in the panel closes it; any other task opens.
+    nonisolated static func clickAction(opening: TaskOpening, panelOpen: Bool, selected: String, id: String) -> ClickAction {
+        if opening == .fullView { return .focus }
+        return panelOpen && selected == id ? .closePanel : .openPanel
+    }
+
+    /// A single click on a board card, list or inbox row, or timeline bar.
     func toggleTask(_ id: String) {
-        if showInspector, selectedTask == id {
-            closeTaskPanel()
-        } else {
-            openTask(id)
+        switch AppState.clickAction(opening: taskOpening, panelOpen: showInspector, selected: selectedTask, id: id) {
+        case .focus: openFocus(id)
+        case .openPanel: openTask(id)
+        case .closePanel: closeTaskPanel()
         }
     }
 
@@ -233,6 +251,11 @@ final class AppState {
                                          when: "4m", via: "Slack #maple-requests"))
         }
         if task.hand != nil { task.needsYou = true }
+        // The mockup's queue: what's waiting for a slot, in the order it was approved.
+        if let at = FactoryData.queuedTasks.firstIndex(where: { $0.id == task.id }), task.detail.hasPrefix("Queued") {
+            task.queued = true
+            task.queueRank = Double(at)
+        }
         return task
     }
     /// Change requests and comments sent from this session.
@@ -401,6 +424,27 @@ final class AppState {
     }
 
     /// Derived from live task state, so acting on a task clears its inbox item on its own.
+    // MARK: Task opening
+
+    /// Whether clicking a task opens its full view or peeks at it in the side panel.
+    nonisolated enum TaskOpening: String, CaseIterable {
+        case fullView, panel
+
+        static let key = "taskOpening"
+
+        var title: String {
+            switch self {
+            case .fullView: "Open the full view"
+            case .panel: "Peek in the side panel"
+            }
+        }
+
+        /// The saved choice; the full view until someone picks otherwise.
+        static func stored(_ defaults: UserDefaults = AppDefaults) -> TaskOpening {
+            TaskOpening(rawValue: defaults.string(forKey: key) ?? "") ?? .fullView
+        }
+    }
+
     // MARK: Goal scope
 
     /// Inbox, Needs a hand and Activity show the goals you follow unless you ask for all of them.
@@ -907,6 +951,95 @@ final class AppState {
         update(id) { $0.state = .planning }
     }
 
+    // MARK: Queue
+
+    /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
+    func queue(_ id: String, before: String?) {
+        let rank = rank(for: id, before: before)
+        if let client, isLive {
+            // Reordered here at once, as the factory will: no wait for its echo after a drop.
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.queueRank = rank } }
+            client.send(.taskQueue(.init(id: id, before: before)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.queueRank = rank
+                joinQueue(&task)
+            }
+        }
+    }
+
+    /// The rank that puts `id` ahead of `before` ("top": the front; none: the back), as the factory works it out.
+    private func rank(for id: String, before: String?) -> Double {
+        let line = queueOrder.filter { $0.id != id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            return at > 0 ? (line[at - 1].queueRank + target.queueRank) / 2 : target.queueRank - 1000
+        }
+        return (line.map(\.queueRank).max() ?? 0) + 1
+    }
+
+    func moveToTop(_ id: String) { queue(id, before: "top") }
+    func moveToBottom(_ id: String) { queue(id, before: nil) }
+
+    /// Holds a task until `at`, keeping its place; a draft joins the queue.
+    func schedule(_ id: String, at: Date) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, startAt: UInt64(at.timeIntervalSince1970 * 1000))))
+            return
+        }
+        update(id) { task in
+            task.startAt = at
+            joinQueue(&task)
+        }
+    }
+
+    /// Clears its schedule and puts it at the front.
+    func startNow(_ id: String) {
+        if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true)))
+            return
+        }
+        let first = queueOrder.first { $0.id != id }
+        update(id) { task in
+            task.startAt = nil
+            if let first { task.queueRank = first.queueRank - 1 }
+            joinQueue(&task)
+        }
+    }
+
+    /// Takes its schedule off, keeping its place.
+    func unschedule(_ id: String) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, clearSchedule: true)))
+            return
+        }
+        update(id) { task in
+            task.startAt = nil
+            joinQueue(&task)
+        }
+    }
+
+    /// The mockup's queue: a draft goes to planning.
+    private func joinQueue(_ task: inout FactoryTask) {
+        if task.state == .drafting { task.state = .planning }
+        task.queued = true
+        task.detail = task.scheduled ? "Scheduled" : "Waiting for a free slot"
+    }
+
+    /// Every queued task, front first.
+    var queueOrder: [FactoryTask] {
+        tasks.filter(\.queued).sorted { $0.queueRank < $1.queueRank }
+    }
+
     func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         mutate(&tasks[index])
@@ -1376,6 +1509,8 @@ final class AppState {
         return parts.count >= 2 ? parts : nil
     }
 
+    static let demoSettings = Notification.Name("AppState.demoSettings")
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
     /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
@@ -1393,6 +1528,28 @@ final class AppState {
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
             case "retry": retry(parts[1])
+            // The queue: Move to top / bottom, a card dropped on another (`drop:<id>:<before>`),
+            // Schedule… with a quick pick (`scheduleask:<id>`, then `schedule:<id>:tonight`), Start now.
+            case "top": moveToTop(parts[1])
+            case "bottom": moveToBottom(parts[1])
+            case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "scheduleask": schedulingTask = parts[1]
+            case "schedule":
+                schedulingTask = nil
+                let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
+                schedule(parts[1], at: pick.date())
+            // A Done when item's Attest…, its reason typed in (`attesttype:<text>`), then Attest.
+            case "attestask": attestReason = ""; attestingItem = "\(parts[1])#\(parts.count > 2 ? parts[2] : "0")"
+            case "attesttype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    attestReason.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+            case "attest":
+                attestingItem = nil
+                attest(parts[1], item: parts.count > 2 ? Int(parts[2]) ?? 0 : 0, reason: attestReason)
+                attestReason = ""
+            case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
@@ -1408,6 +1565,7 @@ final class AppState {
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
+                case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -1428,6 +1586,12 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
+            case "click": toggleTask(parts[1])
+            case "dblclick": openFocus(parts[1])
+            case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+            case "panel": toggleTaskPanel()
+            case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

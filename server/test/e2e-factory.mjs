@@ -2,7 +2,8 @@
 // `scripted` agent (test/scripted-agent.mjs):
 //   node server/test/e2e-factory.mjs http://localhost:8788 <machine> <repo folder>
 // Makes a goal on a local repo (whose origin is a bare repo), then a task, and drives it through
-// planning, approval, building, two review rounds, human review and merge, checking origin's main.
+// planning, approval, building (where a person attests to both Done when items, and the agent's
+// later proof leaves them be), two review rounds, human review and merge, checking origin's main.
 
 import { execFileSync } from "node:child_process";
 
@@ -55,7 +56,7 @@ const goal = goals.find((g) => g.prefix === prefix);
 if (!goal) throw new Error("goal wasn't saved");
 step(`goal ${goal.name} (${goal.id})`);
 
-send({ type: "task.create", goal: goal.id, title: "Say hello", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+send({ type: "task.create", goal: goal.id, title: "Say hello", brief: "Add hello.txt with a greeting. [attest]", shareable: false, plan: true, tickets: [], agent: "scripted" });
 const id = `${prefix}-1`;
 await wait("planning", () => tasks.get(id)?.worker?.role === "planner");
 step(`${id} planning on ${tasks.get(id).machine}`);
@@ -67,12 +68,35 @@ send({ type: "task.approvePlan", id });
 await wait("builder", () => tasks.get(id)?.worker?.role === "builder");
 step("approved; builder started");
 
+// Attest to both items while it builds: one with a reason, one without. The builder waits for them,
+// then proves both anyway; its proof mustn't replace a person's sign-off.
+send({ type: "task.checkedIt", id, item: 0, note: "  Opened hello.txt myself  " });
+send({ type: "task.checkedIt", id, item: 1 });
+t = await wait("attestations", () => tasks.get(id)?.doneWhen.every((d) => d.evidence?.attested) && tasks.get(id));
+const attestedOk = (t) => {
+  const [a, b] = t.doneWhen;
+  for (const d of t.doneWhen) {
+    if (d.status !== "proven" || d.evidence.attested !== true || d.evidence.by === "builder") throw new Error(`not attested: ${JSON.stringify(d)}`);
+  }
+  if (a.evidence.reason !== "Opened hello.txt myself") throw new Error(`reason: ${JSON.stringify(a.evidence.reason)}`);
+  if (b.evidence.reason != null) throw new Error(`no reason was given, got ${JSON.stringify(b.evidence.reason)}`);
+};
+attestedOk(t);
+const by = t.doneWhen[0].evidence.by;
+for (const text of [`attested "${t.doneWhen[0].text}": Opened hello.txt myself`, `attested "${t.doneWhen[1].text}"`]) {
+  if (!t.events.some((e) => e.who === by && e.text === text)) throw new Error(`no timeline event ${JSON.stringify(text)}`);
+}
+step(`attested both as ${by}: "${t.doneWhen[0].evidence.summary}", "${t.doneWhen[1].evidence.summary}"`);
+
 t = await wait("review round 1", () => tasks.get(id)?.autoReview?.rounds[0]?.verdict === "changesRequested" && tasks.get(id), 60000);
 step(`round 1: ${t.autoReview.findings.length} finding(s); PR #${t.pr.number} at ${t.pr.head?.slice(0, 7)}`);
 
 t = await wait("review round 2", () => tasks.get(id)?.autoReview?.rounds[1]?.verdict === "passed" && tasks.get(id), 90000);
 step(`round 2 passed; findings open: ${t.autoReview.findings.filter((f) => f.status === "open").length}`);
 if (t.doneWhen.some((d) => d.status !== "proven")) throw new Error("not every item is proven");
+attestedOk(t);
+if (t.events.some((e) => e.who === "builder" && e.text.startsWith("proved"))) throw new Error("the builder's proof replaced an attestation");
+step("after two builds' proofs, both items are still attested");
 
 if (t.reviewsNeeded > 0) {
   send({ type: "task.approveChanges", id });

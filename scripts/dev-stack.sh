@@ -55,7 +55,7 @@ stop_unrecorded() {
     done
     ;;
   runner)
-    for pid in $(pgrep -f "maple-runner$" 2>/dev/null); do
+    for pid in $(pgrep -f "maple-runner( run)?$" 2>/dev/null); do
       ps eww -o command= -p "$pid" | grep -q " HOME=$RUNNER_HOME " && kill_tree "$pid"
     done
     ;;
@@ -79,7 +79,7 @@ up)
     CODE=$(curl -sf -X POST "localhost:$PORT/api/machines/enroll" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).code))')
     HOME=$RUNNER_HOME "$ROOT/runner/target/debug/maple-runner" enroll --url "http://localhost:$PORT" --code "$CODE" --runner-id "$RUNNER_ID" >/dev/null
   fi
-  HOME=$RUNNER_HOME RUST_LOG=info nohup "$ROOT/runner/target/debug/maple-runner" >"$LOGS/runner.log" 2>&1 </dev/null &
+  HOME=$RUNNER_HOME RUST_LOG=info nohup "$ROOT/runner/target/debug/maple-runner" run >"$LOGS/runner.log" 2>&1 </dev/null &
   echo $! >"$LOGS/runner.pid"
   echo "server http://localhost:$PORT · runner $RUNNER_ID · logs in $LOGS"
   ;;
