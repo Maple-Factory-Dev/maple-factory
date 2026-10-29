@@ -289,6 +289,23 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.assign": {
+        if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        const owner = msg.owner.trim().replace(/^@/, "");
+        if (owner.toLowerCase() === task.owner.toLowerCase()) fail(`${task.owner} already owns it.`);
+        const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === owner.toLowerCase()) ?? fail(`${owner} isn't in the org.`);
+        if (to.login !== who && task.owner !== who && member.role !== "admin") fail(`Only ${task.owner}, its owner, or an admin can give it to someone else; you can take it over yourself.`);
+        const was = task.owner;
+        task.owner = to.login;
+        // Its open hand is the owner's to resolve.
+        if (task.hand && task.hand.assignee === was) task.hand.assignee = to.login;
+        this.event(task, who, to.login === who ? "took it over" : `assigned it to @${to.login}`);
+        await audit(this.env, who, "task.assigned", task.id, { from: was, to: to.login });
+        this.save(task);
+        // What hasn't started yet goes to the new owner's machines; a running session keeps its machine (as a team slot).
+        await this.pump();
+        return;
+      }
       case "task.plan":
         if (task.state !== "drafting") fail("It's already past drafting.");
         return this.startPlanning(task, who);
@@ -768,19 +785,22 @@ export class Engine {
         kind = "team";
       }
       if (!machine) {
+        // Named for its owner: a teammate reads it too, and it changes hands when the task does.
         const mine = machines.filter((m) => m.owner === task.owner);
-        if (!mine.length) return task.shareable ? "Waiting for a free team slot (you have no machines)." : "Waiting for one of your machines: add one under Machines.";
+        const theirs = `${task.owner}'s machines`;
+        if (!mine.length) return task.shareable ? `Waiting for a free team slot (${task.owner} has no machines).` : `Waiting for one of ${theirs}: add one under Machines.`;
         const online = mine.filter((m) => m.online);
-        if (!online.length) return task.shareable ? "Your machines are offline; waiting for them or a team slot." : "Waiting for one of your machines to come online.";
+        const listed = (ms: Machine[]) => ms.map((m) => m.name).join(", ");
+        if (!online.length) return task.shareable ? `${theirs} (${listed(mine)}) are offline; waiting for them or a team slot.` : `Waiting for one of ${theirs} (${listed(mine)}) to come online.`;
         const running = online.filter((m) => !this.store.settings(m.id).paused);
         if (!running.length) {
           const names = online.map((m) => m.name).join(", ");
           return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused.`;
         }
-        if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of your online machines has ${task.agent} installed.`;
+        if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of ${task.owner}'s online machines (${listed(running)}) has ${task.agent} installed.`;
         const capped = running.map((m) => this.overCap(m, task.agent, task.owner)).find(Boolean);
         if (capped && !running.some((m) => this.hasAgent(m, task.agent) && !this.overCap(m, task.agent, task.owner))) return capped;
-        return task.shareable ? "Waiting for a free slot on your machines or the team's." : "Waiting for a free slot on your machines.";
+        return `Waiting for a free slot on ${theirs} (${listed(running)})${task.shareable ? " or the team's" : ""}.`;
       }
     }
 
