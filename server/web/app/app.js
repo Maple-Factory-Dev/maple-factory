@@ -264,7 +264,7 @@ function newTaskView(r) {
       h("button", { type: "button", class: "btn", onclick: park, disabled: composer.busy }, "Save to scratchpad"),
       h("span", { class: "spacer" }),
       h("button", { type: "button", class: "btn", onclick: () => create(false), disabled: composer.busy }, "Save draft"),
-      h("button", { type: "button", class: "btn primary", onclick: () => create(true), disabled: composer.busy, title: "⌘↩" },
+      h("button", { type: "button", class: "btn plan", onclick: () => create(true), disabled: composer.busy, title: "⌘↩" },
         composer.busy ? "Creating…" : "Send to planning", h("kbd", {}, "⌘↩"))));
   return h("div", {},
     h("div", { class: "row muted" }, h("a", { href: composer.note ? `#/notes/${composer.note}` : "#/tasks" }, composer.note ? "← Note" : "← Tasks")),
@@ -297,7 +297,7 @@ function notesView() {
       ? h("div", { class: "list" }, notes.map((n) => h("a", { class: "item note", href: `#/notes/${n.id}` },
         h("div", { style: "flex:1;min-width:0" },
           h("div", { class: "title" }, n.title || "Untitled note"),
-          h("div", { class: "sub" }, preview(n.body) || "Empty", ` · ${ago(n.updatedAt)}`)),
+          h("div", { class: "sub" }, `${ago(n.updatedAt)} · `, preview(n.body) || "Empty")),
         n.taskId && h("span", { class: "pill tag" }, `became ${n.taskId}`))))
       : h("div", { class: "card empty" }, "Nothing jotted down yet."));
 }
@@ -528,7 +528,7 @@ function draftEditor(t) {
       status,
       h("span", { class: "spacer" }),
       h("button", { class: "btn", onclick: save }, "Save"),
-      h("button", { class: "btn primary", onclick: plan }, "Send to planning")));
+      h("button", { class: "btn plan", onclick: plan }, "Send to planning")));
 }
 
 function overview(t) {
