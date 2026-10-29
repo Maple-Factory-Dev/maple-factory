@@ -86,8 +86,16 @@ final class Updater: NSObject {
 
     func checkForUpdates() { updater?.checkForUpdates() }
 
-    /// The release notes for the update on offer, in the browser.
-    var releaseNotesURL: URL? { driver?.releaseNotesURL }
+    /// The release notes for the update on offer, in the browser. The demo borrows this build's own (the
+    /// latest published release's under `swift run`, which has no bundle version).
+    var releaseNotesURL: URL? {
+        guard demo != nil else { return driver?.releaseNotesURL }
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? Self.demoNotesVersion
+        return URL(string: "https://updates.maplefactory.dev/releases/\(version)/notes.html")
+    }
+
+    /// A release whose notes are on the update site, for the demo's link.
+    private static let demoNotesVersion = "0.1.16"
 
     // MARK: The footer's buttons
 
