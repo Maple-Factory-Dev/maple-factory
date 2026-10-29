@@ -12,9 +12,6 @@ struct FactorySidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 WorkspaceSwitcher()
-                    .contentShape(Rectangle())
-                    .onTapGesture { state.startOnboarding() }
-                    .help("Connect to another factory (Esc to go back)")
                 NotificationBell()
             }
             .padding(.top, 48)

@@ -81,7 +81,7 @@ struct AccountSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Account", detail: "The factory this app is connected to. Switch factories from the workspace menu at the top of the sidebar.")
+            SettingsHeader(title: "Account", detail: "The factory this app is connected to. Switch or add factories from the factory menu at the top of the sidebar.")
             if let me = client.me, let server = client.server {
                 SettingsCard {
                     HStack(spacing: 12) {
@@ -104,9 +104,9 @@ struct AccountSettings: View {
                         Text(LocalizedStringKey(update.how)).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                 }
-                Button("Sign Out", role: .destructive) { client.signOut() }
+                Button("Sign Out of \(client.workspaceName)", role: .destructive) { client.signOut() }
             } else {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory from the workspace menu."))
+                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Add a factory from the factory menu at the top of the sidebar."))
             }
         }
         .font(.system(size: 13))

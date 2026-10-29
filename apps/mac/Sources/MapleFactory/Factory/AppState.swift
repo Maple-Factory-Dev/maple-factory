@@ -149,6 +149,13 @@ final class AppState {
         withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = false }
     }
 
+    /// Another factory opened: a goal or task from the last one mustn't stay on screen.
+    func didSwitchFactory() {
+        closeFocus()
+        isComposing = false
+        destination = .inbox
+    }
+
     /// `workspace`: the factory just joined, or the demo's when there's none.
     func finishOnboarding(workspace: String = "Studio Workspace") {
         withAnimation(.easeInOut(duration: 0.45)) { showOnboarding = false }

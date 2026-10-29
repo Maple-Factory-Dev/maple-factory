@@ -61,9 +61,12 @@ struct MapleFactoryApp: App {
                 Button(state.sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { state.toggleSidebar() }
                     .keyboardShortcut("s", modifiers: [.command, .control])
 
-                Button("Connect to Another Factory…") { state.startOnboarding() }
+                Button("Add New Factory…") { state.startOnboarding() }
                 if client.isSignedIn {
-                    Button("Sign Out of \(client.server?.host() ?? "Factory")") { client.signOut() }
+                    Button("Sign Out of \(client.workspaceName)") {
+                        client.signOut()
+                        if client.isSignedIn { state.didSwitchFactory() }
+                    }
                 }
 
                 Button("New Task") { state.startCompose() }
