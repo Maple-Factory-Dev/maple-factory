@@ -3,7 +3,10 @@ import SwiftUI
 struct GoalView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
-    let goal: Goal
+    let name: String
+
+    /// Read from the live goals as the view draws, so a rename, new lead or due date shows at once.
+    private var goal: Goal { FactoryData.goal(named: name) }
 
     private var tasks: [FactoryTask] { state.tasks(for: goal) }
 
