@@ -19,6 +19,11 @@ let package = Package(
             ],
             path: "Sources/MapleFactory",
             resources: [.process("Resources")]
-        )
+        ),
+        .testTarget(
+            name: "MapleFactoryTests",
+            dependencies: ["MapleFactory"],
+            path: "Tests/MapleFactoryTests"
+        ),
     ]
 )
