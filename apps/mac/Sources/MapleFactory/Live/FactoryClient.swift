@@ -72,6 +72,23 @@ import Security
             ?? (me.teams.isEmpty ? others : others.filter { !Set($0.teams).isDisjoint(with: me.teams) })
         return [members.first { $0.login == me.login } ?? me] + shown
     }
+
+    /// The machines in the sidebar: yours, then teammates' that have team slots open. The Machines page
+    /// still lists them all.
+    var sidebarMachines: [Wire.Machine] { Self.sidebarMachines(machines, me: me?.login) }
+
+    static func sidebarMachines(_ machines: [Wire.Machine], me: String?) -> [Wire.Machine] {
+        guard let me else { return machines }
+        let mine = machines.filter { $0.owner == me }
+        let shared = machines.filter { $0.owner != me && isShared($0) }
+        return mine + shared
+    }
+
+    /// Whether a machine lends anything to the team; one with no settings yet lends nothing.
+    static func isShared(_ machine: Wire.Machine) -> Bool {
+        guard let settings = machine.settings else { return false }
+        return settings.teamSlots > 0 || settings.lendIdle
+    }
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.
     private(set) var riskPolicy: RiskPolicy?
