@@ -3824,6 +3824,18 @@ public enum Wire {
         }
     }
 
+    /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
+    public struct ClientMessageTaskAssign: Codable, Hashable, Sendable {
+        public var id: String
+        /// The member's login.
+        public var owner: String
+
+        public init(id: String, owner: String) {
+            self.id = id
+            self.owner = owner
+        }
+    }
+
     /// Send a draft to planning.
     public struct ClientMessageTaskPlan: Codable, Hashable, Sendable {
         public var id: String
@@ -4049,6 +4061,7 @@ public enum Wire {
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
         case taskEdit(ClientMessageTaskEdit)
+        case taskAssign(ClientMessageTaskAssign)
         case taskPlan(ClientMessageTaskPlan)
         case taskComment(ClientMessageTaskComment)
         case taskSteer(ClientMessageTaskSteer)
@@ -4104,6 +4117,7 @@ public enum Wire {
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
+            case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
@@ -4213,6 +4227,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskEdit(let body):
                 try c.encode("task.edit", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskAssign(let body):
+                try c.encode("task.assign", forKey: .type)
                 try body.encode(to: encoder)
             case .taskPlan(let body):
                 try c.encode("task.plan", forKey: .type)
