@@ -500,15 +500,15 @@ fn tools() -> Value {
             "title": "Prove a Done when item",
             "description": "Attaches one piece of evidence to the task this session runs: the Done when item's number (from 1, \
                 in the card's order; 0 for evidence about no single item), the kind, a one-line summary of what it shows, and \
-                either `text` (test output, a command and its output, a terminal capture) or `file`, the path of a screenshot \
-                or capture saved under ~/.cache/maple-proof/<this task's branch>/ (never in the worktree). Call it once per piece. \
+                either `text` (test output, a command and its output, a terminal capture) or `file`, the path of a screenshot, \
+                screen recording or capture saved under ~/.cache/maple-proof/<this task's branch>/ (never in the worktree). Call it once per piece. \
                 The answer says which items still have no proof. Only a task's own session can use it.",
             "inputSchema": { "type": "object", "properties": {
                 "criterion": { "type": "integer", "minimum": 0, "description": "The Done when item, from 1; 0 for none in particular." },
                 "kind": { "type": "string", "enum": PROOF_KINDS, "description": "One the item names after Proof:." },
                 "summary": { "type": "string", "maxLength": MAX_PROOF_SUMMARY, "description": "One line: what the evidence shows." },
                 "text": { "type": "string", "description": "The evidence itself, up to 64 KB. Give this or file." },
-                "file": { "type": "string", "description": "A PNG, JPEG, WebP or text file (at most 5 MB) under ~/.cache/maple-proof/<branch>/. Give this or text." },
+                "file": { "type": "string", "description": "A PNG, JPEG, WebP or text file (at most 5 MB), or an MP4, MOV or WebM video (at most 25 MB), under ~/.cache/maple-proof/<branch>/. Give this or text." },
             }, "required": ["criterion", "kind", "summary"] },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
         },

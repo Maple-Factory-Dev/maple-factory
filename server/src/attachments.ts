@@ -79,7 +79,7 @@ export function sniffProof(b: Uint8Array): string | null {
   if (b[0] === 0x89 && at(1, "PNG")) return "image/png";
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
   if (at(0, "RIFF") && at(8, "WEBP")) return "image/webp";
-  if (at(4, "ftyp")) return at(8, "qt  ") ? "video/quicktime" : "video/mp4";
+  if (at(4, "ftyp")) return at(8, "qt  ") ? "video/quicktime" : /^M4[ABP] $/.test(String.fromCharCode(...b.slice(8, 12))) ? null : "video/mp4";
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "video/webm";
   if (!b.includes(0)) {
     try {

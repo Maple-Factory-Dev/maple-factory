@@ -23,8 +23,10 @@ use uuid::Uuid;
 use crate::protocol::Outbound;
 use crate::sessions::{Sessions, expand_home};
 
-/// One file's bytes (the control plane's limit).
+/// One file's bytes (the control plane's limit): a screenshot or text capture.
 pub const MAX_FILE: u64 = 5 * 1024 * 1024;
+/// A screen recording's bytes (MP4, MOV or WebM).
+pub const MAX_VIDEO: u64 = 25 * 1024 * 1024;
 /// What a session's task is: kept on its tmux session (`@maple_task`) so a restarted runner knows too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskTag {
@@ -183,7 +185,7 @@ pub struct Checked {
 }
 
 /// Checks the file a `prove` call names: `~` expanded and symlinks resolved, it must be inside
-/// `folder`, at most 5 MB, and PNG, JPEG, WebP or text. The message says what to do instead.
+/// `folder`, and PNG, JPEG, WebP or text (at most 5 MB) or MP4, MOV or WebM (at most 25 MB). The message says what to do instead.
 pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, String> {
     let shown = folder.strip_prefix(home).map(|p| format!("~/{}/", p.display())).unwrap_or_else(|_| format!("{}/", folder.display()));
     let file = file.trim();
@@ -203,15 +205,19 @@ pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, Str
     if !meta.is_file() {
         return Err(format!("{file} isn't a file."));
     }
-    if meta.len() > MAX_FILE {
-        return Err(format!("{file} is {} KB; a file is at most 5 MB. Save a smaller one (a PNG of one screen, or the end of the output).", meta.len() / 1024));
+    if meta.len() > MAX_VIDEO {
+        return Err(format!("{file} is {} MB; a video is at most 25 MB and any other file at most 5 MB. Record a shorter clip.", meta.len() / 1024 / 1024));
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read {file}: {e}"))?;
     if bytes.is_empty() {
         return Err(format!("{file} is empty."));
     }
-    let kind = sniff(&bytes)
-        .ok_or_else(|| format!("{file} isn't PNG, JPEG, WebP or text. Save screenshots as PNG, and output as a .txt file (or pass it as text)."))?;
+    let kind = sniff(&bytes).ok_or_else(|| {
+        format!("{file} isn't PNG, JPEG, WebP, MP4, MOV, WebM or text. Save screenshots as PNG, recordings as MP4, and output as a .txt file (or pass it as text).")
+    })?;
+    if !kind.starts_with("video/") && bytes.len() as u64 > MAX_FILE {
+        return Err(format!("{file} is {} KB; a file is at most 5 MB. Save a smaller one (a PNG of one screen, or the end of the output).", bytes.len() / 1024));
+    }
     let name = path.file_name().map(|n| stored_name(&n.to_string_lossy())).unwrap_or_else(|| "evidence".into());
     Ok(Checked { path, name, kind, bytes })
 }
@@ -231,6 +237,15 @@ pub fn sniff(b: &[u8]) -> Option<&'static str> {
         Some("image/jpeg")
     } else if b.starts_with(b"RIFF") && b.get(8..12) == Some(b"WEBP") {
         Some("image/webp")
+    } else if b.get(4..8) == Some(b"ftyp") {
+        match b.get(8..12) {
+            Some(b"qt  ") => Some("video/quicktime"),
+            // Audio only.
+            Some(b"M4A " | b"M4B " | b"M4P ") => None,
+            _ => Some("video/mp4"),
+        }
+    } else if b.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        Some("video/webm")
     } else if !b.contains(&0) && std::str::from_utf8(b).is_ok() {
         Some("text/plain")
     } else {
@@ -1109,6 +1124,16 @@ mod tests {
         assert!(check_file("tasks-390.png", &home, &dir).unwrap_err().contains("full path"));
         std::fs::write(dir.join("big.txt"), vec![b'a'; MAX_FILE as usize + 1]).unwrap();
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/big.txt", &home, &dir).unwrap_err().contains("at most 5 MB"));
+        // A video may be bigger, up to 25 MB.
+        let mut mp4 = b"\0\0\0\x20ftypisom\0\0\x02\0".to_vec();
+        mp4.resize(MAX_FILE as usize * 3, 0);
+        std::fs::write(dir.join("flow.mp4"), &mp4).unwrap();
+        let ok = check_file("~/.cache/maple-proof/agent/cleanup-badge/flow.mp4", &home, &dir).unwrap();
+        assert_eq!((ok.name.as_str(), ok.kind), ("flow.mp4", "video/mp4"));
+        let mut webm = b"\x1a\x45\xdf\xa3".to_vec();
+        webm.resize(MAX_VIDEO as usize + 1, 0);
+        std::fs::write(dir.join("long.webm"), &webm).unwrap();
+        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/long.webm", &home, &dir).unwrap_err().contains("at most 25 MB"));
         std::fs::write(dir.join("clip.gif"), b"GIF89a\x01\x00\x00").unwrap();
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/clip.gif", &home, &dir).unwrap_err().contains("isn't PNG"));
         std::fs::write(dir.join("empty.txt"), b"").unwrap();
@@ -1123,6 +1148,10 @@ mod tests {
         assert_eq!(sniff(b"RIFF\x24\0\0\0WEBPVP8 "), Some("image/webp"));
         assert_eq!(sniff("ℹ tests 41".as_bytes()), Some("text/plain"));
         assert_eq!(sniff(&[0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe]), None);
+        assert_eq!(sniff(b"\0\0\0\x20ftypisom\0\0\x02\0"), Some("video/mp4"));
+        assert_eq!(sniff(b"\0\0\0\x14ftypqt  \0\0\0\0"), Some("video/quicktime"));
+        assert_eq!(sniff(b"\x1a\x45\xdf\xa3\x01\0\0\0"), Some("video/webm"));
+        assert_eq!(sniff(b"\0\0\0\x20ftypM4A \0\0\0\0"), None);
     }
 
     #[test]
