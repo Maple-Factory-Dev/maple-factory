@@ -20,6 +20,7 @@ mod repos;
 mod service;
 mod sessions;
 mod statusline;
+mod style;
 mod tasks;
 mod thumbs;
 mod tmux;
@@ -35,7 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::{self, Message, client::IntoClientRequest, http::HeaderValue};
@@ -49,21 +50,24 @@ use sessions::{Event, Sessions};
 /// Where a runner connects when nothing says otherwise: `wrangler dev` on this machine.
 const LOCAL_DEV_URL: &str = "ws://localhost:8787/runner/connect";
 
-/// Connects this machine to the agent orchestrator and runs terminal sessions for it.
+/// Connects this machine to your Maple Factory and runs its agent sessions.
 ///
-/// With no subcommand, runs the runner. Settings come from flags and MAPLE_* variables
-/// first, then from ~/.config/maple/runner.json (written by `maple-runner enroll`).
+/// `maple-runner run` runs the runner. Settings come from flags and MAPLE_* variables first,
+/// then from ~/.config/maple/runner.json (written by `maple-runner enroll`).
 #[derive(Parser, Debug)]
-#[command(version)]
+#[command(version, styles = style::HELP, after_help = AFTER_HELP)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
-    #[command(flatten)]
-    run: Args,
 }
+
+/// The footer under the command list.
+const AFTER_HELP: &str = "Run `maple-runner run` to start the runner, or `maple-runner install` to run it at login.";
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Run the runner: connect to your Maple Factory and run its agent sessions.
+    Run(Args),
     /// Connect this machine to your account with a one-time code from the web app.
     Enroll {
         /// The control plane, e.g. https://factory.acme.dev (http://localhost:8787 for local dev).
@@ -95,7 +99,11 @@ enum Cmd {
         dry_run: bool,
     },
     /// Show this machine's enrollment, the installed binary, and whether the service is running.
-    Status,
+    Status {
+        /// The control plane to check for updates. Defaults to runner.json's.
+        #[arg(long, env = "MAPLE_URL")]
+        url: Option<String>,
+    },
     /// Restart the runner service and wait for it to connect again.
     Restart,
     /// Replace this binary with the latest signed release.
@@ -104,6 +112,9 @@ enum Cmd {
     /// manifest must be signed with the built-in release key, and the download must match
     /// its size and sha256 and report the new version before it replaces this binary.
     Update {
+        /// The control plane to update from. Defaults to runner.json's.
+        #[arg(long, env = "MAPLE_URL")]
+        url: Option<String>,
         /// Only show the current and latest versions and whether an update is available.
         #[arg(long)]
         check: bool,
@@ -141,7 +152,7 @@ struct Args {
     force: bool,
 }
 
-/// The pid of the service a bare `maple-runner` would take the place of, if it must refuse to
+/// The pid of the service a `maple-runner run` would take the place of, if it must refuse to
 /// start. Only a runner using runner.json's enrollment (no --token/MAPLE_TOKEN) can collide with
 /// the service, and never the service itself, which runs the same command.
 fn second_runner(args: &Args, enrolled: bool, service_pid: Option<u32>, own_pid: u32, under_service: bool) -> Option<u32> {
@@ -151,19 +162,45 @@ fn second_runner(args: &Args, enrolled: bool, service_pid: Option<u32>, own_pid:
     service_pid.filter(|&pid| pid != own_pid)
 }
 
-/// What a refused bare `maple-runner` says.
+/// What a refused `maple-runner run` says.
 fn second_runner_message(runner_id: &str, pid: u32) -> String {
+    let cmd = |c: &str| style::accent(format!("{c:<28}"));
     format!(
-        "maple-runner: the service is already running as {runner_id} (pid {pid}).\n  \
-         maple-runner status     what it's doing\n  \
-         maple-runner restart    restart it\n  \
-         maple-runner --force    run here anyway (the service will stop)"
+        "{} the service is already running as {} (pid {pid}).\n  \
+         {}{}\n  \
+         {}{}\n  \
+         {}{}",
+        style::warn("maple-runner:"),
+        style::bold(runner_id),
+        cmd("maple-runner status"),
+        style::dim("what it's doing"),
+        cmd("maple-runner restart"),
+        style::dim("restart it"),
+        cmd("maple-runner run --force"),
+        style::dim("run here anyway (the service will stop)"),
     )
 }
 
-/// Whether launchd started this process as the runner service.
+/// Whether launchd or systemd started this process as the runner service.
 fn launched_by_service() -> bool {
-    std::env::var("XPC_SERVICE_NAME").is_ok_and(|name| name == service::LAUNCHD_LABEL)
+    let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    started_by_service(|name| std::env::var(name).ok(), &cgroup)
+}
+
+/// launchd names the job in XPC_SERVICE_NAME; systemd sets INVOCATION_ID for every unit it
+/// starts, and puts the process in the unit's cgroup.
+fn started_by_service(env: impl Fn(&str) -> Option<String>, cgroup: &str) -> bool {
+    env("XPC_SERVICE_NAME").is_some_and(|name| name == service::LAUNCHD_LABEL)
+        || (env("INVOCATION_ID").is_some_and(|id| !id.is_empty()) && cgroup.contains(service::SYSTEMD_UNIT))
+}
+
+/// Services installed before `run` existed start a bare `maple-runner`: it still means "run" for
+/// them. Anywhere else, bare prints the command list.
+fn argv(mut argv: Vec<std::ffi::OsString>, under_service: bool) -> Vec<std::ffi::OsString> {
+    if argv.len() == 1 && under_service {
+        argv.push("run".into());
+    }
+    argv
 }
 
 /// Connection settings after flags, environment and runner.json are combined.
@@ -215,17 +252,22 @@ async fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         mcp::serve();
     }
-    tracing_subscriber::fmt().with_target(false).init();
-    let cli = Cli::parse();
+    // Service logs go to a file (or the journal): color only a terminal.
+    tracing_subscriber::fmt().with_target(false).with_ansi(style::enabled()).init();
+    let cli = Cli::parse_from(argv(std::env::args_os().collect(), launched_by_service()));
     match cli.command {
-        None => run(cli.run).await,
+        None => {
+            Cli::command().print_help()?;
+            Ok(())
+        }
+        Some(Cmd::Run(args)) => run(args).await,
         Some(Cmd::Mcp) => mcp::serve(),
         Some(Cmd::Enroll { url, code, runner_id, test }) => enroll(&url, &code, runner_id, test).await,
         Some(Cmd::Install { dry_run }) => install(dry_run),
         Some(Cmd::Uninstall { dry_run }) => service::Service::detect()?.uninstall(dry_run),
-        Some(Cmd::Status) => status(cli.run.url.as_deref()),
+        Some(Cmd::Status { url }) => status(url.as_deref()),
         Some(Cmd::Restart) => restart(),
-        Some(Cmd::Update { check, force }) => self_update(cli.run.url.as_deref(), check, force).await,
+        Some(Cmd::Update { url, check, force }) => self_update(url.as_deref(), check, force).await,
     }
 }
 
@@ -247,12 +289,23 @@ async fn enroll(url: &str, code: &str, runner_id: Option<String>, test: bool) ->
     config.repo_clone_days = previous.as_ref().and_then(|p| p.repo_clone_days);
     config.save(&path)?;
     if let Some(prev) = previous {
-        println!("Replaced the previous enrollment ({} at {}) in {}.", prev.runner_id, prev.url, path.display());
+        println!("Replaced the previous enrollment ({} at {}) in {}.", style::bold(&prev.runner_id), style::accent(&prev.url), style::accent(path.display()));
     } else {
-        println!("Saved {}.", path.display());
+        println!("Saved {}.", style::accent(path.display()));
     }
-    println!("Enrolled as `{}`{} with {}.", config.runner_id, if config.test { " (test runner)" } else { "" }, config.url);
-    println!("\nNext: `maple-runner install` to run it at login, or `maple-runner` to run it now.");
+    println!(
+        "{} as {}{} with {}.",
+        style::ok("Enrolled"),
+        style::bold(&config.runner_id),
+        if config.test { style::dim(" (test runner)") } else { String::new() },
+        style::accent(&config.url)
+    );
+    println!(
+        "\n{} {} to run it at login, or {} to run it now.",
+        style::dim("Next:"),
+        style::accent("maple-runner install"),
+        style::accent("maple-runner run")
+    );
     Ok(())
 }
 
@@ -264,14 +317,14 @@ fn install(dry_run: bool) -> Result<()> {
     let exe = update::current_exe()?;
     let installed = service::installed_exe()?;
     let service = service::Service::detect()?;
-    println!("Runner `{}` at {}, running {}", config.runner_id, config.url, installed.display());
+    println!("Runner {} at {}, running {}", style::bold(&config.runner_id), style::accent(&config.url), style::accent(installed.display()));
     if service::is_installed_copy(&exe, &installed) {
-        println!("{} is already the installed copy", exe.display());
+        println!("{} is already the installed copy", style::accent(exe.display()));
     } else if dry_run {
-        println!("Would copy {} to {}\n", exe.display(), installed.display());
+        println!("Would copy {} to {}\n", style::accent(exe.display()), style::accent(installed.display()));
     } else {
         service::copy_binary(&exe, &installed)?;
-        println!("Copied {} to {}", exe.display(), installed.display());
+        println!("{} {} to {}", style::ok("Copied"), style::accent(exe.display()), style::accent(installed.display()));
     }
     service.install(&installed, dry_run)
 }
@@ -297,34 +350,34 @@ async fn self_update(url: Option<&str>, check: bool, force: bool) -> Result<()> 
     }
     let releases = update::Releases::new(releases)?;
     let current = update::current_version();
-    println!("Checking {}", releases.base());
+    println!("{} {}", style::dim("Checking"), style::accent(releases.base()));
     let check_result = releases.check(force).await?;
     let manifest = match &check_result {
         update::Check::UpToDate(m) | update::Check::NoBuild(m, _) | update::Check::Available(m, _) => m,
     };
     let published = manifest.published_at.as_deref().map(|p| format!(" (published {p})")).unwrap_or_default();
-    println!("current: {current}");
-    println!("latest:  {}{published}", manifest.version);
+    println!("{} {}", style::dim("current:"), style::accent(&current));
+    println!("{}  {}{}", style::dim("latest:"), style::accent(&manifest.version), style::dim(published));
     match check_result {
-        update::Check::UpToDate(_) => println!("maple-runner is up to date."),
+        update::Check::UpToDate(_) => println!("{}", style::ok("maple-runner is up to date.")),
         update::Check::NoBuild(m, target) if check => {
             println!("{} has no build for this machine ({target}).", m.version)
         }
         update::Check::NoBuild(m, target) => bail!("release {} has no build for this machine ({target}); nothing to install", m.version),
         update::Check::Available(m, _) if check => {
             if m.version > current {
-                println!("An update is available: run `maple-runner update`.");
+                println!("{} run {}.", style::warn("An update is available:"), style::accent("maple-runner update"));
             } else {
-                println!("maple-runner is up to date.");
+                println!("{}", style::ok("maple-runner is up to date."));
             }
             if let Some(notes) = m.notes.as_deref().filter(|n| !n.trim().is_empty()) {
                 println!("\n{}", notes.trim());
             }
         }
         update::Check::Available(m, asset) => {
-            println!("Downloading {}{} ({} bytes)", releases.base(), asset.path, asset.size);
+            println!("{} {}{} {}", style::dim("Downloading"), style::accent(releases.base()), style::accent(&asset.path), style::dim(format!("({} bytes)", asset.size)));
             releases.install(&m, &asset, &exe).await?;
-            println!("Updated {} from {current} to {}.", exe.display(), m.version);
+            println!("{} {} from {current} to {}.", style::ok("Updated"), style::accent(exe.display()), style::bold(&m.version));
             let installed = service::installed_exe()?;
             if service::is_installed_copy(&exe, &installed) {
                 println!("The service keeps running {current} until it restarts; `maple-runner install` restarts it now.");
@@ -337,29 +390,30 @@ async fn self_update(url: Option<&str>, check: bool, force: bool) -> Result<()> 
 }
 
 fn status(url: Option<&str>) -> Result<()> {
+    let label = |l: &str| style::dim(format!("{l:<11}"));
     let path = config::path()?;
     match Config::load(&path)? {
         Some(c) => {
-            println!("config:    {}", path.display());
-            println!("runner id: {}{}", c.runner_id, if c.test { " (test runner)" } else { "" });
-            println!("url:       {}", c.url);
-            println!("token:     {}", config::redact(&c.token));
+            println!("{}{}", label("config:"), style::accent(path.display()));
+            println!("{}{}{}", label("runner id:"), style::bold(&c.runner_id), if c.test { style::dim(" (test runner)") } else { String::new() });
+            println!("{}{}", label("factory:"), style::accent(&c.url));
+            println!("{}{}", label("token:"), config::redact(&c.token));
         }
-        None => println!("config:    {} (not enrolled; run `maple-runner enroll`)", path.display()),
+        None => println!("{}{} {}", label("config:"), style::accent(path.display()), style::warn("(not enrolled; run `maple-runner enroll`)")),
     }
     let installed = service::installed_exe()?;
     if installed.exists() {
-        println!("binary:    {} ({})", installed.display(), service::binary_version(&installed));
+        println!("{}{} {}", label("binary:"), style::accent(installed.display()), style::dim(format!("({})", service::binary_version(&installed))));
     } else {
-        println!("binary:    {} (not installed)", installed.display());
+        println!("{}{} {}", label("binary:"), style::accent(installed.display()), style::dim("(not installed)"));
     }
     match server_url(url).and_then(|server| update::releases_url_from_env(server.as_deref())) {
-        Ok(releases) => println!("updates:   {releases}"),
-        Err(e) => println!("updates:   {e:#}"),
+        Ok(releases) => println!("{}{}", label("updates:"), style::accent(releases)),
+        Err(e) => println!("{}{}", label("updates:"), style::err(format!("{e:#}"))),
     }
     match service::Service::detect() {
-        Ok(service) => println!("service:   {}", service.status()),
-        Err(e) => println!("service:   {e:#}"),
+        Ok(service) => println!("{}{}", label("service:"), service.status()),
+        Err(e) => println!("{}{}", label("service:"), style::err(format!("{e:#}"))),
     }
     Ok(())
 }
@@ -369,7 +423,7 @@ fn restart() -> Result<()> {
     let manager = service.manager_name();
     let wait = Duration::from_secs(10);
     match service.restart(wait)? {
-        Some(runner_id) => println!("Restarted the service ({manager}). It's connected as {runner_id}."),
+        Some(runner_id) => println!("{} the service ({manager}). It's connected as {}.", style::ok("Restarted"), style::bold(runner_id)),
         None => bail!("restarted the service ({manager}), but it hasn't connected after {}s. Check `maple-runner status` and {}", wait.as_secs(), service.logs()),
     }
     Ok(())
@@ -865,14 +919,19 @@ mod tests {
 
     fn args(cli: &[&str]) -> Args {
         // Parse flags only; the tests mustn't depend on MAPLE_* in the environment.
-        let mut argv = vec!["maple-runner"];
+        let mut argv = vec!["maple-runner", "run"];
         argv.extend_from_slice(cli);
-        let mut cmd = <Cli as clap::CommandFactory>::command();
-        for id in ["url", "token", "runner_id", "test", "tmux_socket"] {
-            cmd = cmd.mut_arg(id, |a| a.env(None::<&str>));
-        }
+        let cmd = Cli::command().mut_subcommand("run", |mut run| {
+            for id in ["url", "token", "runner_id", "test", "tmux_socket"] {
+                run = run.mut_arg(id, |a| a.env(None::<&str>));
+            }
+            run
+        });
         let matches = cmd.try_get_matches_from(argv).unwrap();
-        <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap().run
+        match <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap().command {
+            Some(Cmd::Run(args)) => args,
+            other => panic!("not run: {other:?}"),
+        }
     }
 
     fn enrolled() -> Config {
@@ -916,14 +975,71 @@ mod tests {
         let cli = Cli::try_parse_from(["maple-runner", "enroll", "--url", "https://x.dev", "--code", "ABCD-EFGH"]).unwrap();
         assert!(matches!(cli.command, Some(Cmd::Enroll { test: false, runner_id: None, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "install", "--dry-run"]).unwrap().command, Some(Cmd::Install { dry_run: true })));
-        assert!(Cli::try_parse_from(["maple-runner", "--runner-id", "x"]).unwrap().command.is_none());
-        assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--check"]).unwrap().command, Some(Cmd::Update { check: true, force: false })));
-        assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--force"]).unwrap().command, Some(Cmd::Update { check: false, force: true })));
+        assert!(Cli::try_parse_from(["maple-runner"]).unwrap().command.is_none());
+        // Run flags belong to `run` now.
+        assert!(Cli::try_parse_from(["maple-runner", "--runner-id", "x"]).is_err());
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--check"]).unwrap().command, Some(Cmd::Update { check: true, force: false, .. })));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--force"]).unwrap().command, Some(Cmd::Update { check: false, force: true, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "restart"]).unwrap().command, Some(Cmd::Restart)));
-        let cli = Cli::try_parse_from(["maple-runner", "--force"]).unwrap();
-        assert!(cli.command.is_none() && cli.run.force);
-        let help = <Cli as clap::CommandFactory>::command().render_help().to_string();
-        assert!(help.contains("restart") && help.contains("--force"), "{help}");
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "run", "--force"]).unwrap().command, Some(Cmd::Run(Args { force: true, .. }))));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "status", "--url", "https://x.dev"]).unwrap().command, Some(Cmd::Status { url: Some(_) })));
+    }
+
+    #[test]
+    fn run_parses_its_flags() {
+        let a = args(&["--token", "x", "--runner-id", "mbp-16", "--test", "--tmux-socket", "dev", "--url", "ws://box:8787"]);
+        assert_eq!(
+            (a.token.as_deref(), a.runner_id.as_deref(), a.test, a.tmux_socket.as_str(), a.url.as_deref(), a.force),
+            (Some("x"), Some("mbp-16"), true, "dev", Some("ws://box:8787"), false)
+        );
+        assert_eq!(args(&[]).tmux_socket, "maple");
+    }
+
+    #[test]
+    fn help_lists_every_command() {
+        let help = Cli::command().render_help().to_string();
+        for cmd in ["run", "enroll", "install", "uninstall", "status", "restart", "update", "mcp"] {
+            assert!(help.lines().any(|l| l.trim_start().starts_with(cmd)), "{cmd} missing:\n{help}");
+        }
+        assert!(help.contains("Maple Factory") && help.contains(AFTER_HELP), "{help}");
+        assert!(!help.to_lowercase().contains("orchestr"), "{help}");
+    }
+
+    fn parse(argv_in: &[&str], under_service: bool) -> Option<Cmd> {
+        Cli::try_parse_from(argv(argv_in.iter().map(Into::into).collect(), under_service)).unwrap().command
+    }
+
+    #[test]
+    fn bare_prints_help_outside_a_service() {
+        // `None` is what main answers with the command list, not the runner.
+        assert!(parse(&["maple-runner"], false).is_none());
+        assert!(!started_by_service(|_| None, ""));
+    }
+
+    #[test]
+    fn bare_runs_under_launchd() {
+        let env = |name: &str| (name == "XPC_SERVICE_NAME").then(|| "dev.maplefactory.runner".to_string());
+        assert!(started_by_service(env, ""));
+        assert!(matches!(parse(&["maple-runner"], started_by_service(env, "")), Some(Cmd::Run(_))));
+        // Another launchd job (Terminal.app sets XPC_SERVICE_NAME too) is just a terminal.
+        assert!(!started_by_service(|n: &str| (n == "XPC_SERVICE_NAME").then(|| "application.com.apple.Terminal".to_string()), ""));
+    }
+
+    #[test]
+    fn bare_runs_under_systemd() {
+        let env = |name: &str| (name == "INVOCATION_ID").then(|| "9f3c0a".to_string());
+        let cgroup = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/maple-runner.service\n";
+        assert!(started_by_service(env, cgroup));
+        assert!(matches!(parse(&["maple-runner"], started_by_service(env, cgroup)), Some(Cmd::Run(_))));
+        // Some other unit, or a login shell with no INVOCATION_ID.
+        assert!(!started_by_service(env, "0::/user.slice/user-1000.slice/session-2.scope\n"));
+        assert!(!started_by_service(|_| None, cgroup));
+    }
+
+    #[test]
+    fn service_never_rewrites_a_subcommand() {
+        assert!(matches!(parse(&["maple-runner", "status"], true), Some(Cmd::Status { .. })));
+        assert!(matches!(parse(&["maple-runner", "run", "--force"], true), Some(Cmd::Run(Args { force: true, .. }))));
     }
 
     #[test]
@@ -952,9 +1068,9 @@ mod tests {
         assert_eq!(
             second_runner_message("mbp-14", 4121),
             "maple-runner: the service is already running as mbp-14 (pid 4121).\n  \
-             maple-runner status     what it's doing\n  \
-             maple-runner restart    restart it\n  \
-             maple-runner --force    run here anyway (the service will stop)"
+             maple-runner status         what it's doing\n  \
+             maple-runner restart        restart it\n  \
+             maple-runner run --force    run here anyway (the service will stop)"
         );
     }
 

@@ -198,7 +198,7 @@ impl Service {
             std::fs::create_dir_all(self.log_file().parent().expect("log file has a parent"))?;
         }
         std::fs::write(&self.file, text).with_context(|| format!("writing {}", self.file.display()))?;
-        println!("Wrote {}", self.file.display());
+        println!("{} {}", crate::style::ok("Wrote"), crate::style::accent(self.file.display()));
 
         for cmd in &optional {
             let _ = run(cmd);
@@ -218,8 +218,8 @@ impl Service {
                 }
             }
         }
-        println!("Installed: maple-runner starts at login and restarts if it stops.");
-        println!("Logs: {}", self.logs());
+        println!("{} maple-runner starts at login and restarts if it stops.", crate::style::ok("Installed:"));
+        println!("{} {}", crate::style::dim("Logs:"), crate::style::accent(self.logs()));
         Ok(())
     }
 
@@ -240,21 +240,21 @@ impl Service {
             let _ = run(cmd);
         }
         match std::fs::remove_file(&self.file) {
-            Ok(()) => println!("Removed {}", self.file.display()),
+            Ok(()) => println!("{} {}", crate::style::ok("Removed"), crate::style::accent(self.file.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("No service file at {}", self.file.display()),
             Err(e) => return Err(e).with_context(|| format!("removing {}", self.file.display())),
         }
         if self.manager == Manager::Systemd {
             let _ = run(&args(&["systemctl", "--user", "daemon-reload"]));
         }
-        println!("Uninstalled. ~/.config/maple/runner.json is kept; delete it to forget this machine's token.");
+        println!("{} ~/.config/maple/runner.json is kept; delete it to forget this machine's token.", crate::style::ok("Uninstalled."));
         Ok(())
     }
 
     /// A one-line description of whether the service is installed and running.
     pub fn status(&self) -> String {
         if !self.file.exists() {
-            return "not installed (run `maple-runner install`)".into();
+            return crate::style::warn("not installed (run `maple-runner install`)");
         }
         let loaded = match self.manager {
             Manager::Launchd => {
@@ -266,7 +266,8 @@ impl Service {
             }
             Manager::Systemd => quiet(&["systemctl", "--user", "is-active", "maple-runner"]).map(|s| s.trim().to_string()).unwrap_or_else(|| "not running".into()),
         };
-        format!("installed ({}), {loaded}", self.file.display())
+        let loaded = if matches!(loaded.as_str(), "loaded, running" | "active") { crate::style::ok(loaded) } else { crate::style::warn(loaded) };
+        format!("installed ({}), {loaded}", crate::style::accent(self.file.display()))
     }
 
     /// The process id of the running service, or `None` if it isn't installed, isn't
@@ -423,6 +424,7 @@ pub fn launchd_plist(exe: &Path, home: &Path, log: &Path, path: &str) -> String 
 	<key>ProgramArguments</key>
 	<array>
 		<string>{exe}</string>
+		<string>run</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -467,11 +469,11 @@ pub fn systemd_unit(exe: &Path, home: &Path, path: &str) -> String {
     let path_env = systemd_quote(&format!("PATH={path}"));
     format!(
         "[Unit]
-Description=maple-runner: runs agent sessions for the agent orchestrator
+Description=maple-runner: runs agent sessions for your Maple Factory
 After=network-online.target
 
 [Service]
-ExecStart={exe}
+ExecStart={exe} run
 Restart=on-failure
 RestartSec=5
 Environment={home_env}
@@ -497,7 +499,7 @@ mod tests {
             "/opt/homebrew/bin:/usr/bin:/bin",
         );
         assert!(text.contains("<string>dev.maplefactory.runner</string>"));
-        assert!(text.contains("<array>\n\t\t<string>/Users/a/bin/maple-runner</string>\n\t</array>"), "{text}");
+        assert!(text.contains("<array>\n\t\t<string>/Users/a/bin/maple-runner</string>\n\t\t<string>run</string>\n\t</array>"), "{text}");
         assert!(text.contains("<key>RunAtLoad</key>\n\t<true/>"));
         // Restart after a crash, not after a clean exit (a runner replaced by another with its name).
         assert!(text.contains("<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>"), "{text}");
@@ -505,7 +507,7 @@ mod tests {
         assert!(text.contains("<key>PATH</key>\n\t\t<string>/opt/homebrew/bin:/usr/bin:/bin</string>"));
         assert!(text.contains("<key>StandardOutPath</key>\n\t<string>/Users/a/Library/Logs/maple-runner.log</string>"));
         assert!(text.contains("<key>StandardErrorPath</key>\n\t<string>/Users/a/Library/Logs/maple-runner.log</string>"));
-        // No arguments: everything comes from runner.json.
+        // Only `run`: everything else comes from runner.json.
         assert_eq!(text.matches("<string>/Users/a/bin/maple-runner</string>").count(), 1);
         assert!(!text.contains("--"));
     }
@@ -520,7 +522,8 @@ mod tests {
     #[test]
     fn unit() {
         let text = systemd_unit(Path::new("/home/a/.cargo/bin/maple-runner"), Path::new("/home/a"), "/usr/bin:/bin");
-        assert!(text.contains("\nExecStart=\"/home/a/.cargo/bin/maple-runner\"\n"), "{text}");
+        assert!(text.contains("\nExecStart=\"/home/a/.cargo/bin/maple-runner\" run\n"), "{text}");
+        assert!(text.contains("\nDescription=maple-runner: runs agent sessions for your Maple Factory\n"));
         assert!(text.contains("\nRestart=on-failure\n"));
         assert!(text.contains("\nEnvironment=\"HOME=/home/a\"\n"));
         assert!(text.contains("\nEnvironment=\"PATH=/usr/bin:/bin\"\n"));
@@ -530,7 +533,7 @@ mod tests {
     #[test]
     fn unit_quotes_odd_paths() {
         let text = systemd_unit(Path::new("/home/a b/100%/maple\"runner"), Path::new("/home/a b"), "/bin");
-        assert!(text.contains("ExecStart=\"/home/a b/100%%/maple\\\"runner\""), "{text}");
+        assert!(text.contains("ExecStart=\"/home/a b/100%%/maple\\\"runner\" run\n"), "{text}");
     }
 
     #[test]
