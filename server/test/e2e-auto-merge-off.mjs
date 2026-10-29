@@ -1,7 +1,8 @@
 // "Merge approved changes automatically" (the policy's autoMerges). Off: a low-risk task whose
 // proofs, review and CI all pass stays in reviewing, says it's waiting for a person (an event and a
 // toast), doesn't merge on its own, and a person's Merge lands it. Turning it back on merges a task
-// that was waiting, and with the field missing (an older policy) the same flow auto-merges as before.
+// that was waiting, and with the field missing (an older policy) the same flow auto-merges as before,
+// each after its countdown (run the server with a short MERGE_GRACE_MS, as e2e-merge-countdown does).
 //   node server/test/e2e-auto-merge-off.mjs http://localhost:8788 <repo folder>
 // Needs a real runner whose agents.toml has the `scripted` agent (test/scripted-agent.mjs), and a
 // local repo whose origin is a bare repo.
@@ -44,6 +45,11 @@ const wait = async (what, test, ms = 30000) => {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (text) => console.log(`✓ ${text}`);
 const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+const countedDown = (t) => {
+  const texts = t.events.map((e) => e.text);
+  const at = texts.findIndex((x) => x.startsWith("will auto-merge"));
+  return at >= 0 && at < texts.findIndex((x) => x.startsWith("auto-merged"));
+};
 const waiting = (t) => t.events.filter((e) => e.who === "factory" && e.text.startsWith("is ready; waiting for a person to merge it"));
 
 await new Promise((r) => (feed.onopen = r));
@@ -112,16 +118,16 @@ step(`${id2} waiting for a person`);
 await save(true, "on");
 t = await wait(`${id2} merged`, () => tasks.get(id2)?.state === "merged" && tasks.get(id2), 60000);
 const auto2 = t.events.find((e) => e.who === "factory" && e.text.startsWith("auto-merged"));
-if (!auto2 || !onMain(id2)) throw new Error(`${id2} wasn't auto-merged: ${t.events.at(-1).text}`);
-step(`turned on: the factory ${auto2.text}; origin main has ${id2}`);
+if (!auto2 || !countedDown(t) || !onMain(id2)) throw new Error(`${id2} wasn't auto-merged: ${t.events.at(-1).text}`);
+step(`turned on: the factory counted down and ${auto2.text}; origin main has ${id2}`);
 
 // 4. Unset (a policy from before the switch): auto-merges as it always did, without waiting.
 await save(undefined, "unset");
 const id3 = await ready(3, "Say hello, merged by the factory");
 t = await wait(`${id3} merged`, () => tasks.get(id3)?.state === "merged" && tasks.get(id3), 60000);
 const auto3 = t.events.find((e) => e.who === "factory" && e.text.startsWith("auto-merged"));
-if (!auto3 || waiting(t).length || !onMain(id3)) throw new Error(`${id3}: ${t.events.map((e) => e.text).join(" / ")}`);
-step(`unset: the factory ${auto3.text} with no wait; origin main has ${id3}`);
+if (!auto3 || !countedDown(t) || waiting(t).length || !onMain(id3)) throw new Error(`${id3}: ${t.events.map((e) => e.text).join(" / ")}`);
+step(`unset: the factory counted down and ${auto3.text}, waiting for nobody; origin main has ${id3}`);
 console.log(`\n${tasks.get(id1).events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
 
 send({ type: "policy.save", policy: original });
