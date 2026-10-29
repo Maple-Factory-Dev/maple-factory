@@ -2,7 +2,7 @@
 // merge…) is a row in `stats_events` as it happens, and `summarize` adds a window of them up for the
 // Statistics page and `GET /api/stats`. Pure, so test/stats.test.ts runs it on fixtures.
 
-import type { Goal, StatsCostRow, StatsCount, StatsSummary, Task } from "../wire.ts";
+import type { Finding, Goal, StatsCostRow, StatsCount, StatsFindings, StatsSummary, Task } from "../wire.ts";
 import type { SessionCostRow } from "./store.ts";
 
 export type StatKind =
@@ -14,7 +14,7 @@ export type StatKind =
   | "hand.raised" // detail: reason
   | "hand.resolved" // detail: reason, openMs, option
   | "prompt.answered" // detail: choice, tool
-  | "review.round" // detail: number, verdict, found, findings [{kind, severity}], fixed
+  | "review.round" // detail: number, verdict, found, findings [{kind, severity, file, text}], fixed
   | "session.restarted" // detail: cause
   | "session.ended" // detail: cause (an end nobody chose that stopped the task)
   | "merged" // detail: auto, cycleMs
@@ -30,6 +30,14 @@ export interface StatEvent {
   actor: string | null;
   /** What the kind records, and `inferred: true` on rows the backfill worked out from older task documents. */
   detail: Record<string, unknown>;
+}
+
+/** A finding as a review.round row keeps it; rows from before file and text were kept have only kind and severity. */
+export interface FindingDetail {
+  kind: Finding["kind"];
+  severity: Finding["severity"];
+  file?: string | null;
+  text?: string;
 }
 
 const DAY = 86_400_000;
@@ -64,7 +72,7 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
   for (const c of task.changes ?? []) add(c.at, "steer", null, c.author, {});
   for (const r of task.autoReview?.rounds ?? []) {
     if (r.verdict === "inProgress") continue;
-    const findings = (task.autoReview?.findings ?? []).filter((f) => f.raisedIn === r.number).map((f) => ({ kind: f.kind, severity: f.severity }));
+    const findings = (task.autoReview?.findings ?? []).filter((f) => f.raisedIn === r.number).map(findingDetail);
     add(r.at, "review.round", "reviewer", null, { number: r.number, verdict: r.verdict, found: r.found, findings });
   }
   if (task.state === "merged") {
@@ -74,6 +82,12 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
   }
   if (task.state === "cancelled") add(task.updatedAt, "cancelled", null, null, {});
   return out;
+}
+
+/** What a review.round row keeps of each finding: enough to show it once its task is gone. */
+export function findingDetail(f: Finding): FindingDetail {
+  const text = f.text.trim();
+  return { kind: f.kind, severity: f.severity, file: f.file ?? null, text: text.length > 200 ? `${text.slice(0, 199).trimEnd()}…` : text };
 }
 
 /** Why an older hand went up: the task's own hand if it's the one still up, else what its event's wording shows. */
@@ -214,7 +228,86 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     costTotal: costs.length ? costRow("total", costs) : null,
     costByRole: costRows(costs, (c) => c.role),
     costByAgent: costRows(costs, (c) => (c.model ? `${c.agent} · ${c.model}` : c.agent)),
+    findings: findingsBreakdown(rounds, byId),
   };
+}
+
+const SERIOUS = new Set(["blocker", "major"]);
+
+/** One finding of a window's review round, with its status when the task still has it. */
+interface RoundFinding extends FindingDetail {
+  task: string;
+  raisedIn: number;
+  at: number;
+  status: Finding["status"] | null;
+  fixedIn: number | null;
+}
+
+/**
+ * The window's review rounds' findings: from the task's own document when it still has that round
+ * (it knows the status, the text and the file), else from what the round's stats row kept.
+ */
+function findingsBreakdown(rounds: StatEvent[], byId: Map<string, Task>): StatsFindings {
+  const all = rounds.flatMap((e): RoundFinding[] => {
+    const number = num(e.detail.number);
+    const review = byId.get(e.task)?.autoReview;
+    const kept = review?.rounds.find((r) => r.number === number && Math.abs(r.at - e.at) < 60_000);
+    if (kept && review) {
+      return review.findings.filter((f) => f.raisedIn === number).map((f) => ({ ...findingDetail(f), task: e.task, raisedIn: number, at: e.at, status: f.status, fixedIn: f.fixedIn ?? null }));
+    }
+    return ((e.detail.findings as FindingDetail[] | undefined) ?? []).map((f) => ({ ...f, task: e.task, raisedIn: number, at: e.at, status: null, fixedIn: null }));
+  });
+
+  const matrix = group(all, (f) => `${f.kind}\u0000${f.severity}`)
+    .map(([, xs]) => ({ kind: xs[0].kind, severity: xs[0].severity, count: xs.length }))
+    .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind) || a.severity.localeCompare(b.severity));
+
+  const areas = group(all, (f) => findingArea(f.file))
+    .map(([key, xs]) => ({ key, count: xs.length, tasks: new Set(xs.map((f) => f.task)).size, serious: xs.filter((f) => SERIOUS.has(f.severity)).length }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+    .slice(0, 12);
+
+  const fixed = all.filter((f) => f.status === "fixed");
+  const toFix = fixed.filter((f) => f.fixedIn != null).map((f) => Math.max(0, (f.fixedIn ?? 0) - f.raisedIn));
+  const outcomes = {
+    fixed: fixed.length,
+    disputed: all.filter((f) => f.status === "disputed").length,
+    open: all.filter((f) => f.status === "open").length,
+    unknown: all.filter((f) => f.status == null).length,
+    roundsToFixMedian: toFix.length ? medianOf(toFix) : null,
+  };
+
+  const agentOf = (taskId: string) => byId.get(taskId)?.agent ?? "unknown";
+  const byAgent = group(rounds, (e) => agentOf(e.task)).map(([agent, list]) => {
+    const xs = all.filter((f) => agentOf(f.task) === agent);
+    return { agent, rounds: list.length, findings: xs.length, serious: xs.filter((f) => SERIOUS.has(f.severity)).length, perRound: round2(xs.length / list.length) };
+  }).sort((a, b) => b.rounds - a.rounds || a.agent.localeCompare(b.agent));
+
+  const recent = [...all]
+    .sort((a, b) => b.at - a.at || a.task.localeCompare(b.task))
+    .slice(0, 60)
+    .map((f) => ({
+      task: f.task,
+      title: byId.get(f.task)?.title ?? f.task,
+      kind: f.kind,
+      severity: f.severity,
+      text: f.text ?? "",
+      file: f.file ?? null,
+      area: findingArea(f.file),
+      status: f.status,
+      raisedIn: f.raisedIn,
+      at: f.at,
+    }));
+
+  return { matrix, areas, outcomes, byAgent, recent };
+}
+
+/** Where a finding's file sits: its first two folders ("server/src"), "(root)" for a top-level file. */
+export function findingArea(file: string | null | undefined): string {
+  const path = (file ?? "").trim().replace(/:\d+(?::\d+)?(?:-\d+)?$/, "").replace(/^\.?\//, "");
+  if (!path) return "(no file)";
+  const folders = path.split("/").filter(Boolean).slice(0, -1);
+  return folders.length ? folders.slice(0, 2).join("/") : "(root)";
 }
 
 /** One group's spend: $ over the sessions that gave one, tokens over all of them. */
@@ -239,6 +332,13 @@ export function median(values: number[]): number | null {
   const s = [...values].sort((a, b) => a - b);
   const mid = s.length >> 1;
   return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+}
+
+/** The middle value, unrounded: 1.5 rounds rather than 2. */
+function medianOf(values: number[]): number {
+  const s = [...values].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 function rate(hits: boolean[]): number | null {

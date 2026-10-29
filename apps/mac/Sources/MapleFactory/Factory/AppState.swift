@@ -1755,6 +1755,9 @@ final class AppState {
     }
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
+    /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
+    /// `findings:back`: Statistics' Review findings view, as its clicks would.
+    static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
@@ -1825,6 +1828,7 @@ final class AppState {
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
+            case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()

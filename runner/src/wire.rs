@@ -1471,6 +1471,87 @@ pub struct StatsCostRow {
     pub unpriced: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingCell {
+    pub kind: FindingKind,
+    pub severity: Severity,
+    pub count: u32,
+}
+
+/// Where findings land: a folder, by the file's first two folders.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingArea {
+    /// "server/src", "(root)" for a file at the top, "(no file)" when the finding names none.
+    pub key: String,
+    pub count: u32,
+    pub tasks: u32,
+    /// Blockers and majors.
+    pub serious: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingOutcomes {
+    pub fixed: u32,
+    pub disputed: u32,
+    pub open: u32,
+    /// Findings of tasks that are gone, whose status wasn't kept.
+    pub unknown: u32,
+    /// Rounds from the one that raised a finding to the one that saw it fixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounds_to_fix_median: Option<f64>,
+}
+
+/// Findings raised on one agent's work.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingAgent {
+    pub agent: String,
+    pub rounds: u32,
+    pub findings: u32,
+    pub serious: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_round: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingRow {
+    pub task: String,
+    pub title: String,
+    pub kind: FindingKind,
+    pub severity: Severity,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    pub area: String,
+    /// None for a task that's gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<FindingStatus>,
+    pub raised_in: u32,
+    /// When its round came in.
+    pub at: u64,
+}
+
+/// The window's review findings, from their text, file and status.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindings {
+    #[serde(default)]
+    pub matrix: Vec<StatsFindingCell>,
+    /// Most findings first, up to 12.
+    #[serde(default)]
+    pub areas: Vec<StatsFindingArea>,
+    pub outcomes: StatsFindingOutcomes,
+    #[serde(default)]
+    pub by_agent: Vec<StatsFindingAgent>,
+    /// Newest first, up to 60.
+    #[serde(default)]
+    pub recent: Vec<StatsFindingRow>,
+}
+
 /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1513,6 +1594,9 @@ pub struct StatsSummary {
     /// Keyed "agent · model".
     #[serde(default)]
     pub cost_by_agent: Vec<StatsCostRow>,
+    /// The findings breakdown; none from a server older than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings: Option<StatsFindings>,
 }
 
 /// Runner → server.

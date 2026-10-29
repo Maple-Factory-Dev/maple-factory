@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { inferEvents, median, summarize, type StatEvent } from "../src/factory/stats.ts";
+import { findingArea, findingDetail, inferEvents, median, summarize, type StatEvent } from "../src/factory/stats.ts";
 import { Store } from "../src/factory/store.ts";
 
 const DAY = 86_400_000;
@@ -180,6 +180,9 @@ test("backfill infers plan versions, approvals, hands, steers, review rounds and
   assert.equal(s.totals.steers, 1);
   assert.equal(s.totals.handsRaised, 4);
   assert.deepEqual(s.findingsByKind, [{ key: "code", count: 1, medianMs: null }]);
+  // The backfilled round keeps the finding's file and text too.
+  assert.deepEqual(inferred.find((e) => e.kind === "review.round")!.detail.findings, [{ kind: "code", severity: "major", file: null, text: "x" }]);
+  assert.deepEqual(s.findings!.outcomes, { fixed: 1, disputed: 0, open: 0, unknown: 0, roundsToFixMedian: 1 });
 });
 
 test("the store reads a window, plus the earlier review rounds of only the tasks it names", () => {
@@ -242,4 +245,102 @@ test("a later, lower reading doesn't reduce a session's total; the store reads a
   assert.equal(store.sessionCosts(0).find((c) => c.session === "s2")!.costUsd, null);
   assert.deepEqual(store.sessionCosts(NOW - 30 * DAY).map((c) => c.session).sort(), ["s1", "s2", "s3"]);
   assert.deepEqual(store.sessionCosts(NOW - 30 * DAY, "g1").map((c) => c.session).sort(), ["s1", "s2"]);
+});
+
+// The findings breakdown: two tasks with their documents (status, fixedIn), one that's gone (only its
+// stats rows), one outside the window and one of another goal.
+const fnd = (id: string, kind: string, severity: string, file: string | null, raisedIn: number, status = "open", fixedIn: number | null = null) =>
+  ({ id, kind, severity, text: `${id} text`, file, raisedIn, status, fixedIn });
+const reviewed = (rounds: [number, number][], findings: unknown[]) =>
+  ({ maxRounds: 5, summary: "", ask: [], proofs: [], findings, rounds: rounds.map(([number, at]) => ({ number, verdict: "changesRequested", found: 0, at, fix: null })) });
+const fTasks = [
+  task("F-1", {
+    title: "Stats view", agent: "claude",
+    autoReview: reviewed([[1, NOW - 3 * DAY], [2, NOW - 2 * DAY], [3, NOW - DAY]], [
+      fnd("R1.1", "code", "major", "server/src/factory/stats.ts:120", 1, "fixed", 2),
+      fnd("R1.2", "code", "major", "server/src/factory/engine.ts", 1, "fixed", 3),
+      fnd("R1.3", "proof", "blocker", null, 1, "disputed"),
+      fnd("R2.1", "code", "minor", "README.md", 2),
+    ]),
+  }),
+  task("F-2", {
+    title: "Mac view", agent: "codex",
+    autoReview: reviewed([[1, NOW - 12 * H]], [fnd("R1.1", "code", "major", "apps/mac/Sources/MapleFactory/Stats/FindingsView.swift", 1, "fixed", 2)]),
+  }),
+  task("F-8", { goal: "g2", agent: "codex", autoReview: reviewed([[1, NOW - H]], [fnd("R1.1", "risk", "major", "server/src/x.ts", 1)]) }),
+];
+const fEvents: StatEvent[] = [
+  ev("review.round", "F-1", 3 * DAY, { number: 1, verdict: "changesRequested", findings: [] }), // the document's findings win
+  ev("review.round", "F-1", 2 * DAY, { number: 2, verdict: "changesRequested", findings: [] }),
+  ev("review.round", "F-1", 1 * DAY, { number: 3, verdict: "passed", findings: [] }),
+  ev("review.round", "F-2", 12 * H, { number: 1, verdict: "changesRequested", findings: [] }),
+  // F-3 is gone: its rows are all there is, one from before file and text were kept.
+  ev("review.round", "F-3", 4 * DAY, { number: 1, verdict: "changesRequested", findings: [{ kind: "code", severity: "major", file: "server/src/factory/stats.ts", text: "gone" }, { kind: "risk", severity: "minor" }] }),
+  ev("review.round", "F-1", 40 * DAY, { number: 1, verdict: "changesRequested", findings: [{ kind: "scope", severity: "blocker", file: "old.ts", text: "old" }] }),
+  ev("review.round", "F-8", H, { number: 1, verdict: "changesRequested", findings: [] }, "g2"),
+];
+
+test("findings breakdown: kind × severity, areas, outcomes, per agent, from documents and gone tasks' rows", () => {
+  const f = summarize(fEvents, fTasks, { days: 30, now: NOW }).findings!;
+  assert.deepEqual(f.matrix, [
+    { kind: "code", severity: "major", count: 4 },
+    { kind: "code", severity: "minor", count: 1 },
+    { kind: "proof", severity: "blocker", count: 1 },
+    { kind: "risk", severity: "major", count: 1 },
+    { kind: "risk", severity: "minor", count: 1 },
+  ]);
+  assert.deepEqual(f.areas, [
+    { key: "server/src", count: 4, tasks: 3, serious: 4 },
+    { key: "(no file)", count: 2, tasks: 2, serious: 1 },
+    { key: "(root)", count: 1, tasks: 1, serious: 0 },
+    { key: "apps/mac", count: 1, tasks: 1, serious: 1 },
+  ]);
+  // Fixed a round later, two rounds later, and a round later: 1 is the middle.
+  assert.deepEqual(f.outcomes, { fixed: 3, disputed: 1, open: 2, unknown: 2, roundsToFixMedian: 1 });
+  assert.deepEqual(f.byAgent, [
+    { agent: "claude", rounds: 3, findings: 4, serious: 3, perRound: 1.33 },
+    { agent: "codex", rounds: 2, findings: 2, serious: 2, perRound: 1 },
+    { agent: "unknown", rounds: 1, findings: 2, serious: 1, perRound: 2 },
+  ]);
+  // Newest round first; a gone task's row keeps its text and file but has no status.
+  assert.deepEqual(f.recent.map((r) => `${r.task} R${r.raisedIn} ${r.kind}/${r.severity}`), [
+    "F-8 R1 risk/major", "F-2 R1 code/major", "F-1 R2 code/minor", "F-1 R1 code/major", "F-1 R1 code/major", "F-1 R1 proof/blocker", "F-3 R1 code/major", "F-3 R1 risk/minor",
+  ]);
+  assert.deepEqual(f.recent[1], {
+    task: "F-2", title: "Mac view", kind: "code", severity: "major", text: "R1.1 text", file: "apps/mac/Sources/MapleFactory/Stats/FindingsView.swift",
+    area: "apps/mac", status: "fixed", raisedIn: 1, at: NOW - 12 * H,
+  });
+  const gone = f.recent.find((r) => r.task === "F-3")!;
+  assert.deepEqual([gone.title, gone.text, gone.file, gone.area, gone.status], ["F-3", "gone", "server/src/factory/stats.ts", "server/src", null]);
+  assert.deepEqual([f.recent.at(-1)!.text, f.recent.at(-1)!.area], ["", "(no file)"]);
+});
+
+test("findings breakdown follows the window and the goal, and caps the list at 60", () => {
+  const week = summarize(fEvents, fTasks, { days: 2, now: NOW }).findings!;
+  assert.deepEqual(week.recent.map((r) => r.task), ["F-8", "F-2", "F-1"]);
+  const g2 = summarize(fEvents, fTasks, { days: 30, now: NOW, goal: "g2" }).findings!;
+  assert.deepEqual(g2.matrix, [{ kind: "risk", severity: "major", count: 1 }]);
+  assert.deepEqual(g2.byAgent.map((a) => a.agent), ["codex"]);
+
+  const many = Array.from({ length: 70 }, (_, i) => ev("review.round", `M-${i}`, (i + 1) * H, { number: 1, verdict: "changesRequested", findings: [{ kind: "code", severity: "minor", file: "a.ts", text: String(i) }] }));
+  const capped = summarize(many, [], { days: 30, now: NOW }).findings!;
+  assert.equal(capped.recent.length, 60);
+  assert.deepEqual([capped.recent[0].text, capped.recent[59].text], ["0", "59"]);
+  assert.deepEqual(capped.areas, [{ key: "(root)", count: 70, tasks: 70, serious: 0 }]);
+  assert.deepEqual(capped.outcomes, { fixed: 0, disputed: 0, open: 0, unknown: 70, roundsToFixMedian: null });
+});
+
+test("a finding's area is its first two folders; its stats row trims long text", () => {
+  assert.equal(findingArea("server/src/factory/stats.ts:12-20"), "server/src");
+  assert.equal(findingArea("./apps/mac/Package.swift"), "apps/mac");
+  assert.equal(findingArea("runner/Cargo.toml"), "runner");
+  assert.equal(findingArea("README.md"), "(root)");
+  assert.equal(findingArea(""), "(no file)");
+  assert.equal(findingArea(null), "(no file)");
+  const long = findingDetail(fnd("R1.1", "code", "major", "a/b.ts", 1) as never);
+  assert.deepEqual(long, { kind: "code", severity: "major", file: "a/b.ts", text: "R1.1 text" });
+  const trimmed = findingDetail({ ...fnd("R1.1", "code", "major", null, 1), text: "x".repeat(500) } as never);
+  assert.equal(trimmed.text!.length, 200);
+  assert.ok(trimmed.text!.endsWith("…"));
+  assert.equal(trimmed.file, null);
 });
