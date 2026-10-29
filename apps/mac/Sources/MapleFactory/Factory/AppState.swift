@@ -72,10 +72,10 @@ final class AppState {
         didSet { UserDefaults.standard.set(taskOpening.rawValue, forKey: TaskOpening.key) }
     }
 
-    enum ClickAction: Equatable { case focus, openPanel, closePanel }
+    nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
 
     /// In the panel mode, clicking the task already open in the panel closes it; any other task opens.
-    static func clickAction(opening: TaskOpening, panelOpen: Bool, selected: String, id: String) -> ClickAction {
+    nonisolated static func clickAction(opening: TaskOpening, panelOpen: Bool, selected: String, id: String) -> ClickAction {
         if opening == .fullView { return .focus }
         return panelOpen && selected == id ? .closePanel : .openPanel
     }
@@ -405,7 +405,7 @@ final class AppState {
     // MARK: Task opening
 
     /// Whether clicking a task opens its full view or peeks at it in the side panel.
-    enum TaskOpening: String, CaseIterable {
+    nonisolated enum TaskOpening: String, CaseIterable {
         case fullView, panel
 
         static let key = "taskOpening"
