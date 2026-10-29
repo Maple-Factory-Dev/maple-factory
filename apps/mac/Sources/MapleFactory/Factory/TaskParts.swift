@@ -253,6 +253,11 @@ struct ReviewActions: View {
                         detail: gate.proofsReady ? "All proven" : gate.failedProofs > 0 ? "\(gate.failedProofs) failed" : "\(gate.unproven) pending")
                 gateRow("CI", ready: gate.checksReady, failed: gate.failedChecks > 0,
                         detail: gate.checksReady ? "Required checks passing" : gate.failedChecks > 0 ? "\(gate.failedChecks) failing" : "Running")
+                if let detail = gate.autoReviewDetail {
+                    let verdict = task.autoReview?.current?.verdict
+                    gateRow("Auto review", ready: gate.autoReviewReady,
+                            failed: verdict == .changesRequested || verdict == .escalated, detail: detail)
+                }
                 gateRow("Reviews", ready: gate.reviewsReady, failed: false,
                         detail: gate.reviewsNeeded == 0 ? "Not required" : "\(task.reviews.count) of \(gate.reviewsNeeded)")
             }
