@@ -255,7 +255,7 @@ struct RunnerSettings: View {
                         }
                         .disabled(!machine.online)
                         Button("Show Log") {
-                            NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/maple-runner.log"))
+                            NSWorkspace.shared.open(LocalRunner.logFile)
                         }
                     }
                 }
