@@ -1,5 +1,6 @@
 // A merge that fails: the task raises a "didn't merge" hand instead of getting stuck, the factory
-// doesn't retry on its own, "Try the merge again" retries once, and "Send it back to fix" starts a
+// doesn't retry on its own, "Try the merge again" retries once, Request changes with the hand open
+// hands it to a builder, and "Send it back to fix" starts a
 // new builder in the same worktree that merges the base in, after which review runs again and it merges.
 //   node server/test/e2e-merge-conflict.mjs http://localhost:8788 <repo folder>
 // Needs a real runner whose agents.toml has the `scripted` agent (test/scripted-agent.mjs), and a
@@ -101,7 +102,20 @@ await pause(5000);
 if (failedMerges(tasks.get(id)) !== 2) throw new Error(`it tried ${failedMerges(tasks.get(id))} merges`);
 step("5s later: still 2 failed merges; nothing loops");
 
-// 3. "Send it back to fix": a new builder in the same worktree, with the change request.
+// 3. Request changes with the hand open: the hand clears and a builder takes it, rather than the
+// task sitting in building behind a stale hand. What it pushes still doesn't merge: a new hand.
+const secondHand = t.hand.at;
+send({ type: "task.steer", id, text: "Add a sign-off line.", anchor: null });
+t = await wait("steered to building", () => tasks.get(id)?.state === "building" && tasks.get(id));
+if (t.hand) throw new Error(`it's building with a ${t.hand.reason} hand still up`);
+step(`Request changes with the hand open: building, hand cleared ("${t.events.at(-1).text}")`);
+t = await wait("steered builder", () => tasks.get(id)?.worker?.role === "builder" && tasks.get(id));
+step(`a builder started on it (${t.worker.session.slice(0, 8)})`);
+t = await wait("third hand", () => tasks.get(id)?.hand?.reason === "mergeFailed" && tasks.get(id).hand.at !== secondHand && tasks.get(id), 120000);
+const steerRounds = t.autoReview.rounds.length;
+step(`it pushed, review passed again (round ${steerRounds}), the merge failed again and a new hand is up (${failedMerges(t)} failed merges)`);
+
+// 4. "Send it back to fix": a new builder in the same worktree, with the change request.
 send({ type: "task.resolveHand", id, option: "Send it back to fix", note: "" });
 t = await wait("back to building", () => tasks.get(id)?.state === "building" && tasks.get(id));
 const change = t.changes.at(-1);
@@ -114,8 +128,8 @@ step(`new builder session ${t.worker.session.slice(0, 8)} in the same worktree (
 t = await wait("applied", () => tasks.get(id)?.changes.find((c) => c.id === change.id)?.status === "applied" && tasks.get(id), 60000);
 step(`${change.id} applied`);
 
-// 4. Review runs again on what it pushed, and then it merges.
-t = await wait("review again", () => (tasks.get(id)?.autoReview?.rounds.length ?? 0) > rounds && tasks.get(id), 60000);
+// 5. Review runs again on what it pushed, and then it merges.
+t = await wait("review again", () => (tasks.get(id)?.autoReview?.rounds.length ?? 0) > steerRounds && tasks.get(id), 60000);
 const merge = git("-C", origin, "log", "-1", "--format=%s", t.branch);
 if (!merge.includes(change.id) || !merge.includes("doesn't merge into main")) throw new Error(`the branch's last commit is ${JSON.stringify(merge)}`);
 step(`pushed the merge, made from ${change.id} in its prompt: ${JSON.stringify(merge.slice(0, 90))}`);

@@ -1425,16 +1425,24 @@ export class Engine {
     const hand = task.hand!;
     // A note with no pick is guidance for the builder.
     const pick = option ?? (note ? MERGE_FIX : fail("Pick a way forward."));
-    task.hand = null;
-    task.comments.push({ id: crypto.randomUUID(), author: who, text: [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), at: now(), anchor: `Hand: ${hand.summary}`, via: null });
+    if (pick !== "Cancel it" && task.state !== "reviewing") fail("It's not waiting to merge any more.");
+    const picked = () => {
+      task.hand = null;
+      task.comments.push({ id: crypto.randomUUID(), author: who, text: [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), at: now(), anchor: `Hand: ${hand.summary}`, via: null });
+    };
+    if (pick === MERGE_RETRY) {
+      // The hand stays up until the merge has started: if it can't (its machine is offline, say),
+      // nothing changed and auto-merge mustn't take over.
+      await this.startMerge(task, who, `picked "${pick}"`);
+      picked();
+      this.save(task);
+      return;
+    }
+    picked();
     this.event(task, who, `picked "${pick}"`);
     if (pick === "Cancel it") {
       await this.cancel(task, who);
       return this.pump();
-    }
-    if (pick === MERGE_RETRY) {
-      this.save(task);
-      return this.startMerge(task, who, "tried the merge again");
     }
     const base = task.pr?.base ?? this.store.private(task.id).base ?? "main";
     const why = hand.summary.replace(/^It didn't merge into [^:]+: /, "").replace(/\s+/g, " ").trim();
@@ -1457,6 +1465,11 @@ export class Engine {
 
   /** A reviewing task goes back to its builder: review and approvals start over on what it pushes. */
   private async backToBuilding(task: Task) {
+    // A "didn't merge" hand is moot once the builder has it; left up, it would keep the pump away.
+    if (task.hand?.reason === "mergeFailed") {
+      task.hand = null;
+      this.event(task, "factory", "cleared the didn't-merge hand: the builder takes it from here");
+    }
     await this.closeWorker(task, "cancelled");
     if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
     task.reviews = [];
