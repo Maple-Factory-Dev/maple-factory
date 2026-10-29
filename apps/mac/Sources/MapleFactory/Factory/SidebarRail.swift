@@ -74,7 +74,7 @@ struct SidebarRail: View {
                     divider
 
                     if client.isSignedIn {
-                        ForEach(client.machines, id: \.id) { machine in
+                        ForEach(client.sidebarMachines, id: \.id) { machine in
                             item(machine.name,
                                  detail: "\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")",
                                  selected: state.destination == .machines && state.focusedTask == nil,
@@ -83,13 +83,13 @@ struct SidebarRail: View {
                                     Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                                         .font(.system(size: 14))
                                         .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.textFaint)
-                                    LivePips(machine: machine, size: 4)
+                                    LivePips(machine: machine, size: 4, sharedOnly: machine.owner != client.me?.login)
                                 }
                             }
                             .onTapGesture { state.closeFocus(); state.destination = .machines }
                         }
                     } else {
-                    ForEach(state.machines) { machine in
+                    ForEach(state.machines.filter { $0.isMine || $0.teamSlots > 0 || $0.lendIdle }) { machine in
                         item(machine.id,
                              detail: "\(machine.isMine ? "Yours" : "\(machine.owner.firstName)'s") · \(machine.status.isOffline ? machine.status.title : "\(machine.sessions.count)/\(machine.capacity) busy")",
                              selected: state.destination == .machines && state.focusedTask == nil,
@@ -98,7 +98,7 @@ struct SidebarRail: View {
                                 Image(systemName: machine.kind.icon)
                                     .font(.system(size: 14))
                                     .foregroundStyle(machine.status == .sleeping ? Theme.textFaint : Theme.text.opacity(0.75))
-                                SlotPips(machine: machine, size: 4)
+                                SlotPips(machine: machine, size: 4, teamOnly: !machine.isMine)
                             }
                         }
                         .onTapGesture { state.closeFocus(); state.destination = .machines }

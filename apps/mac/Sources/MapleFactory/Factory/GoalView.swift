@@ -222,9 +222,6 @@ struct BoardColumns: View {
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Theme.textFaint)
                 Spacer()
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.textFaint)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)

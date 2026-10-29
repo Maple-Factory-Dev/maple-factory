@@ -437,42 +437,51 @@ extension TicketLink {
 }
 
 /// Lays its children out in rows, wrapping when the next one doesn't fit.
+/// A child wider than the row is given the row's width and wraps inside it, so the layout never
+/// grows past the width it's offered.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = rows(width: proposal.width ?? .infinity, subviews: subviews)
-        let height = rows.map { $0.map { $0.size.height }.max() ?? 0 }.reduce(0) { $0 + $1 } + spacing * CGFloat(max(rows.count - 1, 0))
-        let width = rows.map { row in row.map(\.size.width).reduce(0, +) + spacing * CGFloat(max(row.count - 1, 0)) }.max() ?? 0
-        return CGSize(width: width, height: height)
+        let width = proposal.width ?? .infinity
+        return Self.arrange(sizes(width: width, subviews: subviews), width: width, spacing: spacing).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(width: bounds.width, subviews: subviews) {
-            var x = bounds.minX
-            let height = row.map(\.size.height).max() ?? 0
-            for item in row {
-                item.view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
-                x += item.size.width + spacing
-            }
-            y += height + spacing
+        let arranged = Self.arrange(sizes(width: bounds.width, subviews: subviews), width: bounds.width, spacing: spacing)
+        for (view, frame) in zip(subviews, arranged.frames) {
+            view.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
         }
     }
 
-    private func rows(width: CGFloat, subviews: Subviews) -> [[(view: LayoutSubview, size: CGSize)]] {
-        var rows: [[(view: LayoutSubview, size: CGSize)]] = [[]]
-        var x: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > width, !(rows.last?.isEmpty ?? true) {
-                rows.append([])
+    /// Each child at its ideal size, or at the row's width (and however tall that makes it) when
+    /// its ideal is wider.
+    private func sizes(width: CGFloat, subviews: Subviews) -> [CGSize] {
+        subviews.map { view in
+            let ideal = view.sizeThatFits(.unspecified)
+            guard ideal.width > width else { return ideal }
+            return view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        }
+    }
+
+    /// Where each size goes, left to right in rows no wider than `width`, and the size of the whole.
+    /// A size wider than `width` is clamped to it and gets a row of its own.
+    static func arrange(_ sizes: [CGSize], width: CGFloat, spacing: CGFloat) -> (frames: [CGRect], size: CGSize) {
+        var frames: [CGRect] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for size in sizes {
+            let size = CGSize(width: min(size.width, width), height: size.height)
+            if x > 0, x + size.width > width {
+                y += rowHeight + spacing
                 x = 0
+                rowHeight = 0
             }
-            rows[rows.count - 1].append((view, size))
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            widest = max(widest, x + size.width)
+            rowHeight = max(rowHeight, size.height)
             x += size.width + spacing
         }
-        return rows
+        return (frames, CGSize(width: widest, height: frames.isEmpty ? 0 : y + rowHeight))
     }
 }
 

@@ -61,7 +61,16 @@ import Security
         set { UserDefaults.standard.set(newValue, forKey: picksKey); picksChanged += 1 }
     }
     private var picksChanged = 0
-    private var picksKey: String { "sidebarPeople.\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
+    private var picksKey: String { "sidebarPeople.\(serverKey)" }
+
+    /// The order this person put their sidebar goals in, by goal id, per factory; nil until they move one.
+    var goalOrder: [String]? {
+        get { _ = goalOrderChanged; return UserDefaults.standard.stringArray(forKey: goalOrderKey) }
+        set { UserDefaults.standard.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
+    }
+    private var goalOrderChanged = 0
+    private var goalOrderKey: String { "sidebarGoalOrder.\(serverKey)" }
+    private var serverKey: String { "\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
 
     /// The people in the sidebar: their picks, else whoever shares a GitHub team with them (everyone
     /// when they're on none). Always them first.
@@ -71,6 +80,23 @@ import Security
         let shown = sidebarPicks.map { picks in others.filter { picks.contains($0.login) } }
             ?? (me.teams.isEmpty ? others : others.filter { !Set($0.teams).isDisjoint(with: me.teams) })
         return [members.first { $0.login == me.login } ?? me] + shown
+    }
+
+    /// The machines in the sidebar: yours, then teammates' that have team slots open. The Machines page
+    /// still lists them all.
+    var sidebarMachines: [Wire.Machine] { Self.sidebarMachines(machines, me: me?.login) }
+
+    static func sidebarMachines(_ machines: [Wire.Machine], me: String?) -> [Wire.Machine] {
+        guard let me else { return machines }
+        let mine = machines.filter { $0.owner == me }
+        let shared = machines.filter { $0.owner != me && isShared($0) }
+        return mine + shared
+    }
+
+    /// Whether a machine lends anything to the team; one with no settings yet lends nothing.
+    static func isShared(_ machine: Wire.Machine) -> Bool {
+        guard let settings = machine.settings else { return false }
+        return settings.teamSlots > 0 || settings.lendIdle
     }
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.

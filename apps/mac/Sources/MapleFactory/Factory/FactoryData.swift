@@ -144,6 +144,7 @@ enum FactoryData {
             agent: agents[3], detail: "Blocked on a question", needsYou: true, span: 10...28, updated: "12m",
             brief: "Let enterprise customers sign in through their own identity provider, with SAML 2.0 and OIDC both supported from day one.",
             question: "Should users who sign in through SAML be auto-provisioned into the org's default team, or should they need an invite first?",
+            questionOptions: ["Auto-provision", "Require invite"],
             activity: [
                 ActivityItem(who: "Maple-4", text: "Asked a question", when: "12m"),
                 ActivityItem(who: "Maple-4", text: "Drafted 3 of 5 plan steps", when: "18m"),

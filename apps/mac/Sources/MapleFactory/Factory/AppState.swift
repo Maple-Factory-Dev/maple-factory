@@ -289,7 +289,23 @@ final class AppState {
 
     /// The sidebar's goals: the ones you follow, plus the one you're looking at.
     var sidebarGoals: [Goal] {
-        FactoryData.activeGoals.filter { isFollowing($0) || destination == .goal($0.name) }
+        let shown = FactoryData.activeGoals.filter { isFollowing($0) || destination == .goal($0.name) }
+        guard let client, isLive else { return GoalOrder.apply(shown, order: mockGoalOrder, key: \.name) }
+        return GoalOrder.apply(shown, order: client.goalOrder) { client.goal(named: $0.name)?.id }
+    }
+
+    /// The mockup's personal goal order, by name; the live one is saved per factory by the client.
+    private var mockGoalOrder: [String]? = nil
+
+    /// Moves a sidebar goal and saves the whole sidebar's order as yours.
+    func moveGoal(_ goal: Goal, _ move: GoalOrder.Move) {
+        let names = GoalOrder.move(goal.name, to: move, in: sidebarGoals.map(\.name))
+        guard let client, isLive else { mockGoalOrder = GoalOrder.saving(names, over: mockGoalOrder); return }
+        client.goalOrder = GoalOrder.saving(names.compactMap { client.goal(named: $0)?.id }, over: client.goalOrder)
+    }
+
+    func canMoveGoal(_ goal: Goal, _ move: GoalOrder.Move) -> Bool {
+        GoalOrder.canMove(goal.name, move, in: sidebarGoals.map(\.name))
     }
 
     // MARK: Archiving goals
