@@ -45,6 +45,9 @@ final class AppState {
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
+    /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.
+    var attestingItem: String? = nil
+    var attestReason = ""
     /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
     var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
@@ -1522,6 +1525,17 @@ final class AppState {
                 schedulingTask = nil
                 let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
                 schedule(parts[1], at: pick.date())
+            // A Done when item's Attest…, its reason typed in (`attesttype:<text>`), then Attest.
+            case "attestask": attestReason = ""; attestingItem = "\(parts[1])#\(parts.count > 2 ? parts[2] : "0")"
+            case "attesttype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    attestReason.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+            case "attest":
+                attestingItem = nil
+                attest(parts[1], item: parts.count > 2 ? Int(parts[2]) ?? 0 : 0, reason: attestReason)
+                attestReason = ""
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)

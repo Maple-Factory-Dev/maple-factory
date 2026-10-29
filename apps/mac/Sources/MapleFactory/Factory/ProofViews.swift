@@ -101,8 +101,12 @@ private struct CriterionRow: View {
     let task: FactoryTask
     let index: Int
     let criterion: DoneCriterion
-    @State private var attesting = false
-    @State private var reason = ""
+    private var key: String { "\(task.id)#\(index)" }
+    private var attesting: Binding<Bool> {
+        Binding(get: { state.attestingItem == key }, set: { open in
+            if open { state.attestReason = ""; state.attestingItem = key } else if state.attestingItem == key { state.attestingItem = nil }
+        })
+    }
 
     private var attested: Bool { if case .attested = criterion.evidence { true } else { false } }
     private var canAttest: Bool { criterion.status != .proven && (task.state == .building || task.state == .reviewing) }
@@ -136,11 +140,11 @@ private struct CriterionRow: View {
 
                     if canAttest {
                         Spacer(minLength: 0)
-                        Button("Attest") { attesting = true }
+                        Button("Attest") { attesting.wrappedValue = true }
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                             .help("Sign this off yourself instead of waiting for the agent's proof")
-                            .popover(isPresented: $attesting, arrowEdge: .bottom) { attestForm }
+                            .popover(isPresented: attesting, arrowEdge: .leading) { attestForm }
                     }
                 }
 
@@ -177,20 +181,21 @@ private struct CriterionRow: View {
     }
 
     private var attestForm: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        @Bindable var state = state
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Attest to this yourself")
                 .font(.system(size: 12.5, weight: .semibold))
             Text("It counts as proven, signed off by you instead of the agent.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
-            TextField("Reason (optional)", text: $reason, axis: .vertical)
+            TextField("Reason (optional)", text: $state.attestReason, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
                 .onSubmit(confirm)
             HStack {
                 Spacer()
-                Button("Cancel") { attesting = false; reason = "" }
+                Button("Cancel") { attesting.wrappedValue = false }
                     .keyboardShortcut(.cancelAction)
                 Button("Attest", action: confirm)
                     .keyboardShortcut(.defaultAction)
@@ -201,9 +206,9 @@ private struct CriterionRow: View {
     }
 
     private func confirm() {
-        state.attest(task.id, item: index, reason: reason)
-        attesting = false
-        reason = ""
+        state.attest(task.id, item: index, reason: state.attestReason)
+        state.attestingItem = nil
+        state.attestReason = ""
     }
 
     private var statusColor: Color {
