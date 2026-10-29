@@ -214,23 +214,15 @@ struct FactoryStatusBar: View {
     var body: some View {
         HStack(spacing: 16) {
             if client.isSignedIn {
-                let online = client.machines.filter(\.online)
-                let sessions = online.reduce(0) { $0 + $1.sessions.count }
                 HStack(spacing: 5) {
                     Circle().fill(client.status == .live ? Theme.State.merged : Theme.State.awaitingApproval).frame(width: 6, height: 6)
-                    Text(state.isCompact
-                         ? "\(sessions) sessions"
-                         : "\(client.server?.host() ?? "") · \(online.count) of \(client.machines.count) machines · \(sessions) sessions")
+                    Text(client.server?.host() ?? "")
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { state.closeFocus(); state.destination = .machines }
+                .help("Machines")
             } else {
-                HStack(spacing: 5) {
-                    Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
-                    Text(state.isCompact
-                         ? "\(state.fleet.running) running"
-                         : "\(FactoryData.presence.count) online · \(state.fleet.running) running · \(state.queue.count) queued")
-                }
+                Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
             }
             Spacer()
             if state.isLive {
