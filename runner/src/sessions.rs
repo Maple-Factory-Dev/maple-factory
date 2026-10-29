@@ -143,6 +143,7 @@ impl Sessions {
                     if let Some(ports) = existing.ports {
                         sessions.ports.lock().unwrap().insert(id, ports);
                     }
+                    crate::secrets::recover(&sessions.tmux, &existing.name).await;
                     info!("reattached to session {id}")
                 }
                 Err(e) => warn!("could not reattach to {}: {e:#}", existing.name),
@@ -195,6 +196,7 @@ impl Sessions {
         cols: u16,
         rows: u16,
         task: Option<TaskTag>,
+        env: &[(String, String)],
     ) -> Result<SessionInfo> {
         let agent = crate::agent_config::find(agent_name).ok_or_else(|| anyhow!("unknown agent {agent_name:?}"))?;
         let dir = expand_home(cwd);
@@ -230,6 +232,13 @@ impl Sessions {
         }
         if let Some(t) = &task {
             meta.push(("@maple_task", t.to_meta()));
+        }
+        // A task's repo secrets: in the session's environment only, never a file in its worktree.
+        for (name, value) in env {
+            args.extend(["-e".into(), format!("{name}={value}")]);
+        }
+        if !env.is_empty() {
+            meta.push((crate::secrets::OPTION, env.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" ")));
         }
         // A long prompt goes through a file the shell reads (and removes): tmux refuses a long command.
         let long = prompt.filter(|p| !p.trim().is_empty() && p.len() > PROMPT_IN_FILE && agent.takes_prompt());

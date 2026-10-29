@@ -18,6 +18,7 @@ mod proof;
 mod protocol;
 mod proxy;
 mod repos;
+mod secrets;
 mod service;
 mod sessions;
 mod statusline;
@@ -64,6 +65,30 @@ struct Cli {
 
 /// The footer under the command list.
 const AFTER_HELP: &str = "Run `maple-runner run` to start the runner, or `maple-runner install` to run it at login.";
+
+#[derive(Subcommand, Debug)]
+enum SecretsCmd {
+    /// Write the repo's secrets to a gitignored env file (.env.local at the checkout's root), mode 0600.
+    Pull {
+        /// owner/name. Defaults to the GitHub repo behind this checkout's origin.
+        repo: Option<String>,
+        /// Where to write them.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Write even when git doesn't say the file is ignored.
+        #[arg(long)]
+        force: bool,
+        /// The runner's tmux server socket name, as `maple-runner run --tmux-socket` was given.
+        #[arg(long, env = "MAPLE_TMUX_SOCKET", default_value = "maple")]
+        tmux_socket: String,
+    },
+    /// List the repo's secrets by name (no values).
+    List {
+        repo: Option<String>,
+        #[arg(long, env = "MAPLE_TMUX_SOCKET", default_value = "maple")]
+        tmux_socket: String,
+    },
+}
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
@@ -122,6 +147,12 @@ enum Cmd {
         /// Install the latest release even if it isn't newer, or over a development build.
         #[arg(long)]
         force: bool,
+    },
+    /// A repo's secrets from the factory, for your own checkout. Asks the running runner, which the
+    /// factory hands them to when you're a member of its org.
+    Secrets {
+        #[command(subcommand)]
+        command: SecretsCmd,
     },
     /// The `agents` MCP server over stdio. Claude Code and Codex sessions start it themselves;
     /// it only works inside a session (it needs MAPLE_SESSION_ID and MAPLE_HOOK_SOCKET).
@@ -263,6 +294,8 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::Run(args)) => run(args).await,
         Some(Cmd::Mcp) => mcp::serve(),
+        Some(Cmd::Secrets { command: SecretsCmd::Pull { repo, out, force, tmux_socket } }) => secrets::cli(false, repo, out, force, &tmux_socket),
+        Some(Cmd::Secrets { command: SecretsCmd::List { repo, tmux_socket } }) => secrets::cli(true, repo, None, false, &tmux_socket),
         Some(Cmd::Enroll { url, code, runner_id, test }) => enroll(&url, &code, runner_id, test).await,
         Some(Cmd::Install { dry_run }) => install(dry_run),
         Some(Cmd::Uninstall { dry_run }) => service::Service::detect()?.uninstall(dry_run),
@@ -621,7 +654,14 @@ async fn connect(
 /// `out` as JSON, or what to send instead when it's over `MAX_MESSAGE` (Cloudflare would close
 /// the socket for a message over its limit, and big ones are slow to relay anyway).
 fn text_message(out: &Outbound) -> Result<Option<String>> {
-    let text = serde_json::to_string(out)?;
+    // Nothing the runner sends carries a repo secret it was given: agents' calls, proofs, last output.
+    let text = if secrets::any() {
+        let mut value = serde_json::to_value(out)?;
+        secrets::scrub_json(&mut value);
+        serde_json::to_string(&value)?
+    } else {
+        serde_json::to_string(out)?
+    };
     if text.len() <= protocol::MAX_MESSAGE {
         return Ok(Some(text));
     }
@@ -694,17 +734,20 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
                 let opened = async {
                     // In a worktree, the session's directory is the worktree. A task's comes from
                     // GitHub's copy of its branch, and its prompt gets its project's settings and its card's images.
-                    let (cwd, prompt, images) = match (&task, &worktree) {
-                        (Some(t), w) => tasks::open(&sessions, t, &cwd, w.as_ref(), prompt.as_deref(), &images).await?,
-                        (None, Some(w)) => (worktrees::create(&cwd, w).await?, prompt, vec![]),
-                        (None, None) => (cwd.clone(), prompt, vec![]),
+                    let (cwd, prompt, images, env) = match (&task, &worktree) {
+                        (Some(t), w) => {
+                            let o = tasks::open(&sessions, t, &cwd, w.as_ref(), prompt.as_deref(), &images).await?;
+                            (o.worktree, o.prompt, o.images, o.env)
+                        }
+                        (None, Some(w)) => (worktrees::create(&cwd, w).await?, prompt, vec![], vec![]),
+                        (None, None) => (cwd.clone(), prompt, vec![], vec![]),
                     };
                     // A task's session can attach evidence to it (`prove`), from its own proof folder.
                     let tag = task
                         .as_ref()
                         .zip(worktree.as_ref())
                         .map(|(t, w)| proof::TaskTag { id: t.id.clone(), branch: format!("{}{}", worktrees::BRANCH_PREFIX, w.name) });
-                    sessions.open(id, &agent, &cwd, model.as_deref(), unattended.as_ref(), &images, prompt.as_deref(), resume, cols, rows, tag).await
+                    sessions.open(id, &agent, &cwd, model.as_deref(), unattended.as_ref(), &images, prompt.as_deref(), resume, cols, rows, tag, &env).await
                 };
                 match opened.await {
                     Ok(session) => {
@@ -877,6 +920,7 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
             tokio::spawn(tasks::run_cleanup(sessions.clone(), c));
         }
         Inbound::TaskToken { req_id, token, error, code } => tasks::resolve(&req_id, tasks::TokenReply { token, error, code }),
+        Inbound::SecretsReply { req_id, values, error, code } => secrets::resolve(&req_id, secrets::Reply { values, error, code }),
         Inbound::UsageConfig { claude_check } => usage::configure(claude_check),
         Inbound::UsageRefresh { agent } => usage::refresh_now(&agent),
         Inbound::ThumbsWatch { sessions: list, fresh } => thumbs::watch(list, &fresh),

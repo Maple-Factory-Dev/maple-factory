@@ -541,11 +541,13 @@ fn redact_url(url: &str) -> String {
     }
 }
 
-/// `text` with `secret` replaced, for anything that might reach a log or the UI.
+/// `text` with `secret` and every repo secret the runner was given (`secrets::scrub`) replaced, for
+/// anything that might reach a log or the UI.
 pub fn scrub(text: &str, secret: Option<&str>) -> String {
+    let text = crate::secrets::scrub(text);
     match secret.filter(|s| s.len() >= 8) {
         Some(s) => text.replace(s, "***"),
-        None => text.to_string(),
+        None => text,
     }
 }
 
@@ -588,6 +590,7 @@ pub struct Started {
 /// A task's `session.open`: its worktree, made from GitHub's copy of the base branch, and its prompt
 /// with the project's settings in front (see `factory`) and its card's `images` as local files (see
 /// `images`), whose paths come back for the agent's own flag. Tells the hub how that went (`task.started`).
+/// Its repo's secrets come back too, for the session's environment (see `secrets`).
 pub async fn open(
     sessions: &Sessions,
     task: &crate::factory::TaskStart,
@@ -595,21 +598,23 @@ pub async fn open(
     req: Option<&crate::worktrees::Request>,
     prompt: Option<&str>,
     images: &[String],
-) -> Result<(String, Option<String>, Vec<String>)> {
+) -> Result<Opened> {
     let req = req.ok_or_else(|| anyhow!("A task runs in its own worktree."))?;
+    let emit = |m: Outbound| sessions.emit(m);
     if req.existing {
         // Its builder again: the worktree as it is, and the prompt with its project's settings as before.
         let worktree = existing(cwd, req).await?;
         crate::trust::trust_worktree(&expand_home(&worktree));
         let p = crate::factory::prepare(&expand_home(&worktree), prompt, &task.projects).await;
+        let env = crate::secrets::for_task(&emit, &task.id, task.repo.as_deref().or(p.repo.as_deref())).await;
         let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
-        return Ok((worktree, prompt, images));
+        return Ok(Opened { worktree, prompt, images, env });
     }
-    let emit = |m: Outbound| sessions.emit(m);
     let started = start(&emit, &task.id, cwd, task.repo.as_deref(), req, &Places::here()).await?;
     // A worktree the runner just made: Claude Code shouldn't stop to ask whether to trust it.
     crate::trust::trust_worktree(&expand_home(&started.worktree));
     let p = crate::factory::prepare(&expand_home(&started.worktree), prompt, &task.projects).await;
+    let env = crate::secrets::for_task(&emit, &task.id, task.repo.as_deref().or(p.repo.as_deref())).await;
     sessions.emit(Outbound::TaskStarted {
         task_id: task.id.clone(),
         repo: p.repo,
@@ -620,7 +625,17 @@ pub async fn open(
         rules: p.rules,
     });
     let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
-    Ok((started.worktree, prompt, images))
+    Ok(Opened { worktree: started.worktree, prompt, images, env })
+}
+
+/// What a task's session opens with.
+pub struct Opened {
+    /// `~`-abbreviated.
+    pub worktree: String,
+    pub prompt: Option<String>,
+    pub images: Vec<String>,
+    /// Its repo's secrets, for the session's environment only.
+    pub env: Vec<(String, String)>,
 }
 
 /// A task's worktree that's already there (`cwd`), for a new session in it: nothing is fetched or
