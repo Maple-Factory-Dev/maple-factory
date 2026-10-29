@@ -751,7 +751,8 @@ struct TaskComposer: View {
         VStack(alignment: .leading, spacing: 12) {
             if task.isSteerable, let agent = task.agent {
                 HStack(spacing: 2) {
-                    modeTab("Steer \(agent.name)", icon: "sparkle", mode: .steer)
+                    // On a plan waiting for approval, steering means asking for the next version of it.
+                    modeTab(task.state == .awaitingApproval ? "Revise plan" : "Steer \(agent.name)", icon: "sparkle", mode: .steer)
                     modeTab("Comment", icon: "bubble.left", mode: .comment)
                     Spacer()
                     if steering, task.state == .building {
@@ -818,11 +819,21 @@ struct TaskComposer: View {
                         .strokeBorder(steering && focused.wrappedValue ? Theme.State.planning.opacity(0.6) : Theme.stroke)
                 )
         )
+        // The view may have been built before the task had an agent: once it can be steered, steer by default
+        // so Request changes reaches the agent rather than landing as a comment.
+        .onChange(of: task.isSteerable) { _, steerable in
+            if steerable { mode = .steer }
+        }
     }
 
     private var placeholder: String {
-        guard mode == .steer, task.isSteerable, let agent = task.agent else { return "Comment or @mention someone…" }
+        guard mode == .steer, task.isSteerable, let agent = task.agent else {
+            // Say so up front, so a comment on a plan isn't mistaken for a revision that never comes.
+            if task.state == .awaitingApproval, task.isSteerable { return "Comment for teammates; doesn't send the plan back to \(task.agent?.name ?? "the planner")…" }
+            return "Comment or @mention someone…"
+        }
         switch task.state {
+        case .awaitingApproval: return "What should \(agent.name) change for plan v\(task.planVersion + 1)?"
         case .building: return "Tell \(agent.name) what to change mid-build…"
         case .reviewing: return "What should \(agent.name) fix before merge?"
         default: return "Tell \(agent.name) what to change in the plan…"
