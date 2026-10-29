@@ -802,6 +802,7 @@ final class AppState {
         update(id) { task in
             task.state = .cancelled
             if task.pr?.state == .open || task.pr?.state == .draft { task.pr?.state = .closed }
+            if task.autoReview?.current?.verdict == .inProgress { task.autoReview?.rounds.removeLast() }
         }
     }
 
@@ -812,12 +813,24 @@ final class AppState {
         }
         // Back to the stage it was in, as the factory does.
         update(id) { task in
-            guard task.state == .cancelled else { return }
-            if task.pr != nil {
-                task.state = .reviewing
-                if task.pr?.state == .closed { task.pr?.state = .open }
-            } else {
-                task.state = task.plan.isEmpty ? .planning : .building
+            guard task.state == .cancelled || task.state == .reviewing else { return }
+            if task.state == .cancelled {
+                if task.pr != nil {
+                    task.state = .reviewing
+                    if task.pr?.state == .closed { task.pr?.state = .open }
+                } else {
+                    task.state = task.plan.isEmpty ? .planning
+                        : task.approvals.count >= task.approvalsNeeded ? .building
+                        : .awaitingApproval
+                }
+            }
+            // In review: a new automated-review round on what's pushed.
+            if task.state == .reviewing, var review = task.autoReview {
+                if review.current?.verdict == .inProgress { review.rounds.removeLast() }
+                review.maxRounds = max(review.maxRounds, review.rounds.count + 1)
+                review.rounds.append(ReviewRound(number: review.rounds.count + 1, verdict: .inProgress, found: 0, when: "now"))
+                task.autoReview = review
+                task.reviews = []
             }
         }
     }

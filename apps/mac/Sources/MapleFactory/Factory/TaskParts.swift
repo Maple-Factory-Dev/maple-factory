@@ -92,7 +92,8 @@ struct TaskActionButtons: View {
 
     var body: some View {
         if task.state != .merged {
-            if task.state != .drafting {
+            // Waiting on its plan's approval, nothing is running to retry; request changes instead.
+            if task.state != .drafting && task.state != .awaitingApproval {
                 Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
             }
             if task.state != .cancelled {
