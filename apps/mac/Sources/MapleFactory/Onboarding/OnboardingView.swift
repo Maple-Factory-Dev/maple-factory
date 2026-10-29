@@ -393,6 +393,13 @@ struct OnboardingView: View {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
                 Text("Back to \(client.workspaceName)")
+                Text("esc")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.textFaint)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.stroke))
+                    .padding(.leading, 3)
             }
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(Theme.textMuted)

@@ -1295,6 +1295,9 @@ final class AppState {
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
+                // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
+                case "switch": startOnboarding()
+                case "back": cancelOnboarding()
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
