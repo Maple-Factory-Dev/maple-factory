@@ -783,7 +783,7 @@ function overview(t) {
       t.followUps.map((f) => h("div", { class: "check" }, h("div", {},
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
         f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
-    t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map(doneItem))],
+    t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))],
     timeline(t));
 }
 
@@ -827,14 +827,40 @@ function mockup(m) {
     m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
 }
 
-function doneItem(d) {
+const attesting = new Map(); // task id → { item, note }: the Done when item being attested and the reason typed so far
+
+function doneItem(t, d, i) {
   const ok = d.status === "proven";
+  // The same rule as the server and the Mac app: a person can attest while it's building or in review.
+  const canAttest = !ok && (t.state === "building" || t.state === "reviewing");
+  const open = canAttest && attesting.get(t.id)?.item === i;
   return h("div", { class: "check" },
     h("span", { class: `mark ${ok ? "ok" : d.status === "failed" ? "bad" : "wait"}` }, ok ? "✓" : d.status === "failed" ? "✕" : "○"),
-    h("div", { style: "flex:1;min-width:0" }, d.text,
+    h("div", { style: "flex:1;min-width:0" },
+      h("div", { class: "check-head" }, h("span", { class: "check-text" }, d.text),
+        ok && h("span", { class: "pill" }, d.evidence?.attested ? "Attested" : "Proven"),
+        canAttest && !open && h("button", { class: "btn small", onclick: () => { attesting.set(t.id, { item: i, note: "" }); render(); document.querySelector(`[data-keep="${t.id}:attest"]`)?.focus(); } }, "Attest")),
+      open && attestForm(t, i),
       d.evidence && h("div", { class: "muted", style: "font-size:13.5px" }, d.evidence.attested ? `Attested by @${d.evidence.by}${d.evidence.reason ? ` — ${d.evidence.reason}` : ""}` : d.evidence.summary),
       d.evidence?.output?.length > 0 && h("pre", { class: "out" }, [d.evidence.command && `$ ${d.evidence.command}`, ...d.evidence.output].filter(Boolean).join("\n")),
       d.evidence?.file && proofFile(d.evidence)));
+}
+
+/** Attest to a Done when item yourself, with an optional reason. */
+function attestForm(t, i) {
+  const close = () => { attesting.delete(t.id); render(); };
+  const go = () => {
+    const note = (attesting.get(t.id)?.note ?? "").trim();
+    if (!send({ type: "task.checkedIt", id: t.id, item: i, note: note || null })) return;
+    close();
+  };
+  return h("form", { class: "attest", onsubmit: (e) => { e.preventDefault(); go(); } },
+    h("b", {}, "Attest to this yourself"),
+    h("input", { type: "text", "data-keep": `${t.id}:attest`, placeholder: "Reason (optional)", value: attesting.get(t.id)?.note ?? "",
+      oninput: (e) => { const a = attesting.get(t.id); if (a) a.note = e.target.value; }, onkeydown: (e) => { if (e.key === "Escape") close(); } }),
+    h("div", { class: "row", style: "gap:6px;justify-content:flex-end" },
+      h("button", { class: "btn small", type: "button", onclick: close }, "Cancel"),
+      h("button", { class: "btn small primary", type: "submit" }, "Attest")));
 }
 
 /** `/attachments/<uuid>/<name>`, the shape the server keeps a proof's file under (attachments.ts). */
