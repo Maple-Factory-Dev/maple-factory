@@ -18,6 +18,7 @@ import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
+import type { StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
@@ -293,6 +294,7 @@ export class Engine {
         const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: msg.anchor ?? null, status: "queued", timing: null };
         task.changes.push(change);
         this.event(task, who, `asked for a change: ${text}`);
+        this.stat(task, "steer", { state: task.state }, who);
         if (task.state === "awaitingApproval") {
           // The plan isn't approved yet: the planner revises it.
           task.approvals = [];
@@ -326,6 +328,7 @@ export class Engine {
       case "task.answer": {
         const q = task.question ?? fail("There's no question waiting.");
         task.question = null;
+        this.stat(task, "question.answered", { waitMs: now() - q.at }, who, q.role);
         task.comments.push({ id: crypto.randomUUID(), author: who, text: msg.text, at: now(), anchor: `Q: ${q.text}`, via: null });
         this.event(task, who, `answered: ${msg.text}`);
         this.save(task);
@@ -352,6 +355,7 @@ export class Engine {
           await machineHub(this.env, w.machine).fetch("https://hub/activity", { method: "POST", body: JSON.stringify({ session: w.session, activity: stopped }) });
         }
         this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${tool}`);
+        this.stat(task, "prompt.answered", { choice: msg.choice, tool: permission!.tool ?? null }, who, w.role);
         this.save(task);
         return;
       }
@@ -359,7 +363,7 @@ export class Engine {
         const hand = task.hand ?? fail("Nobody's asking for a hand.");
         const option = msg.option ? hand.options.find((o) => o.title === msg.option) : undefined;
         if (hand.reason === "mergeFailed") return this.resolveMergeFailed(task, who, option?.title ?? null, msg.note.trim());
-        task.hand = null;
+        this.lowerHand(task, who, option?.title ?? null);
         const decision = [option ? `Go with: ${option.title} — ${option.detail}` : null, msg.note.trim() || null].filter(Boolean).join("\n");
         if (decision) task.comments.push({ id: crypto.randomUUID(), author: who, text: decision, at: now(), anchor: `Hand: ${hand.summary}`, via: null });
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
@@ -381,6 +385,7 @@ export class Engine {
       case "task.merge": {
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
         if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
+        if (this.store.private(task.id).merging) fail("It's merging now.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
@@ -470,7 +475,7 @@ export class Engine {
           task.autoReview = review;
           task.reviews = [];
         }
-        task.hand = null;
+        this.lowerHand(task, who);
         task.question = null;
         task.waiting = null;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
@@ -688,6 +693,7 @@ export class Engine {
     task.state = "building";
     task.waiting = null;
     this.event(task, "factory", why);
+    this.stat(task, "plan.approved", { version: task.planVersion, approvals: task.approvals.length }, task.approvals.at(-1) ?? "factory");
     const goal = this.store.goal(task.goal);
     if (!goal) return;
     for (const f of task.followUps.filter((f) => !f.task)) {
@@ -894,7 +900,7 @@ export class Engine {
           return null;
         }
         if (!trusting && task.hand?.summary.startsWith(TRUST_HAND)) {
-          task.hand = null;
+          this.lowerHand(task, "factory");
           this.event(task, s.role, "carried on once its folder was trusted");
           this.save(task);
         }
@@ -988,6 +994,9 @@ export class Engine {
     }
     const priv = this.store.private(task.id);
     const where = (await this.hooks.machines()).find((m) => m.id === s.machine)?.name ?? s.machine;
+    if (priv.restarts >= MAX_RESTARTS || !["machineSlept", "tmuxLost", "runnerUpdated", "signaled", "outOfMemory"].includes(end.cause)) {
+      this.stat(task, "session.ended", { cause: end.cause }, end.cause === "killed" ? end.by ?? null : null, s.role);
+    }
     switch (end.cause) {
       case "machineSlept":
       case "tmuxLost":
@@ -997,6 +1006,7 @@ export class Engine {
         if (priv.restarts < MAX_RESTARTS) {
           this.store.savePrivate(task.id, { ...priv, restarts: priv.restarts + 1 });
           this.event(task, "factory", `its ${s.role} ended (${describeCause(end)}); starting it again`);
+          this.stat(task, "session.restarted", { cause: end.cause }, null, s.role);
           this.save(task);
           return this.pump();
         }
@@ -1155,7 +1165,8 @@ export class Engine {
 
   private merged(msg: Extract<RunnerMessage, { type: "task.merged" }>) {
     const task = this.store.task(msg.taskId);
-    if (!task || !task.pr) return;
+    // Already merged: a second answer (a webhook after the merge call's own) changes nothing.
+    if (!task || !task.pr || task.state === "merged") return;
     task.liveLog = null;
     this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false });
     if (!msg.ok) {
@@ -1173,6 +1184,8 @@ export class Engine {
       this.save(task);
       return;
     }
+    const by = this.store.private(task.id).mergeBy ?? null;
+    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt }, by);
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base} (${msg.commit?.slice(0, 7) ?? ""})`);
@@ -1187,6 +1200,7 @@ export class Engine {
 
   /** Ends a task's work: its session, its pull request, anything waiting on a person. */
   private async cancel(task: Task, who: string, why = "cancelled it") {
+    this.stat(task, "cancelled", { state: task.state }, who);
     await this.closeWorker(task, "cancelled");
     task.state = "cancelled";
     // Nothing's reviewing it or going to merge it now.
@@ -1201,7 +1215,7 @@ export class Engine {
     if (task.autoReview?.rounds.at(-1)?.verdict === "inProgress") task.autoReview.rounds.pop();
     task.waiting = null;
     task.question = null;
-    task.hand = null;
+    this.lowerHand(task, who);
     this.event(task, who, why);
     this.save(task);
     await audit(this.env, who, "task.cancelled", task.id);
@@ -1312,6 +1326,7 @@ export class Engine {
         task.doneWhen = done.map((d) => ({ text: str(d.text, "doneWhen[].text"), proof: proofKind(d.proof), status: "pending", evidence: null }));
         task.planSummary = str(a.summary, "summary");
         task.planVersion += 1;
+        this.stat(task, "plan.submitted", { version: task.planVersion, steps: task.plan.length }, null, s.role);
         const risk = obj(a.risk);
         const level = ["low", "medium", "high"].includes(risk.level as string) ? (risk.level as "low" | "medium" | "high") : "medium";
         task.risk = { level, reasons: arr(risk.reasons).map(String), areas: arr(risk.areas).map(String) };
@@ -1349,6 +1364,7 @@ export class Engine {
       case "ask": {
         const question = str(a.question, "question");
         task.question = { text: question, options: arr(a.options).map(String), role: s.role, at: now() };
+        this.stat(task, "question.asked", {}, null, s.role);
         this.event(task, s.role, `asked: ${question}`);
         this.intake.forTask(task, `${task.id}'s ${s.role} asks: ${question}`, true);
         this.hooks.broadcast({ type: "toast", text: `${task.id}'s ${s.role} has a question.`, taskId: task.id });
@@ -1361,8 +1377,10 @@ export class Engine {
           const x = obj(o);
           return { title: str(x.title, "options[].title"), detail: String(x.detail ?? ""), recommended: x.recommended === true };
         });
+        this.lowerHand(task, "factory");
         task.hand = { reason, summary: str(a.summary, "summary"), at: now(), assignee: task.owner, options };
         this.event(task, s.role, "raised a hand");
+        this.stat(task, "hand.raised", { reason }, null, s.role);
         this.hooks.broadcast({ type: "toast", text: `${task.id} needs a hand.`, taskId: task.id });
         return { summary: "Hand raised. End your turn now; a person's decision will be typed into this session." };
       }
@@ -1473,18 +1491,23 @@ export class Engine {
         round.verdict = a.verdict === "passed" && !serious ? "passed" : "changesRequested";
         round.found = found.length;
         round.at = now();
+        const fixed = arr(a.fixed).length;
+        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map((f) => ({ kind: f.kind, severity: f.severity })) }, null, s.role);
         this.closeWorker(task, "done");
         if (round.verdict === "passed") {
           this.event(task, "reviewer", `passed round ${round.number}`);
+          reviewed();
           this.hooks.broadcast({ type: "toast", text: `${task.id} passed review; it's ready for yours.`, taskId: task.id });
           return { summary: "Review in: passed. End your turn now." };
         }
         if (round.number >= review.maxRounds) {
           round.verdict = "escalated";
+          reviewed();
           this.raise(task, "reviewer", "reviewLoop", `${round.number} review rounds and it still has open findings.`);
           return { summary: "Review in. The rounds ran out, so a person takes it from here. End your turn now." };
         }
         round.fix = `${found.length} finding${found.length === 1 ? "" : "s"} to fix`;
+        reviewed();
         task.state = "building";
         this.event(task, "reviewer", `asked for changes in round ${round.number}`);
         this.hooks.waitUntil(this.pump());
@@ -1543,7 +1566,7 @@ export class Engine {
     if (app && priv.gh && !task.pr?.url) fail("Its pull request isn't open on GitHub; it can't be merged without one.");
     if (app && priv.gh && task.pr?.url) {
       // On GitHub: squash-merge the pull request, pinned to the head that was reviewed.
-      this.store.savePrivate(task.id, { ...priv, merging: true });
+      this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who });
       this.event(task, who, text);
       task.liveLog = "Merging…";
       this.save(task);
@@ -1571,7 +1594,7 @@ export class Engine {
       title: `Merge ${task.id}: ${task.title}`,
     });
     if (!sent) fail(`${(await this.hooks.machines()).find((m) => m.id === task.machine)?.name ?? task.machine} is offline; it merges when it's back.`);
-    this.store.savePrivate(task.id, { ...priv, merging: true });
+    this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who });
     this.event(task, who, text);
     task.liveLog = "Merging…";
     this.save(task);
@@ -1607,7 +1630,7 @@ export class Engine {
     const pick = option ?? (note ? MERGE_FIX : fail("Pick a way forward."));
     if (pick !== "Cancel it" && task.state !== "reviewing") fail("It's not waiting to merge any more.");
     const picked = () => {
-      task.hand = null;
+      this.lowerHand(task, who, pick);
       task.comments.push({ id: crypto.randomUUID(), author: who, text: [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), at: now(), anchor: `Hand: ${hand.summary}`, via: null });
     };
     if (pick === MERGE_RETRY) {
@@ -1647,7 +1670,7 @@ export class Engine {
   private async backToBuilding(task: Task) {
     // A "didn't merge" hand is moot once the builder has it; left up, it would keep the pump away.
     if (task.hand?.reason === "mergeFailed") {
-      task.hand = null;
+      this.lowerHand(task, "factory");
       this.event(task, "factory", "cleared the didn't-merge hand: the builder takes it from here");
     }
     await this.closeWorker(task, "cancelled");
@@ -1660,6 +1683,7 @@ export class Engine {
   // Helpers
 
   private raise(task: Task, role: Role | string, reason: Hand["reason"], summary: string, options?: Hand["options"]) {
+    this.lowerHand(task, "factory"); // replaced by this one
     task.hand = {
       reason,
       summary,
@@ -1671,6 +1695,7 @@ export class Engine {
       ],
     };
     this.event(task, String(role), `stopped and needs a hand: ${summary}`);
+    this.stat(task, "hand.raised", { reason }, null, String(role));
     this.hooks.broadcast({ type: "toast", text: `${task.id} needs a hand: ${summary}`, taskId: task.id });
   }
 
@@ -1722,7 +1747,7 @@ export class Engine {
     const carried = commit ?? task.pr?.head ?? null;
     this.store.savePrivate(task.id, { ...priv, worktree: null, repoDir: null, restarts: 0, finishing: false, movedFrom: { machine: from, commit: carried } });
     task.machine = null;
-    task.hand = null;
+    this.lowerHand(task, who);
     task.question = null;
     task.waiting = null;
     task.liveLog = null;
@@ -1793,6 +1818,19 @@ export class Engine {
   private event(task: Task, who: string, text: string) {
     task.events.push({ who, text, at: now() });
     if (task.events.length > MAX_EVENTS) task.events.splice(0, task.events.length - MAX_EVENTS);
+  }
+
+  private stat(task: Task, kind: StatKind, detail: Record<string, unknown> = {}, actor: string | null = null, role: string | null = null) {
+    this.store.recordStat({ at: now(), kind, task: task.id, goal: task.goal, role, actor, detail });
+  }
+
+  /** Takes a task's hand down (answered, retried, cancelled, or replaced by another), recording how long it was up,
+   *  who took it down and the option they picked. */
+  private lowerHand(task: Task, who: string, option: string | null = null) {
+    const hand = task.hand;
+    if (!hand) return;
+    task.hand = null;
+    this.stat(task, "hand.resolved", { reason: hand.reason, openMs: now() - hand.at, option }, who);
   }
 
   private save(task: Task, touch = true) {

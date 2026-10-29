@@ -105,6 +105,11 @@ export default {
     if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local" });
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
     if (path === "/api/usage/goals" && request.method === "GET") return orgHub(env).fetch("https://org/usage/goals");
+    if (path === "/api/stats" && request.method === "GET") {
+      // For prompt and loop tuning: ?days= (7, 30 or 90), &goal=, &raw=1 adds the event rows.
+      if (me.role !== "admin") return text("Only admins can see statistics.", 403);
+      return orgHub(env).fetch(`https://org/stats${url.search}`);
+    }
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
     if (diff && request.method === "GET") return orgHub(env).fetch(`https://org/diff?task=${diff[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);

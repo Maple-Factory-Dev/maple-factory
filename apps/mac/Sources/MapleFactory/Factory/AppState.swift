@@ -249,7 +249,7 @@ final class AppState {
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
         showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
-            && ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(destination)
+            && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
     var contentWidth: CGFloat { windowWidth - sidebarSpace - (inspectorInline ? 380 : 0) }

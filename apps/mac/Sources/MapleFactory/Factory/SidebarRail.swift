@@ -34,6 +34,9 @@ struct SidebarRail: View {
             nav("Activity", icon: "waveform.path.ecg", destination: .activity)
             nav("Scratchpad", icon: "note.text", destination: .scratchpad, detail: "\(state.notes.count) notes")
             nav("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage, detail: "34% session · 41% week")
+            if client.canSeeStats {
+                nav("Statistics", icon: "chart.bar.xaxis", destination: .statistics)
+            }
             item("Notifications", detail: Notifier.shared.statusText,
                  dot: Notifier.shared.isSnoozed ? Theme.State.awaitingApproval : nil) {
                 Menu {

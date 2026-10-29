@@ -27,6 +27,9 @@ struct FactorySidebar: View {
                 navRow("Activity", icon: "waveform.path.ecg", destination: .activity)
                 navRow("Scratchpad", icon: "note.text", destination: .scratchpad, count: "\(state.notes.count)")
                 navRow("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage)
+                if client.canSeeStats {
+                    navRow("Statistics", icon: "chart.bar.xaxis", destination: .statistics)
+                }
                 if let until = Notifier.shared.snoozedUntil, Notifier.shared.isSnoozed {
                     row(selected: false) {
                         Image(systemName: "bell.slash").font(.system(size: 11)).frame(width: 16)
