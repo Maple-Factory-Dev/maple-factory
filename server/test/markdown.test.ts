@@ -49,9 +49,8 @@ test("links open only for http(s) and mailto", () => {
   assert.deepEqual(inline("[docs](https://example.com)"), [
     { type: "link", href: "https://example.com", children: [{ type: "text", text: "docs" }] },
   ]);
-  const nodes = inline("[click](javascript:alert(1))");
-  assert.ok(!JSON.stringify(nodes).includes('"link"'));
-  assert.ok(!JSON.stringify(nodes).includes("javascript:alert"));
+  const nodes = inline("[click](javascript:alert(1)) after");
+  assert.deepEqual(nodes, [{ type: "text", text: "click after" }]);
   assert.ok(!JSON.stringify(inline("[x](JavaScript:void(0)) [y](data:text/html,hi)")).includes('"link"'));
 });
 

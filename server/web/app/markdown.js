@@ -102,10 +102,10 @@ export function inline(text) {
     } else if ((m = /^([*_])(?=\S)([\s\S]+?)(?<=\S)\1/.exec(rest)) && !(c === "_" && wordBefore(i))) {
       push({ type: "em", children: inline(m[2]) });
       i += m[0].length;
-    } else if (c === "[" && (m = /^\[([^\]]*)\]\(([^)\s]*)\)/.exec(rest))) {
+    } else if (c === "[" && (m = /^\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)/.exec(rest))) {
       const children = inline(m[1]);
       if (SAFE_LINK.test(m[2])) push({ type: "link", href: m[2], children });
-      else for (const child of children) push(child);
+      else for (const child of children) child.type === "text" ? (plain += child.text) : push(child);
       i += m[0].length;
     } else if (!wordBefore(i) && (m = /^https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/.exec(rest))) {
       push({ type: "link", href: m[0], children: [{ type: "text", text: m[0] }] });
@@ -235,8 +235,8 @@ export function render(blocks, h) {
     switch (b.type) {
       case "heading": return h(`h${Math.min(b.level + 2, 6)}`, { class: "md-h" }, spans(b.inline));
       case "list":
-        return h(b.ordered ? "ol" : "ul", { start: b.ordered && b.start !== 1 ? String(b.start) : null, class: b.items.some((i) => i.checked != null) ? "tasks" : null },
-          b.items.map((item) => h("li", {},
+        return h(b.ordered ? "ol" : "ul", { start: b.ordered && b.start !== 1 ? String(b.start) : null },
+          b.items.map((item) => h("li", { class: item.checked != null ? "task" : null },
             item.checked != null && h("input", { type: "checkbox", checked: item.checked, disabled: true }),
             spans(item.inline))));
       case "quote": return h("blockquote", {}, spans(b.inline));
