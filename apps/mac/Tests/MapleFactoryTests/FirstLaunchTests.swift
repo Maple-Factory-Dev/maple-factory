@@ -25,6 +25,14 @@ struct FirstLaunchTests {
         #expect(AppState.showsMock(arguments: [app, "-mock", "true"]))
     }
 
+    @Test func onboardingSwitchesCountOnlyWhenOn() {
+        #expect(AppState.showsMock(arguments: [app, "-onboarding", "YES"]))
+        #expect(AppState.showsMock(arguments: [app, "-onboardingFromWorkspace", "1"]))
+        #expect(!AppState.showsMock(arguments: [app, "-onboarding", "NO"]))
+        #expect(!AppState.showsMock(arguments: [app, "-onboardingFromWorkspace", "NO"]))
+        #expect(!AppState.showsMock(arguments: [app, "-onboardingAuto", "false"]))
+    }
+
     @Test func signedOutWithoutDemoOpensOnboarding() {
         #expect(AppState.launchesToOnboarding(signedIn: false, demo: false))
     }
@@ -42,5 +50,19 @@ struct FirstLaunchTests {
         #expect(!AppState.onboardingCancellable(signedIn: false, demo: false))
         #expect(AppState.onboardingCancellable(signedIn: true, demo: false))
         #expect(AppState.onboardingCancellable(signedIn: false, demo: true))
+    }
+
+    /// Signing out of the last factory has to go through AppState.signOut, or it lands on the mockup.
+    @Test func everySignOutGoesThroughAppState() throws {
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MapleFactory")
+        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        var callers: [String] = []
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            if text.contains("client.signOut()") { callers.append(url.lastPathComponent) }
+        }
+        #expect(callers == ["AppState.swift"])
     }
 }

@@ -203,10 +203,7 @@ struct FactoryMenu: View {
         if !client.savedFactories.isEmpty { Divider() }
         Button("Add new factory…", systemImage: "plus") { state.startOnboarding() }
         if client.isSignedIn {
-            Button("Sign out of \(client.workspaceName)") {
-                client.signOut()
-                if client.isSignedIn { state.didSwitchFactory() }
-            }
+            Button("Sign out of \(client.workspaceName)") { state.signOut() }
         }
     }
 }

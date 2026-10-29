@@ -161,12 +161,17 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "mockview", "onboarding", "onboardingAuto", "onboardingStep", "onboardingFromWorkspace"]
+                                        "mockview", "onboardingStep"]
+    /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
+    nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
-    /// `-mock YES`/`NO` decides; otherwise any demo flag makes it a demo. A fresh install has none.
+    /// `-mock YES`/`NO` decides; otherwise any demo flag, or demo switch that's on, makes it a demo.
+    /// A fresh install has none.
     nonisolated static func showsMock(arguments: [String]) -> Bool {
-        if let mock = Headless.value("mock", in: arguments) { return ["yes", "true", "1"].contains(mock.lowercased()) }
+        func isOn(_ value: String) -> Bool { ["yes", "true", "1"].contains(value.lowercased()) }
+        if let mock = Headless.value("mock", in: arguments) { return isOn(mock) }
         return demoFlags.contains { Headless.value($0, in: arguments) != nil }
+            || demoSwitches.contains { Headless.value($0, in: arguments).map(isOn) == true }
     }
 
     /// Signed out and not a demo: there's no factory to show, so connect to one.

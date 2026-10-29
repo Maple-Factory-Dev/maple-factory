@@ -103,6 +103,7 @@ struct GeneralSettings: View {
 
 /// Which factory this app is signed in to, and as whom.
 struct AccountSettings: View {
+    @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
 
     var body: some View {
@@ -130,7 +131,7 @@ struct AccountSettings: View {
                         Text(LocalizedStringKey(update.how)).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                 }
-                Button("Sign Out of \(client.workspaceName)", role: .destructive) { client.signOut() }
+                Button("Sign Out of \(client.workspaceName)", role: .destructive) { state.signOut() }
             } else {
                 ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Add a factory from the factory menu at the top of the sidebar."))
             }
