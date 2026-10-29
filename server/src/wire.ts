@@ -690,6 +690,106 @@ export interface Member {
   teams: string[];
 }
 
+/** A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet. */
+export interface StatsTotals {
+  merged: number;
+  autoMerged: number;
+  cancelled: number;
+  created: number;
+  tasksTouched: number;
+  handsRaised: number;
+  /** Up right now, whenever they were raised. */
+  handsOpen: number;
+  questions: number;
+  steers: number;
+  prompts: number;
+  restarts: number;
+  reviewRounds: number;
+  findings: number;
+  planVersions: number;
+  approvals: number;
+  /** From created to merged. */
+  cycleMedianMs?: number | null;
+  /** How long a hand stays up before someone answers it. */
+  handOpenMedianMs?: number | null;
+  /** How long an agent's question waits for its answer. */
+  answerMedianMs?: number | null;
+  /** Plans approved at version 1. */
+  firstTryApproval?: number | null;
+  avgPlanVersions?: number | null;
+  reviewRoundsPerMerge?: number | null;
+  steersPerTask?: number | null;
+}
+
+export interface StatsCount {
+  key: string;
+  count: number;
+  medianMs?: number | null;
+}
+
+export interface StatsDay {
+  /** YYYY-MM-DD (UTC). */
+  day: string;
+  merges: number;
+  hands: number;
+}
+
+export interface StatsGoalRow {
+  goal: string;
+  name: string;
+  tasks: number;
+  merged: number;
+  hands: number;
+  steers: number;
+  reviewRounds: number;
+  cycleMedianMs?: number | null;
+}
+
+export interface StatsAgentRow {
+  agent: string;
+  tasks: number;
+  merged: number;
+  hands: number;
+  steers: number;
+  reviewRounds: number;
+  firstTryApproval?: number | null;
+}
+
+export interface StatsTaskRow {
+  task: string;
+  title: string;
+  goal: string;
+  state: TaskState;
+  touchpoints: number;
+  hands: number;
+  steers: number;
+  questions: number;
+  reviewRounds: number;
+}
+
+/** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
+export interface StatsSummary {
+  days: number;
+  goal?: string | null;
+  since: number;
+  generatedAt: number;
+  /** Rows in the window worked out from older tasks' history rather than recorded as they happened. */
+  inferred: number;
+  totals: StatsTotals;
+  /** medianMs: how long they stayed up. */
+  handsByReason: StatsCount[];
+  findingsByKind: StatsCount[];
+  findingsBySeverity: StatsCount[];
+  restartsByCause: StatsCount[];
+  prompts: StatsCount[];
+  reviewVerdicts: StatsCount[];
+  daily: StatsDay[];
+  goals: StatsGoalRow[];
+  agents: StatsAgentRow[];
+  /** The tasks with the most touchpoints, most first. */
+  topTasks: StatsTaskRow[];
+}
+
 /** First message on every connection, so a server that missed messages catches up. */
 export interface RunnerMessage_Hello {
   type: "hello";
@@ -1302,9 +1402,16 @@ export interface ClientMessage_TaskMockupChange {
   text: string;
 }
 
+/** Admins only: the factory's statistics, answered with `stats`. */
+export interface ClientMessage_StatsGet {
+  type: "stats.get";
+  days: number;
+  goal?: string | null;
+}
+
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1414,6 +1521,12 @@ export interface ServerToClient_SessionEnded {
   end: SessionEnd;
 }
 
+/** The statistics `stats.get` asked for, to that connection only. */
+export interface ServerToClient_Stats {
+  type: "stats";
+  summary: StatsSummary;
+}
+
 export interface ServerToClient_Error {
   type: "error";
   message: string;
@@ -1421,5 +1534,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","repos.updated","toast","session.ended","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","repos.updated","toast","session.ended","stats","error"] as const;
