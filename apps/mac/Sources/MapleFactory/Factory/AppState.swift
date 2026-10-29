@@ -487,6 +487,13 @@ final class AppState {
         policy.assess(task, acceptance: acceptances[task.goal])
     }
 
+    /// Reviewed, proven and green, but a person merges it: the board's Pending merge column.
+    func pendingMerge(_ task: FactoryTask) -> Bool {
+        guard task.state == .reviewing, task.hand == nil, !autoMerging.contains(task.id) else { return false }
+        let gate = mergeGate(for: task)
+        return gate.canMerge && !gate.autoMerge
+    }
+
     func mergeGate(for task: FactoryTask) -> MergeGate {
         let risk = risk(for: task)
         let failedProofs = task.doneWhen.filter { $0.status == .failed }.count
