@@ -150,3 +150,31 @@ test("the editor's empty-src upload placeholder is a muted line", () => {
   assert.equal(p.attrs.class, "md-uploading");
   assert.deepEqual(texts(p), ["Uploading shot.png…"]);
 });
+
+// Task references: only IDs the factory knows link, so `UTF-8` and `ISO-8601` stay text.
+import { taskResolver } from "../web/app/markdown.js";
+
+test("a known task ID, bare or after #, becomes a taskref; unknown IDs and a#b stay text", () => {
+  const tasks = taskResolver([{ id: "MF-12", title: "Reference tickets", state: "building" }, { id: "MF-3", title: "Old", state: "merged" }]);
+  const ref = { type: "taskref", id: "MF-12", title: "Reference tickets", state: "building" };
+  assert.deepEqual(inline("see MF-12.", tasks), [{ type: "text", text: "see " }, ref, { type: "text", text: "." }]);
+  assert.deepEqual(inline("(#MF-12)", tasks), [{ type: "text", text: "(" }, ref, { type: "text", text: ")" }]);
+  assert.deepEqual(inline("**MF-3**", tasks), [{ type: "strong", children: [{ type: "taskref", id: "MF-3", title: "Old", state: "merged" }] }]);
+  for (const plain of ["UTF-8 and ISO-8601", "foo#bar a#b", "MF-99 is unknown", "XMF-12", "MF-12a", "MF-12-x", "`MF-12`", "a#MF-12"]) {
+    assert.ok(!JSON.stringify(inline(plain, tasks)).includes("taskref"), plain);
+  }
+  // Without a resolver, nothing links.
+  assert.deepEqual(inline("MF-12"), [{ type: "text", text: "MF-12" }]);
+  // Link text doesn't nest another link.
+  assert.ok(!JSON.stringify(inline("[MF-12](https://x.dev)", tasks)).includes("taskref"));
+  assert.deepEqual(parse("- MF-12", tasks)[0].items[0].inline, [ref]);
+});
+
+test("a taskref renders as a link to the task with its state dot and title", () => {
+  const h = (tag: string, attrs: Record<string, unknown>, ...children: unknown[]) => ({ tag, attrs, children: children.flat(Infinity) });
+  const tasks = taskResolver([{ id: "MF-12", title: "Reference tickets", state: "building" }]);
+  const tree = JSON.stringify(render(parse("see MF-12", tasks), h));
+  assert.ok(tree.includes('"href":"#/t/MF-12"'));
+  assert.ok(tree.includes('"title":"Reference tickets"'));
+  assert.ok(tree.includes('"class":"dot bg-building"'));
+});
