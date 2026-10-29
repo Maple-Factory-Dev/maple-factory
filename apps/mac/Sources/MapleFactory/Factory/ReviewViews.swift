@@ -498,6 +498,9 @@ struct PermissionPromptCard: View {
 
     private let color = Theme.State.awaitingApproval
 
+    /// `-actions 'prompt:<task>:yes'` presses a button, for demo videos.
+    static let demoAnswer = Notification.Name("PermissionPromptCard.demoAnswer")
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 5) {
@@ -580,6 +583,10 @@ struct PermissionPromptCard: View {
                 .fill(color)
                 .frame(width: 3)
         }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoAnswer)) { note in
+            guard prompt != nil, note.userInfo?["task"] as? String == task.id else { return }
+            answer(note.userInfo?["choice"] as? String == "no" ? .no : .yes)
+        }
         // A server refusal or a lost keypress: the buttons come back rather than spinning forever.
         .task(id: sent) {
             guard sent != nil else { return }
@@ -604,12 +611,14 @@ struct PermissionPromptCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(filled ? Color.clear : Theme.stroke))
         )
         .contentShape(Rectangle())
-        .onTapGesture {
-            guard sent == nil else { return }
-            sent = choice
-            client.answerPrompt(taskID: task.id, choice: choice)
-        }
+        .onTapGesture { answer(choice) }
         .help(choice == .yes ? "Allow it in the session (1)" : "Deny it in the session (2)")
+    }
+
+    private func answer(_ choice: Wire.PromptChoice) {
+        guard sent == nil else { return }
+        sent = choice
+        client.answerPrompt(taskID: task.id, choice: choice)
     }
 }
 

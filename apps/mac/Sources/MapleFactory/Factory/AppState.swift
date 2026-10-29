@@ -1679,6 +1679,8 @@ final class AppState {
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
+            // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
+            case "prompt": NotificationCenter.default.post(name: PermissionPromptCard.demoAnswer, object: nil, userInfo: ["task": parts[1], "choice": parts.count > 2 ? parts[2] : "yes"])
             case "teamslots": setTeamSlots(parts[1], to: Int(parts[2]) ?? 1)
             case "offline": toggleOffline(parts[1])
             case "resume": resumeElsewhere(parts[1])
