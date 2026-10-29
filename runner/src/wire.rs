@@ -514,6 +514,27 @@ pub struct AgentUsage {
     pub account: Option<UsageAccountRef>,
 }
 
+/// What one session has spent so far, measured from its agent's harness (status line or rollout file).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCost {
+    pub session: Uuid,
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Claude Code's API-equivalent estimate, not a subscription bill. None where the agent doesn't say (Codex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// Totals for the whole session, not the latest turn.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    pub observed_at: u64,
+}
+
 /// Usage caps for one agent's account on a machine, in place of the machine-wide ones.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1369,6 +1390,22 @@ pub struct StatsTaskRow {
     pub steers: u32,
     pub questions: u32,
     pub review_rounds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+}
+
+/// Spend for one group of sessions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsCostRow {
+    pub key: String,
+    pub sessions: u32,
+    /// Summed over sessions whose agent gives a $ figure.
+    pub cost_usd: f64,
+    /// Input, output and cache tokens over every session.
+    pub tokens: u64,
+    /// Sessions with tokens but no $ figure (Codex).
+    pub unpriced: u32,
 }
 
 /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
@@ -1405,6 +1442,14 @@ pub struct StatsSummary {
     /// The tasks with the most touchpoints, most first.
     #[serde(default)]
     pub top_tasks: Vec<StatsTaskRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_total: Option<StatsCostRow>,
+    /// planner, builder, reviewer, …
+    #[serde(default)]
+    pub cost_by_role: Vec<StatsCostRow>,
+    /// Keyed "agent · model".
+    #[serde(default)]
+    pub cost_by_agent: Vec<StatsCostRow>,
 }
 
 /// Runner → server.
@@ -1468,6 +1513,11 @@ pub enum RunnerMessage {
     Usage {
         #[serde(default)]
         agents: Vec<AgentUsage>,
+    },
+    /// A session's latest spend reading (again on reconnect, and once more just before it ends).
+    #[serde(rename = "session.cost")]
+    SessionCost {
+        cost: SessionCost,
     },
     /// A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).
     #[serde(rename = "mcp.request")]

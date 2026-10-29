@@ -178,6 +178,25 @@ export const structs: Record<string, Struct> = {
       account: "UsageAccountRef?",
     },
   },
+  SessionCost: {
+    doc: "What one session has spent so far, measured from its agent's harness (status line or rollout file).",
+    fields: {
+      session: "uuid",
+      agent: "string",
+      model: "string?",
+      costUsd: "f64?",
+      inputTokens: "u64",
+      outputTokens: "u64",
+      cacheReadTokens: "u64",
+      cacheWriteTokens: "u64",
+      durationMs: "u64?",
+      observedAt: "u64",
+    },
+    fieldDocs: {
+      costUsd: "Claude Code's API-equivalent estimate, not a subscription bill. None where the agent doesn't say (Codex).",
+      inputTokens: "Totals for the whole session, not the latest turn.",
+    },
+  },
   AgentCap: {
     doc: "Usage caps for one agent's account on a machine, in place of the machine-wide ones.",
     fields: { agent: "string", session: "f64?", weekly: "f64?" },
@@ -614,7 +633,16 @@ export const structs: Record<string, Struct> = {
     fields: { agent: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", firstTryApproval: "f64?" },
   },
   StatsTaskRow: {
-    fields: { task: "string", title: "string", goal: "string", state: "TaskState", touchpoints: "u32", hands: "u32", steers: "u32", questions: "u32", reviewRounds: "u32" },
+    fields: { task: "string", title: "string", goal: "string", state: "TaskState", touchpoints: "u32", hands: "u32", steers: "u32", questions: "u32", reviewRounds: "u32", costUsd: "f64?" },
+  },
+  StatsCostRow: {
+    doc: "Spend for one group of sessions.",
+    fields: { key: "string", sessions: "u32", costUsd: "f64", tokens: "u64", unpriced: "u32" },
+    fieldDocs: {
+      costUsd: "Summed over sessions whose agent gives a $ figure.",
+      tokens: "Input, output and cache tokens over every session.",
+      unpriced: "Sessions with tokens but no $ figure (Codex).",
+    },
   },
   StatsSummary: {
     doc: "The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.",
@@ -635,8 +663,13 @@ export const structs: Record<string, Struct> = {
       goals: "StatsGoalRow[]",
       agents: "StatsAgentRow[]",
       topTasks: "StatsTaskRow[]",
+      costTotal: "StatsCostRow?",
+      costByRole: "StatsCostRow[]",
+      costByAgent: "StatsCostRow[]",
     },
     fieldDocs: {
+      costByRole: "planner, builder, reviewer, …",
+      costByAgent: "Keyed \"agent · model\".",
       inferred: "Rows in the window worked out from older tasks' history rather than recorded as they happened.",
       handsByReason: "medianMs: how long they stayed up.",
       topTasks: "The tasks with the most touchpoints, most first.",
@@ -673,6 +706,7 @@ export const unions: Record<string, Union> = {
       },
       "update.status": { fields: { state: "string", version: "string?", message: "string?" } },
       usage: { doc: "Plan usage readings that changed (all of them again on reconnect).", fields: { agents: "AgentUsage[]" } },
+      "session.cost": { doc: "A session's latest spend reading (again on reconnect, and once more just before it ends).", fields: { cost: "SessionCost" } },
       "mcp.request": {
         doc: "A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).",
         fields: { reqId: "string", session: "uuid", tool: "string", args: "json" },

@@ -2,7 +2,8 @@
 // merge…) is a row in `stats_events` as it happens, and `summarize` adds a window of them up for the
 // Statistics page and `GET /api/stats`. Pure, so test/stats.test.ts runs it on fixtures.
 
-import type { Goal, StatsCount, StatsSummary, Task } from "../wire.ts";
+import type { Goal, StatsCostRow, StatsCount, StatsSummary, Task } from "../wire.ts";
+import type { SessionCostRow } from "./store.ts";
 
 export type StatKind =
   | "plan.submitted" // detail: version
@@ -92,6 +93,8 @@ export interface SummarizeOptions {
   goal?: string | null;
   goals?: Goal[];
   now?: number;
+  /** Each factory session's spend (store.sessionCosts); rows outside the window or goal are left out here. */
+  costs?: SessionCostRow[];
 }
 
 /** Totals, rates and medians over the last `days`, for one goal or all of them. */
@@ -149,6 +152,9 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     firstTryApproval: rate(of("plan.approved", list).map((e) => (num(e.detail.version) || 1) === 1)),
   })).sort((a, b) => b.tasks - a.tasks);
 
+  const costs = (opts.costs ?? []).filter((c) => c.updated >= since && c.updated <= at && (!goal || c.goal === goal));
+  const taskCost = new Map(group(costs, (c) => c.task).map(([id, list]) => [id, costRow(id, list)]));
+
   const topTasks = group(events, (e) => e.task).map(([id, list]) => {
     const t = byId.get(id);
     return {
@@ -161,6 +167,7 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
       steers: of("steer", list).length,
       questions: of("question.asked", list).length,
       reviewRounds: of("review.round", list).length,
+      costUsd: taskCost.get(id)?.costUsd ?? null,
     };
   }).filter((r) => r.touchpoints > 0).sort((a, b) => b.touchpoints - a.touchpoints || a.task.localeCompare(b.task)).slice(0, 10);
 
@@ -204,7 +211,27 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     goals: goalRows,
     agents: agentRows,
     topTasks,
+    costTotal: costs.length ? costRow("total", costs) : null,
+    costByRole: costRows(costs, (c) => c.role),
+    costByAgent: costRows(costs, (c) => (c.model ? `${c.agent} · ${c.model}` : c.agent)),
   };
+}
+
+/** One group's spend: $ over the sessions that gave one, tokens over all of them. */
+function costRow(key: string, list: SessionCostRow[]): StatsCostRow {
+  const tokens = (c: SessionCostRow) => c.tokens.input + c.tokens.output + c.tokens.cacheRead + c.tokens.cacheWrite;
+  return {
+    key,
+    sessions: list.length,
+    costUsd: Math.round(list.reduce((sum, c) => sum + (c.costUsd ?? 0), 0) * 10_000) / 10_000,
+    tokens: list.reduce((sum, c) => sum + tokens(c), 0),
+    unpriced: list.filter((c) => c.costUsd == null).length,
+  };
+}
+
+/** Most expensive first, then most tokens. */
+function costRows(list: SessionCostRow[], key: (c: SessionCostRow) => string): StatsCostRow[] {
+  return group(list, key).map(([k, xs]) => costRow(k, xs)).sort((a, b) => b.costUsd - a.costUsd || b.tokens - a.tokens || a.key.localeCompare(b.key));
 }
 
 export function median(values: number[]): number | null {

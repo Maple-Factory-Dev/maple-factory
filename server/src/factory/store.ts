@@ -50,6 +50,20 @@ export interface TaskSession {
   kind: "personal" | "team";
 }
 
+/// What one factory session has spent, as its runner last measured it.
+export interface SessionCostRow {
+  session: string;
+  task: string;
+  goal: string;
+  role: Role;
+  agent: string;
+  model: string | null;
+  /// Claude Code's API-equivalent estimate; null where the agent gives none (Codex).
+  costUsd: number | null;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  updated: number;
+}
+
 export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null };
 
 export class Store {
@@ -81,6 +95,11 @@ export class Store {
         role TEXT, actor TEXT, detail TEXT NOT NULL DEFAULT '{}'
       );
       CREATE INDEX IF NOT EXISTS stats_events_at ON stats_events (at);
+      CREATE TABLE IF NOT EXISTS session_costs (
+        session TEXT PRIMARY KEY, task TEXT NOT NULL, goal TEXT NOT NULL, role TEXT NOT NULL, agent TEXT NOT NULL,
+        model TEXT, cost_usd REAL, tokens TEXT NOT NULL DEFAULT '{}', updated INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS session_costs_updated ON session_costs (updated);
     `);
     this.backfillStats();
   }
@@ -117,6 +136,44 @@ export class Store {
     if (this.get("stats:backfilled")) return;
     for (const task of this.tasks()) for (const e of inferEvents(task)) this.recordStat(e);
     this.set("stats:backfilled", String(Date.now()));
+  }
+
+  // Costs: one row per factory session, its highest totals so far.
+
+  /** Keeps the higher of each total, so a restarted status line (counting from zero again) can't lower them. */
+  recordSessionCost(c: SessionCostRow) {
+    const old = this.sql.exec<{ cost_usd: number | null; tokens: string; model: string | null }>(
+      "SELECT cost_usd, tokens, model FROM session_costs WHERE session = ?", c.session,
+    ).toArray()[0];
+    let { costUsd, tokens, model } = c;
+    if (old) {
+      const prev = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...JSON.parse(old.tokens) } as SessionCostRow["tokens"];
+      costUsd = costUsd == null ? old.cost_usd : old.cost_usd == null ? costUsd : Math.max(costUsd, old.cost_usd);
+      tokens = {
+        input: Math.max(tokens.input, prev.input),
+        output: Math.max(tokens.output, prev.output),
+        cacheRead: Math.max(tokens.cacheRead, prev.cacheRead),
+        cacheWrite: Math.max(tokens.cacheWrite, prev.cacheWrite),
+      };
+      model = model ?? old.model;
+    }
+    this.sql.exec(
+      `INSERT INTO session_costs (session, task, goal, role, agent, model, cost_usd, tokens, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (session) DO UPDATE SET model = excluded.model, cost_usd = excluded.cost_usd, tokens = excluded.tokens, updated = excluded.updated`,
+      c.session, c.task, c.goal, c.role, c.agent, model, costUsd, JSON.stringify(tokens), c.updated,
+    );
+  }
+
+  /** Sessions that spent anything since `since` (ms), on `goal`'s tasks when given. */
+  sessionCosts(since = 0, goal?: string | null): SessionCostRow[] {
+    const rows = goal
+      ? this.sql.exec("SELECT * FROM session_costs WHERE updated >= ? AND goal = ?", since, goal)
+      : this.sql.exec("SELECT * FROM session_costs WHERE updated >= ?", since);
+    return (rows.toArray() as { session: string; task: string; goal: string; role: string; agent: string; model: string | null; cost_usd: number | null; tokens: string; updated: number }[])
+      .map((r) => ({
+        session: r.session, task: r.task, goal: r.goal, role: r.role as Role, agent: r.agent, model: r.model, costUsd: r.cost_usd,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...JSON.parse(r.tokens) }, updated: r.updated,
+      }));
   }
 
   // Goals

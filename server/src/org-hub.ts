@@ -174,7 +174,8 @@ export class OrgHub extends DurableObject<Env> {
     const recent = this.store.statEvents(since);
     const merged = [...new Set(recent.filter((e) => e.kind === "merged").map((e) => e.task))];
     const events = [...this.store.statRoundsBefore(merged, since), ...recent];
-    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at });
+    const costs = this.store.sessionCosts(since, goal || null);
+    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs });
   }
 
   /** Every enrolled machine, live where its hub has reported. */

@@ -1343,6 +1343,35 @@ public enum Wire {
         }
     }
 
+    /// What one session has spent so far, measured from its agent's harness (status line or rollout file).
+    public struct SessionCost: Codable, Hashable, Sendable {
+        public var session: String
+        public var agent: String
+        public var model: String?
+        /// Claude Code's API-equivalent estimate, not a subscription bill. None where the agent doesn't say (Codex).
+        public var costUsd: Double?
+        /// Totals for the whole session, not the latest turn.
+        public var inputTokens: UInt64
+        public var outputTokens: UInt64
+        public var cacheReadTokens: UInt64
+        public var cacheWriteTokens: UInt64
+        public var durationMs: UInt64?
+        public var observedAt: UInt64
+
+        public init(session: String, agent: String, model: String? = nil, costUsd: Double? = nil, inputTokens: UInt64, outputTokens: UInt64, cacheReadTokens: UInt64, cacheWriteTokens: UInt64, durationMs: UInt64? = nil, observedAt: UInt64) {
+            self.session = session
+            self.agent = agent
+            self.model = model
+            self.costUsd = costUsd
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.cacheReadTokens = cacheReadTokens
+            self.cacheWriteTokens = cacheWriteTokens
+            self.durationMs = durationMs
+            self.observedAt = observedAt
+        }
+    }
+
     /// Usage caps for one agent's account on a machine, in place of the machine-wide ones.
     public struct AgentCap: Codable, Hashable, Sendable {
         public var agent: String
@@ -2686,8 +2715,9 @@ public enum Wire {
         public var steers: UInt32
         public var questions: UInt32
         public var reviewRounds: UInt32
+        public var costUsd: Double?
 
-        public init(task: String, title: String, goal: String, state: TaskState, touchpoints: UInt32, hands: UInt32, steers: UInt32, questions: UInt32, reviewRounds: UInt32) {
+        public init(task: String, title: String, goal: String, state: TaskState, touchpoints: UInt32, hands: UInt32, steers: UInt32, questions: UInt32, reviewRounds: UInt32, costUsd: Double? = nil) {
             self.task = task
             self.title = title
             self.goal = goal
@@ -2697,6 +2727,27 @@ public enum Wire {
             self.steers = steers
             self.questions = questions
             self.reviewRounds = reviewRounds
+            self.costUsd = costUsd
+        }
+    }
+
+    /// Spend for one group of sessions.
+    public struct StatsCostRow: Codable, Hashable, Sendable {
+        public var key: String
+        public var sessions: UInt32
+        /// Summed over sessions whose agent gives a $ figure.
+        public var costUsd: Double
+        /// Input, output and cache tokens over every session.
+        public var tokens: UInt64
+        /// Sessions with tokens but no $ figure (Codex).
+        public var unpriced: UInt32
+
+        public init(key: String, sessions: UInt32, costUsd: Double, tokens: UInt64, unpriced: UInt32) {
+            self.key = key
+            self.sessions = sessions
+            self.costUsd = costUsd
+            self.tokens = tokens
+            self.unpriced = unpriced
         }
     }
 
@@ -2721,8 +2772,13 @@ public enum Wire {
         public var agents: [StatsAgentRow]
         /// The tasks with the most touchpoints, most first.
         public var topTasks: [StatsTaskRow]
+        public var costTotal: StatsCostRow?
+        /// planner, builder, reviewer, …
+        public var costByRole: [StatsCostRow]
+        /// Keyed "agent · model".
+        public var costByAgent: [StatsCostRow]
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = []) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = []) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -2739,6 +2795,9 @@ public enum Wire {
             self.goals = goals
             self.agents = agents
             self.topTasks = topTasks
+            self.costTotal = costTotal
+            self.costByRole = costByRole
+            self.costByAgent = costByAgent
         }
 
         public init(from decoder: Decoder) throws {
@@ -2759,6 +2818,9 @@ public enum Wire {
             goals = try c.decodeIfPresent([StatsGoalRow].self, forKey: .goals) ?? []
             agents = try c.decodeIfPresent([StatsAgentRow].self, forKey: .agents) ?? []
             topTasks = try c.decodeIfPresent([StatsTaskRow].self, forKey: .topTasks) ?? []
+            costTotal = try c.decodeIfPresent(StatsCostRow.self, forKey: .costTotal)
+            costByRole = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByRole) ?? []
+            costByAgent = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByAgent) ?? []
         }
     }
 
@@ -2876,6 +2938,15 @@ public enum Wire {
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             agents = try c.decodeIfPresent([AgentUsage].self, forKey: .agents) ?? []
+        }
+    }
+
+    /// A session's latest spend reading (again on reconnect, and once more just before it ends).
+    public struct RunnerMessageSessionCost: Codable, Hashable, Sendable {
+        public var cost: SessionCost
+
+        public init(cost: SessionCost) {
+            self.cost = cost
         }
     }
 
@@ -3066,6 +3137,7 @@ public enum Wire {
         case sessionReplay(RunnerMessageSessionReplay)
         case updateStatus(RunnerMessageUpdateStatus)
         case usage(RunnerMessageUsage)
+        case sessionCost(RunnerMessageSessionCost)
         case mcpRequest(RunnerMessageMcpRequest)
         case taskStarted(RunnerMessageTaskStarted)
         case taskFinished(RunnerMessageTaskFinished)
@@ -3093,6 +3165,7 @@ public enum Wire {
             case "session.replay": self = .sessionReplay(try RunnerMessageSessionReplay(from: decoder))
             case "update.status": self = .updateStatus(try RunnerMessageUpdateStatus(from: decoder))
             case "usage": self = .usage(try RunnerMessageUsage(from: decoder))
+            case "session.cost": self = .sessionCost(try RunnerMessageSessionCost(from: decoder))
             case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
             case "task.started": self = .taskStarted(try RunnerMessageTaskStarted(from: decoder))
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
@@ -3136,6 +3209,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .usage(let body):
                 try c.encode("usage", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionCost(let body):
+                try c.encode("session.cost", forKey: .type)
                 try body.encode(to: encoder)
             case .mcpRequest(let body):
                 try c.encode("mcp.request", forKey: .type)

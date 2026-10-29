@@ -285,7 +285,7 @@ pub fn claude_windows(rate_limits: &Value) -> Vec<Window> {
 // ---- Codex ----
 
 /// `$CODEX_HOME/sessions`, else `~/.codex/sessions`.
-fn codex_sessions_dir() -> PathBuf {
+pub fn codex_sessions_dir() -> PathBuf {
     match std::env::var_os("CODEX_HOME") {
         Some(home) if !home.is_empty() => PathBuf::from(home).join("sessions"),
         _ => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex/sessions"),
@@ -306,6 +306,18 @@ fn scan_codex(dir: &Path) -> Option<AgentUsage> {
 
 /// The most recently written `rollout-*.jsonl` files under the newest day folders, newest first.
 fn newest_rollouts(dir: &Path) -> Vec<(PathBuf, u64)> {
+    let mut files = rollouts(dir);
+    files.truncate(FILES);
+    files
+}
+
+/// Rollout files written since `since` (Unix ms), newest first (costs.rs).
+pub fn newest_rollouts_since(dir: &Path, since: u64) -> Vec<PathBuf> {
+    rollouts(dir).into_iter().take_while(|f| f.1 >= since).map(|f| f.0).collect()
+}
+
+/// Every `rollout-*.jsonl` file under the newest day folders, newest first.
+fn rollouts(dir: &Path) -> Vec<(PathBuf, u64)> {
     // Folder names sort by date: YYYY/MM/DD.
     let children = |p: &Path| -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
@@ -338,12 +350,11 @@ fn newest_rollouts(dir: &Path) -> Vec<(PathBuf, u64)> {
         })
         .collect();
     files.sort_by_key(|f| std::cmp::Reverse(f.1));
-    files.truncate(FILES);
     files
 }
 
 /// The last `max` bytes of a file, from the start of a line.
-fn read_tail(path: &Path, max: u64) -> Option<String> {
+pub fn read_tail(path: &Path, max: u64) -> Option<String> {
     let mut f = std::fs::File::open(path).ok()?;
     let len = f.metadata().ok()?.len();
     let start = len.saturating_sub(max);

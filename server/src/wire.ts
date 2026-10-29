@@ -172,6 +172,22 @@ export interface AgentUsage {
   account?: UsageAccountRef | null;
 }
 
+/** What one session has spent so far, measured from its agent's harness (status line or rollout file). */
+export interface SessionCost {
+  session: string;
+  agent: string;
+  model?: string | null;
+  /** Claude Code's API-equivalent estimate, not a subscription bill. None where the agent doesn't say (Codex). */
+  costUsd?: number | null;
+  /** Totals for the whole session, not the latest turn. */
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  durationMs?: number | null;
+  observedAt: number;
+}
+
 /** Usage caps for one agent's account on a machine, in place of the machine-wide ones. */
 export interface AgentCap {
   agent: string;
@@ -778,6 +794,19 @@ export interface StatsTaskRow {
   steers: number;
   questions: number;
   reviewRounds: number;
+  costUsd?: number | null;
+}
+
+/** Spend for one group of sessions. */
+export interface StatsCostRow {
+  key: string;
+  sessions: number;
+  /** Summed over sessions whose agent gives a $ figure. */
+  costUsd: number;
+  /** Input, output and cache tokens over every session. */
+  tokens: number;
+  /** Sessions with tokens but no $ figure (Codex). */
+  unpriced: number;
 }
 
 /** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
@@ -801,6 +830,11 @@ export interface StatsSummary {
   agents: StatsAgentRow[];
   /** The tasks with the most touchpoints, most first. */
   topTasks: StatsTaskRow[];
+  costTotal?: StatsCostRow | null;
+  /** planner, builder, reviewer, … */
+  costByRole: StatsCostRow[];
+  /** Keyed "agent · model". */
+  costByAgent: StatsCostRow[];
 }
 
 /** First message on every connection, so a server that missed messages catches up. */
@@ -863,6 +897,12 @@ export interface RunnerMessage_UpdateStatus {
 export interface RunnerMessage_Usage {
   type: "usage";
   agents: AgentUsage[];
+}
+
+/** A session's latest spend reading (again on reconnect, and once more just before it ends). */
+export interface RunnerMessage_SessionCost {
+  type: "session.cost";
+  cost: SessionCost;
 }
 
 /** A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools). */
@@ -963,8 +1003,8 @@ export interface RunnerMessage_TaskTokenRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.cleaned","task.token_request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.cleaned","task.token_request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";

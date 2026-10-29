@@ -195,3 +195,51 @@ test("the store reads a window, plus the earlier review rounds of only the tasks
   assert.deepEqual(store.statRoundsBefore(["A-1"], since).map((e) => [e.task, e.kind]), [["A-1", "review.round"]]);
   assert.deepEqual(store.statRoundsBefore([], since), []);
 });
+
+const cost = (session: string, task: string, role: string, agent: string, model: string | null, costUsd: number | null, input: number, output: number, ago = H, goal = "g1") =>
+  ({ session, task, goal, role: role as never, agent, model, costUsd, tokens: { input, output, cacheRead: 0, cacheWrite: 0 }, updated: NOW - ago });
+
+test("cost adds up by role and by agent · model; Codex has tokens but no $", () => {
+  const costs = [
+    cost("s1", "A-1", "planner", "claude", "claude-opus-5-5", 0.5, 1000, 100),
+    cost("s2", "A-1", "builder", "claude", "claude-opus-5-5", 2.25, 5000, 900),
+    cost("s3", "A-2", "builder", "codex", "gpt-6.1", null, 8000, 400),
+    cost("s4", "A-1", "reviewer", "claude", "claude-sonnet-5-5", 0.25, 2000, 50),
+    // Outside the window, and another goal's.
+    cost("s5", "A-9", "builder", "claude", "claude-opus-5-5", 9, 1, 1, 40 * DAY),
+    cost("s6", "B-1", "builder", "claude", "claude-opus-5-5", 7, 1, 1, H, "g2"),
+  ];
+  const s = summarize(events, tasks, { days: 30, now: NOW, costs, goal: "g1" });
+  assert.deepEqual(s.costTotal, { key: "total", sessions: 4, costUsd: 3, tokens: 17_450, unpriced: 1 });
+  assert.deepEqual(s.costByRole.map((r) => [r.key, r.sessions, r.costUsd, r.tokens, r.unpriced]), [
+    ["builder", 2, 2.25, 14_300, 1],
+    ["planner", 1, 0.5, 1100, 0],
+    ["reviewer", 1, 0.25, 2050, 0],
+  ]);
+  assert.deepEqual(s.costByAgent.map((r) => [r.key, r.sessions, r.costUsd]), [
+    ["claude · claude-opus-5-5", 2, 2.75],
+    ["claude · claude-sonnet-5-5", 1, 0.25],
+    ["codex · gpt-6.1", 1, 0],
+  ]);
+  assert.equal(s.topTasks.find((t) => t.task === "A-1")?.costUsd, 3);
+  assert.equal(s.topTasks.find((t) => t.task === "A-3")?.costUsd, null);
+  // Nothing measured yet.
+  const none = summarize(events, tasks, { days: 30, now: NOW });
+  assert.equal(none.costTotal, null);
+  assert.deepEqual(none.costByRole, []);
+});
+
+test("a later, lower reading doesn't reduce a session's total; the store reads a window and a goal", () => {
+  const store = new Store(sqlStorage());
+  store.recordSessionCost(cost("s1", "A-1", "builder", "claude", "claude-opus-5-5", 2, 5000, 900));
+  // Its status line restarted and counts from zero again.
+  store.recordSessionCost(cost("s1", "A-1", "builder", "claude", null, 0.1, 100, 1000, H / 2));
+  store.recordSessionCost(cost("s2", "A-2", "builder", "codex", "gpt-6.1", null, 10, 10));
+  store.recordSessionCost(cost("s3", "B-1", "planner", "claude", null, 1, 1, 1, H, "g2"));
+  store.recordSessionCost(cost("s4", "A-9", "planner", "claude", null, 1, 1, 1, 40 * DAY));
+  const s1 = store.sessionCosts(0).find((c) => c.session === "s1")!;
+  assert.deepEqual([s1.costUsd, s1.tokens.input, s1.tokens.output, s1.model, s1.updated], [2, 5000, 1000, "claude-opus-5-5", NOW - H / 2]);
+  assert.equal(store.sessionCosts(0).find((c) => c.session === "s2")!.costUsd, null);
+  assert.deepEqual(store.sessionCosts(NOW - 30 * DAY).map((c) => c.session).sort(), ["s1", "s2", "s3"]);
+  assert.deepEqual(store.sessionCosts(NOW - 30 * DAY, "g1").map((c) => c.session).sort(), ["s1", "s2"]);
+});
