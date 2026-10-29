@@ -145,7 +145,7 @@ struct QuestionBlock: View {
     @State private var replying = false
     @State private var reply = ""
 
-    private var options: [String] { appState.isLive ? task.questionOptions : ["Auto-provision", "Require invite"] }
+    private var options: [String] { task.questionOptions }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -181,22 +181,15 @@ struct QuestionBlock: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
             }
-            FlowLayout(spacing: 6) {
-                ForEach(options + ["Reply…"], id: \.self) { answer in
-                    Text(answer)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 10)
-                        .frame(height: 26)
-                        .background(
-                            Capsule()
-                                .fill(Theme.cardBG)
-                                .overlay(Capsule().strokeBorder(Theme.stroke))
-                        )
-                        .contentShape(Capsule())
-                        .onTapGesture {
-                            if answer == "Reply…" { replying = true } else { appState.answer(task.id, text: answer) }
-                        }
+            if options.allSatisfy({ $0.count <= 32 }) {
+                FlowLayout(spacing: 6) {
+                    ForEach(options + ["Reply…"], id: \.self) { answer in chip(answer) }
+                }
+            } else {
+                // Long answers read as full-width rows that wrap, like a hand-raise's options.
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(options, id: \.self) { answer in optionRow(answer) }
+                    chip("Reply…")
                 }
             }
             if replying {
@@ -220,6 +213,7 @@ struct QuestionBlock: View {
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Theme.State.planning.opacity(0.08))
@@ -229,6 +223,45 @@ struct QuestionBlock: View {
 }
 
 extension QuestionBlock {
+    private func chip(_ answer: String) -> some View {
+        Text(answer)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                Capsule()
+                    .fill(Theme.cardBG)
+                    .overlay(Capsule().strokeBorder(Theme.stroke))
+            )
+            .contentShape(Capsule())
+            .onTapGesture { pick(answer) }
+    }
+
+    private func optionRow(_ answer: String) -> some View {
+        Text(answer)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .lineSpacing(2)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Theme.cardBG)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .onTapGesture { pick(answer) }
+    }
+
+    private func pick(_ answer: String) {
+        if answer == "Reply…" { replying = true } else { appState.answer(task.id, text: answer) }
+    }
+
     private func sendReply() {
         let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
