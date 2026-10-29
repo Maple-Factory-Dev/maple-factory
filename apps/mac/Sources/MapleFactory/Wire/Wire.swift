@@ -1475,8 +1475,10 @@ public enum Wire {
         public var archived: Bool?
         /// The GitHub team (slug) it's for: its members follow it unless they unfollow.
         public var team: String?
+        /// Added to its sessions' prompts after the org's. Only its lead or an admin can change them.
+        public var prompts: PromptAdditions?
 
-        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil, archived: Bool? = nil, team: String? = nil) {
+        public init(id: String, name: String, prefix: String, color: String, summary: String, lead: String, due: UInt64? = nil, repo: String? = nil, repos: [String] = [], folder: String? = nil, base: String? = nil, archived: Bool? = nil, team: String? = nil, prompts: PromptAdditions? = nil) {
             self.id = id
             self.name = name
             self.prefix = prefix
@@ -1490,6 +1492,7 @@ public enum Wire {
             self.base = base
             self.archived = archived
             self.team = team
+            self.prompts = prompts
         }
 
         public init(from decoder: Decoder) throws {
@@ -1507,6 +1510,7 @@ public enum Wire {
             base = try c.decodeIfPresent(String.self, forKey: .base)
             archived = try c.decodeIfPresent(Bool.self, forKey: .archived)
             team = try c.decodeIfPresent(String.self, forKey: .team)
+            prompts = try c.decodeIfPresent(PromptAdditions.self, forKey: .prompts)
         }
     }
 
@@ -2071,8 +2075,10 @@ public enum Wire {
         public var startAt: UInt64?
         /// Its next session skips the wait for a free slot; cleared once it starts.
         public var force: Bool?
+        /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
+        public var effort: String?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2116,6 +2122,7 @@ public enum Wire {
             self.queueRank = queueRank
             self.startAt = startAt
             self.force = force
+            self.effort = effort
         }
 
         public init(from decoder: Decoder) throws {
@@ -2163,6 +2170,7 @@ public enum Wire {
             queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
+            effort = try c.decodeIfPresent(String.self, forKey: .effort)
         }
     }
 
@@ -2217,6 +2225,19 @@ public enum Wire {
             planApprovals = try c.decodeIfPresent([String: UInt32].self, forKey: .planApprovals) ?? [:]
             finalReviews = try c.decodeIfPresent([String: UInt32].self, forKey: .finalReviews) ?? [:]
             autoMerge = try c.decodeIfPresent([String: Bool].self, forKey: .autoMerge) ?? [:]
+        }
+    }
+
+    /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
+    public struct PromptAdditions: Codable, Hashable, Sendable {
+        public var planner: String
+        public var builder: String
+        public var reviewer: String
+
+        public init(planner: String, builder: String, reviewer: String) {
+            self.planner = planner
+            self.builder = builder
+            self.reviewer = reviewer
         }
     }
 
@@ -3696,6 +3717,15 @@ public enum Wire {
         }
     }
 
+    /// Admins only: the org's prompt additions.
+    public struct ClientMessagePromptsSave: Codable, Hashable, Sendable {
+        public var prompts: PromptAdditions
+
+        public init(prompts: PromptAdditions) {
+            self.prompts = prompts
+        }
+    }
+
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
         public var name: String
@@ -3740,8 +3770,9 @@ public enum Wire {
         public var intake: String?
         public var repo: String?
         public var after: [String]?
+        public var effort: String?
 
-        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil) {
+        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil, effort: String? = nil) {
             self.goal = goal
             self.title = title
             self.brief = brief
@@ -3752,6 +3783,7 @@ public enum Wire {
             self.intake = intake
             self.repo = repo
             self.after = after
+            self.effort = effort
         }
 
         public init(from decoder: Decoder) throws {
@@ -3766,6 +3798,7 @@ public enum Wire {
             intake = try c.decodeIfPresent(String.self, forKey: .intake)
             repo = try c.decodeIfPresent(String.self, forKey: .repo)
             after = try c.decodeIfPresent([String].self, forKey: .after)
+            effort = try c.decodeIfPresent(String.self, forKey: .effort)
         }
     }
 
@@ -3775,13 +3808,16 @@ public enum Wire {
         public var brief: String?
         public var shareable: Bool?
         public var repo: String?
+        /// Put it in this effort; an empty string takes it out.
+        public var effort: String?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
             self.shareable = shareable
             self.repo = repo
+            self.effort = effort
         }
     }
 
@@ -4003,6 +4039,7 @@ public enum Wire {
         case machineRename(ClientMessageMachineRename)
         case machineUpdate(ClientMessageMachineUpdate)
         case policySave(ClientMessagePolicySave)
+        case promptsSave(ClientMessagePromptsSave)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
@@ -4057,6 +4094,7 @@ public enum Wire {
             case "machine.rename": self = .machineRename(try ClientMessageMachineRename(from: decoder))
             case "machine.update": self = .machineUpdate(try ClientMessageMachineUpdate(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
+            case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
@@ -4153,6 +4191,9 @@ public enum Wire {
             case .policySave(let body):
                 try c.encode("policy.save", forKey: .type)
                 try body.encode(to: encoder)
+            case .promptsSave(let body):
+                try c.encode("prompts.save", forKey: .type)
+                try body.encode(to: encoder)
             case .reposRefresh:
                 try c.encode("repos.refresh", forKey: .type)
             case .reposAdd(let body):
@@ -4241,6 +4282,8 @@ public enum Wire {
         public var tasks: [Task]
         public var policy: RiskPolicy
         public var acceptances: [RiskAcceptance]
+        /// The org's prompt additions. None: an older server.
+        public var prompts: PromptAdditions?
         public var online: [Presence]
         public var notes: [Note]
         public var follows: [GoalFollow]
@@ -4254,7 +4297,7 @@ public enum Wire {
         public var serverUpdate: ServerUpdate?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -4264,6 +4307,7 @@ public enum Wire {
             self.tasks = tasks
             self.policy = policy
             self.acceptances = acceptances
+            self.prompts = prompts
             self.online = online
             self.notes = notes
             self.follows = follows
@@ -4286,6 +4330,7 @@ public enum Wire {
             tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
             policy = try c.decode(RiskPolicy.self, forKey: .policy)
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
+            prompts = try c.decodeIfPresent(PromptAdditions.self, forKey: .prompts)
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
@@ -4415,6 +4460,14 @@ public enum Wire {
         }
     }
 
+    public struct ServerToClientPromptsUpdated: Codable, Hashable, Sendable {
+        public var prompts: PromptAdditions
+
+        public init(prompts: PromptAdditions) {
+            self.prompts = prompts
+        }
+    }
+
     public struct ServerToClientReposUpdated: Codable, Hashable, Sendable {
         public var repos: [OrgRepo]
 
@@ -4483,6 +4536,7 @@ public enum Wire {
         case followsUpdated(ServerToClientFollowsUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
+        case promptsUpdated(ServerToClientPromptsUpdated)
         case reposUpdated(ServerToClientReposUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
@@ -4509,6 +4563,7 @@ public enum Wire {
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
+            case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
@@ -4559,6 +4614,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .policyUpdated(let body):
                 try c.encode("policy.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .promptsUpdated(let body):
+                try c.encode("prompts.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .reposUpdated(let body):
                 try c.encode("repos.updated", forKey: .type)

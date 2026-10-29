@@ -221,6 +221,8 @@ struct FactoryTask: Identifiable {
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
+    /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.
+    var effort: String? = nil
     /// The GitHub repo it changes (live goals that span several), and the tasks it builds on.
     var repo: String? = nil
     var after: [String] = []

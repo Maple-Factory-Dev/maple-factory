@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Foundation
 
 /// The app's defaults: the real ones, or a headless run's own suite, so a run never signs the real
@@ -11,7 +12,8 @@ nonisolated(unsafe) let AppDefaults: UserDefaults = Headless.isOn ? Headless.def
 /// `scripts/headless.sh` wraps it. Other flags: `-name` (the PNG's name; defaults to `-destination`),
 /// `-appearance light|dark|both`, `-settle 1.5` (seconds before the shot), `-frames N` and `-fps 10`
 /// (a frame sequence, for video), `-timeout 60`, `-height 1000`, `-instance` (the defaults suite's name),
-/// `-keep YES` (leave that suite as the last run left it, to show a setting surviving a relaunch).
+/// `-keep YES` (leave that suite as the last run left it, to show a setting surviving a relaunch),
+/// `-window sheet|settings` (shoot the main window's sheet, or the Settings window, instead).
 /// `-snapshot` makes it a demo launch, so a signed-out run shows the mockup; `-mock NO` shows what a
 /// fresh install does instead: the connect-to-a-factory screen.
 enum Headless {
@@ -213,10 +215,33 @@ enum Headless {
         }
     }
 
+    /// What `-window` asks for: the main window's sheet (a goal's, say), the Settings window, or the main window.
+    private var target: NSWindow? {
+        switch AppDefaults.string(forKey: "window") {
+        case "sheet": window?.attachedSheet
+        case "settings": settingsWindow
+        default: window
+        }
+    }
+
+    /// The Settings window's content in a window of its own: a background app's openSettings opens nothing.
+    private lazy var settingsWindow: NSWindow = {
+        let settings = NSWindow(contentViewController: NSHostingController(rootView: OrgSettingsView()
+            .environment(state).environment(client).defaultAppStorage(AppDefaults)))
+        settings.setContentSize(CGSize(width: 780, height: 560))
+        settings.isExcludedFromWindowsMenu = true
+        settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
+        return settings
+    }()
+
     /// The window's content as a bitmap: at the screen's scale, or `scale` (1 for video frames).
     private func render(scale: CGFloat? = nil) -> NSBitmapImageRep? {
-        guard let window, let view = window.contentView else { return nil }
-        if window.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) { Headless.hide(window) }
+        if let window, window.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) { Headless.hide(window) }
+        guard let target, let view = target.contentView else { return nil }
+        // A sheet moves with the main window; Settings keeps its own size, just off screen.
+        if target.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) {
+            target.setFrameOrigin(Headless.offscreenFrame(size: target.frame.size, screens: NSScreen.screens.map(\.frame)).origin)
+        }
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         let rep: NSBitmapImageRep?

@@ -13,7 +13,7 @@ import type {
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
@@ -114,6 +114,15 @@ export class Engine {
         const unknown = goal.repos.find((r) => known.length && !known.some((k) => k.name.toLowerCase() === r.toLowerCase()));
         if (unknown) fail(`${unknown} isn't one of the org's repos. Add it in Settings → Repositories (or grant the GitHub App access) first.`);
         if (this.store.goals().some((g) => g.prefix === goal.prefix && g.id !== goal.id)) fail(`Another goal already uses ${goal.prefix}.`);
+        const before = this.store.goal(goal.id);
+        // None (an older app) keeps what it had; all empty is none.
+        goal.prompts = goal.prompts ? cleanPrompts(goal.prompts) : (before?.prompts ?? null);
+        if (goal.prompts && !goal.prompts.planner && !goal.prompts.builder && !goal.prompts.reviewer) goal.prompts = null;
+        if (JSON.stringify(goal.prompts ?? null) !== JSON.stringify(before?.prompts ?? null) && member.role !== "admin") {
+          // Its lead before this save, so nobody can make themselves lead and change the prompts in one go.
+          const lead = before ? before.lead : goal.lead;
+          if (lead !== who) fail(`Only admins or ${lead}, its lead, can change ${goal.name}'s agent instructions.`);
+        }
         this.store.saveGoal(goal);
         this.hooks.broadcast({ type: "goal.updated", goal });
         return;
@@ -148,6 +157,14 @@ export class Engine {
         this.store.savePolicy(msg.policy);
         await audit(this.env, who, "policy.saved", null, msg.policy);
         return this.policyChanged();
+      }
+      case "prompts.save": {
+        if (member.role !== "admin") fail("Only admins can change the org's prompts.");
+        const prompts = cleanPrompts(msg.prompts);
+        this.store.savePrompts(prompts);
+        await audit(this.env, who, "prompts.saved", null, prompts);
+        this.hooks.broadcast({ type: "prompts.updated", prompts });
+        return;
       }
       case "goal.acceptRisk": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
@@ -231,7 +248,7 @@ export class Engine {
         const after = msg.after ?? [];
         for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
-        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after });
+        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort) });
         if (request) {
           for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
           for (const m of request.thread.filter((m) => !m.bot)) task.comments.push({ id: crypto.randomUUID(), author: m.author, text: m.text, at: m.at, anchor: null, via: sourceTitle(request) });
@@ -256,7 +273,15 @@ export class Engine {
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
         }
-        this.event(task, who, "edited it");
+        const effort = msg.effort != null ? effortName(msg.effort) : undefined;
+        const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
+        if (effort !== undefined && effort !== (task.effort ?? null)) {
+          // Any state: an effort only groups tasks, it doesn't change the work.
+          const was = task.effort;
+          task.effort = effort;
+          this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
+        }
+        if (!onlyEffort) this.event(task, who, "edited it");
         this.save(task);
         await this.pump();
         return;
@@ -643,7 +668,7 @@ export class Engine {
   }
 
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after" | "effort">): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -680,7 +705,7 @@ export class Engine {
     const goal = this.store.goal(task.goal);
     if (!goal) return;
     for (const f of task.followUps.filter((f) => !f.task)) {
-      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id] });
+      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
       f.task = part.id;
       this.event(task, "factory", `made ${part.id} for its ${f.repo} part`);
       await this.startPlanning(part, "factory");
@@ -760,7 +785,8 @@ export class Engine {
     const resumed = priv.movedFrom
       ? { reason: `This task was moved here from ${priv.movedFrom.machine}${priv.movedFrom.commit ? `; its work so far is on the branch, up to ${priv.movedFrom.commit.slice(0, 7)} (any "WIP" commit is unfinished)` : ""}.` }
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
-    const prompt = role === "planner" ? plannerPrompt(task, goal) : role === "builder" ? builderPrompt(task, goal, resumed) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main");
+    const org = this.store.prompts();
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org) : role === "builder" ? builderPrompt(task, goal, resumed, org) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -1820,6 +1846,11 @@ export class Engine {
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
+}
+
+/** An effort's name as stored: trimmed and spaces collapsed; blank is none. */
+function effortName(name: string | null | undefined): string | null {
+  return name?.trim().replace(/\s+/g, " ") || null;
 }
 
 function sourceTitle(r: { source: string; channel?: string | null }) {

@@ -20,7 +20,7 @@
 import type { Env } from "./env.ts";
 import { authConfigured, cookie, readCookie } from "./auth.ts";
 import { apiBase } from "./github.ts";
-import { escape, page, updateNotice } from "./page.ts";
+import { escape, githubButton, page, updateNotice } from "./page.ts";
 import { serverUpdate } from "./version.ts";
 import { saveSettings } from "./settings.ts";
 import { audit, isLocal, publicOrigin, randomToken, sha256, sign, text, verify } from "./util.ts";
@@ -81,6 +81,13 @@ async function sessionSecret(env: Env): Promise<string> {
   return env.SESSION_SECRET!;
 }
 
+/** Setup's progress: where it lives, its GitHub App, then installing it and signing in. */
+function rail(now: 1 | 2 | 3): string {
+  const steps = ["Address", "GitHub App", "Install &amp; sign in"];
+  return `<ol class="rail" aria-label="Setup steps">${steps.map((s, i) =>
+    `<li class="${i + 1 < now ? "done" : i + 1 === now ? "now" : ""}"${i + 1 === now ? ` aria-current="step"` : ""}><span>0${i + 1}</span>${s}</li>`).join("")}</ol>`;
+}
+
 export async function handleSetup(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/setup" && !url.pathname.startsWith("/setup/")) return null;
@@ -93,13 +100,16 @@ export async function handleSetup(request: Request, env: Env): Promise<Response 
   }
   if (authConfigured(env)) {
     const who = env.GITHUB_OWNER_TYPE === "User" ? `<b>${escape(org!)}</b> signs` : `members of <b>${escape(org!)}</b> sign`;
-    return page("Maple Factory", `${updateNotice(await serverUpdate(env))}<p>This factory is set up: ${who} in with GitHub.</p><p><a href="/auth/login">Sign in</a></p>`);
+    return page("Maple Factory", `${updateNotice(await serverUpdate(env))}<p class="lede">This factory is set up: ${who} in with GitHub.</p>
+      <p>${githubButton("/auth/login", "Sign in with GitHub")}</p>`, { card: true, eyebrow: "All set", heading: "You're ready to go" });
   }
   if (!org) {
-    return page("Set up Maple Factory", `<p>This factory doesn't know its GitHub organization yet.</p>
+    return page("Set up Maple Factory", `<section class="card">
       <p>In the Cloudflare dashboard, open this Worker → Settings → Variables and Secrets, set <code>GITHUB_ORG</code>
       to the organization's login (the <code>acme</code> in github.com/acme), or your own username for a factory just
-      for you, deploy, and come back here.</p>`);
+      for you, deploy, and come back here.</p></section>`, {
+      eyebrow: "Set up", heading: "Which GitHub account is it for?", lede: "This factory doesn't know its GitHub organization yet.",
+    });
   }
 
   if (url.pathname === "/setup") {
@@ -145,27 +155,29 @@ export async function handleSetup(request: Request, env: Env): Promise<Response 
     const onWorkersDev = host.endsWith(".workers.dev");
     const worker = host.split(".")[0];
     const where = !onWorkersDev ? "" : `
+      <section class="card step">
       <h2><span class="n">1</span> Where it lives</h2>
       <p>It's at <code>${escape(host)}</code>. To use a domain of your own instead, pick it now: the GitHub App keeps the address it was made at.</p>
-      <form id="domain" class="row">
+      <form id="domain" class="inline">
         <input name="domain" placeholder="factory.example.com" autocomplete="off" spellcheck="false" aria-label="Domain">
         <button type="submit">Use this domain</button>
       </form>
-      <p id="domain-status" class="note" hidden></p>
+      <p id="domain-status" class="status" hidden></p>
       <p class="note">Or skip this and keep ${escape(host)}.</p>
+      </section>
       <script>
         const id = ${JSON.stringify(await factoryId(secret))};
         const dash = ${JSON.stringify(`https://dash.cloudflare.com/?to=/:account/workers/services/view/${encodeURIComponent(worker)}/production/settings`)};
         const status = document.getElementById("domain-status");
-        const say = (html) => { status.innerHTML = html; status.hidden = false; };
+        const say = (html, state = "bad") => { status.innerHTML = html; status.dataset.state = state; status.hidden = false; };
         document.getElementById("domain").onsubmit = async (e) => {
           e.preventDefault();
           const domain = e.target.domain.value.trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "");
           if (!/^[a-z0-9-]+(\\.[a-z0-9-]+)+$/.test(domain)) return say("That isn't a domain name.");
-          say(\`Looking for this factory at \${domain}…\`);
+          say(\`Looking for this factory at \${domain}…\`, "busy");
           let found = null;
           try { found = (await (await fetch(\`https://\${domain}/setup/id\`, { cache: "no-store" })).json()).id; } catch {}
-          if (found === id) { say(\`Found it. Carrying on at \${domain}…\`); location.href = \`https://\${domain}/setup\`; return; }
+          if (found === id) { say(\`Found it. Carrying on at \${domain}…\`, "ok"); location.href = \`https://\${domain}/setup\`; return; }
           say(found
             ? \`\${domain} reaches a different Maple Factory.\`
             : \`\${domain} doesn't reach this factory yet. In Cloudflare, open <a href="\${dash}" target="_blank" rel="noopener">this Worker's settings</a>,
@@ -174,11 +186,17 @@ export async function handleSetup(request: Request, env: Env): Promise<Response 
         };
       </script>`;
 
-    const html = page("Set up Maple Factory", `<p>Two steps and it's yours.</p>${where}
-      ${onWorkersDev ? `<h2><span class="n">2</span> Its GitHub App</h2>` : `<h2>Its GitHub App</h2>`}
+    const html = page("Set up Maple Factory", `${rail(onWorkersDev ? 1 : 2)}<div class="steps">${where}
+      <section class="card step">
+      <h2><span class="n">2</span> Its GitHub App</h2>
       <p>The app signs people in, and pushes, checks and merges tasks' pull requests. GitHub shows what it can do before you create it.</p>
       ${app}
-      <p class="note">It points at ${escape(origin)}.</p>`);
+      <p class="note">It points at <code>${escape(origin)}</code>.</p>
+      </section>
+      <section class="card step later">
+      <h2><span class="n">3</span> Install &amp; sign in</h2>
+      <p>GitHub brings you back here to install the app on your repositories, then you sign in.</p>
+      </section></div>`, { eyebrow: "Set up", heading: "Make it yours", lede: `A few minutes, and <b>${escape(org)}</b> has its own software factory.` });
     html.headers.append("set-cookie", cookie(url, "setup", state, STATE_TTL));
     return html;
   }
@@ -228,14 +246,27 @@ export async function handleSetup(request: Request, env: Env): Promise<Response 
 /** After installing: device flow, which the Mac app signs in with, can only be switched on by hand. */
 function done(env: Env, org: string | undefined): Response {
   const slug = env.GITHUB_APP_SLUG;
-  if (!org || !slug) return page("Set up Maple Factory", `<p><a href="/setup">Start setting up this factory</a>.</p>`);
+  if (!org || !slug) {
+    return page("Set up Maple Factory", `<p><a class="button primary" href="/setup">Start setting up</a></p>`, {
+      card: true, eyebrow: "Set up", heading: "Not set up yet", lede: "This factory doesn't have its GitHub App yet.",
+    });
+  }
   const settings = env.GITHUB_OWNER_TYPE === "User"
     ? `https://github.com/settings/apps/${encodeURIComponent(slug)}`
     : `https://github.com/organizations/${encodeURIComponent(org)}/settings/apps/${encodeURIComponent(slug)}`;
-  return page("Maple Factory is ready", `<p>The GitHub App <b>${escape(slug)}</b> is set up for ${escape(org)}.</p>
-    <ol>
-      <li>Install it on the repositories you work in, if you haven't: <a href="https://github.com/apps/${escape(encodeURIComponent(slug))}/installations/new">install</a>.</li>
-      <li>For the Mac app's sign-in, open <a href="${escape(settings)}">the app's settings</a>, tick <b>Enable Device Flow</b> and save. (GitHub can't do this one from a manifest.)</li>
-      <li><a href="/auth/login">Sign in</a>, then add your machines from Machines → Add machine.</li>
-    </ol>`);
+  return page("Maple Factory is ready", `${rail(3)}<section class="card">
+    <ol class="checklist">
+      <li><span class="n">1</span><span class="grow"><b class="title">Install it on your repositories</b>
+        <span class="sub">On the repositories you work in, if you haven't already.</span>
+        <a class="button" href="https://github.com/apps/${escape(encodeURIComponent(slug))}/installations/new">Install</a></span></li>
+      <li><span class="n">2</span><span class="grow"><b class="title">Enable Device Flow</b>
+        <span class="sub">For the Mac app's sign-in: in the app's settings, tick <b>Enable Device Flow</b> and save. (GitHub can't do this one from a manifest.)</span>
+        <a class="button" href="${escape(settings)}">Open the app's settings</a></span></li>
+      <li><span class="n">3</span><span class="grow"><b class="title">Sign in</b>
+        <span class="sub">Then add your machines from Machines → Add machine.</span>
+        ${githubButton("/auth/login", "Sign in with GitHub")}</span></li>
+    </ol></section>`, {
+    eyebrow: "Set up", heading: "Maple Factory is ready",
+    lede: `The GitHub App <b>${escape(slug)}</b> is set up for ${escape(org)}. Three last things:`,
+  });
 }
