@@ -12,6 +12,7 @@ import { toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
+import { summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
@@ -149,12 +150,24 @@ export class OrgHub extends DurableObject<Env> {
         for (const g of list) g.tasks.sort((a, b) => b.ms - a.ms);
         return Response.json(list);
       }
+      case "/stats": {
+        const summary = this.stats(Number(url.searchParams.get("days")), url.searchParams.get("goal"));
+        if (url.searchParams.get("raw") !== "1") return Response.json(summary);
+        const events = this.store.statEvents(summary.since).filter((e) => !summary.goal || e.goal === summary.goal);
+        return Response.json({ ...summary, events });
+      }
       case "/diff": {
         const patch = this.store.get(`patch:${url.searchParams.get("task")}`);
         return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });
       }
     }
     return new Response("Not found.", { status: 404 });
+  }
+
+  /** The statistics over the last `days` (7, 30 or 90; anything else reads as 30). */
+  private stats(days: number, goal?: string | null) {
+    const window = [7, 30, 90].includes(days) ? days : 30;
+    return summarize(this.store.statEvents(), this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals() });
   }
 
   /** Every enrolled machine, live where its hub has reported. */
@@ -360,6 +373,11 @@ export class OrgHub extends DurableObject<Env> {
         if (!existing || existing.owner !== client.member.login) return;
         this.store.deleteNote(msg.id);
         this.sendTo(client.member.login, { type: "note.removed", id: msg.id });
+        return;
+      }
+      case "stats.get": {
+        if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
+        this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
         return;
       }
       case "session.attach":
