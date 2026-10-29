@@ -38,6 +38,7 @@ struct FactoryLoadingView: View {
                 SecondaryButton(title: "Sign Out") { client.signOut() }
                 SecondaryButton(title: "Connect to Another Factory…") { state.startOnboarding() }
             }
+            .fixedSize()
             .padding(.top, 6)
         }
         .animation(.easeInOut(duration: 0.2), value: detail)
