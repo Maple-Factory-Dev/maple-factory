@@ -33,7 +33,7 @@ public enum Wire {
     }
 
     /// Why a session ended. The runner always says; `unknown` is a bug to chase, not a category.
-    public enum EndCause: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum EndCause: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// The agent exited on its own (see `code`).
         case exited
         /// Someone pressed Kill, or the task was cancelled.
@@ -54,10 +54,59 @@ public enum Wire {
         case usageLimit
         /// None of the above could be shown.
         case unknown
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [EndCause] = [.exited, .killed, .signaled, .outOfMemory, .machineSlept, .tmuxLost, .runnerUpdated, .authExpired, .usageLimit, .unknown]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "exited": self = .exited
+            case "killed": self = .killed
+            case "signaled": self = .signaled
+            case "outOfMemory": self = .outOfMemory
+            case "machineSlept": self = .machineSlept
+            case "tmuxLost": self = .tmuxLost
+            case "runnerUpdated": self = .runnerUpdated
+            case "authExpired": self = .authExpired
+            case "usageLimit": self = .usageLimit
+            case "unknown": self = .unknown
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .exited: "exited"
+            case .killed: "killed"
+            case .signaled: "signaled"
+            case .outOfMemory: "outOfMemory"
+            case .machineSlept: "machineSlept"
+            case .tmuxLost: "tmuxLost"
+            case .runnerUpdated: "runnerUpdated"
+            case .authExpired: "authExpired"
+            case .usageLimit: "usageLimit"
+            case .unknown: "unknown"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: EndCause, b: EndCause) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     /// Where a task is in the loop.
-    public enum TaskState: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum TaskState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Written, not sent to planning yet.
         case drafting
         /// A planner is writing the plan.
@@ -72,28 +121,141 @@ public enum Wire {
         case merged
         /// Stopped.
         case cancelled
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .building, .reviewing, .merged, .cancelled]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "drafting": self = .drafting
+            case "planning": self = .planning
+            case "awaitingApproval": self = .awaitingApproval
+            case "building": self = .building
+            case "reviewing": self = .reviewing
+            case "merged": self = .merged
+            case "cancelled": self = .cancelled
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .drafting: "drafting"
+            case .planning: "planning"
+            case .awaitingApproval: "awaitingApproval"
+            case .building: "building"
+            case .reviewing: "reviewing"
+            case .merged: "merged"
+            case .cancelled: "cancelled"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: TaskState, b: TaskState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     /// What a factory session is for.
-    public enum Role: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum Role: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Writes the plan.
         case planner
         /// Builds and proves it.
         case builder
         /// Reviews the change.
         case reviewer
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [Role] = [.planner, .builder, .reviewer]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "planner": self = .planner
+            case "builder": self = .builder
+            case "reviewer": self = .reviewer
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .planner: "planner"
+            case .builder: "builder"
+            case .reviewer: "reviewer"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: Role, b: Role) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum StepProgress: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum StepProgress: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Finished.
         case done
         /// Being worked on.
         case active
         /// Not started.
         case pending
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [StepProgress] = [.done, .active, .pending]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "done": self = .done
+            case "active": self = .active
+            case "pending": self = .pending
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .done: "done"
+            case .active: "active"
+            case .pending: "pending"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: StepProgress, b: StepProgress) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum ProofKind: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum ProofKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// An image.
         case screenshot
         /// A recording.
@@ -102,9 +264,46 @@ public enum Wire {
         case terminal
         /// A test run.
         case tests
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ProofKind] = [.screenshot, .video, .terminal, .tests]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "screenshot": self = .screenshot
+            case "video": self = .video
+            case "terminal": self = .terminal
+            case "tests": self = .tests
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .screenshot: "screenshot"
+            case .video: "video"
+            case .terminal: "terminal"
+            case .tests: "tests"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ProofKind, b: ProofKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum ProofStatus: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum ProofStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// No evidence yet.
         case pending
         /// Being proven.
@@ -113,10 +312,47 @@ public enum Wire {
         case proven
         /// The proof failed.
         case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ProofStatus] = [.pending, .proving, .proven, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "pending": self = .pending
+            case "proving": self = .proving
+            case "proven": self = .proven
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .pending: "pending"
+            case .proving: "proving"
+            case .proven: "proven"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ProofStatus, b: ProofStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     /// Where Draft with AI is.
-    public enum DraftState: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum DraftState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Picking the goal it belongs to.
         case choosing
         /// Reading the goal's code to write the task.
@@ -127,36 +363,178 @@ public enum Wire {
         case ready
         /// It couldn't; `error` says why.
         case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DraftState] = [.choosing, .reading, .needsGoal, .ready, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "choosing": self = .choosing
+            case "reading": self = .reading
+            case "needsGoal": self = .needsGoal
+            case "ready": self = .ready
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .choosing: "choosing"
+            case .reading: "reading"
+            case .needsGoal: "needsGoal"
+            case .ready: "ready"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DraftState, b: DraftState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     /// A line of a draft's transcript.
-    public enum DraftLineKind: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum DraftLineKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Something the agent said or thought.
         case text
         /// Something it did: "Reading lib/session.ts".
         case tool
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DraftLineKind] = [.text, .tool]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "text": self = .text
+            case "tool": self = .tool
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .text: "text"
+            case .tool: "tool"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DraftLineKind, b: DraftLineKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     /// What archiving a goal does with its tasks that haven't merged or been cancelled.
-    public enum UnfinishedTasks: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum UnfinishedTasks: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Cancel them (ending sessions, closing pull requests) and remove their worktrees where nothing would be lost.
         case cleanup
         /// Cancel them and leave their worktrees.
         case cancel
         /// Leave them running to the end.
         case finish
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [UnfinishedTasks] = [.cleanup, .cancel, .finish]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "cleanup": self = .cleanup
+            case "cancel": self = .cancel
+            case "finish": self = .finish
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .cleanup: "cleanup"
+            case .cancel: "cancel"
+            case .finish: "finish"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: UnfinishedTasks, b: UnfinishedTasks) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum ChangeStatus: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum ChangeStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Waiting for the agent.
         case queued
         /// The agent is on it.
         case applying
         /// Done.
         case applied
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ChangeStatus] = [.queued, .applying, .applied]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "queued": self = .queued
+            case "applying": self = .applying
+            case "applied": self = .applied
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .queued: "queued"
+            case .applying: "applying"
+            case .applied: "applied"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ChangeStatus, b: ChangeStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum ReviewVerdict: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum ReviewVerdict: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Asked for changes.
         case changesRequested
         /// Passed.
@@ -165,18 +543,90 @@ public enum Wire {
         case escalated
         /// Reviewing.
         case inProgress
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ReviewVerdict] = [.changesRequested, .passed, .escalated, .inProgress]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "changesRequested": self = .changesRequested
+            case "passed": self = .passed
+            case "escalated": self = .escalated
+            case "inProgress": self = .inProgress
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .changesRequested: "changesRequested"
+            case .passed: "passed"
+            case .escalated: "escalated"
+            case .inProgress: "inProgress"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ReviewVerdict, b: ReviewVerdict) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum CheckVerdict: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum CheckVerdict: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Met.
         case met
         /// Partly met.
         case partial
         /// Missed.
         case missed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [CheckVerdict] = [.met, .partial, .missed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "met": self = .met
+            case "partial": self = .partial
+            case "missed": self = .missed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .met: "met"
+            case .partial: "partial"
+            case .missed: "missed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: CheckVerdict, b: CheckVerdict) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum FindingKind: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum FindingKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Not what was asked.
         case scope
         /// Proof isn't real or enough.
@@ -185,27 +635,134 @@ public enum Wire {
         case code
         /// Risk.
         case risk
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [FindingKind] = [.scope, .proof, .code, .risk]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "scope": self = .scope
+            case "proof": self = .proof
+            case "code": self = .code
+            case "risk": self = .risk
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .scope: "scope"
+            case .proof: "proof"
+            case .code: "code"
+            case .risk: "risk"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: FindingKind, b: FindingKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum Severity: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum Severity: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Must fix.
         case blocker
         /// Should fix.
         case major
         /// Nice to fix.
         case minor
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [Severity] = [.blocker, .major, .minor]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "blocker": self = .blocker
+            case "major": self = .major
+            case "minor": self = .minor
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .blocker: "blocker"
+            case .major: "major"
+            case .minor: "minor"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: Severity, b: Severity) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum FindingStatus: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum FindingStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Open.
         case open
         /// Fixed (see fixedIn).
         case fixed
         /// The builder disagrees.
         case disputed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [FindingStatus] = [.open, .fixed, .disputed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "open": self = .open
+            case "fixed": self = .fixed
+            case "disputed": self = .disputed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .open: "open"
+            case .fixed: "fixed"
+            case .disputed: "disputed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: FindingStatus, b: FindingStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum HandReason: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum HandReason: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Review rounds ran out.
         case reviewLoop
         /// Can't produce a proof.
@@ -218,18 +775,94 @@ public enum Wire {
         case sessionEnded
         /// It was approved but didn't merge.
         case mergeFailed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [HandReason] = [.reviewLoop, .proofBurden, .needsInput, .overBudget, .sessionEnded, .mergeFailed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "reviewLoop": self = .reviewLoop
+            case "proofBurden": self = .proofBurden
+            case "needsInput": self = .needsInput
+            case "overBudget": self = .overBudget
+            case "sessionEnded": self = .sessionEnded
+            case "mergeFailed": self = .mergeFailed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .reviewLoop: "reviewLoop"
+            case .proofBurden: "proofBurden"
+            case .needsInput: "needsInput"
+            case .overBudget: "overBudget"
+            case .sessionEnded: "sessionEnded"
+            case .mergeFailed: "mergeFailed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: HandReason, b: HandReason) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum MockupStatus: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum MockupStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Proposed with the plan.
         case proposed
         /// Approved.
         case approved
         /// Someone asked for changes.
         case changesRequested
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [MockupStatus] = [.proposed, .approved, .changesRequested]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "proposed": self = .proposed
+            case "approved": self = .approved
+            case "changesRequested": self = .changesRequested
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .proposed: "proposed"
+            case .approved: "approved"
+            case .changesRequested: "changesRequested"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: MockupStatus, b: MockupStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum PRState: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum PRState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Draft.
         case draft
         /// Open.
@@ -238,9 +871,46 @@ public enum Wire {
         case merged
         /// Closed without merging.
         case closed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PRState] = [.draft, .open, .merged, .closed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "draft": self = .draft
+            case "open": self = .open
+            case "merged": self = .merged
+            case "closed": self = .closed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .draft: "draft"
+            case .open: "open"
+            case .merged: "merged"
+            case .closed: "closed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PRState, b: PRState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum CheckStatus: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum CheckStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Queued.
         case queued
         /// Running.
@@ -249,26 +919,131 @@ public enum Wire {
         case passed
         /// Failed.
         case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [CheckStatus] = [.queued, .running, .passed, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "queued": self = .queued
+            case "running": self = .running
+            case "passed": self = .passed
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .queued: "queued"
+            case .running: "running"
+            case .passed: "passed"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: CheckStatus, b: CheckStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum RiskLevel: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum RiskLevel: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Low.
         case low
         /// Medium.
         case medium
         /// High.
         case high
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RiskLevel] = [.low, .medium, .high]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "low": self = .low
+            case "medium": self = .medium
+            case "high": self = .high
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .low: "low"
+            case .medium: "medium"
+            case .high: "high"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RiskLevel, b: RiskLevel) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
-    public enum RepoSource: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum RepoSource: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Granted to the GitHub App.
         case github
         /// Added by an admin.
         case manual
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RepoSource] = [.github, .manual]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "github": self = .github
+            case "manual": self = .manual
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .github: "github"
+            case .manual: "manual"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RepoSource, b: RepoSource) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     /// What a session's agent is doing, from its hooks.
-    public enum AgentState: String, Codable, Hashable, Sendable, CaseIterable {
+    public enum AgentState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Running a turn.
         case working
         /// Waiting on a person: a question, a permission prompt.
@@ -277,6 +1052,43 @@ public enum Wire {
         case done
         /// Started, with nothing asked yet.
         case idle
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [AgentState] = [.working, .waiting, .done, .idle]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "working": self = .working
+            case "waiting": self = .waiting
+            case "done": self = .done
+            case "idle": self = .idle
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .working: "working"
+            case .waiting: "waiting"
+            case .done: "done"
+            case .idle: "idle"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: AgentState, b: AgentState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
     public struct SessionInfo: Codable, Hashable, Sendable {

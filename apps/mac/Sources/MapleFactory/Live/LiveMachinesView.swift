@@ -619,7 +619,7 @@ extension Wire.AgentState {
         case .working: Theme.State.building
         case .waiting: Theme.State.awaitingApproval
         case .done: Theme.State.merged
-        case .idle: Theme.State.drafting
+        case .idle, .other: Theme.State.drafting
         }
     }
 
@@ -629,6 +629,7 @@ extension Wire.AgentState {
         case .waiting: "Waiting for someone"
         case .done: "Finished its turn"
         case .idle: "Ready"
+        case .other: "Busy"
         }
     }
 }
@@ -656,7 +657,7 @@ extension Wire.EndCause {
         case .runnerUpdated: "Runner restarted"
         case .authExpired: "Login expired"
         case .usageLimit: "Usage limit"
-        case .unknown: "Ended, cause unknown"
+        case .unknown, .other: "Ended, cause unknown"
         }
     }
 
@@ -672,6 +673,7 @@ extension Wire.EndCause {
         case .authExpired: "The agent's login needs renewing on that machine."
         case .usageLimit: "The account hit its session or weekly limit."
         case .unknown: "The runner couldn't tell what ended it."
+        case .other: "It ended for a reason this version of the app doesn't know."
         }
     }
 
@@ -686,7 +688,7 @@ extension Wire.EndCause {
         case .runnerUpdated: "arrow.triangle.2.circlepath"
         case .authExpired: "key.fill"
         case .usageLimit: "gauge.with.dots.needle.100percent"
-        case .unknown: "questionmark"
+        case .unknown, .other: "questionmark"
         }
     }
 
@@ -695,7 +697,7 @@ extension Wire.EndCause {
         case .exited: Theme.State.merged
         case .killed, .runnerUpdated: Theme.State.drafting
         case .machineSlept, .usageLimit, .authExpired: Theme.State.awaitingApproval
-        case .signaled, .outOfMemory, .tmuxLost, .unknown: Theme.State.cancelled
+        case .signaled, .outOfMemory, .tmuxLost, .unknown, .other: Theme.State.cancelled
         }
     }
 }

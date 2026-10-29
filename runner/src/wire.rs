@@ -32,6 +32,7 @@ pub enum EndCause {
     /// The account hit its session or weekly limit.
     UsageLimit,
     /// None of the above could be shown.
+    #[serde(other)]
     Unknown,
 }
 
@@ -53,6 +54,9 @@ pub enum TaskState {
     Merged,
     /// Stopped.
     Cancelled,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 /// What a factory session is for.
@@ -65,6 +69,9 @@ pub enum Role {
     Builder,
     /// Reviews the change.
     Reviewer,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +83,9 @@ pub enum StepProgress {
     Active,
     /// Not started.
     Pending,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +99,9 @@ pub enum ProofKind {
     Terminal,
     /// A test run.
     Tests,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +115,9 @@ pub enum ProofStatus {
     Proven,
     /// The proof failed.
     Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 /// Where Draft with AI is.
@@ -118,6 +134,9 @@ pub enum DraftState {
     Ready,
     /// It couldn't; `error` says why.
     Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 /// A line of a draft's transcript.
@@ -128,6 +147,9 @@ pub enum DraftLineKind {
     Text,
     /// Something it did: "Reading lib/session.ts".
     Tool,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 /// What archiving a goal does with its tasks that haven't merged or been cancelled.
@@ -140,6 +162,9 @@ pub enum UnfinishedTasks {
     Cancel,
     /// Leave them running to the end.
     Finish,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +176,9 @@ pub enum ChangeStatus {
     Applying,
     /// Done.
     Applied,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +192,9 @@ pub enum ReviewVerdict {
     Escalated,
     /// Reviewing.
     InProgress,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +206,9 @@ pub enum CheckVerdict {
     Partial,
     /// Missed.
     Missed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +222,9 @@ pub enum FindingKind {
     Code,
     /// Risk.
     Risk,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +236,9 @@ pub enum Severity {
     Major,
     /// Nice to fix.
     Minor,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +250,9 @@ pub enum FindingStatus {
     Fixed,
     /// The builder disagrees.
     Disputed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +270,9 @@ pub enum HandReason {
     SessionEnded,
     /// It was approved but didn't merge.
     MergeFailed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +284,9 @@ pub enum MockupStatus {
     Approved,
     /// Someone asked for changes.
     ChangesRequested,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +300,9 @@ pub enum PRState {
     Merged,
     /// Closed without merging.
     Closed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +316,9 @@ pub enum CheckStatus {
     Passed,
     /// Failed.
     Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,6 +330,9 @@ pub enum RiskLevel {
     Medium,
     /// High.
     High,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,6 +342,9 @@ pub enum RepoSource {
     Github,
     /// Added by an admin.
     Manual,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 /// What a session's agent is doing, from its hooks.
@@ -298,6 +359,9 @@ pub enum AgentState {
     Done,
     /// Started, with nothing asked yet.
     Idle,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
