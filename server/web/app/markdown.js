@@ -1,9 +1,11 @@
 // Markdown for comments, change requests and briefs: the same subset the Mac app's MarkdownPreview
 // reads (headings, lists, task lists, quotes, fenced code with a language, inline code, bold, italic,
-// links), with the same small syntax highlighter for code.
+// links, images and attachment chips), with the same small syntax highlighter for code.
 //
 // parse() is pure and returns a tree; render() builds DOM from it through the app's h(), so every
-// string goes in as text. Nothing is ever set as HTML, and links open only for http(s) and mailto.
+// string goes in as text. Nothing is ever set as HTML. Links open only for http(s), mailto and the
+// factory's own /attachments/<uuid>/<name>; images load only from https or /attachments/<uuid>/<name>,
+// anything else shows its alt text.
 
 // ---- blocks ----
 
@@ -49,6 +51,23 @@ export function parse(source) {
     if (!line) { flush(); continue; }
     if (line === "---") { flush(); blocks.push({ type: "rule" }); continue; }
 
+    // A line that's just `![alt](src)` is an image; just `[name](/attachments/…)` is a file chip.
+    // An empty src is the editor's `![Uploading x…]()` placeholder.
+    let link;
+    if ((link = /^(!?)\[([^\]]*)\]\((\S*)\)$/.exec(line))) {
+      const [, bang, alt, src] = link;
+      if (bang && (src === "" || safeImage(src))) {
+        flush();
+        blocks.push({ type: "image", alt, src });
+        continue;
+      }
+      if (!bang && ATTACHMENT.test(src)) {
+        flush();
+        blocks.push({ type: "file", name: alt, path: src });
+        continue;
+      }
+    }
+
     let m;
     if ((m = /^(#{1,6}) (.*)$/.exec(line))) {
       flush();
@@ -73,7 +92,10 @@ export function parse(source) {
 
 // ---- inline ----
 
-const SAFE_LINK = /^(https?:|mailto:)/i;
+/** `/attachments/<uuid>/<name>`, the same shape the server's attachments.ts serves. */
+const ATTACHMENT = /^\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[\w.\-]{1,120}$/;
+const safeLink = (href) => /^(https?:|mailto:)/i.test(href) || ATTACHMENT.test(href);
+const safeImage = (src) => /^https:/i.test(src) || ATTACHMENT.test(src);
 
 export function inline(text) {
   const out = [];
@@ -102,9 +124,13 @@ export function inline(text) {
     } else if ((m = /^([*_])(?=\S)([\s\S]+?)(?<=\S)\1/.exec(rest)) && !(c === "_" && wordBefore(i))) {
       push({ type: "em", children: inline(m[2]) });
       i += m[0].length;
+    } else if (c === "!" && (m = /^!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)/.exec(rest))) {
+      if (safeImage(m[2])) push({ type: "image", alt: m[1], src: m[2] });
+      else plain += m[1];
+      i += m[0].length;
     } else if (c === "[" && (m = /^\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)/.exec(rest))) {
       const children = inline(m[1]);
-      if (SAFE_LINK.test(m[2])) push({ type: "link", href: m[2], children });
+      if (safeLink(m[2])) push({ type: "link", href: m[2], children });
       else for (const child of children) child.type === "text" ? (plain += child.text) : push(child);
       i += m[0].length;
     } else if (!wordBefore(i) && (m = /^https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/.exec(rest))) {
@@ -227,9 +253,22 @@ export function render(blocks, h) {
       case "em": return h("em", {}, spans(n.children));
       case "link": return h("a", { href: n.href, target: "_blank", rel: "noopener noreferrer" }, spans(n.children));
       case "mention": return h("span", { class: "mention" }, n.text);
+      case "image": return image(n.src, n.alt, "md-img-inline");
       default: return n.text;
     }
   });
+
+  // A file attached to the note, like the Mac app's AttachmentChip.
+  const chip = (name, path) => h("a", { class: "md-file", href: path, target: "_blank", rel: "noopener noreferrer", title: `Open ${name}` },
+    h("span", { class: "md-file-doc", "aria-hidden": "true" }),
+    h("span", {}, name || path.split("/").pop()),
+    h("span", { class: "md-file-arrow", "aria-hidden": "true" }, "↗"));
+  // Clicking an image opens it full size; one that won't load (not an image, or gone) becomes a chip.
+  function image(src, alt, cls) {
+    const link = h("a", { class: cls, href: src, target: "_blank", rel: "noopener noreferrer" },
+      h("img", { src, alt, loading: "lazy", onerror: () => link.replaceWith(chip(alt || src.split("/").pop(), src)) }));
+    return link;
+  }
 
   return h("div", { class: "md" }, blocks.map((b) => {
     switch (b.type) {
@@ -245,6 +284,8 @@ export function render(blocks, h) {
           b.lang && h("span", { class: "md-lang" }, b.lang),
           h("pre", {}, h("code", {}, highlight(b.text, b.lang).map((t) => t.token === "plain" ? t.text : h("span", { class: `tok-${t.token}` }, t.text)))));
       case "rule": return h("hr", {});
+      case "image": return b.src ? image(b.src, b.alt, "md-img") : h("p", { class: "md-uploading" }, b.alt);
+      case "file": return chip(b.name, b.path);
       default: return h("p", {}, spans(b.inline));
     }
   }));
