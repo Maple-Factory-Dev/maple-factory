@@ -877,6 +877,11 @@ export const unions: Record<string, Union> = {
         fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?" },
         fieldDocs: { effort: "Put it in this effort; an empty string takes it out." },
       },
+      "task.assign": {
+        doc: "Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).",
+        fields: { id: "string", owner: "string" },
+        fieldDocs: { owner: "The member's login." },
+      },
       "task.plan": { doc: "Send a draft to planning.", fields: { id: "string" } },
       "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },

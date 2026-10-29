@@ -1970,6 +1970,13 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
     },
+    /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
+    #[serde(rename = "task.assign")]
+    TaskAssign {
+        id: String,
+        /// The member's login.
+        owner: String,
+    },
     /// Send a draft to planning.
     #[serde(rename = "task.plan")]
     TaskPlan {
