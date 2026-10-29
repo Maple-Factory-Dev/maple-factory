@@ -38,7 +38,31 @@ Flow** in its settings for the Mac app's sign-in; GitHub doesn't allow that from
 app owned by `GITHUB_ORG` is accepted, and once sign-in works, `/setup` changes nothing.
 
 Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-`GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `SESSION_SECRET`) take precedence over what `/setup` stored.
+`GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `SESSION_SECRET`, `SECRETS_KEY`) take precedence over what `/setup` stored.
+
+### Repo secrets and SECRETS_KEY
+
+Admins keep per-repo secrets in Settings → Secrets (names, who changed them and when; values are never
+shown again). They live in OrgHub's SQLite, each value sealed with AES-GCM (a fresh IV, the repo and name
+as additional data) under a key derived with HKDF from `SECRETS_KEY`. A runner gets a repo's values only
+for a task assigned to it, as environment variables in the task's sessions, or with
+`maple-runner secrets pull` in its owner's checkout (into a gitignored `.env.local`, mode 0600). Every
+change and every release is in the D1 `audit` table (`secret.set`, `secret.deleted`, `secret.pulled`),
+by name only.
+
+`SECRETS_KEY` is a Worker secret when you set one; otherwise `/setup` (or the first secret saved) generates
+one into D1's `settings` table and never replaces it. **Back it up**: without it no stored value can be
+read. Read it with
+`npx wrangler d1 execute maple --remote --command "SELECT value FROM settings WHERE key = 'SECRETS_KEY'"`
+and keep it in your password manager (or set the same value as a Worker secret with
+`npx wrangler secret put SECRETS_KEY`). Restoring a factory means restoring that value with its data.
+
+**Rotating** it re-encrypts nothing on its own: a different key makes every stored value unreadable (a
+runner's pull then says the factory couldn't decrypt them). To rotate, note the names in Settings →
+Secrets, set the new key (`npx wrangler secret put SECRETS_KEY`, or replace the `settings` row), then
+Replace each secret with its value, which seals it under the new key. Rotate when someone who could read
+the key (a Cloudflare account admin) leaves, and rotate the secrets themselves at their source, since
+anyone who pulled them keeps a copy.
 
 Admins see when a newer maple-server is out, and how this factory gets it, on the home page, `/setup` and
 the Mac app's Account settings. `/healthz` says which version is running.
