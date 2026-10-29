@@ -9,6 +9,7 @@ mod git;
 mod health;
 mod hooks;
 mod images;
+mod attachments;
 mod mcp;
 mod media;
 mod ports;

@@ -150,7 +150,7 @@ async fn fetch(origin: (&str, &str, &str), dir: &Path, task_id: &str, file: &str
 }
 
 /// Writes `bytes` to `path` (in `dir`, made 0700 if it isn't there) as 0600, through a temporary file.
-fn write_private(dir: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(dir: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     let tmp = path.with_extension("part");
     let _ = std::fs::remove_file(&tmp);
