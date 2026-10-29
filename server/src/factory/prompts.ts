@@ -60,6 +60,15 @@ If something essential is ambiguous, call \`ask\` with the question and a few op
 If the task can't be planned as asked, call \`raise_hand\`. After \`submit_plan\` succeeds, end your turn; your session will be closed.`;
 }
 
+/** When a queued change request is there because the reviewed branch didn't merge. */
+function unmerged(task: Task) {
+  const c = task.changes.find((c) => c.status !== "applied" && c.anchor?.startsWith(MERGE_ANCHOR));
+  if (!c) return "";
+  const base = c.anchor!.slice(MERGE_ANCHOR.length).trim();
+  return `\n\n## It didn't merge
+The branch already has the reviewed, approved work, but it doesn't merge into ${base}. Only bring it up to date with origin/${base} and resolve the conflicts (${c.id}); don't redo or extend the plan. Re-prove only the Done when items the conflict resolution touched, then call \`finish\`.`;
+}
+
 export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
@@ -77,7 +86,7 @@ ${done}${comments(task)}${changes(task)}${
     review?.length
       ? `\n\n## Review round ${task.autoReview!.rounds.length} asked for changes\n` + review.map((f) => `- [${f.severity}] (${f.id}) ${f.text}${f.file ? ` (${f.file})` : ""}`).join("\n")
       : ""
-  }${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
+  }${unmerged(task)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
 
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
