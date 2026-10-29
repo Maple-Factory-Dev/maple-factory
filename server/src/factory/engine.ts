@@ -730,7 +730,7 @@ export class Engine {
     switch (msg.type) {
       case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
       case "draft.progress":
-        this.drafts.progress(msg.id, machine, msg.text);
+        this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
         return null;
       case "draft.done":
         await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
