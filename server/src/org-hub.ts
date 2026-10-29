@@ -54,10 +54,12 @@ export class OrgHub extends DurableObject<Env> {
     }, this.intake);
   }
 
-  /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again. */
+  /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again;
+   *  and a scheduled task whose time came starts even if no machine reports in. */
   async alarm() {
     await applySettings(this.env);
     await this.engine.pollCI();
+    await this.engine.pump();
   }
 
   async fetch(request: Request): Promise<Response> {

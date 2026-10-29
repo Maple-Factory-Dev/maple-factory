@@ -11,14 +11,14 @@ import type {
   ServerToRunner, SessionEnd, Task,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
-import { Store, type TaskSession } from "./store.ts";
+import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { Intake } from "./intake.ts";
-import { checks, closePullRequest, createPullRequest, reopenPullRequest, GitHubError, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
+import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -41,7 +41,7 @@ type Hooks = {
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
-  /** Call `pollCI` again in about `ms`, for CI that webhooks may never report (a local server). */
+  /** Call `pollCI` and `pump` again in about `ms`: for CI that webhooks may never report (a local server), and scheduled tasks. */
   wakeIn(ms: number): void;
 };
 
@@ -353,6 +353,31 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.queue": {
+        if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        const scheduling = msg.startAt != null || msg.clearSchedule;
+        if (msg.before === task.id) fail("It can't go ahead of itself.");
+        const queue = this.store.queued();
+        const before = msg.before === "top" ? queue.find((t) => t.id !== task.id) ?? null
+          : msg.before ? this.store.task(msg.before) ?? fail(`${msg.before} isn't there any more.`) : null;
+        const moved = msg.before != null || !scheduling;
+        if (moved && (msg.before !== "top" || before)) {
+          task.queueRank = this.store.rankBefore(task.id, before, queue);
+          this.event(task, who, msg.before === "top" ? "moved it to the top of the queue" : before ? `moved it ahead of ${before.id} in the queue` : "moved it to the back of the queue");
+        }
+        if (msg.startAt != null) {
+          task.startAt = msg.startAt;
+          this.event(task, who, `scheduled it for ${new Date(msg.startAt).toISOString()}`);
+        } else if (msg.clearSchedule && task.startAt != null) {
+          task.startAt = null;
+          this.event(task, who, "cleared its schedule");
+        }
+        if (task.state === "drafting") return this.startPlanning(task, who);
+        task.waiting = null;
+        this.save(task);
+        await this.pump();
+        return;
+      }
       case "task.retry": {
         if (task.state === "merged") fail("It's already merged.");
         if (task.state === "drafting") fail("It hasn't started yet; send it to planning.");
@@ -551,7 +576,8 @@ export class Engine {
 
   private async pumpOnce(): Promise<void> {
     const machines = await this.hooks.machines();
-    for (const listed of this.store.tasks().reverse()) {
+    // Front of the queue first.
+    for (const listed of this.store.tasks().sort(byRank)) {
       // Read it again: what an earlier dispatch awaited may have changed it (a cancel, a move).
       const task = this.store.task(listed.id);
       if (!task) continue;
@@ -592,6 +618,7 @@ export class Engine {
       events: [{ who, text: "created it", at: t }],
       mockups: [],
       followUps: [],
+      queueRank: t,
       ...f,
     };
     this.save(task);
@@ -615,12 +642,8 @@ export class Engine {
 
   /** The session a task needs now, if any. */
   private roleFor(task: Task): Role | null {
-    switch (task.state) {
-      case "planning": return "planner";
-      case "building": return this.store.private(task.id).finishing ? null : "builder";
-      case "reviewing": return task.autoReview?.rounds.at(-1)?.verdict === "inProgress" ? "reviewer" : null;
-      default: return null;
-    }
+    if (!needsSession(task, this.store.private(task.id))) return null;
+    return task.state === "planning" ? "planner" : task.state === "building" ? "builder" : "reviewer";
   }
 
   /** Starts `role` for `task`, or says why it can't yet. */
@@ -628,6 +651,10 @@ export class Engine {
     const goal = this.store.goal(task.goal);
     if (!goal) return "Its goal is gone.";
     if (!goal.folder && !taskRepo(task, goal)) return `The goal ${goal.name} doesn't say where its code is: set a repo or folder.`;
+    if (task.startAt != null && task.startAt > now()) {
+      this.hooks.wakeIn(task.startAt - now());
+      return `Scheduled to start at ${new Date(task.startAt).toISOString()}.`;
+    }
     if (role === "builder") {
       // Work that builds on another repo's change starts once that change is in.
       const before = task.after.map((id) => this.store.task(id)).filter((t): t is Task => !!t && t.state !== "merged");
@@ -714,6 +741,7 @@ export class Engine {
     this.store.addSession({ id, task: task.id, role, machine: machine.id, agent: task.agent, started: now(), ended: null, cause: null, kind });
     if (priv.movedFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
+    task.startAt = null;
     task.machine = machine.id;
     task.branch = `agent/${branchName(task)}`;
     task.liveLog = role === "planner" ? "Reading the code…" : role === "builder" ? "Starting…" : "Reading the change…";
@@ -1453,8 +1481,13 @@ export class Engine {
       const pr = task.pr;
       this.hooks.waitUntil(
         mergePullRequest(app, priv.gh.owner, priv.gh.repo, pr.number, { sha: pr.head ?? null, title: `${task.id}: ${task.title}` })
-          .then((m) => this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: m.sha, message: null }))
-          .catch((e) => this.merged({ type: "task.merged", taskId: task.id, ok: false, commit: null, message: (e as Error).message })),
+          .then(
+            (m) => {
+              this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: m.sha, message: null });
+              return this.deleteMergedBranch(task.id, app, priv.gh!, pr);
+            },
+            (e) => this.merged({ type: "task.merged", taskId: task.id, ok: false, commit: null, message: (e as Error).message }),
+          ),
       );
       return;
     }
@@ -1473,6 +1506,27 @@ export class Engine {
     task.liveLog = "Merging…";
     this.save(task);
     await audit(this.env, who, "task.merged", task.id);
+  }
+
+  /** After the factory merged a pull request: deletes its agent/ branch on GitHub, if it's still the head
+   *  that merged. Best-effort: the merge stands whatever happens here. */
+  private async deleteMergedBranch(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
+    const branch = pr.branch;
+    if (!branch.startsWith("agent/") || branch === pr.base) return;
+    let text: string;
+    if (!pr.head) text = `kept branch ${branch} on GitHub (its merged head isn't known)`;
+    else {
+      try {
+        const r = await deleteBranch(app, gh.owner, gh.repo, branch, pr.head);
+        text = r === "moved" ? `kept branch ${branch} on GitHub (it moved after the merge)` : `deleted branch ${branch} on GitHub`;
+      } catch (e) {
+        text = `couldn't delete branch ${branch} on GitHub: ${(e as Error).message}`;
+      }
+    }
+    const task = this.store.task(taskId);
+    if (!task) return;
+    this.event(task, "factory", text);
+    this.save(task, false);
   }
 
   /** A person's pick on a "didn't merge" hand. Its task is reviewing with no session, so the

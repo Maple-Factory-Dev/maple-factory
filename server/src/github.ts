@@ -254,6 +254,28 @@ export async function reopenPullRequest(app: GitHubApp, owner: string, repo: str
   await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/issues/${number}/comments`, auth, { body: comment });
 }
 
+// ---- branches ----
+
+export type BranchDeletion = "deleted" | "gone" | "moved";
+
+/** Deletes a branch, but only while it still points at `expectSha`: a branch that moved is kept ("moved").
+ *  One that's already gone (the repo deletes head branches itself, say) counts as done ("gone"). */
+export async function deleteBranch(app: GitHubApp, owner: string, repo: string, branch: string, expectSha: string): Promise<BranchDeletion> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const ref = branch.split("/").map(seg).join("/");
+  const got = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/git/ref/heads/${ref}`, auth);
+  if (got.status === 404) return "gone";
+  if (!got.ok) throw await failure(got, `read branch ${branch}`);
+  const j = (await got.json()) as { object?: { sha?: string } } | { object?: { sha?: string } }[];
+  // A prefix match returns a list of refs rather than the ref itself: then this branch isn't there.
+  if (Array.isArray(j)) return "gone";
+  if (j.object?.sha !== expectSha) return "moved";
+  const res = await call(app, "DELETE", `/repos/${seg(owner)}/${seg(repo)}/git/refs/heads/${ref}`, auth);
+  if (res.status === 404 || res.status === 422) return "gone";
+  if (!res.ok) throw await failure(res, `delete branch ${branch}`);
+  return "deleted";
+}
+
 // ---- CI ----
 
 /** A check on a commit, as the apps show it. */

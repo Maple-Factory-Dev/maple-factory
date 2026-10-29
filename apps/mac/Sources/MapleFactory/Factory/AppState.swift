@@ -45,6 +45,8 @@ final class AppState {
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
+    /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
+    var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
@@ -179,7 +181,7 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
             && ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -214,6 +216,18 @@ final class AppState {
     /// everything here is the design mockup's.
     var client: FactoryClient?
     var isLive: Bool { client?.isSignedIn == true }
+    /// Signed in, but the factory's first snapshot hasn't landed: show the loader, not the mock's goal.
+    var isLoadingFactory: Bool { Self.isLoading(signedIn: client?.isSignedIn == true, hasSnapshot: client?.hasSnapshot == true) }
+
+    nonisolated static func isLoading(signedIn: Bool, hasSnapshot: Bool) -> Bool { signedIn && !hasSnapshot }
+
+    /// Where to land once the workspace's goals are known, or nil to stay put: a goal that isn't the
+    /// workspace's (the mock's starting one) gives way to the focused task's goal, else the first, else the inbox.
+    nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?) -> Destination? {
+        guard case .goal(let name) = current, !goals.contains(name) else { return nil }
+        if let focusedGoal, goals.contains(focusedGoal) { return .goal(focusedGoal) }
+        return goals.first.map(Destination.goal) ?? .inbox
+    }
 
     var tasks: [FactoryTask] {
         get { isLive ? client?.factoryTasks ?? [] : mockTasks }
@@ -234,6 +248,11 @@ final class AppState {
                                          when: "4m", via: "Slack #maple-requests"))
         }
         if task.hand != nil { task.needsYou = true }
+        // The mockup's queue: what's waiting for a slot, in the order it was approved.
+        if let at = FactoryData.queuedTasks.firstIndex(where: { $0.id == task.id }), task.detail.hasPrefix("Queued") {
+            task.queued = true
+            task.queueRank = Double(at)
+        }
         return task
     }
     /// Change requests and comments sent from this session.
@@ -929,6 +948,95 @@ final class AppState {
         update(id) { $0.state = .planning }
     }
 
+    // MARK: Queue
+
+    /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
+    func queue(_ id: String, before: String?) {
+        let rank = rank(for: id, before: before)
+        if let client, isLive {
+            // Reordered here at once, as the factory will: no wait for its echo after a drop.
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.queueRank = rank } }
+            client.send(.taskQueue(.init(id: id, before: before)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.queueRank = rank
+                joinQueue(&task)
+            }
+        }
+    }
+
+    /// The rank that puts `id` ahead of `before` ("top": the front; none: the back), as the factory works it out.
+    private func rank(for id: String, before: String?) -> Double {
+        let line = queueOrder.filter { $0.id != id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            return at > 0 ? (line[at - 1].queueRank + target.queueRank) / 2 : target.queueRank - 1000
+        }
+        return (line.map(\.queueRank).max() ?? 0) + 1
+    }
+
+    func moveToTop(_ id: String) { queue(id, before: "top") }
+    func moveToBottom(_ id: String) { queue(id, before: nil) }
+
+    /// Holds a task until `at`, keeping its place; a draft joins the queue.
+    func schedule(_ id: String, at: Date) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, startAt: UInt64(at.timeIntervalSince1970 * 1000))))
+            return
+        }
+        update(id) { task in
+            task.startAt = at
+            joinQueue(&task)
+        }
+    }
+
+    /// Clears its schedule and puts it at the front.
+    func startNow(_ id: String) {
+        if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true)))
+            return
+        }
+        let first = queueOrder.first { $0.id != id }
+        update(id) { task in
+            task.startAt = nil
+            if let first { task.queueRank = first.queueRank - 1 }
+            joinQueue(&task)
+        }
+    }
+
+    /// Takes its schedule off, keeping its place.
+    func unschedule(_ id: String) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, clearSchedule: true)))
+            return
+        }
+        update(id) { task in
+            task.startAt = nil
+            joinQueue(&task)
+        }
+    }
+
+    /// The mockup's queue: a draft goes to planning.
+    private func joinQueue(_ task: inout FactoryTask) {
+        if task.state == .drafting { task.state = .planning }
+        task.queued = true
+        task.detail = task.scheduled ? "Scheduled" : "Waiting for a free slot"
+    }
+
+    /// Every queued task, front first.
+    var queueOrder: [FactoryTask] {
+        tasks.filter(\.queued).sorted { $0.queueRank < $1.queueRank }
+    }
+
     func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         mutate(&tasks[index])
@@ -1041,16 +1149,18 @@ final class AppState {
         }
     }
 
+    /// What answering a raised hand sends. Retry with no session running is a real retry, so the server
+    /// repairs the task's state; a task's agent is set from its stage even when nothing runs, so check the worker.
+    static func handAnswer(_ task: FactoryTask, option: String?, note: String) -> Wire.ClientMessage {
+        if option == "Cancel it" { return .taskCancel(.init(id: task.id)) }
+        if option == "Retry" && task.worker == nil { return .taskRetry(.init(id: task.id)) }
+        return .taskResolveHand(.init(id: task.id, option: option, note: note))
+    }
+
     /// Answers a raised hand: the agent takes the chosen option (plus any note) and gets moving again.
     func resolveHand(_ id: String, option: HandRaise.Option?, note: String) {
         if let client, isLive {
-            if option?.title == "Cancel it" {
-                client.send(.taskCancel(.init(id: id)))
-            } else if option?.title == "Retry" && task(id).agent == nil {
-                client.send(.taskRetry(.init(id: id)))
-            } else {
-                client.send(.taskResolveHand(.init(id: id, option: option?.title, note: note)))
-            }
+            client.send(Self.handAnswer(task(id), option: option?.title, note: note))
             return
         }
         guard let hand = task(id).hand else { return }
@@ -1402,6 +1512,17 @@ final class AppState {
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
             case "retry": retry(parts[1])
+            // The queue: Move to top / bottom, a card dropped on another (`drop:<id>:<before>`),
+            // Schedule… with a quick pick (`scheduleask:<id>`, then `schedule:<id>:tonight`), Start now.
+            case "top": moveToTop(parts[1])
+            case "bottom": moveToBottom(parts[1])
+            case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "scheduleask": schedulingTask = parts[1]
+            case "schedule":
+                schedulingTask = nil
+                let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
+                schedule(parts[1], at: pick.date())
+            case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)

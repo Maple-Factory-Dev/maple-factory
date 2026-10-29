@@ -141,12 +141,16 @@ struct BoardColumns: View {
 
     /// Whether columns are cut off past the trailing edge, so the board fades there.
     @State private var moreTrailing = false
+    /// A card dragged over the Queued column's empty space, to go to the back.
+    @State private var queueTargeted = false
 
     var body: some View {
         // In a narrow window the columns overflow: a scrollbar shows and the cut-off edge fades.
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(TaskState.allCases) { taskState in
+                column(.drafting)
+                queueColumn
+                ForEach(TaskState.allCases.filter { $0 != .drafting }) { taskState in
                     column(taskState)
                 }
             }
@@ -170,15 +174,48 @@ struct BoardColumns: View {
         }
     }
 
+    /// Queued tasks wait in Queued until a session picks them up, not in their state's column.
     private func column(_ taskState: TaskState) -> some View {
-        let columnTasks = tasks.filter { $0.state == taskState }
+        let columnTasks = tasks.filter { $0.state == taskState && !$0.queued }
+        return shell(icon: taskState.icon, title: taskState.title, color: taskState.color, tasks: columnTasks) {
+            ForEach(columnTasks) { task in
+                BoardCard(task: task, draggable: task.state == .drafting)
+            }
+        }
+        .opacity(taskState == .cancelled ? 0.7 : 1)
+    }
 
+    /// Every task waiting for a session, front of the queue first. Drag a card onto another to put
+    /// it ahead of that one, or below the cards to send it to the back; a draft dragged in joins.
+    private var queueColumn: some View {
+        let queued = tasks.filter(\.queued).sorted { $0.queueRank < $1.queueRank }
+        return shell(icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) {
+            ForEach(Array(queued.enumerated()), id: \.element.id) { index, task in
+                BoardCard(task: task, position: index + 1, draggable: true) { dropped in
+                    guard dropped != task.id else { return }
+                    state.queue(dropped, before: task.id)
+                }
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Theme.State.building.opacity(queueTargeted ? 0.6 : 0), lineWidth: 1.5)
+        }
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first, state.tasks.contains(where: { $0.id == id }) else { return false }
+            state.moveToBottom(id)
+            return true
+        } isTargeted: { queueTargeted = $0 }
+    }
+
+    private func shell<Cards: View>(icon: String, title: String, color: Color, tasks columnTasks: [FactoryTask], @ViewBuilder cards: () -> Cards) -> some View {
+        let content = cards()
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
-                Image(systemName: taskState.icon)
+                Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(taskState.color)
-                Text(taskState.title)
+                    .foregroundStyle(color)
+                Text(title)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Theme.text)
                 Text("\(columnTasks.count)")
@@ -191,8 +228,8 @@ struct BoardColumns: View {
 
             // A column hugs its cards until they outgrow the window, then scrolls on its own.
             ViewThatFits(in: .vertical) {
-                cards(columnTasks)
-                ScrollView { cards(columnTasks).padding(.trailing, 6) }.scrollIndicators(.automatic)
+                VStack(spacing: 8) { content }
+                ScrollView { VStack(spacing: 8) { content }.padding(.trailing, 6) }.scrollIndicators(.automatic)
             }
 
             if columnTasks.isEmpty {
@@ -210,16 +247,138 @@ struct BoardColumns: View {
         .padding(8)
         .frame(width: 240, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.columnBG))
-        .opacity(taskState == .cancelled ? 0.7 : 1)
+    }
+}
+
+/// A card on the board, with its actions on right-click (the queue's, Retry and Cancel…).
+private struct BoardCard: View {
+    @Environment(AppState.self) private var state
+    let task: FactoryTask
+    var position: Int? = nil
+    var draggable = false
+    /// A card dropped on this one, to go ahead of it.
+    var onDrop: ((String) -> Void)? = nil
+    @State private var confirmCancel = false
+    @State private var scheduling = false
+    @State private var targeted = false
+
+    var body: some View {
+        let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position)
+            .taskClicks(task.id)
+            .contextMenu {
+                TaskActionButtons(task: task, confirmCancel: $confirmCancel, schedule: { scheduling = true })
+            }
+            .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
+            .popover(isPresented: Binding(get: { scheduling || state.schedulingTask == task.id },
+                                          set: { if !$0 { scheduling = false; state.schedulingTask = nil } }),
+                     arrowEdge: .trailing) { SchedulePopover(task: task) }
+            // Where a dropped card lands: a line above this one.
+            .overlay(alignment: .top) {
+                if targeted {
+                    Capsule().fill(Theme.State.building).frame(height: 3).offset(y: -6)
+                }
+            }
+        if draggable {
+            if let onDrop {
+                card
+                    .draggable(task.id) { TaskCard(task: task, selected: false, position: position).frame(width: 224) }
+                    .dropDestination(for: String.self) { ids, _ in
+                        guard let id = ids.first else { return false }
+                        onDrop(id)
+                        return true
+                    } isTargeted: { targeted = $0 }
+            } else {
+                card.draggable(task.id) { TaskCard(task: task, selected: false).frame(width: 224) }
+            }
+        } else {
+            card
+        }
+    }
+}
+
+/// Holds a task until a time: quick picks fill the date picker, which can also be set by hand.
+struct SchedulePopover: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.dismiss) private var dismiss
+    let task: FactoryTask
+    @State private var at: Date
+
+    init(task: FactoryTask) {
+        self.task = task
+        _at = State(initialValue: task.startAt ?? SchedulePopover.picks[0].date())
     }
 
-    private func cards(_ columnTasks: [FactoryTask]) -> some View {
-        VStack(spacing: 8) {
-            ForEach(columnTasks) { task in
-                TaskCard(task: task, selected: task.id == state.openedTask)
-                    .taskClicks(task.id)
+    /// Tonight 12 AM, In 1 hour, Tomorrow 9 AM.
+    static let picks: [(label: String, date: () -> Date)] = [
+        ("Tonight 12 AM", { Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)) }),
+        ("In 1 hour", { Date().addingTimeInterval(3600) }),
+        ("Tomorrow 9 AM", {
+            let tomorrow = Calendar.current.startOfDay(for: Date().addingTimeInterval(86400))
+            return Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+        }),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Start \(task.id) after…")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            HStack(spacing: 6) {
+                ForEach(Self.picks, id: \.label) { pick in
+                    let date = pick.date()
+                    let on = abs(date.timeIntervalSince(at)) < 60
+                    Text(pick.label)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(on ? .white : Theme.text)
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(on ? Theme.State.building : Theme.fill))
+                        .contentShape(Rectangle())
+                        .onTapGesture { at = date }
+                }
+            }
+            DatePicker("Starts", selection: $at, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                .labelsHidden()
+            Text("It keeps its place in the queue and starts at the first free slot after this.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                if task.startAt != nil {
+                    Button("Clear") {
+                        state.unschedule(task.id)
+                        dismiss()
+                    }
+                }
+                Button("Schedule") {
+                    state.schedule(task.id, at: at)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
             }
         }
+        .padding(14)
+        .frame(width: 340)
+    }
+}
+
+/// "Starts 12:00 AM" on a scheduled task; the day too when it isn't within a day.
+struct ScheduleBadge: View {
+    let at: Date
+
+    var body: some View {
+        let soon = at.timeIntervalSinceNow < 86400
+        HStack(spacing: 3) {
+            Image(systemName: "clock").font(.system(size: 9.5, weight: .semibold))
+            Text("Starts \(soon ? at.formatted(date: .omitted, time: .shortened) : at.formatted(.dateTime.month(.abbreviated).day().hour().minute()))")
+        }
+        .font(.system(size: 10.5, weight: .semibold))
+        .foregroundStyle(Theme.State.awaitingApproval)
+        .padding(.horizontal, 6)
+        .frame(height: 18)
+        .background(Capsule().fill(Theme.State.awaitingApproval.opacity(0.14)))
+        .help(at.formatted(date: .complete, time: .shortened))
     }
 }
 
@@ -227,10 +386,20 @@ struct TaskCard: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     let selected: Bool
+    /// Its place in the Queued column.
+    var position: Int? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
+                if let position {
+                    Text("#\(position)")
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Theme.State.building)
+                        .padding(.horizontal, 5)
+                        .frame(height: 16)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.State.building.opacity(0.14)))
+                }
                 let unseen = state.unseenChanges(for: task).count
                 if unseen > 0 {
                     Circle()
@@ -266,7 +435,11 @@ struct TaskCard: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            TaskProgressFooter(task: task)
+            if task.queued {
+                QueuedFooter(task: task)
+            } else {
+                TaskProgressFooter(task: task)
+            }
 
             if !task.doneWhen.isEmpty, task.state == .building || task.state == .reviewing {
                 HStack(spacing: 6) {
@@ -314,6 +487,30 @@ struct TaskCard: View {
     private var borderColor: Color {
         if let viewer { return viewer.color }
         return selected ? task.state.color : Theme.stroke
+    }
+}
+
+/// What a queued task runs next, its schedule, and why it's waiting.
+struct QueuedFooter: View {
+    let task: FactoryTask
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            Text("Next: \(task.nextStep)")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(Capsule().fill(Theme.fill))
+            if task.scheduled, let at = task.startAt {
+                ScheduleBadge(at: at)
+            } else if !task.detail.isEmpty {
+                Text(task.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(2)
+            }
+        }
     }
 }
 

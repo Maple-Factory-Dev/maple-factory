@@ -105,6 +105,8 @@ import Security
     /// A passing line from the factory ("ATL-3 merged"), for the app's toast.
     private(set) var toast: (text: String, taskID: String?, at: Date)?
     private(set) var status: Status = .signedOut
+    /// Whether this factory's first snapshot has landed. A reconnect keeps it, so the old content stays up.
+    private(set) var hasSnapshot = false
     /// The last thing the server refused, shown as a toast-like line.
     var notice: String?
 
@@ -147,9 +149,17 @@ import Security
         connect()
     }
 
+    /// Shows a change before the factory echoes it (a card dropped in the queue lands at once);
+    /// the task's next `task.updated` replaces it with what the factory did.
+    func expect(_ id: String, _ change: (inout FactoryTask) -> Void) {
+        guard let index = factoryTasks.firstIndex(where: { $0.id == id }) else { return }
+        change(&factoryTasks[index])
+    }
+
     // MARK: Session
 
     func signIn(_ result: SignInResult) {
+        if result.server != server { hasSnapshot = false }
         server = result.server
         token = result.token
         me = result.member
@@ -172,6 +182,7 @@ import Security
         goals = []
         tasks = []
         rebuild()
+        hasSnapshot = false
         status = .signedOut
     }
 
@@ -280,6 +291,7 @@ import Security
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
             rebuild()
+            hasSnapshot = true
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
