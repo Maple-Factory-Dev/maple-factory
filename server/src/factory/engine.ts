@@ -355,6 +355,21 @@ export class Engine {
       }
       case "task.queue": {
         if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (msg.force) {
+          if (task.worker || task.hand || task.question) fail("It's already running.");
+          if (task.state !== "drafting" && !this.roleFor(task)) fail("It isn't waiting for a session.");
+          const queue = this.store.queued();
+          const top = queue.find((t) => t.id !== task.id);
+          if (top) task.queueRank = this.store.rankBefore(task.id, top, queue);
+          task.startAt = null;
+          task.force = true;
+          this.event(task, who, "ran it now, over its machine's slot limit");
+          if (task.state === "drafting") return this.startPlanning(task, who);
+          task.waiting = null;
+          this.save(task);
+          await this.pump();
+          return;
+        }
         const scheduling = msg.startAt != null || msg.clearSchedule;
         if (msg.before === task.id) fail("It can't go ahead of itself.");
         const queue = this.store.queued();
@@ -679,7 +694,8 @@ export class Engine {
       kind = machine.owner === task.owner ? "personal" : "team";
     } else {
       const usable = machines.filter((m) => m.online && !this.store.settings(m.id).paused && this.hasAgent(m, task.agent) && !this.overCap(m, task.agent, task.owner));
-      const own = usable.filter((m) => m.owner === task.owner && busy(m.id) < this.capacity(m));
+      // Forced: any of its owner's own machines, full or not; never a teammate's past what they lend.
+      const own = usable.filter((m) => m.owner === task.owner && (task.force || busy(m.id) < this.capacity(m)));
       machine = own.sort((a, b) => busy(a.id) - busy(b.id))[0];
       if (!machine && task.shareable) {
         const lent = usable.filter((m) => {
@@ -742,6 +758,7 @@ export class Engine {
     if (priv.movedFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
     task.startAt = null;
+    task.force = null;
     task.machine = machine.id;
     task.branch = `agent/${branchName(task)}`;
     task.liveLog = role === "planner" ? "Reading the code…" : role === "builder" ? "Starting…" : "Reading the change…";
