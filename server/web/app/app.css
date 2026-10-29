@@ -75,6 +75,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .callout { border-radius: 12px; padding: 14px 16px; margin-top: 16px; border: 1px solid; }
 .callout.hand { border-color: color-mix(in srgb, var(--cancelled) 35%, transparent); background: color-mix(in srgb, var(--cancelled) 7%, transparent); }
 .callout.question { border-color: color-mix(in srgb, var(--awaiting) 35%, transparent); background: color-mix(in srgb, var(--awaiting) 8%, transparent); }
+.callout .prompt-detail { font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--stroke); background: var(--card); }
 .callout .options { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .option { text-align: left; border: 1px solid var(--stroke); background: var(--card); border-radius: 9px; padding: 8px 12px; cursor: pointer; }
 .option b { display: block; }

@@ -1,7 +1,7 @@
 // Maple Factory on the web: review on the go. The same live feed as the apps (/client/connect, signed
 // in by the session cookie): the inbox, and a task's plan, mockups, diff, review and proofs, with the
 // decisions a person makes on them; new tasks and drafts, and the scratchpad. Nothing here touches
-// terminals or machines.
+// terminals or machines, except to answer an agent's permission prompt with Yes or No.
 //
 // Every string from the factory goes in with textContent; agents' screen mockups render in an iframe
 // with an empty sandbox (no scripts, no same-origin).
@@ -9,7 +9,7 @@
 import { markdown } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map() };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [] };
 let socket = null;
 let retry = 1000;
 
@@ -86,6 +86,7 @@ function receive(m) {
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
       state.notes = m.notes ?? [];
+      state.machines = m.machines ?? [];
       $("org").textContent = m.org || "Maple Factory";
       status();
       break;
@@ -94,6 +95,15 @@ function receive(m) {
       state.tasks.set(m.task.id, m.task);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
+    case "machine.updated":
+    case "machine.removed": {
+      // Machines change with every step an agent takes; only a prompt starting or ending redraws.
+      const before = prompts();
+      state.machines = state.machines.filter((x) => x.id !== (m.machine?.id ?? m.id));
+      if (m.machine) state.machines.push(m.machine);
+      if (prompts() === before) return;
+      break;
+    }
     case "goal.updated": state.goals = [...state.goals.filter((g) => g.id !== m.goal.id), m.goal]; break;
     case "note.updated": state.notes = [...state.notes.filter((n) => n.id !== m.note.id), m.note]; break;
     case "note.removed": state.notes = state.notes.filter((n) => n.id !== m.id); break;
@@ -442,6 +452,7 @@ function taskView(id) {
     h("div", { class: "stepper" }, STATES.map((s, i) => h("span", { class: i <= reached ? `bg-${STATES[Math.min(i, reached)]}` : "" }))),
     t.waiting && h("p", { class: "muted" }, t.waiting),
     t.liveLog && !t.waiting && t.worker && h("p", { class: "muted" }, `${name(t.worker.role)}: ${t.liveLog}`),
+    promptCard(t),
     t.hand && handCard(t),
     t.question && !t.hand && questionCard(t),
     t.state === "drafting" && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
@@ -461,6 +472,42 @@ function handCard(t) {
         h("b", {}, o.title + (o.recommended ? " · recommended" : "")), h("span", { class: "muted" }, o.detail)))),
     mine && compose(t, "hand", "Or say what to do…", "Send", (text) => send({ type: "task.resolveHand", id: t.id, option: null, note: text })),
     !mine && h("p", { class: "muted" }, `Waiting on ${name(t.hand.assignee)}.`));
+}
+
+/** The task's worker session's activity while it's waiting for someone, from its machine. */
+function waitingActivity(t) {
+  const w = t.worker;
+  const a = w && state.machines.find((m) => m.id === w.machine)?.sessions.find((s) => s.session.id === w.session)?.activity;
+  return a?.state === "waiting" ? a : null;
+}
+
+/** Which tasks are stopped at a prompt, and since when: what `receive` compares to skip a redraw. */
+const prompts = () => [...state.tasks.values()].map((t) => waitingActivity(t)?.at ?? "").join();
+
+const answering = new Map(); // task id → the activity `at` answered, while it moves on
+
+function promptCard(t) {
+  const a = waitingActivity(t);
+  const p = a?.question?.permission;
+  if (!a || (!p && t.hand)) return null;
+  const busy = answering.get(t.id) === a.at;
+  const answer = (choice) => {
+    if (busy || !send({ type: "task.answerPrompt", id: t.id, choice })) return;
+    answering.set(t.id, a.at);
+    // Refused, or the keypress was lost: the buttons come back.
+    setTimeout(() => { if (answering.get(t.id) === a.at) { answering.delete(t.id); render(); } }, 10_000);
+    render();
+  };
+  return h("div", { class: "callout question" },
+    h("b", {}, `${name(t.worker.role)} is waiting on you`),
+    p ? [
+      h("p", { style: "margin:6px 0 0" }, `Wants to run ${p.tool}: ${p.summary}`),
+      p.detail && h("pre", { class: "prompt-detail" }, p.detail),
+      p.warning && h("p", { class: "muted", style: "margin:6px 0 0" }, `⚠ ${p.warning}`),
+      h("div", { class: "actions" },
+        h("button", { class: "btn go", disabled: busy, onclick: () => answer("yes") }, busy ? "Answering…" : "Yes"),
+        h("button", { class: "btn", disabled: busy, onclick: () => answer("no") }, "No")),
+    ] : h("p", { style: "margin:6px 0 0" }, `${a.message ?? "It's waiting for you in its session."} Answer it in the session.`));
 }
 
 function questionCard(t) {
