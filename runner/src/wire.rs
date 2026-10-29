@@ -645,9 +645,15 @@ pub struct Evidence {
     /// An uploaded image or video's path under /api/files/.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
-    /// The agent's role, or a login for "I checked it".
+    /// The agent's role, or the login of the person who attested.
     pub by: String,
     pub at: u64,
+    /// A person signed it off themselves instead of the agent proving it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested: Option<bool>,
+    /// Why they attested, if they said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1816,7 +1822,7 @@ pub enum ClientMessage {
     TaskMove {
         id: String,
     },
-    /// "I checked it" for a Done when item.
+    /// Attest to a Done when item yourself, with an optional reason.
     #[serde(rename = "task.checkedIt")]
     TaskCheckedIt {
         id: String,

@@ -9,7 +9,8 @@
 //
 // Planner: submits a two-step plan with a terminal and a screen mockup ("[cross-repo]": plus a part
 // for the goal's next repo). Builder: commits a file,
-// proves both items and finishes ("## It didn't merge": merges its base in and resolves the conflicts).
+// proves both items and finishes ("## It didn't merge": merges its base in and resolves the conflicts;
+// "[attest]": waits for a person to attest to both items first, then proves them anyway).
 // Reviewer: asks for changes in round 1, passes round 2.
 
 import net from "node:net";
@@ -140,6 +141,10 @@ async function builder() {
   await call("progress", { step: 2, status: "done" });
   const applied = [...requested, ...steered].map(([, id]) => id);
   if (applied.length) await call("progress", { applied });
+  if (prompt.includes("[attest]")) {
+    say("waiting for both items to be attested");
+    while (!(await call("get_task")).data.task.doneWhen.every((d) => d.evidence?.attested)) await new Promise((r) => setTimeout(r, 500));
+  }
   await call("prove", { item: 1, kind: "terminal", summary: "hello.txt has the greeting", command: "cat hello.txt", output: git("show", "HEAD:hello.txt").split("\n") });
   await call("prove", { item: 2, kind: "terminal", summary: "The commit is on the branch", command: "git log --oneline -3", output: git("log", "--oneline", "-3").split("\n") });
   const done = await call("finish", { summary: fixing ? "Addressed the review's finding." : "Added hello.txt with the task's greeting." });

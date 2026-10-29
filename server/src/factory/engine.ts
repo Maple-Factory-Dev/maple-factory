@@ -521,9 +521,11 @@ export class Engine {
       }
       case "task.checkedIt": {
         const item = task.doneWhen[msg.item] ?? fail("There's no such Done when item.");
+        if (task.state !== "building" && task.state !== "reviewing") fail("You can attest to it while it's building or in review.");
+        const reason = msg.note?.trim() || null;
         item.status = "proven";
-        item.evidence = { kind: item.proof, summary: msg.note?.trim() || `${who} checked it by hand.`, output: [], by: who, at: now() };
-        this.event(task, who, `checked "${item.text}"`);
+        item.evidence = { kind: item.proof, summary: `Attested by ${who}${reason ? `: ${reason}` : ""}`, output: [], by: who, at: now(), attested: true, reason };
+        this.event(task, who, `attested "${item.text}"${reason ? `: ${reason}` : ""}`);
         this.save(task);
         return;
       }
@@ -1337,6 +1339,11 @@ export class Engine {
           by: "builder",
           at: now(),
         };
+        // A person's attestation stands unless the agent's own proof shows it failing.
+        if (item.evidence?.attested && item.status === "proven" && !evidence.failed) {
+          const left = task.doneWhen.filter((d) => d.status !== "proven").length;
+          return { summary: `${item.evidence.by} already attested to it; kept their sign-off. ${left ? `${left} item${left === 1 ? "" : "s"} left to prove.` : "Every item is proven."}` };
+        }
         item.evidence = evidence;
         item.status = evidence.failed ? "failed" : "proven";
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
@@ -1752,7 +1759,7 @@ const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "te
 /** The pull request's description: the brief, the plan, and what proves it's done. */
 function pullBody(task: Task): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text}${s.file ? ` (\`${s.file}\`)` : ""}`).join("\n");
-  const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
+  const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence?.attested ? ` (attested by @${d.evidence.by}${d.evidence.reason ? `: ${d.evidence.reason}` : ""})` : d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
   return [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, task.brief.trim(), steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
     .join("\n\n")

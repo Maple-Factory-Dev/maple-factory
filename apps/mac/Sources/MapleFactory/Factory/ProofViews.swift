@@ -1,5 +1,23 @@
 import SwiftUI
 
+extension AppState {
+    /// A person signs a Done when item off themselves, with an optional reason.
+    func attest(_ taskID: String, item index: Int, reason: String) {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let client, isLive {
+            client.send(.taskCheckedIt(.init(id: taskID, item: UInt32(index), note: trimmed.isEmpty ? nil : trimmed)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.2)) {
+            update(taskID) { task in
+                guard task.doneWhen.indices.contains(index) else { return }
+                task.doneWhen[index].status = .proven
+                task.doneWhen[index].evidence = .attested(by: FactoryData.me.github ?? FactoryData.me.name, reason: trimmed.isEmpty ? nil : trimmed, when: "now")
+            }
+        }
+    }
+}
+
 /// The acceptance checks a plan commits to, and — once building — the evidence the agent attached for each.
 struct DoneWhenSection: View {
     let task: FactoryTask
@@ -28,7 +46,7 @@ struct DoneWhenSection: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(task.doneWhen.enumerated()), id: \.element.id) { index, criterion in
-                    CriterionRow(criterion: criterion)
+                    CriterionRow(task: task, index: index, criterion: criterion)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if index < task.doneWhen.count - 1 { Hairline().padding(.leading, 36) }
                 }
@@ -79,7 +97,19 @@ struct ProofMeter: View {
 }
 
 private struct CriterionRow: View {
+    @Environment(AppState.self) private var state
+    let task: FactoryTask
+    let index: Int
     let criterion: DoneCriterion
+    private var key: String { "\(task.id)#\(index)" }
+    private var attesting: Binding<Bool> {
+        Binding(get: { state.attestingItem == key }, set: { open in
+            if open { state.attestReason = ""; state.attestingItem = key } else if state.attestingItem == key { state.attestingItem = nil }
+        })
+    }
+
+    private var attested: Bool { if case .attested = criterion.evidence { true } else { false } }
+    private var canAttest: Bool { criterion.status != .proven && (task.state == .building || task.state == .reviewing) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -107,6 +137,15 @@ private struct CriterionRow: View {
                     Text(statusText)
                         .font(.system(size: 11))
                         .foregroundStyle(statusColor)
+
+                    if canAttest {
+                        Spacer(minLength: 0)
+                        Button("Attest") { attesting.wrappedValue = true }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 11, weight: .medium))
+                            .help("Sign this off yourself instead of waiting for the agent's proof")
+                            .popover(isPresented: attesting, arrowEdge: .leading) { attestForm }
+                    }
                 }
 
                 if let evidence = criterion.evidence {
@@ -126,7 +165,7 @@ private struct CriterionRow: View {
         case .proving:
             ProgressView().controlSize(.mini)
         case .proven:
-            Image(systemName: "checkmark.seal.fill").foregroundStyle(Theme.State.merged)
+            Image(systemName: attested ? "person.badge.shield.checkmark.fill" : "checkmark.seal.fill").foregroundStyle(Theme.State.merged)
         case .failed:
             Image(systemName: "xmark.seal.fill").foregroundStyle(Theme.State.cancelled)
         }
@@ -136,9 +175,40 @@ private struct CriterionRow: View {
         switch criterion.status {
         case .pending: "Needs proof"
         case .proving: "Collecting proof…"
-        case .proven: "Proven"
+        case .proven: attested ? "Attested" : "Proven"
         case .failed: "Proof failed"
         }
+    }
+
+    private var attestForm: some View {
+        @Bindable var state = state
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Attest to this yourself")
+                .font(.system(size: 12.5, weight: .semibold))
+            Text("It counts as proven, signed off by you instead of the agent.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Reason (optional)", text: $state.attestReason, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
+                .onSubmit(confirm)
+            HStack {
+                Spacer()
+                Button("Cancel") { attesting.wrappedValue = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Attest", action: confirm)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(14)
+        .frame(width: 300)
+    }
+
+    private func confirm() {
+        state.attest(task.id, item: index, reason: state.attestReason)
+        state.attestingItem = nil
+        state.attestReason = ""
     }
 
     private var statusColor: Color {
@@ -160,7 +230,41 @@ struct EvidenceView: View {
         case let .tests(suite, passed, failed): TestsProof(suite: suite, passed: passed, failed: failed)
         case let .screenshot(caption): MediaProof(caption: caption, duration: nil)
         case let .video(caption, duration): MediaProof(caption: caption, duration: duration)
+        case let .attested(by, reason, when): AttestedProof(by: by, reason: reason, when: when)
         }
+    }
+}
+
+/// A person's sign-off, kept apart from anything the agent proved.
+private struct AttestedProof: View {
+    let by: String
+    let reason: String?
+    let when: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.badge.shield.checkmark")
+                    .foregroundStyle(Theme.State.merged)
+                Text("Attested by @\(by)")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                Text("·").foregroundStyle(Theme.textFaint)
+                Text(when == "now" ? "just now" : "\(when) ago")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.textMuted)
+            }
+            .font(.system(size: 11.5))
+            if let reason {
+                Text("“\(reason)”")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fillSubtle))
     }
 }
 

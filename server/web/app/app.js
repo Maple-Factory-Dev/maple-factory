@@ -658,7 +658,7 @@ function doneItem(d) {
   return h("div", { class: "check" },
     h("span", { class: `mark ${ok ? "ok" : d.status === "failed" ? "bad" : "wait"}` }, ok ? "✓" : d.status === "failed" ? "✕" : "○"),
     h("div", { style: "flex:1;min-width:0" }, d.text,
-      d.evidence && h("div", { class: "muted", style: "font-size:13.5px" }, d.evidence.summary),
+      d.evidence && h("div", { class: "muted", style: "font-size:13.5px" }, d.evidence.attested ? `Attested by @${d.evidence.by}${d.evidence.reason ? ` — ${d.evidence.reason}` : ""}` : d.evidence.summary),
       d.evidence?.output?.length > 0 && h("pre", { class: "out" }, [d.evidence.command && `$ ${d.evidence.command}`, ...d.evidence.output].filter(Boolean).join("\n"))));
 }
 
