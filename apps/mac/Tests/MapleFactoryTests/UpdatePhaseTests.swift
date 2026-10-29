@@ -78,4 +78,17 @@ struct UpdatePhaseTests {
         #expect(UpdatePhase.upToDate.action == nil)
         #expect(all.filter { !$0.showsInFooter } == [.idle, .upToDate])
     }
+
+    @Test func releaseNotesLinkShowsWhileAnUpdateIsOnOfferOrReady() {
+        #expect(UpdatePhase.available(version: "0.2.0").showsReleaseNotesLink)
+        #expect(UpdatePhase.readyToRelaunch(version: "0.2.0").showsReleaseNotesLink)
+        #expect(all.filter(\.showsReleaseNotesLink) == [.available(version: "0.2.0"), .readyToRelaunch(version: "0.2.0")])
+        for phase: UpdatePhase in [.checking, .downloading(received: 10, expected: 100), .failed(message: "The feed is down"), .upToDate] {
+            #expect(!phase.showsReleaseNotesLink)
+        }
+    }
+
+    @Test func releaseNotesLinkSaysWhatsNew() {
+        #expect(UpdatePhase.releaseNotesLinkLabel == "What's new")
+    }
 }
