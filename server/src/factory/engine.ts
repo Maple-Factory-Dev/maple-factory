@@ -321,13 +321,19 @@ export class Engine {
         const activity = machine?.sessions.find((s) => s.session.id === w.session)?.activity;
         const permission = activity?.state === "waiting" ? (activity.question as { permission?: { tool?: string } } | null)?.permission : undefined;
         if (!activity || !permission) fail(`Its ${w.role} isn't waiting on a permission prompt.`);
-        if (this.answered.get(w.session) === activity!.at) fail("That prompt has already been answered.");
+        if (this.store.get(`answered:${w.session}`) === String(activity!.at)) fail("That prompt has already been answered.");
         // 1 is always "Yes" (once). No is whichever number comes last ("2. Yes, and don't ask again" can
         // sit before it), so it's Esc, Claude's own way out of the menu, which denies the tool call.
         const ok = await this.press(task, msg.choice === "yes" ? "1" : "\x1b");
         if (!ok) fail(`${machine?.name ?? w.machine} is offline.`);
-        this.answered.set(w.session, activity!.at);
-        this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${permission!.tool ?? "it"}`);
+        this.store.set(`answered:${w.session}`, String(activity!.at));
+        const tool = permission!.tool ?? "it";
+        if (msg.choice === "no") {
+          // Allowed, its PostToolUse moves it on; denied, Claude stops and says nothing, so the factory does.
+          const stopped = { ...activity!, message: `Stopped: ${who} denied ${tool}. Steer it, or answer in its session.`, question: null };
+          await machineHub(this.env, w.machine).fetch("https://hub/activity", { method: "POST", body: JSON.stringify({ session: w.session, activity: stopped }) });
+        }
+        this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${tool}`);
         this.save(task);
         return;
       }
@@ -1751,9 +1757,6 @@ export class Engine {
     const res = await machineHub(this.env, w.machine).fetch("https://hub/input", { method: "POST", body: JSON.stringify({ session: w.session, text: keys, keys: true }) });
     return res.ok;
   }
-
-  /** The activity (`at`) each session's permission prompt was last answered at, so a second click doesn't type into what comes next. */
-  private answered = new Map<string, number>();
 
   private async toRunner(machine: string, command: ServerToRunner, by?: string): Promise<boolean> {
     const res = await machineHub(this.env, machine).fetch("https://hub/command", {

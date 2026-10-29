@@ -6,7 +6,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.ts";
-import type { LiveSession, Machine, RunnerMessage, ServerToRunner, SessionEnd } from "./wire.ts";
+import type { Activity, LiveSession, Machine, RunnerMessage, ServerToRunner, SessionEnd } from "./wire.ts";
 import { offlineMachine, machineRow } from "./machines.ts";
 import { orgHub } from "./util.ts";
 
@@ -59,6 +59,15 @@ export class MachineHub extends DurableObject<Env> {
       case "/state": return Response.json(await this.machine());
       case "/rename": {
         await this.publish({ ...(await this.machine()), name: await request.text() });
+        return new Response(null, { status: 204 });
+      }
+      case "/activity": {
+        // The factory's word on a session's activity until the runner's next: Claude sends no hook when
+        // its permission prompt is denied, so the denied prompt would otherwise stay up.
+        const { session, activity } = (await request.json()) as { session: string; activity: Activity };
+        const machine = await this.machine();
+        if (!machine.sessions.some((s) => s.session.id === session)) return new Response("No such session.", { status: 404 });
+        await this.publish({ ...machine, sessions: machine.sessions.map((s) => (s.session.id === session ? { ...s, activity } : s)) });
         return new Response(null, { status: 204 });
       }
       case "/input": {
