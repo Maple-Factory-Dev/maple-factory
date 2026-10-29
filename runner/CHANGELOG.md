@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.42.0 — 2026-10-29
+
+Statistics break down code review findings by kind, severity, area, outcome and agent.
+
 ## 0.41.0 — 2026-10-29
 
 A backlog state: park a draft or a plan for later, and pick it up when it's time.
