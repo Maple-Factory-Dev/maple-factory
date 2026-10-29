@@ -19,8 +19,13 @@ struct MergeGate {
     let reviewsNeeded: Int
     let reviewsReady: Bool
     let autoMerge: Bool
+    /// The factory's own reviewer has passed the latest round; the server refuses approvals and merges until then.
+    let autoReviewReady: Bool
+    let autoReviewDetail: String?
+    /// The round still under way, if the reviewer is working on one now.
+    let autoReviewRound: Int?
 
-    var canMerge: Bool { proofsReady && checksReady && reviewsReady }
+    var canMerge: Bool { proofsReady && checksReady && reviewsReady && autoReviewReady }
 }
 
 @MainActor @Observable
@@ -294,6 +299,16 @@ final class AppState {
         let unproven = task.doneWhen.filter { $0.status != .proven }.count
         let required = task.pr?.checks.filter(\.required) ?? []
         let reviewsNeeded = risk?.reviews ?? 1
+        let round = task.autoReview?.current
+        let autoReviewDetail: String? = task.autoReview.map { _ in
+            switch round?.verdict {
+            case .inProgress?: "Round \(round!.number) in progress"
+            case .changesRequested?: "Changes requested"
+            case .escalated?: "Escalated"
+            case .passed?: "Passed"
+            case nil: "Waiting for the reviewer"
+            }
+        }
 
         return MergeGate(
             proofsReady: unproven == 0,
@@ -303,7 +318,10 @@ final class AppState {
             failedChecks: required.filter { $0.status == .failed }.count,
             reviewsNeeded: reviewsNeeded,
             reviewsReady: task.reviews.count >= reviewsNeeded,
-            autoMerge: risk?.autoMerge ?? false
+            autoMerge: risk?.autoMerge ?? false,
+            autoReviewReady: task.autoReview == nil || round?.verdict == .passed,
+            autoReviewDetail: autoReviewDetail,
+            autoReviewRound: round?.verdict == .inProgress ? round?.number : nil
         )
     }
 
