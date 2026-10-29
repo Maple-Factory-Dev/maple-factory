@@ -162,10 +162,13 @@ struct TaskFocusView: View {
                 }
                 headerButton("Copy link", icon: "link")
                     .onTapGesture { appState.copyLink(task.id) }
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textMuted)
-                    .frame(width: 28, height: 28)
+                TaskActionsMenu(task: task) {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textMuted)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
             }
 
             Text(task.title)

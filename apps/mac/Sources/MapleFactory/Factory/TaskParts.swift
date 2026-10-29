@@ -57,6 +57,82 @@ struct TaskOwnership: View {
     }
 }
 
+/// The ⋯ menu on a task: Retry and Cancel task…, with Cancel's confirmation. Nothing on a merged task.
+struct TaskActionsMenu<Label: View>: View {
+    let task: FactoryTask
+    @ViewBuilder var label: Label
+    @State private var confirmCancel = false
+
+    var body: some View {
+        if task.state != .merged {
+            Menu {
+                TaskActionButtons(task: task, confirmCancel: $confirmCancel)
+            } label: {
+                label
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Task actions")
+            .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
+        }
+    }
+}
+
+/// Retry and Cancel task…, for a menu or a row's context menu. Cancel only asks; the caller shows
+/// the confirmation (`cancelTaskConfirmation`).
+struct TaskActionButtons: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+    @Binding var confirmCancel: Bool
+
+    var body: some View {
+        if task.state != .merged {
+            if task.state != .drafting {
+                Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
+            }
+            if task.state != .cancelled {
+                Button(role: .destructive) { confirmCancel = true } label: { Label("Cancel task…", systemImage: "xmark.circle") }
+            }
+        }
+    }
+}
+
+extension View {
+    /// Asks before cancelling `task`, saying what cancelling stops.
+    func cancelTaskConfirmation(task: FactoryTask, isPresented: Binding<Bool>) -> some View {
+        modifier(CancelTaskConfirmation(task: task, isPresented: isPresented))
+    }
+}
+
+private struct CancelTaskConfirmation: ViewModifier {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Cancel \(task.id)?", isPresented: $isPresented) {
+            Button("Cancel Task", role: .destructive) { appState.cancel(task.id) }
+            Button("Keep Working", role: .cancel) {}
+        } message: {
+            Text(Self.stops(task))
+        }
+    }
+
+    /// What cancelling ends, in a sentence.
+    static func stops(_ task: FactoryTask) -> String {
+        var parts: [String] = []
+        if let worker = task.worker { parts.append("its running \(worker.role) session") }
+        else if task.state == .planning || task.state == .building || task.liveLog != nil { parts.append("its running session") }
+        if let pr = task.pr, pr.state == .open || pr.state == .draft { parts.append("its open PR #\(pr.number)") }
+        if task.state == .awaitingApproval { parts.append("the pending plan approval") }
+        if task.state == .reviewing, task.pr?.state != .merged { parts.append("the pending review") }
+        if task.question != nil || task.hand != nil { parts.append("the open question to you") }
+        let list = parts.count > 1 ? parts.dropLast().joined(separator: ", ") + " and " + parts.last! : parts.first
+        return (list.map { "This stops \($0). " } ?? "") + "Its branch stays, and you can pick it back up with Retry."
+    }
+}
+
 struct QuestionBlock: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask

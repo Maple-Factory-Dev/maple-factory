@@ -803,6 +803,17 @@ final class AppState {
     func retry(_ id: String) {
         if let client, isLive {
             client.send(.taskRetry(.init(id: id)))
+            return
+        }
+        // Back to the stage it was in, as the factory does.
+        update(id) { task in
+            guard task.state == .cancelled else { return }
+            if task.pr != nil {
+                task.state = .reviewing
+                if task.pr?.state == .closed { task.pr?.state = .open }
+            } else {
+                task.state = task.plan.isEmpty ? .planning : .building
+            }
         }
     }
 

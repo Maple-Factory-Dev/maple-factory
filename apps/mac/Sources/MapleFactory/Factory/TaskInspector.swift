@@ -29,7 +29,10 @@ struct TaskInspector: View {
                     .contentShape(Rectangle())
                     .onTapGesture { appState.openFocus(task.id) }
                     .help("Open full view (⌘↩)")
-                Image(systemName: "ellipsis").padding(.leading, 4)
+                TaskActionsMenu(task: task) {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .padding(.leading, 4)
             }
             .font(.system(size: 13))
             .foregroundStyle(Theme.textMuted)
