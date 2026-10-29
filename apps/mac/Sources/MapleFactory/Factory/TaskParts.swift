@@ -177,7 +177,17 @@ struct RequestChangesButton: View {
     var action: () -> Void
 
     var body: some View {
-        Text("Request changes")
+        SecondaryButton(title: "Request changes", enabled: enabled, action: action)
+    }
+}
+
+struct SecondaryButton: View {
+    let title: String
+    var enabled = true
+    var action: () -> Void
+
+    var body: some View {
+        Text(title)
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(Theme.text)
             .lineLimit(1)
@@ -287,6 +297,22 @@ struct ReviewActions: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.State.merged.opacity(0.1)))
+            } else if let hand = task.hand, hand.reason == .mergeFailed {
+                // The merge failed: a person picks how it goes on, so Merge gives way to the hand's options.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: hand.reason.icon).foregroundStyle(hand.reason.color)
+                    Text(hand.explanation).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 12))
+                DecisionButtons {
+                    PrimaryButton(title: "Send back to fix", icon: "arrow.uturn.backward") {
+                        state.resolveHand(task.id, option: hand.options.first { $0.title == "Send it back to fix" }, note: "")
+                    }
+                    SecondaryButton(title: "Retry merge") {
+                        state.resolveHand(task.id, option: hand.options.first { $0.title == "Try the merge again" }, note: "")
+                    }
+                    RequestChangesButton(action: onRequestChanges)
+                }
             } else {
                 let approving = state.isInFlight(task.id, .approveChanges)
                 let merging = state.isInFlight(task.id, .merge)
@@ -328,6 +354,9 @@ struct ReviewActions: View {
         let risk = state.risk(for: task)
         let level = risk?.level.title.lowercased() ?? "this"
         let (icon, text, color): (String, String, Color) = {
+            if task.hand?.reason == .mergeFailed {
+                return ("hand.raised", "Nothing merges it again until someone picks a way forward.", Theme.textMuted)
+            }
             if !gate.autoReviewReady {
                 switch task.autoReview?.current?.verdict {
                 case .changesRequested?:

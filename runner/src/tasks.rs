@@ -158,13 +158,14 @@ pub struct Merge {
 pub async fn run_merge(sessions: Sessions, m: Merge) {
     let dir = expand_home(&m.cwd);
     let merged = merge(&dir, &m).await;
+    // A conflicted merge blocks the checkout until it's aborted.
+    if merged.is_err() {
+        let _ = git(&dir, &["merge", "--abort"], None).await;
+    }
     let _ = git(&dir, &["checkout", "--quiet", &m.branch], None).await;
     sessions.emit(match merged {
         Ok(commit) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None },
-        Err(e) => {
-            let _ = git(&dir, &["merge", "--abort"], None).await;
-            Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) }
-        }
+        Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) },
     });
 }
 

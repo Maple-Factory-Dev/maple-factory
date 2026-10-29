@@ -225,6 +225,8 @@ pub enum HandReason {
     OverBudget,
     /// Its session ended in a way that needs a person.
     SessionEnded,
+    /// It was approved but didn't merge.
+    MergeFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
