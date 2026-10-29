@@ -126,6 +126,14 @@ private struct NoteEditor: View {
                             state.openFocus(taskID)
                         }
                     }
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 30, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill))
+                        .contentShape(Rectangle())
+                        .onTapGesture { state.deletingNote = note.id }
+                        .help("Delete note")
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.right.square").font(.system(size: 11))
                         Text("Turn into task")
