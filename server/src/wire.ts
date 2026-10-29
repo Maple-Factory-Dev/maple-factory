@@ -1626,6 +1626,15 @@ export interface ServerToClient_ReposUpdated {
   repos: OrgRepo[];
 }
 
+/** A runner release came out (or the feed changed) since the snapshot. */
+export interface ServerToClient_RunnerReleased {
+  type: "runner.released";
+  /** The newest released runner version. */
+  runnerLatest?: string | null;
+  /** Runner releases, newest first, with their notes. */
+  runnerReleases: RunnerRelease[];
+}
+
 /** Something worth a passing line in the app. */
 export interface ServerToClient_Toast {
   type: "toast";
@@ -1652,5 +1661,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","repos.updated","toast","session.ended","stats","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_ReposUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","repos.updated","runner.released","toast","session.ended","stats","error"] as const;

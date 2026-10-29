@@ -2271,6 +2271,16 @@ pub enum ServerToClient {
         #[serde(default)]
         repos: Vec<OrgRepo>,
     },
+    /// A runner release came out (or the feed changed) since the snapshot.
+    #[serde(rename = "runner.released")]
+    RunnerReleased {
+        /// The newest released runner version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runner_latest: Option<String>,
+        /// Runner releases, newest first, with their notes.
+        #[serde(default)]
+        runner_releases: Vec<RunnerRelease>,
+    },
     /// Something worth a passing line in the app.
     #[serde(rename = "toast")]
     Toast {
