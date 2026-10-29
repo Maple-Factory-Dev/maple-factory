@@ -1367,15 +1367,20 @@ final class AppState {
     /// False while an `-actions` script is still playing, so a headless run waits for it.
     @ObservationIgnored private(set) var scriptFinished = true
 
+    /// One step of a demo script, `name:argument…`; nil when it has no argument.
+    nonisolated static func demoAction(_ command: String) -> [String]? {
+        let parts = command.trimmingCharacters(in: .whitespaces).split(separator: ":").map(String.init)
+        return parts.count >= 2 ? parts : nil
+    }
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
     /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
     /// Headless (`-snapshot`), `shot:approved` renders the window to approved.png between actions.
     private func play(_ script: String) async {
-        for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+        for command in script.split(separator: ";") {
             try? await Task.sleep(for: .seconds(1))
-            let parts = command.split(separator: ":").map(String.init)
-            guard parts.count >= 2 else { continue }
+            guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
             case "review": approveChanges(parts[1])
