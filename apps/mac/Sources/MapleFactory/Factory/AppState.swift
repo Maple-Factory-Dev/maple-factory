@@ -44,7 +44,14 @@ final class AppState {
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
-    var showInspector = UserDefaults.standard.bool(forKey: "taskPanel")
+    var showInspector = AppState.panelLeftOpen
+    /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
+    /// written on every toggle while the panel opened by default, so it's true for most people.
+    private static let panelKey = "taskPanelOpen"
+    private static var panelLeftOpen: Bool {
+        UserDefaults.standard.removeObject(forKey: "taskPanel")
+        return UserDefaults.standard.bool(forKey: panelKey)
+    }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
     /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
@@ -67,15 +74,17 @@ final class AppState {
         }
     }
 
+    /// ×, Esc or clicking the open card again; in a full-width window the close sticks across launches.
     func closeTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector = false }
+        if !isCompact { UserDefaults.standard.set(false, forKey: AppState.panelKey) }
     }
 
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
     /// (in a full-width window; a narrow one hides and floats the panel on its own).
     func toggleTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
-        if !isCompact { UserDefaults.standard.set(showInspector, forKey: "taskPanel") }
+        if !isCompact { UserDefaults.standard.set(showInspector, forKey: AppState.panelKey) }
     }
 
     // MARK: Machines
@@ -161,7 +170,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = UserDefaults.standard.bool(forKey: "taskPanel")
+                showInspector = UserDefaults.standard.bool(forKey: AppState.panelKey)
             }
         }
     }

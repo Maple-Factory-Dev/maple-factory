@@ -679,6 +679,7 @@ struct TaskComposer: View {
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
+                .onExitCommand { focused.wrappedValue = false }
                 .onSubmit(send)
 
             HStack {

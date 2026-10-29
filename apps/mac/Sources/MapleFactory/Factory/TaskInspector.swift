@@ -37,7 +37,8 @@ struct TaskInspector: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
+                // While typing, Esc leaves the composer (keeping the draft) instead of closing the panel.
+                .keyboardShortcut(composerFocused ? nil : .cancelAction)
                 .help("Close (Esc)")
             }
             .font(.system(size: 13))
