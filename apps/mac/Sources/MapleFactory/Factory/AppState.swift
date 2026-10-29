@@ -1013,6 +1013,22 @@ final class AppState {
         }
     }
 
+    /// Starts its next session now, over its machine's slot count: the front, no schedule, forced.
+    func forceStart(_ id: String) {
+        if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true, force: true)))
+            return
+        }
+        startNow(id)
+    }
+
     /// Takes its schedule off, keeping its place.
     func unschedule(_ id: String) {
         if let client, isLive {
