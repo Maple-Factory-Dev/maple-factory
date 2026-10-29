@@ -439,16 +439,21 @@ final class AppState {
         }()
         var chosen = false
         if goal != nil { chosen = true } else if case .goal = destination { chosen = true }
-        draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
-        cancelAIDraft()
+        // A Draft with AI left running (or finished, not yet in the composer) carries on: a plain
+        // New Task comes back to it as it was left.
+        let resuming = aiDraftPending && goal == nil && title.isEmpty && body.isEmpty && fromNote == nil
+        if !aiDraftPending { aiDraftID = nil }
+        if !resuming {
+            draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
+        }
         withAnimation(.snappy(duration: 0.3)) {
             focusedTask = nil
             isComposing = true
         }
     }
 
+    /// Closes the composer. A Draft with AI that's running keeps going, to come back to.
     func cancelCompose() {
-        cancelAIDraft()
         withAnimation(.snappy(duration: 0.3)) { isComposing = false }
     }
 
@@ -461,7 +466,18 @@ final class AppState {
     /// A goal Draft with AI suggested, for the goal sheet to start from.
     var goalPrefill: Wire.NewGoalIdea? = nil
 
+    /// Whether the Draft with AI card shows what the agent has said and done.
+    var watchingAIDraft = false
+
     var aiDraft: Wire.Draft? { aiDraftID.flatMap { client?.drafts[$0] } }
+
+    /// A Draft with AI the composer should come back to: still running, or done with its result
+    /// (or its question, or why it failed) not yet in the composer.
+    var aiDraftPending: Bool {
+        guard let id = aiDraftID else { return false }
+        guard let draft = aiDraft else { return true }
+        return draft.state != .ready || appliedAIDraft != id
+    }
 
     /// Has an agent read the code (or pick a goal first) and fill in the title, brief and Done when.
     func draftWithAI() {
@@ -1118,6 +1134,8 @@ final class AppState {
                 switch parts[1] {
                 case "compose": startCompose()
                 case "cancel": cancelCompose()
+                case "draft": draftWithAI()
+                case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 default: break
                 }
