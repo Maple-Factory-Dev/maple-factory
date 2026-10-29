@@ -502,7 +502,8 @@ function taskView(id) {
     h("h1", {}, t.title),
     h("div", { class: "row" },
       h("span", { class: `pill s-${t.state}` }, STATE_TITLE[t.state]),
-      h("span", { class: "muted" }, `${name(t.owner)} · ${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
+      ownerControl(t),
+      h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
       t.after.map((id, i) => [i ? ", " : "", h("a", { href: `#/t/${id}` }, id)])),
     effortLine(t),
@@ -527,6 +528,22 @@ const effortEdits = new Map(); // task id → the effort name being typed
 /** Every task in `t`'s goal that's part of `effort`, in id order (ATL-9 before ATL-10). */
 const effortTasks = (t, effort) => [...state.tasks.values()].filter((x) => x.goal === t.goal && x.effort === effort)
   .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+// Its owner: a select for its owner or an admin (who can give it to anyone), Take over for everyone else.
+function ownerControl(t) {
+  const me = state.me?.login;
+  const open = t.state !== "merged" && t.state !== "cancelled";
+  const assign = (owner) => owner && owner !== t.owner && send({ type: "task.assign", id: t.id, owner });
+  if (!open) return h("span", { class: "muted" }, `${name(t.owner)} ·`);
+  const canGive = t.owner === me || state.me?.role === "admin";
+  return h("span", { class: "row", style: "gap:6px" },
+    canGive
+      ? h("select", { title: "Who owns it", onchange: (e) => assign(e.target.value) },
+          state.members.map((m) => h("option", { value: m.login, selected: m.login === t.owner }, m.login === me ? `${m.name || m.login} (you)` : m.name || m.login)))
+      : h("span", { class: "muted" }, name(t.owner)),
+    t.owner !== me && h("button", { class: "btn small", onclick: () => assign(me) }, "Take over"),
+    h("span", { class: "muted" }, "·"));
+}
 
 function effortLine(t) {
   const typed = effortEdits.get(t.id);
