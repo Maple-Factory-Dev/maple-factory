@@ -5,7 +5,7 @@ import SwiftUI
 struct RunnerUpdateRow: View {
     @Environment(FactoryClient.self) private var client
     let machine: Wire.Machine
-    /// Whether this person may update it (its owner, or an admin).
+    /// Whether it has its own Update, Retry and Show Log (this person may update it, and nothing beside it does).
     let canUpdate: Bool
     /// Opens What's new (the `runnerChanges` sheet on the view around this).
     let whatsNew: () -> Void
@@ -60,7 +60,7 @@ struct RunnerUpdateRow: View {
                 }
             }
             Spacer(minLength: 4)
-            if isThisMac {
+            if canUpdate && isThisMac {
                 Button("Show Log") { Self.showLog() }.controlSize(.small)
             }
             if canUpdate {

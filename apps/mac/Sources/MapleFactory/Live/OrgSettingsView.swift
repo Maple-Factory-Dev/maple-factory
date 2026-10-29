@@ -222,6 +222,12 @@ struct RunnerSettings: View {
     @State private var adding: String?
     @State private var error: String?
     @State private var nickname = ""
+    @State private var showingChanges = false
+
+    /// Available but not asked for: the header says so, without a row of its own.
+    private static func outdatedOnly(_ phase: RunnerUpdatePhase) -> Bool {
+        if case .outdated = phase { true } else { false }
+    }
 
     private func rename(_ machine: Wire.Machine) {
         client.send(.machineRename(.init(machine: machine.id, name: nickname)))
@@ -242,9 +248,10 @@ struct RunnerSettings: View {
                                 Circle().fill(machine.online ? Theme.State.merged : Theme.textFaint).frame(width: 6, height: 6)
                                 Text(machine.online ? "Online" : "Offline")
                                 if let version = machine.version { Text("· runner \(version)") }
-                                if client.runnerOutdated(machine), let latest = client.runnerLatest {
-                                    Text("· \(latest) available").foregroundStyle(Theme.State.awaitingApproval)
-                                }
+                                Text("·")
+                                Button("What's New") { showingChanges = true }
+                                    .buttonStyle(.link)
+                                    .disabled(client.runnerReleases.isEmpty)
                             }
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.textMuted)
@@ -253,12 +260,21 @@ struct RunnerSettings: View {
                         Button(client.runnerOutdated(machine) ? "Update" : "Check for Update") {
                             client.send(.machineUpdate(.init(machine: machine.id)))
                         }
-                        .disabled(!machine.online)
+                        .disabled(!machine.online || client.updatePhase(machine).isBusy)
                         Button("Show Log") {
                             NSWorkspace.shared.open(LocalRunner.logFile)
                         }
                     }
+                    // Its progress and how it ended; Settings has its own Update and Show Log beside it.
+                    if case let phase = client.updatePhase(machine), phase != .current, !Self.outdatedOnly(phase) {
+                        RunnerUpdateRow(machine: machine, canUpdate: false) { showingChanges = true }
+                    } else if client.runnerOutdated(machine), let latest = client.runnerLatest {
+                        Text("Runner \(latest) is available.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.State.awaitingApproval)
+                    }
                 }
+                .runnerChanges(machine, isPresented: $showingChanges)
                 SettingsCard {
                     HStack {
                         Text("Name")
