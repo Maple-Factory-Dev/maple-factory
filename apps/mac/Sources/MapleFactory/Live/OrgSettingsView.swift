@@ -391,7 +391,7 @@ struct PromptSettings: View {
     }
 }
 
-/// What the factory does when an approved change won't merge. Org-wide, on the risk policy; admins change it.
+/// Whether approved changes merge on their own, and what the factory does when one won't merge. Org-wide, on the risk policy; admins change it.
 struct MergingSettings: View {
     @Environment(FactoryClient.self) private var client
 
@@ -403,6 +403,19 @@ struct MergingSettings: View {
             if !client.isSignedIn || client.riskPolicy == nil {
                 ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see how it merges."))
             } else {
+                SettingsCard {
+                    Toggle("Merge approved changes automatically", isOn: Binding(
+                        get: { client.riskPolicy?.autoMerges ?? true },
+                        set: { on in
+                            guard var policy = client.riskPolicy else { return }
+                            policy.autoMerges = on
+                            client.save(policy: policy)
+                        }
+                    ))
+                    .disabled(!isAdmin)
+                    Text("When a change is proven, reviewed and its checks pass, the factory merges it if its risk level (or its goal's accepted risk) allows. Off: nothing merges on its own; ready changes wait in Pending merge until someone clicks Merge.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+                }
                 SettingsCard {
                     Toggle("Fix merges automatically", isOn: Binding(
                         get: { client.riskPolicy?.autoFixMerges ?? true },

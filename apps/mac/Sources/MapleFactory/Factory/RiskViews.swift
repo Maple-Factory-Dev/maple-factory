@@ -78,7 +78,7 @@ struct RiskBox: View {
                 requirement("checkmark.circle", "Plan approvals", "\(risk.approvals)")
                 requirement("person.2", "Reviews of the final change", risk.reviews == 0 ? "None" : "\(risk.reviews)")
                 requirement(risk.autoMerge ? "bolt.fill" : "bolt.slash", "Auto-merge",
-                            risk.autoMerge ? "On when proofs pass" : "Off",
+                            risk.autoMerge ? "On when proofs pass" : state.policy.autoMerges ? "Off" : "Off for the factory",
                             highlight: risk.autoMerge ? Theme.State.merged : nil)
             }
 
@@ -328,10 +328,16 @@ struct RiskPolicyEditor: View {
                             .toggleStyle(.checkbox)
                             .labelsHidden()
                             .gridColumnAlignment(.center)
+                            .disabled(!state.policy.autoMerges)
                         }
                     }
                 }
                 .font(.system(size: 12))
+                if !state.policy.autoMerges {
+                    Label("Off for the whole factory in Settings › Merging", systemImage: "bolt.slash")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textMuted)
+                }
             }
         }
         .padding(18)

@@ -553,6 +553,9 @@ struct ReviewActions: View {
                     return ("hourglass", "The factory's reviewer is on \(round). You can approve once it passes.", Theme.textMuted)
                 }
             }
+            if !state.policy.autoMerges && gate.canMerge {
+                return ("hand.tap", "Ready. Nothing merges on its own in this factory, so a person merges.", Theme.textMuted)
+            }
             if let acceptance = risk?.acceptance {
                 return ("bolt.shield", "\(acceptance.acceptedBy.firstName) accepted \(level) risk for \(task.goal). The factory merges once proofs and CI pass.", Theme.State.merged)
             }

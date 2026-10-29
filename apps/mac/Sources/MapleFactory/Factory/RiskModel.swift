@@ -79,7 +79,7 @@ struct RiskPolicy {
             approvals: planApprovals[level, default: 1],
             reviews: accepted ? 0 : finalReviews[level, default: 1],
             autoMerge: autoMerges && (accepted || autoMerge[level, default: false]),
-            acceptance: accepted ? acceptance : nil,
+            acceptance: accepted && autoMerges ? acceptance : nil,
             suggestedSplit: overFiles || overLines
                 ? max(Int((Double(footprint.files) / Double(maxFiles)).rounded(.up)),
                       Int((Double(footprint.lines) / Double(maxLines)).rounded(.up)))
