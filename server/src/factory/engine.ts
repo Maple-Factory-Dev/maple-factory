@@ -18,7 +18,7 @@ import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
-import type { StatKind } from "./stats.ts";
+import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import { mentionsIn } from "./mentions.ts";
 import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
@@ -1555,7 +1555,7 @@ export class Engine {
         round.found = found.length;
         round.at = now();
         const fixed = arr(a.fixed).length;
-        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map((f) => ({ kind: f.kind, severity: f.severity })) }, null, s.role);
+        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map(findingDetail) }, null, s.role);
         this.closeWorker(task, "done");
         if (round.verdict === "passed") {
           this.event(task, "reviewer", `passed round ${round.number}`);
