@@ -20,6 +20,25 @@ struct ScratchpadView: View {
         .onChange(of: state.notes.map(\.id), initial: true) { _, ids in
             if !ids.contains(where: { $0 == state.selectedNote }) { state.selectedNote = ids.first }
         }
+        .confirmationDialog(
+            "Delete \u{201C}\(deleting.map { $0.title.isEmpty ? "Untitled note" : $0.title } ?? "")\u{201D}?",
+            isPresented: Binding(get: { state.deletingNote != nil }, set: { if !$0 { state.deletingNote = nil } }),
+            titleVisibility: .visible,
+            presenting: deleting
+        ) { note in
+            Button("Delete Note", role: .destructive) { state.deleteNote(note.id) }
+            Button("Cancel", role: .cancel) { state.deletingNote = nil }
+        } message: { note in
+            if let taskID = note.taskID {
+                Text("This can't be undone. \(taskID) stays; only the note goes.")
+            } else {
+                Text("This can't be undone.")
+            }
+        }
+    }
+
+    private var deleting: Note? {
+        state.notes.first { $0.id == state.deletingNote }
     }
 
     private var noteList: some View {
