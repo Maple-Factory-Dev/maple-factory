@@ -934,6 +934,10 @@ struct TaskComposer: View {
                     draft = note.userInfo?["text"] as? String ?? ""
                     focused.wrappedValue = true
                 }
+                .onReceive(NotificationCenter.default.publisher(for: MentionKey.demo)) { note in
+                    if let key = note.object as? MentionKey { _ = pickerKey(key) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Self.demoSend)) { _ in send() }
 
             HStack {
                 Image(systemName: "paperclip").foregroundStyle(Theme.textMuted)
@@ -1008,6 +1012,8 @@ struct TaskComposer: View {
 
     /// `-actions "mention:cc @"` (AppState.play): types into the composer, for recordings.
     static let demoType = Notification.Name("TaskComposer.demoType")
+    /// `-actions "post:1"`: sends what's in the composer, as Return would.
+    static let demoSend = Notification.Name("TaskComposer.demoSend")
 
     private func mentionKey(_ key: MentionKey) -> Bool {
         let candidates = mentionCandidates

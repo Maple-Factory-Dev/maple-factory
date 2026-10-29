@@ -183,12 +183,19 @@ struct MarkdownPreview: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
-        // A task reference opens that task in the panel; other links open as they always have.
-        .environment(\.openURL, OpenURLAction { url in
-            guard let id = TaskRefQuery.id(from: url) else { return .systemAction }
-            if known.contains(id) { appState?.openTask(id) }
-            return .handled
-        })
+        .environment(\.openURL, OpenURLAction { open($0, known: known) })
+        .onReceive(NotificationCenter.default.publisher(for: TaskRefQuery.demoOpen)) { note in
+            // `openref:<id>` (AppState.play): what clicking that reference here does, for recordings.
+            guard let id = note.userInfo?["id"] as? String, source.contains(id), let url = TaskRefQuery.url(id) else { return }
+            _ = open(url, known: known)
+        }
+    }
+
+    /// A known task's reference opens it in the panel; other links open as they always have.
+    private func open(_ url: URL, known: Set<String>) -> OpenURLAction.Result {
+        guard let id = TaskRefQuery.id(from: url) else { return .systemAction }
+        if known.contains(id) { appState?.openReference(id) }
+        return .handled
     }
 
     private static func grouped(_ blocks: [MarkdownBlock]) -> [[MarkdownBlock]] {
@@ -428,6 +435,14 @@ struct MarkdownEditor: View {
         .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
         .onChange(of: taskQuery?.range.location) { taskRef.highlighted = 0 }
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPreview)) { _ in previewing = true }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoType)) { note in
+            previewing = false
+            text += note.userInfo?["text"] as? String ?? ""
+            selection = NSRange(location: (text as NSString).length, length: 0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: MentionKey.demo)) { note in
+            if let key = note.object as? MentionKey { _ = mentionKey(key) || taskKey(key) }
+        }
     }
 
     private func mentionKey(_ key: MentionKey) -> Bool {
@@ -462,6 +477,8 @@ struct MarkdownEditor: View {
     /// and open Preview, for recordings.
     static let demoPaste = Notification.Name("MarkdownEditor.demoPaste")
     static let demoPreview = Notification.Name("MarkdownEditor.demoPreview")
+    /// `-actions "type:See #ATL"`: types at the end of the editor, for recordings.
+    static let demoType = Notification.Name("MarkdownEditor.demoType")
 
     private func tab(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Text(title)
@@ -578,7 +595,12 @@ struct MentionQuery: Equatable {
 }
 
 /// The keys the picker takes while it's open.
-enum MentionKey { case up, down, pick, close }
+enum MentionKey {
+    case up, down, pick, close
+
+    /// `-actions "pickerkey:pick"` (AppState.play): presses the key in whichever picker is open, for recordings.
+    static let demo = Notification.Name("MentionKey.demo")
+}
 
 /// A popover-style list of teammates to mention; the highlighted one is what Return or Tab picks.
 struct MentionPicker: View {
@@ -707,6 +729,9 @@ struct TaskRefQuery: Equatable {
             return known.contains(id) ? (match.range, id) : nil
         }
     }
+
+    /// `-actions "openref:ATL-150"` (AppState.play): clicks that reference in rendered Markdown.
+    static let demoOpen = Notification.Name("TaskRefQuery.demoOpen")
 
     /// The link a reference gets in rendered Markdown; MarkdownPreview opens it in the task panel.
     static let scheme = "maple-task"
