@@ -43,7 +43,7 @@ struct MapleFactoryApp: App {
             }
             CommandGroup(after: .sidebar) {
                 Button(state.showInspector ? "Hide Task Panel" : "Show Task Panel") {
-                    withAnimation(.snappy(duration: 0.25)) { state.showInspector.toggle() }
+                    state.toggleTaskPanel()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
 

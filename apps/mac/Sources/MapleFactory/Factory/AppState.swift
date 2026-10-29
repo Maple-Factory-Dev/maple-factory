@@ -47,6 +47,8 @@ final class AppState {
     var showInspector = UserDefaults.standard.bool(forKey: "taskPanel")
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
+    /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
+    var openedTask: String? { showInspector ? selectedTask : nil }
 
     /// A card or row was clicked: show it in the task panel.
     func openTask(_ id: String) {

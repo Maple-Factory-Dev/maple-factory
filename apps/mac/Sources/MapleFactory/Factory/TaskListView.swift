@@ -59,7 +59,7 @@ struct TaskListView: View {
     private var compact: Bool { state.contentWidth < 860 }
 
     private func row(_ task: FactoryTask) -> some View {
-        let selected = state.selectedTask == task.id
+        let selected = state.openedTask == task.id
 
         return HStack(spacing: 12) {
             Text(task.id)
@@ -114,7 +114,7 @@ struct TaskListView: View {
         .overlay(alignment: .bottom) { Hairline().padding(.leading, 24) }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { state.openFocus(task.id) }
-        .onTapGesture { state.selectedTask = task.id }
+        .onTapGesture { state.toggleTask(task.id) }
     }
 }
 

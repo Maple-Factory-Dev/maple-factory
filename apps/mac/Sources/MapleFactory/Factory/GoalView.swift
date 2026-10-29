@@ -198,9 +198,9 @@ struct BoardColumns: View {
     private func cards(_ columnTasks: [FactoryTask]) -> some View {
         VStack(spacing: 8) {
             ForEach(columnTasks) { task in
-                TaskCard(task: task, selected: task.id == state.selectedTask)
+                TaskCard(task: task, selected: task.id == state.openedTask)
                     .onTapGesture(count: 2) { state.openFocus(task.id) }
-                    .onTapGesture { state.selectedTask = task.id }
+                    .onTapGesture { state.toggleTask(task.id) }
             }
         }
     }

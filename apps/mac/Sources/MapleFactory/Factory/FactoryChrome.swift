@@ -57,7 +57,7 @@ struct FactoryTopBar: View {
             AppearanceButton()
             if !state.isCompact { iconButton("line.3.horizontal.decrease") }
             iconButton("sidebar.right", active: state.showInspector && state.focusedTask == nil)
-                .onTapGesture { withAnimation(.snappy(duration: 0.25)) { state.showInspector.toggle() } }
+                .onTapGesture { state.toggleTaskPanel() }
                 .help("Toggle task panel (⌥⌘I)")
 
             HStack(spacing: 6) {
