@@ -380,7 +380,7 @@ struct MarkdownEditor: View {
             let candidates = mentionCandidates
             if !candidates.isEmpty {
                 MentionPicker(people: candidates, highlighted: min(mention.highlighted, candidates.count - 1), pick: pickMention)
-                    .alignmentGuide(.bottom) { $0[.top] + 34 }
+                    .offset(y: MentionPicker.height(candidates.count) - 34)
                     .padding(.leading, 12)
             }
         }
@@ -530,6 +530,9 @@ struct MentionPicker: View {
     let people: [Person]
     let highlighted: Int
     let pick: (Person) -> Void
+
+    /// How tall it is with this many rows, to place it beside a box without measuring.
+    static func height(_ rows: Int) -> CGFloat { CGFloat(rows) * 31 - 1 + 8 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {

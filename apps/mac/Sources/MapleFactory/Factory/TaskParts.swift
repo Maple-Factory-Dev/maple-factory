@@ -911,10 +911,15 @@ struct TaskComposer: View {
                     let candidates = mentionCandidates
                     if !candidates.isEmpty {
                         MentionPicker(people: candidates, highlighted: min(mention.highlighted, candidates.count - 1)) { pickMention($0) }
-                            .alignmentGuide(.top) { $0[.bottom] + 8 }
+                            .offset(y: -MentionPicker.height(candidates.count) - 8)
                     }
                 }
                 .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
+                .onReceive(NotificationCenter.default.publisher(for: Self.demoType)) { note in
+                    mode = .comment
+                    draft = note.userInfo?["text"] as? String ?? ""
+                    focused.wrappedValue = true
+                }
 
             HStack {
                 Image(systemName: "paperclip").foregroundStyle(Theme.textMuted)
@@ -986,6 +991,9 @@ struct TaskComposer: View {
         .contentShape(Rectangle())
         .onTapGesture { mode = tabMode }
     }
+
+    /// `-actions "mention:cc @"` (AppState.play): types into the composer, for recordings.
+    static let demoType = Notification.Name("TaskComposer.demoType")
 
     private func mentionKey(_ key: MentionKey) -> Bool {
         let candidates = mentionCandidates

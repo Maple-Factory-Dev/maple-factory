@@ -1726,6 +1726,11 @@ final class AppState {
             case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
             case "panel": toggleTaskPanel()
             case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
+            // `mention:<text>` types into the open task's composer; `banner:<id>` is clicking a task's banner.
+            case "mention": NotificationCenter.default.post(name: TaskComposer.demoType, object: nil, userInfo: ["text": parts.dropFirst().joined(separator: ":")])
+            case "banner": Notifier.shared.opening = (parts[1], false, true)
+            // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
+            case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

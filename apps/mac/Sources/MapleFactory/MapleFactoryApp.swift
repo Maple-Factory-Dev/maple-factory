@@ -155,10 +155,15 @@ struct ContentView: View {
                     // A clicked banner: its task, in the list that holds it.
                     guard let opening = Notifier.shared.opening else { return }
                     Notifier.shared.opening = nil
+                    Notifier.shared.headlessBanner = nil
                     state.destination = opening.hand ? .needsHand : .inbox
                     state.selectedTask = opening.id
-                    // Needs a hand has no selection of its own, so the task opens full size.
-                    if opening.hand { state.focusedTask = opening.id }
+                    // Needs a hand has no selection of its own, and a mention is on the task: both open it full size.
+                    if opening.focus { state.focusedTask = opening.id }
+                }
+                // Headless can't post banners, so a recording shows the one it would have, where macOS puts them.
+                .overlay(alignment: .topTrailing) {
+                    if Headless.isOn, let banner = Notifier.shared.headlessBanner { HeadlessBanner(banner: banner) }
                 }
                 .onChange(of: [state.destination.hashValue, state.tasks.count], initial: true) { state.keepSelectionInGoal() }
                 .onChange(of: client.hasSnapshot ? client.factoryGoals.map(\.name) : nil, initial: true) { _, names in
