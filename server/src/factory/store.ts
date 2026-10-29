@@ -93,6 +93,22 @@ export class Store {
     return this.sql.exec<{ doc: string }>("SELECT doc FROM tasks ORDER BY updated DESC").toArray().map((r) => taskDoc(r.doc));
   }
 
+  /** Tasks whose next session hasn't started (to plan, build or review), front of the queue first. */
+  queued(): Task[] {
+    return this.tasks()
+      .filter((t) => !t.worker && !t.hand && !t.question && needsSession(t, this.private(t.id)))
+      .sort(byRank);
+  }
+
+  /** The rank that puts a task just ahead of `before` (the back, when none), among `queue` without it. */
+  rankBefore(id: string, before: Task | null, queue = this.queued()): number {
+    const rest = queue.filter((t) => t.id !== id);
+    if (!before) return rest.length ? Math.max(...rest.map((t) => t.queueRank!)) + 1 : Date.now();
+    const at = rest.findIndex((t) => t.id === before.id);
+    const prev = at > 0 ? rest[at - 1] : null;
+    return prev ? (prev.queueRank! + before.queueRank!) / 2 : before.queueRank! - 1000;
+  }
+
   task(id: string): Task | null {
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM tasks WHERE id = ?", id).toArray()[0];
     return row ? taskDoc(row.doc) : null;
@@ -288,8 +304,21 @@ function goalDoc(doc: string): Goal {
   return { ...goal, repos: goal.repos ?? (goal.repo ? [goal.repo] : []) };
 }
 
-/** A stored task, with fields added since it was saved. */
+/** A stored task, with fields added since it was saved. Tasks from before the queue keep their order. */
 function taskDoc(doc: string): Task {
   const task = JSON.parse(doc) as Task;
-  return { ...task, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [] };
+  return { ...task, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], queueRank: task.queueRank ?? task.createdAt };
+}
+
+/** Front of the queue first; ties by age. */
+export const byRank = (a: Task, b: Task) => a.queueRank! - b.queueRank! || a.createdAt - b.createdAt;
+
+/** Whether its state calls for a session: planning, building (not finishing), or a review round in progress. */
+export function needsSession(task: Task, priv: TaskPrivate): boolean {
+  switch (task.state) {
+    case "planning": return true;
+    case "building": return !priv.finishing;
+    case "reviewing": return task.autoReview?.rounds.at(-1)?.verdict === "inProgress";
+    default: return false;
+  }
 }
