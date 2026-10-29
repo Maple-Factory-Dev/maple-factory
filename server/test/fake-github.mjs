@@ -15,6 +15,7 @@
 //   GET  /app/installations, GET /installation/repositories   the app's installations, and an installation's repos
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
+//   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
 //   POST /app-manifests/:code/conversions                /setup's new app; code `app-<owner>` makes one owned by <owner>
@@ -25,7 +26,8 @@
 // and, for the test driver: GET /_log, POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
 // like a server webhooks can't reach), and POST /_deleteBranch { owner, repo, branch }, after which
-// GitHub won't reopen that branch's closed pull request.
+// GitHub won't reopen that branch's closed pull request, and POST /_moveOnMerge { owner, repo, branch }: once
+// that branch's pull request merges, someone pushes another commit to it.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -58,6 +60,7 @@ const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
 const pulls = [];
 const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite }]
+const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
 let lastNumber = 0;
 let lastRun = 0;
 
@@ -136,6 +139,10 @@ createServer((req, res) => {
     if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson) });
     if (req.method === "POST" && url.pathname === "/_deleteBranch") {
       git(bare(body.owner, body.repo), "branch", "-D", body.branch);
+      return send(res, 200, {});
+    }
+    if (req.method === "POST" && url.pathname === "/_moveOnMerge") {
+      moveOnMerge.add(`${body.owner}/${body.repo}:${body.branch}`);
       return send(res, 200, {});
     }
     if (req.method === "POST" && url.pathname === "/_checks") {
@@ -236,6 +243,11 @@ createServer((req, res) => {
           execFileSync("git", ["-C", work, "push", "--quiet", "origin", `HEAD:${p.base}`]);
           const sha = execFileSync("git", ["-C", work, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
           Object.assign(p, { state: "closed", merged: true });
+          if (moveOnMerge.delete(`${p.owner}/${p.repo}:${p.head}`)) {
+            const dir = bare(p.owner, p.repo);
+            const moved = execFileSync("git", ["--git-dir", dir, "-c", "user.name=Someone", "-c", "user.email=someone@example.invalid", "commit-tree", `${head}^{tree}`, "-p", head, "-m", "A push after the merge"], { encoding: "utf8" }).trim();
+            git(dir, "update-ref", `refs/heads/${p.head}`, moved);
+          }
           return send(res, 200, { sha, merged: true, message: "Pull Request successfully merged" });
         } catch (e) {
           return send(res, 405, { message: `Merge conflict: ${e.message.split("\n")[0]}` });
@@ -244,6 +256,21 @@ createServer((req, res) => {
         }
       }
       return send(res, 200, pullJson(p));
+    }
+    if ((m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/git\/(ref|refs)\/heads\/(.+)$/))) {
+      const g = grant(req, m[2], "contents", req.method === "GET" ? "read" : "write");
+      if (g) return deny(g);
+      const dir = bare(m[1], m[2]);
+      const branch = decodeURIComponent(m[4]);
+      const sha = headOf({ owner: m[1], repo: m[2], head: branch });
+      if (req.method === "GET" && m[3] === "ref") {
+        return sha ? send(res, 200, { ref: `refs/heads/${branch}`, object: { type: "commit", sha } }) : send(res, 404, { message: "Not Found" });
+      }
+      if (req.method === "DELETE" && m[3] === "refs") {
+        if (!sha) return send(res, 422, { message: "Reference does not exist" });
+        git(dir, "update-ref", "-d", `refs/heads/${branch}`);
+        return send(res, 204);
+      }
     }
     if (req.method === "POST" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/issues\/(\d+)\/comments$/))) {
       const g = grant(req, m[2], "pull_requests", "write");
