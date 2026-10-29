@@ -88,6 +88,8 @@ struct StatisticsView: View {
             BarList(title: "Session ends and restarts", note: "\(t.restarts) restarted", rows: s.restartsByCause, label: endCause, trailing: { _ in nil })
         }
 
+        costCard(s)
+
         if !s.goals.isEmpty { goalTable(s.goals) }
         if !s.agents.isEmpty { agentTable(s.agents) }
         topTasks(s.topTasks)
@@ -117,6 +119,42 @@ struct StatisticsView: View {
                 metric("Questions answered in", duration(t.answerMedianMs) + (t.answerMedianMs == nil ? "" : " (median)"))
                 metric("Permission prompts", t.prompts == 0 ? "0" : "\(yes) allowed, \(no) denied")
                 metric("Cancelled", "\(t.cancelled)")
+            }
+        }
+    }
+
+    /// What sessions spent, by role and by agent · model. $ is Claude Code's own estimate; Codex says only tokens.
+    private func costCard(_ s: Wire.StatsSummary) -> some View {
+        StatsCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Cost")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Spacer()
+                    if let total = s.costTotal {
+                        Text(costFigure(total))
+                            .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.text)
+                        Text("\(tokens(total.tokens)) tokens · \(counted(total.sessions, "session"))")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textFaint)
+                    }
+                }
+                if s.costTotal == nil {
+                    Text("No session has reported its spend in this range yet.")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textMuted)
+                } else {
+                    twoUp {
+                        CostBars(title: "By role", rows: s.costByRole, label: { $0.capitalized })
+                        CostBars(title: "By agent and model", rows: s.costByAgent, label: { $0 })
+                    }
+                }
+                Text("$ is Claude Code's API-equivalent estimate for the session, not a subscription bill. Codex reports tokens only.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -189,6 +227,12 @@ struct StatisticsView: View {
                         Text(touchSummary(r))
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.textMuted)
+                        if let cost = r.costUsd {
+                            Text(dollars(cost))
+                                .font(.system(size: 12).monospacedDigit())
+                                .foregroundStyle(Theme.textFaint)
+                                .help("What its sessions spent (Claude Code's estimate)")
+                        }
                         Text("\(r.touchpoints)")
                             .font(.system(size: 12.5, weight: .semibold).monospacedDigit())
                             .foregroundStyle(Theme.text)
@@ -284,6 +328,26 @@ private func duration(_ ms: UInt64?) -> String {
     if minutes < 60 { return "\(Int(minutes.rounded()))m" }
     if minutes < 48 * 60 { return String(format: "%.1fh", minutes / 60) }
     return String(format: "%.1fd", minutes / 1440)
+}
+
+/// "$12.34", "<$0.01".
+private func dollars(_ usd: Double) -> String {
+    if usd > 0 && usd < 0.01 { return "<$0.01" }
+    return usd >= 1000 ? String(format: "$%.0f", usd) : String(format: "$%.2f", usd)
+}
+
+/// "1.2M", "34k", "512".
+private func tokens(_ n: UInt64) -> String {
+    let d = Double(n)
+    if d >= 1_000_000 { return String(format: "%.1fM", d / 1_000_000) }
+    if d >= 10_000 { return "\(Int((d / 1000).rounded()))k" }
+    if d >= 1000 { return String(format: "%.1fk", d / 1000) }
+    return "\(n)"
+}
+
+/// The $ where some session gave one, else its tokens (Codex).
+private func costFigure(_ r: Wire.StatsCostRow) -> String {
+    r.unpriced == r.sessions ? "\(tokens(r.tokens)) tok" : dollars(r.costUsd)
 }
 
 private func percent(_ rate: Double?) -> String {
@@ -424,6 +488,48 @@ private struct BarList: View {
     }
 }
 
+/// Spend as horizontal bars, by $ where there is one and by tokens for groups with none (Codex).
+private struct CostBars: View {
+    let title: String
+    let rows: [Wire.StatsCostRow]
+    let label: (String) -> String
+
+    var body: some View {
+        let topUsd = max(0.0001, rows.map(\.costUsd).max() ?? 0)
+        let topTokens = max(1, rows.map(\.tokens).max() ?? 1)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+            ForEach(rows, id: \.key) { row in
+                let priced = row.unpriced < row.sessions
+                let share = priced ? row.costUsd / topUsd : Double(row.tokens) / Double(topTokens)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(label(row.key)).foregroundStyle(Theme.text).lineLimit(1)
+                        Spacer()
+                        Text("\(tokens(row.tokens)) tok · \(row.sessions)")
+                            .foregroundStyle(Theme.textFaint)
+                        Text(costFigure(row))
+                            .font(.system(size: 12.5, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                    }
+                    .font(.system(size: 12.5))
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Theme.fill)
+                            Capsule().fill(priced ? Theme.accent : Theme.textFaint).frame(width: max(4, geo.size.width * CGFloat(share)))
+                        }
+                    }
+                    .frame(height: 6)
+                }
+                .help("\(label(row.key)): \(row.sessions) session\(row.sessions == 1 ? "" : "s"), \(tokens(row.tokens)) tokens" + (priced ? ", \(dollars(row.costUsd))" : "") + (row.unpriced > 0 && priced ? " (\(row.unpriced) without a $ figure)" : ""))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
 // MARK: Sample (signed out)
 
 extension Wire.StatsSummary {
@@ -454,9 +560,16 @@ extension Wire.StatsSummary {
                     .init(goal: "onboarding", name: "Onboarding revamp", tasks: 12, merged: 10, hands: 3, steers: 7, reviewRounds: 17, cycleMedianMs: 5 * 3_600_000)],
             agents: [.init(agent: "claude", tasks: 49, merged: 39, hands: 12, steers: 27, reviewRounds: 66, firstTryApproval: 0.74),
                      .init(agent: "codex", tasks: 12, merged: 8, hands: 4, steers: 7, reviewRounds: 17, firstTryApproval: 0.58)],
-            topTasks: [.init(task: "ATL-147", title: "Passkey sign-in", goal: "auth", state: .reviewing, touchpoints: 9, hands: 2, steers: 4, questions: 1, reviewRounds: 4),
-                       .init(task: "BIL-212", title: "Proration on plan change", goal: "billing", state: .merged, touchpoints: 6, hands: 1, steers: 3, questions: 2, reviewRounds: 3),
-                       .init(task: "ONB-88", title: "Invite flow", goal: "onboarding", state: .building, touchpoints: 4, hands: 1, steers: 2, questions: 0, reviewRounds: 2)]
+            topTasks: [.init(task: "ATL-147", title: "Passkey sign-in", goal: "auth", state: .reviewing, touchpoints: 9, hands: 2, steers: 4, questions: 1, reviewRounds: 4, costUsd: 18.42),
+                       .init(task: "BIL-212", title: "Proration on plan change", goal: "billing", state: .merged, touchpoints: 6, hands: 1, steers: 3, questions: 2, reviewRounds: 3, costUsd: 9.75),
+                       .init(task: "ONB-88", title: "Invite flow", goal: "onboarding", state: .building, touchpoints: 4, hands: 1, steers: 2, questions: 0, reviewRounds: 2)],
+            costTotal: .init(key: "total", sessions: 186, costUsd: 412.6, tokens: 318_400_000, unpriced: 31),
+            costByRole: [.init(key: "builder", sessions: 64, costUsd: 268.3, tokens: 201_000_000, unpriced: 14),
+                         .init(key: "reviewer", sessions: 83, costUsd: 98.1, tokens: 82_400_000, unpriced: 12),
+                         .init(key: "planner", sessions: 39, costUsd: 46.2, tokens: 35_000_000, unpriced: 5)],
+            costByAgent: [.init(key: "claude · claude-opus-5-5", sessions: 121, costUsd: 371.9, tokens: 236_000_000, unpriced: 0),
+                          .init(key: "claude · claude-sonnet-5-5", sessions: 34, costUsd: 40.7, tokens: 41_400_000, unpriced: 0),
+                          .init(key: "codex · gpt-6.1", sessions: 31, costUsd: 0, tokens: 41_000_000, unpriced: 31)]
         )
     }
 }
