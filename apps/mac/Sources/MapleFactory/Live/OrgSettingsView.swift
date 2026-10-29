@@ -6,7 +6,7 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case general, account, repos, people, prompts, runner, notifications, updates
+        case general, account, repos, people, prompts, merging, runner, notifications, updates
 
         var title: String {
             switch self {
@@ -15,6 +15,7 @@ struct OrgSettingsView: View {
             case .repos: "Repositories"
             case .people: "People"
             case .prompts: "Prompts"
+            case .merging: "Merging"
             case .runner: "Runner"
             case .notifications: "Notifications"
             case .updates: "Updates"
@@ -28,6 +29,7 @@ struct OrgSettingsView: View {
             case .repos: "shippingbox"
             case .people: "person.2"
             case .prompts: "text.bubble"
+            case .merging: "arrow.triangle.merge"
             case .runner: "laptopcomputer"
             case .notifications: "bell"
             case .updates: "arrow.down.circle"
@@ -44,7 +46,7 @@ struct OrgSettingsView: View {
             List(selection: pane) {
                 row(.general)
                 Section("Factory") {
-                    ForEach([Pane.account, .repos, .people, .prompts], id: \.self) { row($0) }
+                    ForEach([Pane.account, .repos, .people, .prompts, .merging], id: \.self) { row($0) }
                 }
                 Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
             }
@@ -59,6 +61,7 @@ struct OrgSettingsView: View {
                 case .repos: RepositoriesSettings()
                 case .people: PeopleSettings()
                 case .prompts: ScrollView { PromptSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                case .merging: ScrollView { MergingSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .runner: ScrollView { RunnerSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .notifications: ScrollView { NotificationSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .updates: ScrollView { UpdateSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
@@ -385,6 +388,41 @@ struct PromptSettings: View {
         .onAppear { draft = current }
         // Another admin's save, or the server's trimmed echo of ours.
         .onChange(of: client.prompts) { _, new in draft = new ?? LiveAdapter.noPrompts }
+    }
+}
+
+/// What the factory does when an approved change won't merge. Org-wide, on the risk policy; admins change it.
+struct MergingSettings: View {
+    @Environment(FactoryClient.self) private var client
+
+    private var isAdmin: Bool { client.me?.role == "admin" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Merging", detail: "What happens after a change is approved, for everyone in the factory.")
+            if !client.isSignedIn || client.riskPolicy == nil {
+                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see how it merges."))
+            } else {
+                SettingsCard {
+                    Toggle("Fix merges automatically", isOn: Binding(
+                        get: { client.riskPolicy?.autoFixMerges ?? true },
+                        set: { on in
+                            guard var policy = client.riskPolicy else { return }
+                            policy.autoFixMerges = on
+                            client.save(policy: policy)
+                        }
+                    ))
+                    .disabled(!isAdmin)
+                    Text("When an approved change won't merge into its base, a builder brings the branch up to date, resolves the conflicts and pushes, and review runs again. It tries twice before asking you. Off: the factory raises its hand and you pick what to do.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+                }
+                if !isAdmin {
+                    Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
     }
 }
 
