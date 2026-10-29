@@ -145,7 +145,7 @@ struct QuestionBlock: View {
     @State private var replying = false
     @State private var reply = ""
 
-    private var options: [String] { appState.isLive ? task.questionOptions : ["Auto-provision", "Require invite"] }
+    private var options: [String] { task.questionOptions }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
