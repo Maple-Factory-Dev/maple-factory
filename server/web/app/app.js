@@ -663,8 +663,18 @@ function decisions(t) {
         t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
-    // A failed merge's hand carries the ways forward instead.
-    if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
+    const countdown = mergeCountdown(t);
+    if (countdown) {
+      // The factory merges when the fill drains: its delay is the part of the window already gone,
+      // so a re-render (or a reload) carries on from where it is.
+      buttons.push(h("button", {
+        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt,
+        style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
+      }, countdownLabel(t.mergeAt)));
+      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.holdMerge", id: t.id }) }, "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.merge", id: t.id }) }, "Merge now"));
+    } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
+      // A failed merge's hand carries the ways forward instead.
       buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
@@ -690,6 +700,25 @@ function decisions(t) {
     cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && cancelCard(t),
     steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
 }
+
+/** The auto-merge counting down on a task: the whole window and what's left of it (ms), or null. The
+ *  window starts at the factory's "will auto-merge" event; without one it's taken as the default 10s. */
+function mergeCountdown(t) {
+  if (t.state !== "reviewing" || !t.mergeAt) return null;
+  const started = t.events.findLast((e) => e.who === "factory" && e.text.startsWith("will auto-merge"))?.at;
+  const left = Math.max(0, t.mergeAt - Date.now());
+  return { total: Math.max(started ? t.mergeAt - started : 10_000, left, 1), left };
+}
+
+function countdownLabel(mergeAt) {
+  const left = Math.ceil((mergeAt - Date.now()) / 1000);
+  return left > 0 ? `Merging in ${left}s` : "Merging…";
+}
+
+// A countdown's label ticks on its own, between the renders that updates bring.
+setInterval(() => {
+  for (const el of document.querySelectorAll("[data-merge-at]")) el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+}, 250);
 
 const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
 

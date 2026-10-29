@@ -69,6 +69,13 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .btn { border: 1px solid var(--stroke); background: var(--fill); border-radius: 8px; padding: 6px 14px; font-size: 14px; font-weight: 550; cursor: pointer; }
 .btn:hover { filter: brightness(0.97); }
 .btn.go { background: var(--approve); border-color: transparent; color: #fff; }
+/* An auto-merge counting down: the fill drains to empty over the grace window, then it merges. */
+.btn.go.countdown { position: relative; isolation: isolate; overflow: hidden; cursor: default; font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--approve) 40%, transparent); }
+.btn.go.countdown:hover { filter: none; }
+.btn.go.countdown::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--approve); transform-origin: left;
+  animation: drain var(--grace) linear calc(-1 * var(--used)) forwards; }
+@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
 .btn.danger { color: var(--cancelled); }
 .btn.danger.solid { background: var(--cancelled); border-color: transparent; color: #fff; }
