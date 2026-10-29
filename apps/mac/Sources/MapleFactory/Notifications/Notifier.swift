@@ -14,6 +14,8 @@ import UserNotifications
         case question
         case approval
         case review
+        /// A teammate's comment that @mentions you: who wrote it, and what it says.
+        case mention(author: String, text: String)
 
         var text: String {
             switch self {
@@ -21,6 +23,7 @@ import UserNotifications
             case .question: "Asked you a question"
             case .approval: "Plan ready to approve"
             case .review: "Ready for your review"
+            case .mention(let author, let text): "\(author) mentioned you: \(text)"
             }
         }
     }
@@ -122,13 +125,22 @@ import UserNotifications
         await refreshPermission()
         guard !denied else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(task.id) · \(reason.text)"
-        content.body = task.title
+        var identifier = task.id
+        if case .mention(let author, let text) = reason {
+            content.title = "\(author) mentioned you"
+            content.subtitle = "\(task.id) · \(task.title)"
+            content.body = text
+            // Each mention is its own banner, apart from the task's.
+            identifier = "\(task.id)/mention/\(UUID().uuidString)"
+        } else {
+            content.title = "\(task.id) · \(reason.text)"
+            content.body = task.title
+        }
         content.sound = .default
         content.categoryIdentifier = Self.category
         content.userInfo = ["task": task.id, "hand": { if case .hand = reason { true } else { false } }()]
         // The task's id, so a task never stacks banners: a newer one replaces it.
-        try? await center.add(UNNotificationRequest(identifier: task.id, content: content, trigger: nil))
+        try? await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
 
     func refreshPermission() async {

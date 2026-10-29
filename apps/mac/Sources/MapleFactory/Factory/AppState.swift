@@ -584,14 +584,17 @@ final class AppState {
             if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
                 items.append(InboxItem(kind: .failing, taskID: task.id, assignee: task.owner, message: "Checks are failing", when: task.updated))
             }
-            if let handle = me.github {
-                for comment in task.comments where comment.text.contains("@\(handle)") && comment.author.id != me.id {
-                    let item = InboxItem(kind: .mention, taskID: task.id, assignee: me, message: "\(comment.author.firstName): \(comment.text)", when: comment.when)
-                    if !dismissedMentions.contains(item.id) { items.append(item) }
-                }
-            }
+            items += Self.mentionItems(task, me: me).filter { !dismissedMentions.contains($0.id) }
         }
         return items
+    }
+
+    /// A Mentions row for each comment in the task that @mentions you and isn't yours.
+    static func mentionItems(_ task: FactoryTask, me: Person) -> [InboxItem] {
+        guard let handle = me.github else { return [] }
+        return task.comments.filter { $0.mentions(handle) && $0.author.github != handle && $0.author.id != me.id }.map { comment in
+            InboxItem(kind: .mention, taskID: task.id, assignee: me, message: "\(comment.author.firstName): \(comment.text)", when: comment.when, commentID: comment.id)
+        }
     }
 
     /// Tasks whose agent has stopped and asked for a human, longest-waiting first.
