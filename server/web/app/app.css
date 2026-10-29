@@ -62,6 +62,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .btn:hover { filter: brightness(0.97); }
 .btn.go { background: var(--approve); border-color: transparent; color: #fff; }
 .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.btn.danger { color: var(--cancelled); }
+.btn.danger.solid { background: var(--cancelled); border-color: transparent; color: #fff; }
 .btn.small { padding: 3px 10px; font-size: 13px; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
