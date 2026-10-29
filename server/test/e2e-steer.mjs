@@ -1,3 +1,4 @@
+// Asking for changes on a plan whose planner has closed: a new planner starts and posts plan v2.
 // Steering a running builder: the change request is typed into its session, it applies it and says
 // so, and the pushed change has it. Then a change asked for once it's in review goes back to the
 // builder and through review again.
@@ -38,6 +39,23 @@ await new Promise((r) => (feed.onopen = r));
 send({ type: "subscribe" });
 await wait("snapshot", () => goals.length);
 const goal = goals.find((g) => g.prefix === prefix) ?? (() => { throw new Error(`no goal ${prefix}`); })();
+// Asking for changes on a plan after its planner has closed: a new planner starts and posts plan v2.
+const fresh = new Set(tasks.keys());
+send({ type: "task.create", goal: goal.id, title: "Revise my plan", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+let p = await wait("plan v1", () => [...tasks.values()].find((x) => !fresh.has(x.id) && x.state === "awaitingApproval"), 60000);
+const pid = p.id;
+p = await wait("the planner to close", () => tasks.get(pid)?.state === "awaitingApproval" && tasks.get(pid).worker == null && tasks.get(pid), 60000);
+step(`${pid} plan v${p.planVersion} is waiting and its planner has closed`);
+send({ type: "task.steer", id: pid, text: "Make it two greetings." });
+await wait("back to planning", () => tasks.get(pid)?.state === "planning");
+step("asking for changes sent it back to planning");
+await wait("a new planner", () => tasks.get(pid)?.worker?.role === "planner");
+step("a new planner session started");
+p = await wait("plan v2", () => tasks.get(pid)?.state === "awaitingApproval" && tasks.get(pid).planVersion === 2 && tasks.get(pid), 60000);
+step(`plan v${p.planVersion} is waiting for approval`);
+send({ type: "task.cancel", id: pid });
+await wait("cancelled", () => tasks.get(pid)?.state === "cancelled");
+
 const before = new Set(tasks.keys());
 
 send({ type: "task.create", goal: goal.id, title: "Steer me", brief: "[slow-build] Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });

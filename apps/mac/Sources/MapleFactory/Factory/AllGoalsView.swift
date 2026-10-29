@@ -207,6 +207,13 @@ struct GoalContextMenu: View {
         let following = state.isFollowing(goal)
         Button("Open") { state.destination = .goal(goal.name) }
         Button(following ? "Unfollow" : "Follow") { state.setFollowing(goal, !following) }
+        if state.sidebarGoals.contains(where: { $0.name == goal.name }) {
+            Divider()
+            ForEach([("Move Up", GoalOrder.Move.up), ("Move Down", .down), ("Move to Top", .top), ("Move to Bottom", .bottom)], id: \.0) { title, move in
+                Button(title) { state.moveGoal(goal, move) }
+                    .disabled(!state.canMoveGoal(goal, move))
+            }
+        }
         if state.isLive, let live = client.goal(named: goal.name) {
             Divider()
             Button("Edit Goal…") { state.goalSheet = .edit(live.id) }

@@ -5,6 +5,8 @@ struct FactorySidebar: View {
     @Environment(FactoryClient.self) private var client
     @Environment(\.openSettings) private var openSettings
     @AppStorage("settingsTab") private var settingsTab = "repos"
+    /// The row a dragged goal would land above, for the insertion line.
+    @State private var goalDropTarget: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -47,8 +49,12 @@ struct FactorySidebar: View {
                     VStack(spacing: 2) {
                         if state.isLoadingFactory { GoalsSkeleton().frame(maxWidth: .infinity, alignment: .leading) }
                         // Only the goals you follow; the rest (and archived ones) are a click away in All goals.
-                        ForEach(state.isLoadingFactory ? [] : state.sidebarGoals) { goal in
+                        // Drag them into your own order; a goal dropped on a row lands above it.
+                        let goals = state.isLoadingFactory ? [] : state.sidebarGoals
+                        ForEach(Array(goals.enumerated()), id: \.element.id) { index, goal in
                             goalRow(goal).opacity(state.isFollowing(goal) ? 1 : 0.6)
+                                .draggable(goal.name) { goalRow(goal).frame(width: 200) }
+                                .goalDrop(id: goal.name, target: $goalDropTarget) { dropGoal($0, at: index) }
                         }
                         if !FactoryData.goals.isEmpty {
                             row(selected: state.destination == .allGoals) {
@@ -58,6 +64,7 @@ struct FactorySidebar: View {
                             }
                             .foregroundStyle(Theme.textMuted)
                             .onTapGesture { state.destination = .allGoals }
+                            .goalDrop(id: "All goals", target: $goalDropTarget) { dropGoal($0, at: goals.count) }
                         }
                         if client.isSignedIn && client.hasSnapshot && client.goals.isEmpty {
                             row(selected: false) {
@@ -147,6 +154,12 @@ struct FactorySidebar: View {
             }
         }
         .onTapGesture { state.destination = destination }
+    }
+
+    private func dropGoal(_ name: String, at index: Int) -> Bool {
+        guard let goal = state.sidebarGoals.first(where: { $0.name == name }) else { return false }
+        state.moveGoal(goal, .to(index))
+        return true
     }
 
     private func goalRow(_ goal: Goal) -> some View {
@@ -258,5 +271,22 @@ struct FactorySidebar: View {
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.fillSelected : .clear))
             .contentShape(Rectangle())
+    }
+}
+
+private extension View {
+    /// Takes a goal dragged onto this sidebar row, with an accent line above it while one hovers.
+    func goalDrop(id: String, target: Binding<String?>, perform: @escaping (String) -> Bool) -> some View {
+        overlay(alignment: .top) {
+            if target.wrappedValue == id {
+                Capsule().fill(Theme.accent).frame(height: 2).offset(y: -2).allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: String.self) { names, _ in
+            target.wrappedValue = nil
+            return names.first.map(perform) ?? false
+        } isTargeted: { over in
+            if over { target.wrappedValue = id } else if target.wrappedValue == id { target.wrappedValue = nil }
+        }
     }
 }
