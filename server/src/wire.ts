@@ -27,6 +27,10 @@ export const ProofStatusValues: readonly ProofStatus[] = ["pending","proving","p
 export type DraftState = "choosing" | "reading" | "needsGoal" | "ready" | "failed";
 export const DraftStateValues: readonly DraftState[] = ["choosing","reading","needsGoal","ready","failed"];
 
+/** A line of a draft's transcript. */
+export type DraftLineKind = "text" | "tool";
+export const DraftLineKindValues: readonly DraftLineKind[] = ["text","tool"];
+
 /** What archiving a goal does with its tasks that haven't merged or been cancelled. */
 export type UnfinishedTasks = "cleanup" | "cancel" | "finish";
 export const UnfinishedTasksValues: readonly UnfinishedTasks[] = ["cleanup","cancel","finish"];
@@ -627,6 +631,12 @@ export interface NewGoalIdea {
   repos: string[];
 }
 
+/** One line of what a draft's agent said or did. */
+export interface DraftLine {
+  kind: DraftLineKind;
+  text: string;
+}
+
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
 export interface Draft {
   id: string;
@@ -646,6 +656,8 @@ export interface Draft {
   doneWhen: string[];
   /** What it's doing now: "Reading lib/session.ts". */
   progress?: string | null;
+  /** What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed. */
+  log: DraftLine[];
   error?: string | null;
 }
 
@@ -788,11 +800,12 @@ export interface RunnerMessage_TaskHandedOff {
   message?: string | null;
 }
 
-/** What a draft's agent is doing. */
+/** What a draft's agent is doing (a `tool` line, the default) or saying (`text`). */
 export interface RunnerMessage_DraftProgress {
   type: "draft.progress";
   id: string;
   text: string;
+  kind?: DraftLineKind | null;
 }
 
 /** A draft's agent finished: its last message, or why it couldn't. */

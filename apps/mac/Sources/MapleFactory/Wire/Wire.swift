@@ -129,6 +129,14 @@ public enum Wire {
         case failed
     }
 
+    /// A line of a draft's transcript.
+    public enum DraftLineKind: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Something the agent said or thought.
+        case text
+        /// Something it did: "Reading lib/session.ts".
+        case tool
+    }
+
     /// What archiving a goal does with its tasks that haven't merged or been cancelled.
     public enum UnfinishedTasks: String, Codable, Hashable, Sendable, CaseIterable {
         /// Cancel them (ending sessions, closing pull requests) and remove their worktrees where nothing would be lost.
@@ -1535,6 +1543,17 @@ public enum Wire {
         }
     }
 
+    /// One line of what a draft's agent said or did.
+    public struct DraftLine: Codable, Hashable, Sendable {
+        public var kind: DraftLineKind
+        public var text: String
+
+        public init(kind: DraftLineKind, text: String) {
+            self.kind = kind
+            self.text = text
+        }
+    }
+
     /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
     public struct Draft: Codable, Hashable, Sendable {
         public var id: String
@@ -1554,9 +1573,11 @@ public enum Wire {
         public var doneWhen: [String]
         /// What it's doing now: "Reading lib/session.ts".
         public var progress: String?
+        /// What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed.
+        public var log: [DraftLine]
         public var error: String?
 
-        public init(id: String, idea: String, agent: String, state: DraftState, machine: String? = nil, goal: String? = nil, also: [String] = [], newGoal: NewGoalIdea? = nil, why: String? = nil, title: String? = nil, brief: String? = nil, doneWhen: [String] = [], progress: String? = nil, error: String? = nil) {
+        public init(id: String, idea: String, agent: String, state: DraftState, machine: String? = nil, goal: String? = nil, also: [String] = [], newGoal: NewGoalIdea? = nil, why: String? = nil, title: String? = nil, brief: String? = nil, doneWhen: [String] = [], progress: String? = nil, log: [DraftLine] = [], error: String? = nil) {
             self.id = id
             self.idea = idea
             self.agent = agent
@@ -1570,6 +1591,7 @@ public enum Wire {
             self.brief = brief
             self.doneWhen = doneWhen
             self.progress = progress
+            self.log = log
             self.error = error
         }
 
@@ -1588,6 +1610,7 @@ public enum Wire {
             brief = try c.decodeIfPresent(String.self, forKey: .brief)
             doneWhen = try c.decodeIfPresent([String].self, forKey: .doneWhen) ?? []
             progress = try c.decodeIfPresent(String.self, forKey: .progress)
+            log = try c.decodeIfPresent([DraftLine].self, forKey: .log) ?? []
             error = try c.decodeIfPresent(String.self, forKey: .error)
         }
     }
@@ -1864,14 +1887,16 @@ public enum Wire {
         }
     }
 
-    /// What a draft's agent is doing.
+    /// What a draft's agent is doing (a `tool` line, the default) or saying (`text`).
     public struct RunnerMessageDraftProgress: Codable, Hashable, Sendable {
         public var id: String
         public var text: String
+        public var kind: DraftLineKind?
 
-        public init(id: String, text: String) {
+        public init(id: String, text: String, kind: DraftLineKind? = nil) {
             self.id = id
             self.text = text
+            self.kind = kind
         }
     }
 

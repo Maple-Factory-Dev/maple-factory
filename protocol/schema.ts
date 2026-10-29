@@ -62,6 +62,10 @@ export const enums: Record<string, Enum> = {
       failed: "It couldn't; `error` says why.",
     },
   },
+  DraftLineKind: {
+    doc: "A line of a draft's transcript.",
+    values: { text: "Something the agent said or thought.", tool: "Something it did: \"Reading lib/session.ts\"." },
+  },
   UnfinishedTasks: {
     doc: "What archiving a goal does with its tasks that haven't merged or been cancelled.",
     values: {
@@ -500,6 +504,10 @@ export const structs: Record<string, Struct> = {
     doc: "A goal Draft with AI suggests making.",
     fields: { name: "string", summary: "string", repos: "string[]" },
   },
+  DraftLine: {
+    doc: "One line of what a draft's agent said or did.",
+    fields: { kind: "DraftLineKind", text: "string" },
+  },
   Draft: {
     doc: "Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.",
     fields: {
@@ -516,6 +524,7 @@ export const structs: Record<string, Struct> = {
       brief: "string?",
       doneWhen: "string[]",
       progress: "string?",
+      log: "DraftLine[]",
       error: "string?",
     },
     fieldDocs: {
@@ -523,6 +532,7 @@ export const structs: Record<string, Struct> = {
       also: "Other goals it could belong to.",
       why: "Why that goal (or a new one).",
       progress: "What it's doing now: \"Reading lib/session.ts\".",
+      log: "What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed.",
     },
   },
   GoalFollow: {
@@ -595,7 +605,10 @@ export const unions: Record<string, Union> = {
         doc: "How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.",
         fields: { taskId: "string", ok: "bool", pushed: "string?", commit: "string?", message: "string?" },
       },
-      "draft.progress": { doc: "What a draft's agent is doing.", fields: { id: "string", text: "string" } },
+      "draft.progress": {
+        doc: "What a draft's agent is doing (a `tool` line, the default) or saying (`text`).",
+        fields: { id: "string", text: "string", kind: "DraftLineKind?" },
+      },
       "draft.done": { doc: "A draft's agent finished: its last message, or why it couldn't.", fields: { id: "string", output: "string?", error: "string?" } },
       "task.cleaned": { fields: { taskId: "string", ok: "bool", branchDeleted: "bool", message: "string?" } },
       "task.token_request": {
