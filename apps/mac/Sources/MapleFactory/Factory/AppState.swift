@@ -1222,6 +1222,18 @@ final class AppState {
         }
     }
 
+    /// Stand-in for the factory's reviewer finishing its round, so the unlock can be shown in mockup mode.
+    private func passAutoReview(_ id: String) {
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                guard var review = task.autoReview, let round = review.current, round.verdict != .passed else { return }
+                review.rounds[review.rounds.count - 1] = ReviewRound(number: round.number, verdict: .passed, found: 0, when: "now")
+                task.autoReview = review
+                task.activity.insert(ActivityItem(who: review.reviewer.name, text: "Passed review round \(round.number)", when: "now"), at: 0)
+            }
+        }
+    }
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second, so flows can be shown (or screenshotted) without clicking.
     private func play(_ script: String) async {
@@ -1232,6 +1244,7 @@ final class AppState {
             switch parts[0] {
             case "approve": approvePlan(parts[1])
             case "review": approveChanges(parts[1])
+            case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
