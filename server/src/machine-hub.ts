@@ -63,8 +63,9 @@ export class MachineHub extends DurableObject<Env> {
       }
       case "/input": {
         // The factory typing into a session: steering, answers. Text, then Enter on its own, so a
-        // TUI that treats a fast paste-plus-return as a newline still submits.
-        const { session, text } = (await request.json()) as { session: string; text: string };
+        // TUI that treats a fast paste-plus-return as a newline still submits. With `keys`, the text
+        // is sent as typed keys, nothing added: a permission menu's "1".
+        const { session, text, keys } = (await request.json()) as { session: string; text: string; keys?: boolean };
         const runner = this.runner();
         if (!runner) return new Response("That machine is offline.", { status: 409 });
         const frame = (bytes: Uint8Array) => {
@@ -73,6 +74,10 @@ export class MachineHub extends DurableObject<Env> {
           out.set(bytes, 16);
           return out;
         };
+        if (keys) {
+          runner.send(frame(new TextEncoder().encode(text)));
+          return new Response(null, { status: 204 });
+        }
         runner.send(frame(new TextEncoder().encode(`\x1b[200~${text}\x1b[201~`)));
         await new Promise((r) => setTimeout(r, 400));
         runner.send(frame(new Uint8Array([13])));
