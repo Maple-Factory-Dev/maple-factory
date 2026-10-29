@@ -22,11 +22,11 @@ up)
     CODE=$(curl -sf -X POST "localhost:$PORT/api/machines/enroll" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).code))')
     HOME=$RUNNER_HOME "$ROOT/runner/target/debug/maple-runner" enroll --url "http://localhost:$PORT" --code "$CODE" --runner-id dev-mac >/dev/null
   fi
-  HOME=$RUNNER_HOME RUST_LOG=info nohup "$ROOT/runner/target/debug/maple-runner" >"$LOGS/runner.log" 2>&1 &
+  HOME=$RUNNER_HOME RUST_LOG=info nohup "$ROOT/runner/target/debug/maple-runner" run >"$LOGS/runner.log" 2>&1 &
   echo "server http://localhost:$PORT · runner dev-mac · logs in $LOGS"
   ;;
 down)
-  pkill -f "maple-runner$" 2>/dev/null || true
+  pkill -f "maple-runner run$" 2>/dev/null || true
   pkill -f "wrangler dev --port $PORT" 2>/dev/null || true
   tmux -S "$RUNNER_HOME/.config/maple/tmux/maple.sock" kill-server 2>/dev/null || true
   ;;

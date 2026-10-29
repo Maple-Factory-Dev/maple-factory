@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn dev_builds() {
-        assert!(is_dev_build(Path::new("/Users/a/agent-orchestrator/runner/target/debug/maple-runner")));
+        assert!(is_dev_build(Path::new("/Users/a/maple-factory/runner/target/debug/maple-runner")));
         assert!(is_dev_build(Path::new("/tmp/x/target/release/maple-runner")));
         assert!(!is_dev_build(Path::new("/Users/a/.local/share/maple/bin/maple-runner")));
         assert!(!is_dev_build(Path::new("/Users/a/targets/maple-runner")));
