@@ -63,9 +63,9 @@ struct GoalTimeline: View {
                 .padding(.leading, 24)
                 .padding(.trailing, 12)
                 .frame(height: rowHeight)
-                .background(state.selectedTask == task.id ? Theme.fillSelected : .clear)
+                .background(state.openedTask == task.id ? Theme.fillSelected : .clear)
                 .contentShape(Rectangle())
-                .onTapGesture { state.selectedTask = task.id }
+                .onTapGesture { state.toggleTask(task.id) }
             }
         }
     }
@@ -81,9 +81,9 @@ struct GoalTimeline: View {
                 ForEach(rows) { task in
                     bar(for: task)
                         .frame(width: CGFloat(FactoryData.timelineDays) * dayWidth, height: rowHeight, alignment: .leading)
-                        .background(state.selectedTask == task.id ? Theme.fillSelected : .clear)
+                        .background(state.openedTask == task.id ? Theme.fillSelected : .clear)
                         .contentShape(Rectangle())
-                        .onTapGesture { state.selectedTask = task.id }
+                        .onTapGesture { state.toggleTask(task.id) }
                 }
             }
 

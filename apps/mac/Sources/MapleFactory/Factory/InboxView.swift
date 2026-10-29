@@ -156,7 +156,7 @@ struct InboxView: View {
     private func row(_ item: InboxItem) -> some View {
         let task = state.task(item.taskID)
         let goal = FactoryData.goal(named: task.goal)
-        let selected = state.selectedTask == task.id
+        let selected = state.openedTask == task.id
 
         return HStack(alignment: .center, spacing: 12) {
             Image(systemName: item.kind.icon)
@@ -210,7 +210,7 @@ struct InboxView: View {
         .background(selected ? Theme.fillSubtle : .clear)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { state.openFocus(task.id) }
-        .onTapGesture { state.selectedTask = task.id }
+        .onTapGesture { state.toggleTask(task.id) }
     }
 
     @ViewBuilder private func actionButton(_ item: InboxItem) -> some View {
