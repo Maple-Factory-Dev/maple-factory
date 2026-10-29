@@ -11,8 +11,20 @@ struct GoalTimeline: View {
     private let headerHeight: CGFloat = 46
     private let labelWidth: CGFloat = 290
 
-    private var rows: [FactoryTask] { tasks.sorted { $0.span.lowerBound < $1.span.lowerBound } }
-    private var chartHeight: CGFloat { headerHeight + CGFloat(rows.count) * rowHeight + 24 }
+    private var rows: [FactoryTask] { GoalTimeline.visibleRows(tasks, showMerged: state.timelineShowsMerged) }
+    private var mergedCount: Int { tasks.filter { $0.state == .merged }.count }
+    /// Every task is merged and hidden, so the grid would be blank.
+    private var allHidden: Bool { rows.isEmpty && mergedCount > 0 }
+    private var chartHeight: CGFloat {
+        headerHeight + CGFloat(rows.count) * rowHeight + (allHidden ? rowHeight : 0) + 24
+    }
+
+    /// The tasks the timeline draws, by span start: merged ones only when `showMerged` is on.
+    static func visibleRows(_ tasks: [FactoryTask], showMerged: Bool) -> [FactoryTask] {
+        tasks
+            .filter { showMerged || $0.state != .merged }
+            .sorted { $0.span.lowerBound < $1.span.lowerBound }
+    }
 
     var body: some View {
         ScrollView(.vertical) {
@@ -35,14 +47,23 @@ struct GoalTimeline: View {
 
     private var labels: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
                 SectionLabel(title: "Task")
                 Spacer()
+                if mergedCount > 0 { mergedToggle }
                 SectionLabel(title: "Owner")
             }
             .padding(.horizontal, 24)
             .frame(height: headerHeight)
             .overlay(alignment: .bottom) { Hairline() }
+
+            if allHidden {
+                Text("All \(mergedCount) tasks merged. Show merged to see them.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
+            }
 
             ForEach(rows) { task in
                 HStack(spacing: 8) {
@@ -68,6 +89,23 @@ struct GoalTimeline: View {
                 .onTapGesture { state.toggleTask(task.id) }
             }
         }
+    }
+
+    /// A pill like the layout picker's: lit while merged tasks show, with how many there are.
+    private var mergedToggle: some View {
+        let on = state.timelineShowsMerged
+        return Text("Show merged · \(mergedCount)")
+            .font(.system(size: 11.5, weight: on ? .medium : .regular).monospacedDigit())
+            .foregroundStyle(on ? Theme.text : Theme.textMuted)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 6).fill(on ? Theme.cardBG : .clear))
+            .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 1, y: 0.5)
+            .padding(2)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill))
+            .contentShape(Rectangle())
+            .onTapGesture { state.timelineShowsMerged.toggle() }
+            .help(on ? "Hide merged tasks" : "Show merged tasks")
     }
 
     // MARK: Chart

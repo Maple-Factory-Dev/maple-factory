@@ -58,6 +58,10 @@ final class AppState {
     var layout: GoalLayout = .board {
         didSet { focusedTask = nil }
     }
+    /// The goal Timeline hides merged tasks until this is on; it's one choice for every goal.
+    var timelineShowsMerged = AppDefaults.bool(forKey: "timelineShowsMerged") {
+        didSet { AppDefaults.set(timelineShowsMerged, forKey: "timelineShowsMerged") }
+    }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
@@ -181,7 +185,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "mockview", "onboardingStep"]
+                                        "timelineMerged", "mockview", "onboardingStep"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -1621,6 +1625,9 @@ final class AppState {
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
+        if defaults.object(forKey: "timelineMerged") != nil {
+            timelineShowsMerged = defaults.bool(forKey: "timelineMerged")
+        }
         if let argument = defaults.string(forKey: "destination") {
             destination = Destination(argument: argument)
         }
@@ -1774,6 +1781,9 @@ final class AppState {
             case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
             case "panel": toggleTaskPanel()
             case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
+            // The Timeline's "Show merged" pill, and moving to another goal or page.
+            case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
+            case "go": destination = Destination(argument: parts[1])
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
