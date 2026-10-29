@@ -53,8 +53,8 @@ export const SeverityValues: readonly Severity[] = ["blocker","major","minor"];
 export type FindingStatus = "open" | "fixed" | "disputed";
 export const FindingStatusValues: readonly FindingStatus[] = ["open","fixed","disputed"];
 
-export type HandReason = "reviewLoop" | "proofBurden" | "needsInput" | "overBudget" | "sessionEnded";
-export const HandReasonValues: readonly HandReason[] = ["reviewLoop","proofBurden","needsInput","overBudget","sessionEnded"];
+export type HandReason = "reviewLoop" | "proofBurden" | "needsInput" | "overBudget" | "sessionEnded" | "mergeFailed";
+export const HandReasonValues: readonly HandReason[] = ["reviewLoop","proofBurden","needsInput","overBudget","sessionEnded","mergeFailed"];
 
 export type MockupStatus = "proposed" | "approved" | "changesRequested";
 export const MockupStatusValues: readonly MockupStatus[] = ["proposed","approved","changesRequested"];

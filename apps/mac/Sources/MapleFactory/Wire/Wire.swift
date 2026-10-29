@@ -216,6 +216,8 @@ public enum Wire {
         case overBudget
         /// Its session ended in a way that needs a person.
         case sessionEnded
+        /// It was approved but didn't merge.
+        case mergeFailed
     }
 
     public enum MockupStatus: String, Codable, Hashable, Sendable, CaseIterable {

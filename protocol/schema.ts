@@ -87,6 +87,7 @@ export const enums: Record<string, Enum> = {
       needsInput: "Needs more input than the plan has.",
       overBudget: "The fix goes over the size budget.",
       sessionEnded: "Its session ended in a way that needs a person.",
+      mergeFailed: "It was approved but didn't merge.",
     },
   },
   MockupStatus: { values: { proposed: "Proposed with the plan.", approved: "Approved.", changesRequested: "Someone asked for changes." } },
