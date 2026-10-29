@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.applicationIconImage = MapleIcon.dockImage
         Updater.shared.start()
+        Notifier.shared.start()
         NSApp.activate(ignoringOtherApps: true)
         // macOS restores the last window frame, so `-width` resizes after the window exists.
         let width = UserDefaults.standard.double(forKey: "width")
@@ -126,6 +127,15 @@ struct ContentView: View {
                     state.isComposing = false
                     state.selectedTask = id
                     state.focusedTask = id
+                }
+                .onChange(of: Notifier.shared.opening?.id) {
+                    // A clicked banner: its task, in the list that holds it.
+                    guard let opening = Notifier.shared.opening else { return }
+                    Notifier.shared.opening = nil
+                    state.destination = opening.hand ? .needsHand : .inbox
+                    state.selectedTask = opening.id
+                    // Needs a hand has no selection of its own, so the task opens full size.
+                    if opening.hand { state.focusedTask = opening.id }
                 }
                 .onChange(of: [state.destination.hashValue, state.tasks.count], initial: true) { state.keepSelectionInGoal() }
                 .onChange(of: client.factoryGoals.map(\.name), initial: true) { _, names in

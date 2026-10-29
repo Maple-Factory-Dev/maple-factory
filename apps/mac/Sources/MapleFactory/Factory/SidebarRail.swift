@@ -29,6 +29,21 @@ struct SidebarRail: View {
             nav("Activity", icon: "waveform.path.ecg", destination: .activity)
             nav("Scratchpad", icon: "note.text", destination: .scratchpad, detail: "\(state.notes.count) notes")
             nav("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage, detail: "34% session · 41% week")
+            item("Notifications", detail: Notifier.shared.statusText,
+                 dot: Notifier.shared.isSnoozed ? Theme.State.awaitingApproval : nil) {
+                Menu {
+                    NotificationMenu()
+                } label: {
+                    Image(systemName: Notifier.shared.bellIcon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.text.opacity(0.75))
+                        .frame(width: 40, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+            }
 
             divider
 
