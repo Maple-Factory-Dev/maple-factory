@@ -118,13 +118,16 @@ struct FlowBar: View {
             .frame(height: 6)
             .frame(maxWidth: 620)
 
-            HStack(spacing: 14) {
+            // Whole items wrap to a second row when the states don't fit, so no title is squeezed
+            // and broken mid-word (MF-40).
+            FlowLayout(spacing: 14, lineSpacing: 6) {
                 ForEach(populated, id: \.state) { entry in
                     HStack(spacing: 5) {
                         Circle().fill(entry.state.color).frame(width: 6, height: 6)
                         Text("\(entry.count)").foregroundStyle(Theme.text).monospacedDigit()
-                        Text(entry.state.title)
+                        Text(entry.state.title).lineLimit(1)
                     }
+                    .fixedSize()
                 }
             }
             .font(.system(size: 11.5))

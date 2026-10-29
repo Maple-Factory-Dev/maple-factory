@@ -33,4 +33,16 @@ struct FlowLayoutRows {
             #expect(arranged.frames.allSatisfy { $0.maxX <= width })
         }
     }
+
+    /// The goal legend spaces items 14pt apart but rows only 6pt (MF-40).
+    @Test func rowsAreLineSpacingApart() {
+        let arranged = FlowLayout.arrange(
+            [CGSize(width: 90, height: 14), CGSize(width: 120, height: 14), CGSize(width: 70, height: 14)],
+            width: 230, spacing: 14, lineSpacing: 6
+        )
+        #expect(arranged.frames.map(\.minX) == [0, 104, 0])
+        #expect(arranged.frames.map(\.minY) == [0, 0, 20])
+        #expect(arranged.size == CGSize(width: 224, height: 34))
+        #expect(arranged.frames.allSatisfy { $0.maxX <= 230 })
+    }
 }
