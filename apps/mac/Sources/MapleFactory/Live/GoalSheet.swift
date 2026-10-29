@@ -17,10 +17,20 @@ struct GoalSheet: View {
     @State private var prefixEdited = false
     @State private var repoFilter = ""
     @State private var team = ""
+    /// Fields you've typed in, and whether Create was clicked: problems show for those.
+    @State private var touched: Set<Field> = []
+    @State private var attempted = false
+    /// Sent and waiting on the server's goal.updated, or the refusal it sent instead.
+    @State private var saving = false
+    @State private var failure: String?
     @State private var prompts = LiveAdapter.noPrompts
     @State private var showPrompts = false
 
     enum Source: String, CaseIterable { case folder = "A folder on my machines", repo = "A GitHub repo" }
+    enum Field { case name, prefix, code }
+
+    /// `-actions 'goalfill:prefix:PLATFORM; goalfill:create'` types into a field or clicks Create, for demo videos.
+    static let demoFill = Notification.Name("GoalSheet.demoFill")
 
     private static let colors: [(name: String, hex: String)] = [
         ("Green", "#2EA043"), ("Blue", "#3B82F6"), ("Violet", "#8B5CF6"), ("Amber", "#F59E0B"), ("Pink", "#EC4899"), ("Teal", "#14B8A6"),
@@ -51,9 +61,29 @@ struct GoalSheet: View {
         _color = State(initialValue: Self.colors.firstIndex { $0.hex.caseInsensitiveCompare(goal.color) == .orderedSame } ?? 0)
     }
 
-    private var valid: Bool {
-        !name.trimmed.isEmpty && prefix.range(of: "^[A-Z][A-Z0-9]{0,5}$", options: .regularExpression) != nil
-            && (source == .folder ? !folder.trimmed.isEmpty : !repos.isEmpty && repos.allSatisfy { $0.range(of: "^[\\w.-]+/[\\w.-]+$", options: .regularExpression) != nil })
+    /// What's wrong with each field, the same rules goal.save checks.
+    private var problems: [Field: String] {
+        var problems: [Field: String] = [:]
+        if name.trimmed.isEmpty { problems[.name] = "Give the goal a name." }
+        if prefix.isEmpty {
+            problems[.prefix] = "Needs a prefix, like ATL."
+        } else if prefix.count > 10 {
+            problems[.prefix] = "At most 10 letters or digits."
+        } else if prefix.range(of: "^[A-Z][A-Z0-9]{0,9}$", options: .regularExpression) == nil {
+            problems[.prefix] = "Letters and digits, starting with a letter."
+        }
+        if source == .folder {
+            if folder.trimmed.isEmpty { problems[.code] = "Say which folder its code is in." }
+        } else if repos.isEmpty {
+            problems[.code] = "Pick at least one repo."
+        } else if let bad = repos.first(where: { $0.range(of: "^[\\w.-]+/[\\w.-]+$", options: .regularExpression) == nil }) {
+            problems[.code] = "\(bad) isn't owner/name, like acme/api."
+        }
+        return problems
+    }
+
+    private func problem(_ field: Field) -> String? {
+        attempted || touched.contains(field) ? problems[field] : nil
     }
 
     /// Its lead or an admin; whoever makes a goal leads it.
@@ -120,12 +150,15 @@ struct GoalSheet: View {
             }
 
             HStack(alignment: .top, spacing: 12) {
-                field("Name") {
+                field("Name", problem: problem(.name)) {
                     TextField("Auth overhaul", text: $name)
-                        .onChange(of: name) { _, value in if !prefixEdited { prefix = Self.prefix(for: value) } }
+                        .onChange(of: name) { _, value in
+                            touched.insert(.name)
+                            if !prefixEdited { prefix = Self.prefix(for: value) }
+                        }
                 }
-                field("Task ids", width: 110) {
-                    TextField("ATL", text: Binding(get: { prefix }, set: { prefix = $0.uppercased(); prefixEdited = true }))
+                field("Task ids", width: 130, problem: problem(.prefix)) {
+                    TextField("ATL", text: Binding(get: { prefix }, set: { prefix = $0.uppercased(); prefixEdited = true; touched.insert(.prefix) }))
                 }
             }
 
@@ -176,6 +209,7 @@ struct GoalSheet: View {
                     repoPicker
                     input { TextField("Base branch (each repo's default)", text: $base) }.frame(width: 240)
                 }
+                if let problem = problem(.code) { problemLine(problem) }
                 Text(source == .folder
                      ? "The same path on each machine that works on it. Tasks branch from origin/<base> in their own worktrees."
                      : client.repos.isEmpty
@@ -184,6 +218,8 @@ struct GoalSheet: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textFaint)
             }
+            .onChange(of: folder) { touched.insert(.code) }
+            .onChange(of: repo) { touched.insert(.code) }
 
             HStack(spacing: 8) {
                 Text("Color").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
@@ -219,6 +255,19 @@ struct GoalSheet: View {
                 .onTapGesture { withAnimation { showPrompts.toggle() } }
             }
 
+            if let failure {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text(failure).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.State.cancelled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.State.cancelled.opacity(0.1)))
+            }
+
             HStack(spacing: 8) {
                 Spacer()
                 Text("Cancel")
@@ -229,22 +278,58 @@ struct GoalSheet: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
                     .contentShape(Rectangle())
                     .onTapGesture { dismiss() }
-                Text(editing == nil ? "Create goal" : "Save")
+                Text(saving ? (editing == nil ? "Creating…" : "Saving…") : editing == nil ? "Create goal" : "Save")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.accent.opacity(valid ? 1 : 0.4)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.accent.opacity(problems.isEmpty && !saving ? 1 : 0.4)))
                     .contentShape(Rectangle())
                     .onTapGesture(perform: save)
             }
         }
         .padding(24)
         .frame(width: 560)
+        // The sheet stays up until the server keeps the goal, or says why it won't.
+        .onChange(of: client.goalUpdates) {
+            guard saving, client.goals.contains(where: isSaved) else { return }
+            stopSaving()
+            dismiss()
+        }
+        .onChange(of: client.notice) { _, notice in
+            guard saving, let notice else { return }
+            failure = notice
+            stopSaving()
+            client.notice = nil
+        }
+        .onDisappear { if saving { stopSaving() } }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoFill)) { note in
+            let value = note.userInfo?["value"] as? String ?? ""
+            switch note.userInfo?["field"] as? String {
+            case "name": name = value
+            case "prefix": prefix = value.uppercased(); prefixEdited = true; touched.insert(.prefix)
+            case "folder": source = .folder; folder = value
+            case "repo": source = .repo; repo = value
+            case "create": save()
+            default: break
+            }
+        }
+    }
+
+    /// The goal this sheet sent: the one being edited, or a new one with its name and prefix.
+    private func isSaved(_ goal: Wire.Goal) -> Bool {
+        if let editing { return goal.id == editing.id }
+        return goal.prefix == prefix && goal.name == name.trimmed
+    }
+
+    private func stopSaving() {
+        saving = false
+        client.savingGoal = false
     }
 
     private func save() {
-        guard valid else { return }
+        guard !saving else { return }
+        guard problems.isEmpty else { attempted = true; return }
         let goal = Wire.Goal(
             id: editing?.id ?? "",
             name: name.trimmed,
@@ -262,8 +347,10 @@ struct GoalSheet: View {
             // All empty clears them (the server stores none); unchanged when you can't edit them.
             prompts: canEditPrompts ? LiveAdapter.prompts(prompts) ?? LiveAdapter.noPrompts : editing?.prompts
         )
+        failure = nil
+        saving = true
+        client.savingGoal = true
         client.send(.goalSave(.init(goal: goal)))
-        dismiss()
     }
 
     /// "Auth overhaul" → "AO"; one word → its first three letters.
@@ -273,12 +360,20 @@ struct GoalSheet: View {
         return String(letters.drop { !$0.isLetter })
     }
 
-    private func field<Content: View>(_ label: String, width: CGFloat? = nil, @ViewBuilder content: () -> Content) -> some View {
+    private func field<Content: View>(_ label: String, width: CGFloat? = nil, problem: String? = nil, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
             input(content)
+            if let problem { problemLine(problem) }
         }
         .frame(width: width)
+    }
+
+    private func problemLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.State.cancelled)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func input<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {

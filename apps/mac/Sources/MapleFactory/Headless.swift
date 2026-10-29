@@ -255,7 +255,40 @@ enum Headless {
         }
         guard let rep else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
+        if let window, target === window, let sheet = window.attachedSheet, let content = sheet.contentView {
+            // Like the window's, the sheet's own appearance is what reaches SwiftUI off screen.
+            if sheet.appearance != window.appearance { sheet.appearance = window.appearance }
+            (window.appearance ?? NSApp.effectiveAppearance).performAsCurrentDrawingAppearance {
+                drawSheet(content, over: rep, in: view.bounds)
+            }
+        }
         return rep
+    }
+
+    /// A sheet is its own window, so the content view's bitmap lacks it: drawn on top, dimming what's
+    /// behind, centered at the top as macOS shows it.
+    private func drawSheet(_ sheet: NSView, over rep: NSBitmapImageRep, in bounds: CGRect) {
+        sheet.layoutSubtreeIfNeeded()
+        sheet.displayIfNeeded()
+        guard let sheetRep = sheet.bitmapImageRepForCachingDisplay(in: sheet.bounds), let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+        sheet.cacheDisplay(in: sheet.bounds, to: sheetRep)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.black.withAlphaComponent(0.18).setFill()
+        bounds.fill(using: .sourceOver)
+        let frame = CGRect(x: (bounds.width - sheet.bounds.width) / 2, y: bounds.height - sheet.bounds.height - 28,
+                           width: sheet.bounds.width, height: sheet.bounds.height)
+        let shape = NSBezierPath(roundedRect: frame, xRadius: 12, yRadius: 12)
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 24
+        shadow.shadowColor = .black.withAlphaComponent(0.3)
+        shadow.set()
+        NSColor.windowBackgroundColor.setFill()
+        shape.fill()
+        NSShadow().set()
+        shape.addClip()
+        sheetRep.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func write(_ rep: NSBitmapImageRep, to name: String) {

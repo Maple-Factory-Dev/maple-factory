@@ -120,6 +120,10 @@ import Security
     private(set) var hasSnapshot = false
     /// The last thing the server refused, shown as a toast-like line.
     var notice: String?
+    /// A goal sheet is waiting on goal.save: it shows refusals itself, so they don't toast behind it.
+    var savingGoal = false
+    /// Bumped on every goal.updated, so a saving goal sheet hears an update even when nothing changed.
+    private(set) var goalUpdates = 0
 
     private var token: String?
     private var socket: URLSessionWebSocketTask?
@@ -400,6 +404,7 @@ import Security
             } else {
                 goals.append(update.goal)
             }
+            goalUpdates += 1
             rebuild()
         case .intakeUpdated(let update):
             if let index = intakeRequests.firstIndex(where: { $0.id == update.request.id }) {

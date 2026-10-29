@@ -240,7 +240,8 @@ struct ContentView: View {
             state.showToast(UpdatePhase.upToDateToast, icon: "checkmark.circle.fill", color: Theme.approve)
         }
         .onChange(of: client.notice) { _, notice in
-            guard let notice else { return }
+            // A saving goal sheet shows its refusal inside, where it can be seen.
+            guard let notice, !client.savingGoal else { return }
             state.serverRefused(notice)
             // Cleared once shown, so the same refusal again still reaches the buttons.
             client.notice = nil

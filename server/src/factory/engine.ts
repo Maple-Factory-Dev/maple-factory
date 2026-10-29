@@ -103,7 +103,7 @@ export class Engine {
         return;
       case "goal.save": {
         const goal = { ...msg.goal, prefix: msg.goal.prefix.trim().toUpperCase() };
-        if (!/^[A-Z][A-Z0-9]{0,5}$/.test(goal.prefix)) fail("A goal's prefix is 1–6 letters or digits, starting with a letter.");
+        if (!/^[A-Z][A-Z0-9]{0,9}$/.test(goal.prefix)) fail("A goal's prefix is 1–10 letters or digits, starting with a letter.");
         if (!goal.name.trim()) fail("A goal needs a name.");
         if (!goal.id) goal.id = crypto.randomUUID();
         // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.

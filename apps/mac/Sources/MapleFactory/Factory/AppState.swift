@@ -1754,6 +1754,8 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
+            // The goal sheet's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
+            case "goalfill": NotificationCenter.default.post(name: GoalSheet.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
             // Edit Goal… on a goal, by its name or task prefix: `editgoal:MF`. Signing in, it waits for the goal to arrive.
             case "editgoal":
                 for _ in 0..<300 {

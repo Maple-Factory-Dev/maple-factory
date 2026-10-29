@@ -347,7 +347,7 @@ private struct IntakeDetail: View {
         var result = AttributedString(text)
         let tokens = text.split(whereSeparator: { $0 == " " || $0 == "," || $0 == "." || $0 == "(" || $0 == ")" })
             .map(String.init)
-            .filter { $0.hasPrefix("@") || $0.range(of: #"^[A-Z]+-\d+$"#, options: .regularExpression) != nil }
+            .filter { $0.hasPrefix("@") || $0.range(of: #"^[A-Z][A-Z0-9]{0,9}-\d+$"#, options: .regularExpression) != nil }
         for token in Set(tokens) {
             var searchRange = result.startIndex..<result.endIndex
             while let range = result[searchRange].range(of: token) {
