@@ -75,7 +75,10 @@ function rust(): string {
   out += `pub const PROTOCOL_VERSION: u32 = ${version};\n\n`;
   for (const [name, e] of Object.entries(enums)) {
     out += rustDoc(e.doc) + `#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub enum ${name} {\n`;
-    for (const [value, doc] of Object.entries(e.values)) out += rustDoc(doc, "    ") + `    ${pascal(value)},\n`;
+    // A value this build doesn't know (a newer server added it) decodes as the catch-all instead of failing the message.
+    // An enum with its own `unknown` value uses that; the rest get `Other`.
+    for (const [value, doc] of Object.entries(e.values)) out += rustDoc(doc, "    ") + (value === "unknown" ? "    #[serde(other)]\n" : "") + `    ${pascal(value)},\n`;
+    if (!("unknown" in e.values)) out += `    /// A value this build doesn't know yet; newer servers may send them.\n    #[serde(other)]\n    Other,\n`;
     out += "}\n\n";
   }
   for (const [name, s] of Object.entries(structs)) {
@@ -211,8 +214,18 @@ public enum JSONValue: Codable, Hashable, Sendable {
 `;
   }
   for (const [name, e] of Object.entries(enums)) {
-    out += swiftDoc(e.doc) + `public enum ${name}: String, Codable, Hashable, Sendable, CaseIterable {\n`;
+    // Tolerant of values a newer server adds: they decode as `.other("…")` rather than failing the whole message.
+    const values = Object.keys(e.values);
+    if (values.includes("other")) throw new Error(`${name}.other: "other" is the generated catch-all; pick another name`);
+    out += swiftDoc(e.doc) + `public enum ${name}: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {\n`;
     for (const [value, doc] of Object.entries(e.values)) out += swiftDoc(doc, "    ") + `    case ${swiftName(value)}\n`;
+    out += `    /// A value this build doesn't know yet; newer servers may send them.\n    case other(String)\n\n`;
+    out += `    /// The values this build knows; never \`.other\`.\n    public static let allCases: [${name}] = [${values.map((v) => `.${swiftName(v)}`).join(", ")}]\n\n`;
+    out += `    public init(rawValue: String) {\n        switch rawValue {\n${values.map((v) => `        case "${v}": self = .${swiftName(v)}\n`).join("")}        default: self = .other(rawValue)\n        }\n    }\n\n`;
+    out += `    public var rawValue: String {\n        switch self {\n${values.map((v) => `        case .${swiftName(v)}: "${v}"\n`).join("")}        case .other(let value): value\n        }\n    }\n\n`;
+    out += `    public init(from decoder: Decoder) throws {\n        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))\n    }\n\n`;
+    out += `    public func encode(to encoder: Encoder) throws {\n        var c = encoder.singleValueContainer()\n        try c.encode(rawValue)\n    }\n\n`;
+    out += `    public static func == (a: ${name}, b: ${name}) -> Bool { a.rawValue == b.rawValue }\n    public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }\n`;
     out += "}\n\n";
   }
   for (const [name, s] of Object.entries(structs)) out += swiftStruct(name, s.fields, s.fieldDocs, s.doc);

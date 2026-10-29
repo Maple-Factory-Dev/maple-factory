@@ -98,7 +98,9 @@ struct AutoReview {
 /// An agent stopping to ask a human for help it can't get anywhere else.
 struct HandRaise {
     enum Reason {
-        case reviewLoop, proofBurden, needsInput, overBudget, sessionEnded
+        case reviewLoop, proofBurden, needsInput, overBudget, sessionEnded, mergeFailed
+        /// A reason a newer factory sent that this build doesn't know.
+        case other
 
         var title: String {
             switch self {
@@ -107,6 +109,8 @@ struct HandRaise {
             case .needsInput: "Needs more input"
             case .overBudget: "Fix goes over budget"
             case .sessionEnded: "Its session ended"
+            case .mergeFailed: "Didn't merge"
+            case .other: "Needs attention"
             }
         }
 
@@ -117,6 +121,8 @@ struct HandRaise {
             case .needsInput: "text.bubble"
             case .overBudget: "gauge.with.dots.needle.100percent"
             case .sessionEnded: "bolt.horizontal.circle"
+            case .mergeFailed: "arrow.triangle.merge"
+            case .other: "hand.raised"
             }
         }
 
@@ -127,6 +133,8 @@ struct HandRaise {
             case .needsInput: Theme.State.planning
             case .overBudget: Theme.State.awaitingApproval
             case .sessionEnded: Theme.State.cancelled
+            case .mergeFailed: Theme.State.cancelled
+            case .other: Theme.State.awaitingApproval
             }
         }
     }

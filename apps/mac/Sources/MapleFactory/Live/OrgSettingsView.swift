@@ -94,7 +94,7 @@ struct AccountSettings: View {
                     Divider()
                     LabeledContent("Factory", value: client.workspaceName)
                     LabeledContent("Address", value: server.absoluteString)
-                    LabeledContent("Status", value: client.status == .live ? "Connected" : "Reconnecting…")
+                    LabeledContent("Status", value: client.status == .live ? "Connected" : client.status == .tooNew ? "Update needed" : "Reconnecting…")
                     if let version = client.serverVersion { LabeledContent("Server", value: "maple-server \(version)") }
                 }
                 if let update = client.serverUpdate {

@@ -12,7 +12,7 @@ struct FactorySidebar: View {
                 WorkspaceSwitcher()
                     .contentShape(Rectangle())
                     .onTapGesture { state.startOnboarding() }
-                    .help("Connect to another factory")
+                    .help("Connect to another factory (Esc to go back)")
                 NotificationBell()
             }
             .padding(.top, 48)
@@ -182,7 +182,7 @@ struct FactorySidebar: View {
             }
         }
         .onTapGesture {
-            if let viewing { state.selectedTask = viewing; state.showInspector = true }
+            if let viewing { state.openTask(viewing) }
         }
         .help(viewing.map { "\(person.firstName) is viewing \($0)" } ?? (online ? "Online" : "Offline"))
     }
@@ -240,7 +240,7 @@ struct FactorySidebar: View {
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textMuted)
         }
-        .onTapGesture { state.selectedTask = task; state.showInspector = true }
+        .onTapGesture { state.openTask(task) }
     }
 
     private func row<Content: View>(selected: Bool, @ViewBuilder content: () -> Content) -> some View {

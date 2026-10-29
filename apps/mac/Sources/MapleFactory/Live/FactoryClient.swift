@@ -12,6 +12,8 @@ import Security
         case live
         /// Lost the feed; trying again on a backoff.
         case reconnecting(attempt: Int, reason: String)
+        /// The factory sent something this build can't read: it's newer than the app.
+        case tooNew
     }
 
     /// A session end as the feed reported it, kept newest first.
@@ -84,6 +86,8 @@ import Security
     private var socket: URLSessionWebSocketTask?
     private var generation = 0
     private var attempt = 0
+    /// When the feed last answered: a message, or a pong to a keep-alive ping.
+    private var lastHeard = Date()
 
     var isSignedIn: Bool { server != nil && token != nil }
 
@@ -100,6 +104,21 @@ import Security
             self.token = token
             org = UserDefaults.standard.string(forKey: "factoryOrg") ?? ""
         }
+        // A socket can die quietly while the Mac sleeps or the app sits in the background; catch up
+        // with a fresh snapshot rather than leave every list as it was.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.catchUp(force: true) }
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.catchUp(force: false) }
+        }
+    }
+
+    /// Reconnects (and so resubscribes) after a wake, or when the feed has been quiet longer than its pings allow.
+    private func catchUp(force: Bool) {
+        guard isSignedIn, force || Date().timeIntervalSince(lastHeard) > 45 else { return }
+        attempt = 0
+        connect()
     }
 
     // MARK: Session
@@ -137,11 +156,12 @@ import Security
         disconnect()
         generation += 1
         let gen = generation
-        if status != .live { status = attempt == 0 ? .connecting : status }
+        if status != .live && status != .tooNew { status = attempt == 0 ? .connecting : status }
         var request = URLRequest(url: Self.websocketURL(server, path: "/client/connect"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
         self.socket = socket
+        lastHeard = Date()
         socket.resume()
         send(.subscribe)
         Task { await receive(socket, gen: gen) }
@@ -157,10 +177,16 @@ import Security
         while gen == generation {
             do {
                 let message = try await socket.receive()
+                lastHeard = Date()
                 guard case .string(let text) = message, let data = text.data(using: .utf8) else { continue }
                 apply(try JSONDecoder().decode(Wire.ServerToClient.self, from: data))
             } catch {
                 guard gen == generation else { return }
+                if error is DecodingError {
+                    NSLog("Maple Factory: can't read the factory's message: \(error)")
+                    tooNew()
+                    return
+                }
                 retry(reason: Self.describe(error, response: socket.response))
                 return
             }
@@ -172,7 +198,10 @@ import Security
         while gen == generation {
             try? await Task.sleep(for: .seconds(20))
             guard gen == generation else { return }
-            socket.sendPing { _ in }
+            socket.sendPing { error in
+                guard error == nil else { return }
+                Task { @MainActor in self.lastHeard = Date() }
+            }
         }
     }
 
@@ -184,6 +213,19 @@ import Security
         let gen = generation
         Task {
             try? await Task.sleep(for: .seconds(delay))
+            if gen == generation { connect() }
+        }
+    }
+
+    /// Only an app update (or the server rolling back) fixes a message this build can't read, so this
+    /// tries again slowly rather than on the usual backoff.
+    private func tooNew() {
+        disconnect()
+        status = .tooNew
+        for index in machines.indices { machines[index].online = false }
+        let gen = generation
+        Task {
+            try? await Task.sleep(for: .seconds(60))
             if gen == generation { connect() }
         }
     }
@@ -683,8 +725,11 @@ import Security
         }
     }
 
+    nonisolated static let tooNewMessage = "This factory is newer than this app — update Maple Factory."
+
     nonisolated static func describe(_ error: Error, response: URLResponse? = nil) -> String {
         if let http = response as? HTTPURLResponse, http.statusCode == 401 { return "Your sign-in expired." }
+        if error is DecodingError { return tooNewMessage }
         let ns = error as NSError
         switch ns.code {
         case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost: return "Can't reach the factory."

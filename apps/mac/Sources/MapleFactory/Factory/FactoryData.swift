@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// The connected factory's goals, people and presence. `FactoryData` reads them through here so the
+/// views that show them redraw when the feed changes them; nil means not signed in (the mockup's).
+@MainActor @Observable final class LiveData {
+    static let shared = LiveData()
+
+    var goals: [Goal]?
+    var people: [Person]?
+    var presence: [(person: Person, viewing: String?)]?
+}
+
 enum FactoryData {
     // MARK: People
 
@@ -8,13 +18,19 @@ enum FactoryData {
     static let chris = Person(name: "Chris", color: Color(light: 0xE0662F, dark: 0xFF8A5B), isHuman: true, github: "excid3")
 
     /// The org's people: its members when connected, for mentions, facepiles and avatars.
-    static var people: [Person] { livePeople ?? [me, chris] }
-    nonisolated(unsafe) static var livePeople: [Person]?
+    @MainActor static var people: [Person] { livePeople ?? [me, chris] }
+    @MainActor static var livePeople: [Person]? {
+        get { LiveData.shared.people }
+        set { LiveData.shared.people = newValue }
+    }
 
     /// Who's online and which task they have open (nil = elsewhere in the workspace).
-    static var presence: [(person: Person, viewing: String?)] { livePresence ?? seedPresence }
+    @MainActor static var presence: [(person: Person, viewing: String?)] { livePresence ?? seedPresence }
     /// Who's online in the connected factory (`FactoryClient`).
-    nonisolated(unsafe) static var livePresence: [(person: Person, viewing: String?)]?
+    @MainActor static var livePresence: [(person: Person, viewing: String?)]? {
+        get { LiveData.shared.presence }
+        set { LiveData.shared.presence = newValue }
+    }
 
     static let seedPresence: [(person: Person, viewing: String?)] = [
         (me, nil),
@@ -49,7 +65,7 @@ enum FactoryData {
     // MARK: Calendar
 
     /// The mockup's calendar is pinned to its story; a live workspace's starts 11 days before today.
-    static var timelineStart: Date {
+    @MainActor static var timelineStart: Date {
         liveGoals == nil
             ? Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 13))!
             : Calendar.current.date(byAdding: .day, value: -todayOffset, to: Calendar.current.startOfDay(for: Date()))!
@@ -57,21 +73,24 @@ enum FactoryData {
     static let timelineDays = 49
     static let todayOffset = 11
 
-    static func date(_ offset: Int) -> Date {
+    @MainActor static func date(_ offset: Int) -> Date {
         Calendar.current.date(byAdding: .day, value: offset, to: timelineStart)!
     }
 
-    static func dueLabel(_ goal: Goal) -> String {
+    @MainActor static func dueLabel(_ goal: Goal) -> String {
         date(goal.dueOffset).formatted(.dateTime.month(.abbreviated).day())
     }
 
     // MARK: Goals
 
     /// The connected factory's goals, when signed in (`FactoryClient`); the mockup's otherwise.
-    nonisolated(unsafe) static var liveGoals: [Goal]?
-    static var goals: [Goal] { liveGoals ?? seedGoals }
+    @MainActor static var liveGoals: [Goal]? {
+        get { LiveData.shared.goals }
+        set { LiveData.shared.goals = newValue }
+    }
+    @MainActor static var goals: [Goal] { liveGoals ?? seedGoals }
     /// The goals still in play: the sidebar's and the composer's.
-    static var activeGoals: [Goal] { goals.filter { !$0.archived } }
+    @MainActor static var activeGoals: [Goal] { goals.filter { !$0.archived } }
 
     static let seedGoals: [Goal] = [
         Goal(name: "Auth overhaul", color: Theme.State.merged, dueOffset: 32, lead: me,
@@ -86,7 +105,7 @@ enum FactoryData {
              summary: "A searchable docs site with generated API reference and live examples."),
     ]
 
-    static func goal(named name: String) -> Goal {
+    @MainActor static func goal(named name: String) -> Goal {
         goals.first { $0.name == name } ?? Goal(name: name, color: Theme.textMuted, dueOffset: todayOffset, lead: me, summary: "")
     }
 

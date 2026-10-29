@@ -539,7 +539,7 @@ struct NeedsHandView: View {
 
     private var reasonSummary: some View {
         HStack(spacing: 12) {
-            ForEach([HandRaise.Reason.reviewLoop, .proofBurden, .needsInput, .overBudget], id: \.self) { reason in
+            ForEach([HandRaise.Reason.reviewLoop, .proofBurden, .needsInput, .overBudget, .mergeFailed], id: \.self) { reason in
                 let count = state.handRaises.filter { $0.hand?.reason == reason }.count
                 if count > 0 {
                     HStack(spacing: 4) {

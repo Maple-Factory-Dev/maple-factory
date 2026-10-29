@@ -267,7 +267,8 @@ function decisions(t) {
         t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
-    if (passed && t.reviews.length >= t.reviewsNeeded) {
+    // A failed merge's hand carries the ways forward instead.
+    if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }

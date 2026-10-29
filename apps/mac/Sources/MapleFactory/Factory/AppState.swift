@@ -43,13 +43,48 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
-    /// Starts as it was left (in a full-width window), so a closed task panel stays closed.
-    var showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true {
-        // A narrow window hides and floats it on its own; only choices in a full-width one stick.
-        didSet { if !isCompact { UserDefaults.standard.set(showInspector, forKey: "taskPanel") } }
+    /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
+    var showInspector = AppState.panelLeftOpen
+    /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
+    /// written on every toggle while the panel opened by default, so it's true for most people.
+    private static let panelKey = "taskPanelOpen"
+    private static var panelLeftOpen: Bool {
+        UserDefaults.standard.removeObject(forKey: "taskPanel")
+        return UserDefaults.standard.bool(forKey: panelKey)
     }
-    var selectedTask = "ATL-147" {
-        didSet { if isCompact, focusedTask == nil { showInspector = true } }
+    /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
+    var selectedTask = "ATL-147"
+    /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
+    var openedTask: String? { showInspector ? selectedTask : nil }
+
+    /// A card or row was clicked: show it in the task panel.
+    func openTask(_ id: String) {
+        withAnimation(.snappy(duration: 0.25)) {
+            selectedTask = id
+            showInspector = true
+        }
+    }
+
+    /// Clicking the task already open in the panel closes the panel; any other task opens.
+    func toggleTask(_ id: String) {
+        if showInspector, selectedTask == id {
+            closeTaskPanel()
+        } else {
+            openTask(id)
+        }
+    }
+
+    /// ×, Esc or clicking the open card again; in a full-width window the close sticks across launches.
+    func closeTaskPanel() {
+        withAnimation(.snappy(duration: 0.25)) { showInspector = false }
+        if !isCompact { UserDefaults.standard.set(false, forKey: AppState.panelKey) }
+    }
+
+    /// The toolbar toggle and the menu item: the one choice that sticks across launches
+    /// (in a full-width window; a narrow one hides and floats the panel on its own).
+    func toggleTaskPanel() {
+        withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
+        if !isCompact { UserDefaults.standard.set(showInspector, forKey: AppState.panelKey) }
     }
 
     // MARK: Machines
@@ -94,10 +129,20 @@ final class AppState {
     // MARK: Onboarding
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
+    /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
     var showOnboarding = UserDefaults.standard.bool(forKey: "onboarding") || UserDefaults.standard.bool(forKey: "onboardingAuto")
+        || UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
+    var onboardingCanCancel = UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
 
     func startOnboarding() {
+        onboardingCanCancel = true
         withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
+    }
+
+    /// Back to the workspace without connecting: the current factory stays as it was.
+    func cancelOnboarding() {
+        withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = false }
     }
 
     /// `workspace`: the factory just joined, or the demo's when there's none.
@@ -135,7 +180,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = UserDefaults.standard.object(forKey: "taskPanel") as? Bool ?? true
+                showInspector = UserDefaults.standard.bool(forKey: AppState.panelKey)
             }
         }
     }
@@ -683,8 +728,8 @@ final class AppState {
         }
     }
 
-    /// The inspector shows a task from the goal on screen: when the selection belongs elsewhere (or is
-    /// gone), it moves to the goal's first unfinished task.
+    /// The selection follows the goal on screen: when it belongs elsewhere (or is gone), it moves to the
+    /// goal's first unfinished task. This only picks what the panel would show; it never opens the panel.
     func keepSelectionInGoal() {
         if destination == .inbox {
             if !myInbox.contains(where: { $0.taskID == selectedTask }), let first = myInbox.first { selectedTask = first.taskID }
@@ -1229,6 +1274,7 @@ final class AppState {
         }
         if let task = defaults.string(forKey: "task") {
             selectedTask = task
+            showInspector = true
         }
         if let task = defaults.string(forKey: "focus") {
             selectedTask = task
@@ -1285,6 +1331,9 @@ final class AppState {
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
+                // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
+                case "switch": startOnboarding()
+                case "back": cancelOnboarding()
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
