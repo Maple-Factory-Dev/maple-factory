@@ -509,6 +509,8 @@ struct TaskCard: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let effort = task.effort { EffortChip(effort: effort) }
+
             if task.queued {
                 QueuedFooter(task: task)
             } else {

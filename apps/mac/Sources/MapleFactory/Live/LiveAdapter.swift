@@ -79,6 +79,7 @@ import SwiftUI
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
+        task.effort = t.effort
         let goal = goals.first { $0.id == t.goal }
         if let goal, goal.repos.count > 1 { task.repo = t.repo ?? goal.repo }
         task.after = t.after
@@ -568,5 +569,17 @@ extension LiveAdapter {
             return dry < resets ? dry.formatted(date: .omitted, time: .shortened) : nil
         }()
         return UsageWindow(label: label, span: w.label, used: used, resetsIn: resetsIn, resetsAt: resetsAt, elapsed: elapsed, runsOutAt: runsOut)
+    }
+}
+
+extension LiveAdapter {
+    static let noPrompts = Wire.PromptAdditions(planner: "", builder: "", reviewer: "")
+
+    /// A goal's prompt additions to save: none when every field is empty, so an untouched goal stays as it was.
+    static func prompts(_ p: Wire.PromptAdditions) -> Wire.PromptAdditions? {
+        let trimmed = Wire.PromptAdditions(planner: p.planner.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           builder: p.builder.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           reviewer: p.reviewer.trimmingCharacters(in: .whitespacesAndNewlines))
+        return trimmed == noPrompts ? nil : trimmed
     }
 }

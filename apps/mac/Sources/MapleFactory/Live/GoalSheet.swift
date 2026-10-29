@@ -23,6 +23,8 @@ struct GoalSheet: View {
     /// Sent and waiting on the server's goal.updated, or the refusal it sent instead.
     @State private var saving = false
     @State private var failure: String?
+    @State private var prompts = LiveAdapter.noPrompts
+    @State private var showPrompts = false
 
     enum Source: String, CaseIterable { case folder = "A folder on my machines", repo = "A GitHub repo" }
     enum Field { case name, prefix, code }
@@ -54,6 +56,8 @@ struct GoalSheet: View {
         _repo = State(initialValue: (goal.repos.isEmpty ? [goal.repo].compactMap { $0 } : goal.repos).joined(separator: ", "))
         _base = State(initialValue: goal.base ?? "")
         _team = State(initialValue: goal.team ?? "")
+        _prompts = State(initialValue: goal.prompts ?? LiveAdapter.noPrompts)
+        _showPrompts = State(initialValue: goal.prompts.flatMap(LiveAdapter.prompts) != nil)
         _color = State(initialValue: Self.colors.firstIndex { $0.hex.caseInsensitiveCompare(goal.color) == .orderedSame } ?? 0)
     }
 
@@ -80,6 +84,11 @@ struct GoalSheet: View {
 
     private func problem(_ field: Field) -> String? {
         attempted || touched.contains(field) ? problems[field] : nil
+    }
+
+    /// Its lead or an admin; whoever makes a goal leads it.
+    private var canEditPrompts: Bool {
+        client.me?.role == "admin" || (editing?.lead ?? client.me?.login) == client.me?.login
     }
 
     /// The goal's repos in order, the default first: "acme/api, acme/web".
@@ -225,6 +234,27 @@ struct GoalSheet: View {
                 }
             }
 
+            DisclosureGroup(isExpanded: $showPrompts) {
+                VStack(alignment: .leading, spacing: 8) {
+                    PromptFields(prompts: $prompts, editable: canEditPrompts, height: 54)
+                    Text(canEditPrompts
+                         ? "Added to this goal's sessions after the org's prompts (Settings → Prompts), never in place of them."
+                         : "Added after the org's prompts. Only \(editing?.lead ?? "its lead") or an admin can change these.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textFaint)
+                }
+                .padding(.top, 8)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Agent instructions").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+                    if !showPrompts, LiveAdapter.prompts(prompts) != nil {
+                        Text("Set").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation { showPrompts.toggle() } }
+            }
+
             if let failure {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "exclamationmark.circle.fill")
@@ -313,7 +343,9 @@ struct GoalSheet: View {
             folder: source == .folder ? folder.trimmed : nil,
             base: base.trimmed.isEmpty ? nil : base.trimmed,
             archived: editing?.archived,
-            team: team.trimmed.isEmpty ? nil : team.trimmed
+            team: team.trimmed.isEmpty ? nil : team.trimmed,
+            // All empty clears them (the server stores none); unchanged when you can't edit them.
+            prompts: canEditPrompts ? LiveAdapter.prompts(prompts) ?? LiveAdapter.noPrompts : editing?.prompts
         )
         failure = nil
         saving = true

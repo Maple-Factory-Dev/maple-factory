@@ -624,6 +624,9 @@ pub struct Goal {
     /// The GitHub team (slug) it's for: its members follow it unless they unfollow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
+    /// Added to its sessions' prompts after the org's. Only its lead or an admin can change them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptAdditions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1028,6 +1031,9 @@ pub struct Task {
     /// Its next session skips the wait for a free slot; cleared once it starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
+    /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1057,6 +1063,15 @@ pub struct RiskPolicy {
     pub final_reviews: BTreeMap<String, u32>,
     #[serde(default)]
     pub auto_merge: BTreeMap<String, bool>,
+}
+
+/// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptAdditions {
+    pub planner: String,
+    pub builder: String,
+    pub reviewer: String,
 }
 
 /// A goal letting the factory merge without human review, up to a risk level, on the record.
@@ -1835,6 +1850,11 @@ pub enum ClientMessage {
     PolicySave {
         policy: RiskPolicy,
     },
+    /// Admins only: the org's prompt additions.
+    #[serde(rename = "prompts.save")]
+    PromptsSave {
+        prompts: PromptAdditions,
+    },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]
     ReposRefresh,
@@ -1876,6 +1896,8 @@ pub enum ClientMessage {
         repo: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     #[serde(rename = "task.edit")]
     TaskEdit {
@@ -1888,6 +1910,9 @@ pub enum ClientMessage {
         shareable: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo: Option<String>,
+        /// Put it in this effort; an empty string takes it out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     /// Send a draft to planning.
     #[serde(rename = "task.plan")]
@@ -2026,6 +2051,9 @@ pub enum ServerToClient {
         policy: RiskPolicy,
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
+        /// The org's prompt additions. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompts: Option<PromptAdditions>,
         #[serde(default)]
         online: Vec<Presence>,
         #[serde(default)]
@@ -2101,6 +2129,10 @@ pub enum ServerToClient {
         policy: RiskPolicy,
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
+    },
+    #[serde(rename = "prompts.updated")]
+    PromptsUpdated {
+        prompts: PromptAdditions,
     },
     #[serde(rename = "repos.updated")]
     ReposUpdated {

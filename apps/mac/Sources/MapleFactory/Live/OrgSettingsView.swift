@@ -6,7 +6,7 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case general, account, repos, people, runner, notifications, updates
+        case general, account, repos, people, prompts, runner, notifications, updates
 
         var title: String {
             switch self {
@@ -14,6 +14,7 @@ struct OrgSettingsView: View {
             case .account: "Account"
             case .repos: "Repositories"
             case .people: "People"
+            case .prompts: "Prompts"
             case .runner: "Runner"
             case .notifications: "Notifications"
             case .updates: "Updates"
@@ -26,6 +27,7 @@ struct OrgSettingsView: View {
             case .account: "person.crop.circle"
             case .repos: "shippingbox"
             case .people: "person.2"
+            case .prompts: "text.bubble"
             case .runner: "laptopcomputer"
             case .notifications: "bell"
             case .updates: "arrow.down.circle"
@@ -42,7 +44,7 @@ struct OrgSettingsView: View {
             List(selection: pane) {
                 row(.general)
                 Section("Factory") {
-                    ForEach([Pane.account, .repos, .people], id: \.self) { row($0) }
+                    ForEach([Pane.account, .repos, .people, .prompts], id: \.self) { row($0) }
                 }
                 Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
             }
@@ -56,6 +58,7 @@ struct OrgSettingsView: View {
                 case .account: ScrollView { AccountSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .repos: RepositoriesSettings()
                 case .people: PeopleSettings()
+                case .prompts: ScrollView { PromptSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .runner: ScrollView { RunnerSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .notifications: ScrollView { NotificationSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .updates: ScrollView { UpdateSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
@@ -336,6 +339,93 @@ struct SettingsCard<Content: View>: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
+    }
+}
+
+/// What the org adds to every planning, building and review session's prompt. Admins edit it; a goal
+/// can add its own on top (the goal sheet's Agent instructions).
+struct PromptSettings: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var draft = LiveAdapter.noPrompts
+    @State private var saved = false
+
+    private var isAdmin: Bool { client.me?.role == "admin" }
+    private var current: Wire.PromptAdditions { client.prompts ?? LiveAdapter.noPrompts }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Prompts", detail: "Added to every factory session's prompt for its role, after the task's brief. A goal's own instructions come after these.")
+            if !client.isSignedIn {
+                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its prompts."))
+            } else {
+                SettingsCard {
+                    PromptFields(prompts: $draft, editable: isAdmin, height: 96)
+                }
+                HStack {
+                    if !isAdmin {
+                        Label("Only admins can change these", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    } else if saved && draft == current {
+                        Text("Saved").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                    Spacer()
+                    if isAdmin {
+                        Button("Revert") { draft = current }.disabled(draft == current)
+                        Button("Save") {
+                            client.save(prompts: draft)
+                            saved = true
+                        }
+                        .keyboardShortcut("s")
+                        .disabled(draft == current)
+                    }
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+        .onAppear { draft = current }
+        // Another admin's save, or the server's trimmed echo of ours.
+        .onChange(of: client.prompts) { _, new in draft = new ?? LiveAdapter.noPrompts }
+    }
+}
+
+/// Planning, Building and Review prompt additions, each a labelled multi-line editor.
+struct PromptFields: View {
+    @Binding var prompts: Wire.PromptAdditions
+    var editable = true
+    var height: CGFloat = 64
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            editor("Planning", "How the planner should plan: conventions, what a plan must cover.", $prompts.planner)
+            editor("Building", "What the builder must do: test commands, style, what not to touch.", $prompts.builder)
+            editor("Review", "What the review agent should check for.", $prompts.reviewer)
+        }
+    }
+
+    private func editor(_ label: String, _ hint: String, _ text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+                Spacer()
+                if text.wrappedValue.count > 3500 {
+                    Text("\(text.wrappedValue.count) / 4000").font(.system(size: 11)).foregroundStyle(text.wrappedValue.count > 4000 ? Theme.State.awaitingApproval : Theme.textFaint)
+                }
+            }
+            TextEditor(text: text)
+                .font(.system(size: 12.5))
+                .scrollContentBackground(.hidden)
+                .disabled(!editable)
+                .opacity(editable ? 1 : 0.75)
+                .padding(6)
+                .frame(height: height)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+                .overlay(alignment: .topLeading) {
+                    if text.wrappedValue.isEmpty {
+                        Text(editable ? hint : "None").font(.system(size: 12.5)).foregroundStyle(Theme.textFaint)
+                            .padding(.horizontal, 11).padding(.vertical, 6).allowsHitTesting(false)
+                    }
+                }
+        }
     }
 }
 
