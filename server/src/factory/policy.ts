@@ -15,6 +15,7 @@ export const DEFAULT_POLICY: RiskPolicy = {
   planApprovals: { low: 1, medium: 1, high: 2 },
   finalReviews: { low: 0, medium: 1, high: 2 },
   autoMerge: { low: true, medium: false, high: false },
+  autoFixMerges: true,
 };
 
 const ORDER: RiskLevel[] = ["low", "medium", "high"];

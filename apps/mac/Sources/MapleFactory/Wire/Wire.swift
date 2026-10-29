@@ -2210,14 +2210,17 @@ public enum Wire {
         public var planApprovals: [String: UInt32]
         public var finalReviews: [String: UInt32]
         public var autoMerge: [String: Bool]
+        /// When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.
+        public var autoFixMerges: Bool?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:]) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
             self.planApprovals = planApprovals
             self.finalReviews = finalReviews
             self.autoMerge = autoMerge
+            self.autoFixMerges = autoFixMerges
         }
 
         public init(from decoder: Decoder) throws {
@@ -2228,6 +2231,7 @@ public enum Wire {
             planApprovals = try c.decodeIfPresent([String: UInt32].self, forKey: .planApprovals) ?? [:]
             finalReviews = try c.decodeIfPresent([String: UInt32].self, forKey: .finalReviews) ?? [:]
             autoMerge = try c.decodeIfPresent([String: Bool].self, forKey: .autoMerge) ?? [:]
+            autoFixMerges = try c.decodeIfPresent(Bool.self, forKey: .autoFixMerges)
         }
     }
 
