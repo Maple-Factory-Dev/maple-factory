@@ -314,6 +314,21 @@ export class Engine {
         if (!(await this.type(task, `${who} answered your question ("${q.text}"): ${msg.text}`))) await this.pump();
         return;
       }
+      case "task.answerPrompt": {
+        // Only ever a keypress into a permission menu: anything else waiting, or working, is refused.
+        const w = task.worker ?? fail("Nothing's running on it.");
+        const machine = (await this.hooks.machines()).find((m) => m.id === w.machine);
+        const activity = machine?.sessions.find((s) => s.session.id === w.session)?.activity;
+        const permission = activity?.state === "waiting" ? (activity.question as { permission?: { tool?: string } } | null)?.permission : undefined;
+        if (!activity || !permission) fail(`Its ${w.role} isn't waiting on a permission prompt.`);
+        if (this.answered.get(w.session) === activity!.at) fail("That prompt has already been answered.");
+        const ok = await this.press(task, msg.choice === "yes" ? "1" : "2");
+        if (!ok) fail(`${machine?.name ?? w.machine} is offline.`);
+        this.answered.set(w.session, activity!.at);
+        this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${permission!.tool ?? "it"}`);
+        this.save(task);
+        return;
+      }
       case "task.resolveHand": {
         const hand = task.hand ?? fail("Nobody's asking for a hand.");
         const option = msg.option ? hand.options.find((o) => o.title === msg.option) : undefined;
@@ -1726,6 +1741,17 @@ export class Engine {
     const res = await machineHub(this.env, w.machine).fetch("https://hub/input", { method: "POST", body: JSON.stringify({ session: w.session, text }) });
     return res.ok;
   }
+
+  /** Presses keys in the task's live session, nothing added: a permission menu's choice. */
+  private async press(task: Task, keys: string): Promise<boolean> {
+    const w = task.worker;
+    if (!w) return false;
+    const res = await machineHub(this.env, w.machine).fetch("https://hub/input", { method: "POST", body: JSON.stringify({ session: w.session, text: keys, keys: true }) });
+    return res.ok;
+  }
+
+  /** The activity (`at`) each session's permission prompt was last answered at, so a second click doesn't type into what comes next. */
+  private answered = new Map<string, number>();
 
   private async toRunner(machine: string, command: ServerToRunner, by?: string): Promise<boolean> {
     const res = await machineHub(this.env, machine).fetch("https://hub/command", {
