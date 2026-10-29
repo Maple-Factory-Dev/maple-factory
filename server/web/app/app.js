@@ -5,6 +5,8 @@
 // Every string from the factory goes in with textContent; agents' screen mockups render in an iframe
 // with an empty sandbox (no scripts, no same-origin).
 
+import { markdown } from "./markdown.js";
+
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), live: false, diffs: new Map() };
 let socket = null;
 let retry = 1000;
@@ -297,7 +299,7 @@ function compose(t, key, placeholder, label, submit) {
 
 function overview(t) {
   return h("div", {},
-    t.brief && [h("h2", {}, "Brief"), h("div", { class: "card", style: "white-space:pre-wrap" }, t.brief)],
+    t.brief && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h))],
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
     t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map(mockup)],
@@ -364,8 +366,8 @@ function doneItem(d) {
 function timeline(t) {
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), h("div", { style: "white-space:pre-wrap" }, c.text)) })),
-    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), h("div", {}, c.text)) })),
+    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h)) })),
+    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
     compose(t, "comment", "Comment…", "Comment", (text) => send({ type: "task.comment", id: t.id, text })),

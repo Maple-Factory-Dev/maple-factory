@@ -107,5 +107,6 @@ enum Theme {
         static let attribute = Color(light: 0x9A6200, dark: 0xE6C27F)
         static let number = Color(light: 0xC0531A, dark: 0xEFA26B)
         static let punctuation = Color(light: 0x8A909A, dark: 0x6E7480)
+        static let comment = Color(light: 0x7A808A, dark: 0x6E7480)
     }
 }

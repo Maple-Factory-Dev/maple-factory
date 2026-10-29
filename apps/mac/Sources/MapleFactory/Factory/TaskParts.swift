@@ -451,26 +451,11 @@ struct DiscussionList: View {
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Theme.textFaint)
                         }
-                        Text(mentionStyled(comment.text))
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(Theme.text.opacity(0.88))
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        MarkdownPreview(source: comment.text, baseSize: 12.5)
                     }
                 }
             }
         }
-    }
-
-    /// Highlights @handles so mentions read like they would in a real comment thread.
-    private func mentionStyled(_ text: String) -> AttributedString {
-        var result = AttributedString(text)
-        for person in FactoryData.people {
-            guard let handle = person.github, let range = result.range(of: "@\(handle)") else { continue }
-            result[range].foregroundColor = Theme.mention
-            result[range].font = .system(size: 12.5, weight: .semibold)
-        }
-        return result
     }
 }
 

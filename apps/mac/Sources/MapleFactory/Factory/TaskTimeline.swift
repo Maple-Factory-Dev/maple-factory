@@ -137,11 +137,7 @@ struct TaskTimeline: View {
                    verb: comment.via.map { "replied in \($0)" } ?? (comment.author.isHuman ? "commented" : "replied"),
                    anchor: comment.anchor, when: comment.when)
             Hairline()
-            Text(mentionStyled(comment.text))
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.text.opacity(0.9))
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
+            MarkdownPreview(source: comment.text, baseSize: 13)
                 .padding(12)
         }
         .background(card(Theme.stroke))
@@ -153,10 +149,7 @@ struct TaskTimeline: View {
                    verb: "asked \(task.agent?.name ?? "the agent") for a change", anchor: request.anchor, when: request.when)
             Hairline()
             VStack(alignment: .leading, spacing: 8) {
-                Text(request.text)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
+                MarkdownPreview(source: request.text, baseSize: 13)
                 HStack(spacing: 6) {
                     ChangeStatusChip(status: request.status)
                     if let timing = request.timing {
@@ -224,15 +217,5 @@ struct TaskTimeline: View {
         if text.contains("step") { return "hammer" }
         if text.contains("moved") { return "arrow.right" }
         return "circle.fill"
-    }
-
-    private func mentionStyled(_ text: String) -> AttributedString {
-        var result = AttributedString(text)
-        for person in FactoryData.people {
-            guard let handle = person.github, let range = result.range(of: "@\(handle)") else { continue }
-            result[range].foregroundColor = Theme.mention
-            result[range].font = .system(size: 13, weight: .semibold)
-        }
-        return result
     }
 }
