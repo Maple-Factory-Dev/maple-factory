@@ -46,7 +46,7 @@ type Hooks = {
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
-  /** Call `pollCI` and `pump` again in about `ms`: for CI that webhooks may never report (a local server), and scheduled tasks. */
+  /** Call `pollCI`, `mergeDue` and `pump` again in about `ms`: for CI that webhooks may never report (a local server), auto-merge countdowns and scheduled tasks. */
   wakeIn(ms: number): void;
 };
 
@@ -63,6 +63,8 @@ const MERGE_RETRY = "Try the merge again";
 const MERGE_FIX_TRIES = 2;
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
+/** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
+const MERGE_GRACE_MS = 10_000;
 
 export class FactoryError extends Error {}
 
@@ -423,7 +425,17 @@ export class Engine {
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
         if (task.pr!.checks.some((c) => c.status !== "passed")) fail("CI is still running.");
+        task.mergeAt = null;
         await this.startMerge(task, who);
+        return;
+      }
+      case "task.holdMerge": {
+        if (task.mergeAt == null) fail("It isn't counting down to merge.");
+        const head = task.pr?.head ?? task.pr?.branch ?? null;
+        task.mergeAt = null;
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeHeld: head });
+        this.event(task, who, "held the auto-merge; a person merges it");
+        this.save(task);
         return;
       }
       case "task.cancel": {
@@ -1614,17 +1626,28 @@ export class Engine {
     await this.pump();
   }
 
-  /** Merges on the factory's own say-so when the policy (or the goal's accepted risk) allows it. */
+  /** Ready to merge on its own: reviewed, proven, CI green, nothing in the way. */
+  private mergeReady(task: Task) {
+    if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return false;
+    if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return false;
+    if (task.pr.checks.some((c) => c.status !== "passed")) return false; // CI first
+    return !this.store.private(task.id).merging && !task.hand;
+  }
+
+  private mergeGraceMs() {
+    const ms = Number(this.env.MERGE_GRACE_MS);
+    return this.env.MERGE_GRACE_MS && Number.isFinite(ms) && ms >= 0 ? ms : MERGE_GRACE_MS;
+  }
+
+  /** Merges on the factory's own say-so when the policy (or the goal's accepted risk) allows it, after
+   *  counting down `mergeAt` so a person can hold it. */
   private async autoMerge(task: Task) {
-    if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return;
-    if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return;
-    if (task.pr.checks.some((c) => c.status !== "passed")) return; // CI first
+    if (!this.mergeReady(task)) return;
     const a = this.assessment(task);
     const priv = this.store.private(task.id);
-    if (priv.merging || task.hand?.reason === "mergeFailed") return;
+    const head = task.pr!.head ?? task.pr!.branch;
     if (!a.autoMerge) {
       // Ready, but the org merges by hand: say so once per head, so it isn't mistaken for stuck.
-      const head = task.pr.head ?? task.pr.branch;
       if (this.store.policy().autoMerges === false && priv.pendingMerge !== head) {
         this.store.savePrivate(task.id, { ...priv, pendingMerge: head });
         this.event(task, "factory", "is ready; waiting for a person to merge it (auto-merge is off)");
@@ -1633,7 +1656,24 @@ export class Engine {
       }
       return;
     }
-    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {});
+    if (priv.mergeHeld === head) return; // a person held this head's auto-merge
+    if (task.mergeAt == null) {
+      const grace = this.mergeGraceMs();
+      task.mergeAt = now() + grace;
+      this.store.savePrivate(task.id, { ...priv, mergeHead: head });
+      this.event(task, "factory", `will auto-merge in ${+(grace / 1000).toFixed(1)}s`);
+      this.save(task);
+      this.hooks.wakeIn(grace);
+      return;
+    }
+    if (task.mergeAt > now()) return this.hooks.wakeIn(task.mergeAt - now());
+    task.mergeAt = null;
+    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => this.save(task));
+  }
+
+  /** Auto-merges whose countdown ran out (one still running wakes the hub again); the hub's alarm calls this. */
+  async mergeDue() {
+    for (const task of this.store.tasks()) if (task.state === "reviewing" && task.mergeAt != null) await this.autoMerge(task);
   }
 
   private async startMerge(task: Task, who: string, text = "merged it") {
@@ -1926,6 +1966,12 @@ export class Engine {
 
   private save(task: Task, touch = true) {
     if (touch) task.updatedAt = now();
+    // An auto-merge counts down only while every gate still holds, on the head it started for.
+    if (task.mergeAt != null) {
+      const priv = this.store.private(task.id);
+      const head = task.pr?.head ?? task.pr?.branch;
+      if (!this.mergeReady(task) || !this.assessment(task).autoMerge || priv.mergeHead !== head || priv.mergeHeld === head) task.mergeAt = null;
+    }
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
