@@ -291,16 +291,35 @@ struct UpdateFooter: View {
         if phase.showsInFooter {
             VStack(spacing: 0) {
                 Rectangle().fill(Theme.stroke).frame(height: 1)
-                HStack(alignment: .center, spacing: 9) {
-                    Image(systemName: phase.icon)
-                        .font(.system(size: 13))
-                        .foregroundStyle(iconColor(phase))
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 4) {
+                // The buttons sit on the title's line, so the line under it has the footer's whole width
+                // (the version and its What's new link don't fit beside them).
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center, spacing: 9) {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 13))
+                            .foregroundStyle(iconColor(phase))
+                            .frame(width: 16)
                         Text(phase.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            if let action = phase.action, let label = phase.buttonLabel {
+                                button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
+                            }
+                            if phase.isDismissible {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .frame(width: 16, height: 16)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { updater.dismiss() }
+                                    .help("Not now")
+                            }
+                        }
+                    }
+                    Group {
                         if phase.isBusy {
                             HStack(spacing: 6) {
                                 if let progress = phase.progress {
@@ -340,21 +359,7 @@ struct UpdateFooter: View {
                             }
                         }
                     }
-                    Spacer(minLength: 0)
-                    HStack(spacing: 4) {
-                        if let action = phase.action, let label = phase.buttonLabel {
-                            button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
-                        }
-                        if phase.isDismissible {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Theme.textMuted)
-                                .frame(width: 16, height: 16)
-                                .contentShape(Rectangle())
-                                .onTapGesture { updater.dismiss() }
-                                .help("Not now")
-                        }
-                    }
+                    .padding(.leading, 25)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
