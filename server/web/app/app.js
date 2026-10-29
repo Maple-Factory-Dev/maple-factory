@@ -7,6 +7,7 @@
 // with an empty sandbox (no scripts, no same-origin).
 
 import { markdown } from "./markdown.js";
+import { markdownEditor } from "./editor.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map() };
 let socket = null;
@@ -239,8 +240,7 @@ function newTaskView(r) {
 
   // Only the text boxes are kept across re-renders; the selects, checkbox and buttons rebuild from `composer`.
   const title = h("input", { type: "text", "data-keep": "new:title", placeholder: "What should change?", value: composer.title, oninput: (e) => (composer.title = e.target.value) });
-  const brief = h("textarea", { rows: 10, "data-keep": "new:brief", placeholder: "The brief: what you want and why, what done looks like. Markdown works.", oninput: (e) => (composer.brief = e.target.value) });
-  brief.value = composer.brief;
+  const brief = markdownEditor({ value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
   const goalSelect = h("select", { onchange: (e) => { composer.goal = e.target.value; composer.repo = null; render(); } },
     goals.map((g) => h("option", { value: g.id, selected: g.id === composer.goal }, g.name)));
   const repoSelect = repos.length > 1 && h("select", { onchange: (e) => (composer.repo = e.target.value) },
@@ -273,7 +273,7 @@ function newTaskView(r) {
     h("div", { class: "fields" },
       h("label", { class: "field" }, h("span", {}, "Goal"), goalSelect),
       repoSelect && h("label", { class: "field" }, h("span", {}, "Repo"), repoSelect)),
-    h("label", { class: "field" }, h("span", {}, "Brief"), brief),
+    h("div", { class: "field" }, h("span", {}, "Brief"), brief),
     h("label", { class: "checkrow" },
       h("input", { type: "checkbox", checked: composer.shareable, onchange: (e) => (composer.shareable = e.target.checked) }),
       h("span", {}, "Shareable", h("span", { class: "muted" }, ": a teammate's machine can run it, not just yours"))),
@@ -367,8 +367,7 @@ function noteView(id) {
     $("note-status").textContent = "Saving…";
   };
   const title = h("input", { type: "text", class: "note-title", placeholder: "Untitled note", value: text.title, oninput: edit("title") });
-  const body = h("textarea", { class: "note-body", placeholder: "Jot it down…", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) });
-  body.value = text.body;
+  const body = markdownEditor({ value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
   const turn = () => {
     if (!text.title.trim() && !text.body.trim()) return toast("Write something first.");
     if (noteSaves.has(id)) saveNote(id, true);
@@ -404,6 +403,9 @@ function noteView(id) {
 
 function mount(next, keepCompose) {
   const main = $("main");
+  // Moving the box being typed in blurs it, so put the focus and selection back after.
+  const active = document.activeElement;
+  const range = active && "selectionStart" in active ? [active.selectionStart, active.selectionEnd] : null;
   if (keepCompose) {
     // Swap everything but the boxes being typed in.
     const kept = new Map([...main.querySelectorAll("[data-keep]")].map((el) => [el.dataset.keep, el]));
@@ -413,6 +415,10 @@ function mount(next, keepCompose) {
     }
   }
   main.replaceChildren(next);
+  if (active && active !== document.activeElement && main.contains(active)) {
+    active.focus({ preventScroll: true });
+    if (range) try { active.setSelectionRange(...range); } catch {}
+  }
 }
 
 // ---- a task ----
@@ -537,16 +543,14 @@ function cancelCard(t) {
 }
 
 function compose(t, key, placeholder, label, submit) {
-  const box = h("textarea", { placeholder, rows: 2 });
   const go = () => {
-    const text = box.value.trim();
+    const text = editor.textarea.value.trim();
     if (!text) return;
     submit(text);
-    box.value = "";
-    box.blur();
+    editor.clear();
   };
-  box.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) go(); });
-  return h("div", { class: "compose", "data-keep": `${t.id}:${key}` }, box, h("div", {}, h("button", { class: "btn small", onclick: go }, label)));
+  const editor = markdownEditor({ placeholder, rows: 2, onsubmit: go }, h);
+  return h("div", { class: "compose", "data-keep": `${t.id}:${key}` }, editor, h("div", {}, h("button", { class: "btn small", onclick: go }, label)));
 }
 
 // What's typed into a draft's editor, until it's saved.
@@ -557,8 +561,7 @@ function draftEditor(t) {
   draftEdits.set(t.id, edits);
   const dirty = () => edits.title.trim() !== t.title || edits.brief !== t.brief;
   const title = h("input", { type: "text", placeholder: "Title", value: edits.title, oninput: (e) => { edits.title = e.target.value; mark(); } });
-  const brief = h("textarea", { rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } });
-  brief.value = edits.brief;
+  const brief = markdownEditor({ value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
   const status = h("span", { class: "muted", style: "font-size:13px" });
   const mark = () => (status.textContent = dirty() ? "Unsaved changes" : "");
   mark();
@@ -582,7 +585,7 @@ function draftEditor(t) {
     h("div", { class: "note-editor", "data-keep": `${t.id}:draft`,
       onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); } } },
       h("label", { class: "field" }, h("span", {}, "Title"), title),
-      h("label", { class: "field" }, h("span", {}, "Brief"), brief)),
+      h("div", { class: "field" }, h("span", {}, "Brief"), brief)),
     h("div", { class: "actionbar" },
       cancelling.has(t.id)
         ? [h("span", { class: "muted", style: "font-size:13px" }, "Cancel this draft?"),
