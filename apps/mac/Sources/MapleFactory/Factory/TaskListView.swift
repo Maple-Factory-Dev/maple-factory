@@ -116,8 +116,7 @@ struct TaskListView: View {
         }
         .overlay(alignment: .bottom) { Hairline().padding(.leading, 24) }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { state.openFocus(task.id) }
-        .onTapGesture { state.toggleTask(task.id) }
+        .taskClicks(task.id)
         .contextMenu {
             TaskActionButtons(task: task, confirmCancel: Binding(get: { cancelling?.id == task.id }, set: { cancelling = $0 ? task : nil }))
         }

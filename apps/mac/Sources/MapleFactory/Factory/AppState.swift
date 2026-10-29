@@ -67,12 +67,25 @@ final class AppState {
         }
     }
 
-    /// Clicking the task already open in the panel closes the panel; any other task opens.
+    /// What a click on a card or row does: the full task view by default, or a peek in the panel.
+    var taskOpening = TaskOpening.stored() {
+        didSet { UserDefaults.standard.set(taskOpening.rawValue, forKey: TaskOpening.key) }
+    }
+
+    enum ClickAction: Equatable { case focus, openPanel, closePanel }
+
+    /// In the panel mode, clicking the task already open in the panel closes it; any other task opens.
+    static func clickAction(opening: TaskOpening, panelOpen: Bool, selected: String, id: String) -> ClickAction {
+        if opening == .fullView { return .focus }
+        return panelOpen && selected == id ? .closePanel : .openPanel
+    }
+
+    /// A single click on a board card, list or inbox row, or timeline bar.
     func toggleTask(_ id: String) {
-        if showInspector, selectedTask == id {
-            closeTaskPanel()
-        } else {
-            openTask(id)
+        switch AppState.clickAction(opening: taskOpening, panelOpen: showInspector, selected: selectedTask, id: id) {
+        case .focus: openFocus(id)
+        case .openPanel: openTask(id)
+        case .closePanel: closeTaskPanel()
         }
     }
 
@@ -389,6 +402,27 @@ final class AppState {
     }
 
     /// Derived from live task state, so acting on a task clears its inbox item on its own.
+    // MARK: Task opening
+
+    /// Whether clicking a task opens its full view or peeks at it in the side panel.
+    enum TaskOpening: String, CaseIterable {
+        case fullView, panel
+
+        static let key = "taskOpening"
+
+        var title: String {
+            switch self {
+            case .fullView: "Open the full view"
+            case .panel: "Peek in the side panel"
+            }
+        }
+
+        /// The saved choice; the full view until someone picks otherwise.
+        static func stored(_ defaults: UserDefaults = .standard) -> TaskOpening {
+            TaskOpening(rawValue: defaults.string(forKey: key) ?? "") ?? .fullView
+        }
+    }
+
     // MARK: Goal scope
 
     /// Inbox, Needs a hand and Activity show the goals you follow unless you ask for all of them.
