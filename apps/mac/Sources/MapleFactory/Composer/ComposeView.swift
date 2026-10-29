@@ -400,7 +400,7 @@ struct FactoryReadingPanel: View {
 }
 
 /// Where the composer's Draft with AI is: what the agent is doing, the goal it suggests making, or
-/// how it went.
+/// how it went; and, under Watch, everything it has said and done so far.
 struct AIDraftCard: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
@@ -419,6 +419,7 @@ struct AIDraftCard: View {
                 case .ready?: ready(draft!)
                 case .failed?: failed(draft!)
                 }
+                if let draft { transcript(draft) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -468,6 +469,34 @@ struct AIDraftCard: View {
         }
         if let why = draft?.why, draft?.state == .reading {
             Text(why).foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    @ViewBuilder private func transcript(_ draft: Wire.Draft) -> some View {
+        @Bindable var state = state
+        let running = draft.state == .choosing || draft.state == .reading
+        if running || !draft.log.isEmpty {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { state.watchingAIDraft.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(state.watchingAIDraft ? 90 : 0))
+                    Text(state.watchingAIDraft ? "Hide" : "Watch")
+                    if !state.watchingAIDraft, !draft.log.isEmpty {
+                        Text("· \(draft.log.count) \(draft.log.count == 1 ? "line" : "lines")").foregroundStyle(Theme.textFaint)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.State.planning)
+            .help(running ? "See what \(agentName(draft)) is thinking and reading" : "See what \(agentName(draft)) thought and read")
+            if state.watchingAIDraft {
+                DraftTranscript(lines: draft.log, running: running)
+            }
         }
     }
 
@@ -541,6 +570,50 @@ struct AIDraftCard: View {
             Button("Dismiss") { state.aiDraftID = nil }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textMuted)
+        }
+    }
+}
+
+/// What a draft's agent has said (plain) and done (dimmed), oldest first, following the newest line
+/// while it runs.
+struct DraftTranscript: View {
+    let lines: [Wire.DraftLine]
+    let running: Bool
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 5) {
+                    if lines.isEmpty {
+                        Text("Nothing yet…").foregroundStyle(Theme.textFaint)
+                    }
+                    ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                        Text(line.text)
+                            .foregroundStyle(line.kind == .tool ? Theme.textMuted : Theme.text)
+                            .opacity(line.kind == .tool ? 0.8 : 1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(i)
+                    }
+                    if running {
+                        Text("…").foregroundStyle(Theme.textFaint).id("end")
+                    }
+                }
+                .font(.system(size: 11.5, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(10)
+            }
+            .frame(height: 220)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Theme.editorBG)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+            )
+            .onAppear { proxy.scrollTo(running ? AnyHashable("end") : AnyHashable(lines.count - 1), anchor: .bottom) }
+            // The whole log, not its count: once capped it stays at 200 lines as new ones come in.
+            .onChange(of: lines) {
+                guard running else { return }
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("end", anchor: .bottom) }
+            }
         }
     }
 }
