@@ -7,7 +7,7 @@
 
 import type { Env } from "../env.ts";
 import type {
-  ChangeRequest, ClientMessage, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
+  ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
   ServerToRunner, SessionEnd, Task,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -19,6 +19,7 @@ import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { Intake } from "./intake.ts";
+import { mentionsIn } from "./mentions.ts";
 import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
@@ -39,6 +40,8 @@ type Hooks = {
   /** To one person's apps only. */
   sendTo(login: string, message: ServerToClient): void;
   machines(): Promise<Machine[]>;
+  /** The org's members, for working out who a comment @mentions. */
+  members(): Promise<Member[]>;
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
@@ -184,7 +187,7 @@ export class Engine {
         const request = this.intake.get(msg.id) ?? fail("That request isn't there any more.");
         const task = this.store.task(msg.task) ?? fail("That task isn't there any more.");
         for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
-        task.comments.push({ id: crypto.randomUUID(), author: request.requester, text: request.thread.filter((m) => !m.bot).map((m) => m.text).join("\n\n"), at: now(), anchor: null, via: sourceTitle(request) });
+        task.comments.push(await this.comment(request.requester, request.thread.filter((m) => !m.bot).map((m) => m.text).join("\n\n"), { via: sourceTitle(request) }));
         this.event(task, who, `added ${request.requester}'s request (${request.id}) to it`);
         this.save(task);
         this.intake.accepted(request, task, "attached", who);
@@ -233,7 +236,7 @@ export class Engine {
         const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after });
         if (request) {
           for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
-          for (const m of request.thread.filter((m) => !m.bot)) task.comments.push({ id: crypto.randomUUID(), author: m.author, text: m.text, at: m.at, anchor: null, via: sourceTitle(request) });
+          for (const m of request.thread.filter((m) => !m.bot)) task.comments.push(await this.comment(m.author, m.text, { at: m.at, via: sourceTitle(request) }));
         }
         this.save(task);
         await audit(this.env, who, "task.created", task.id, { title: task.title });
@@ -265,7 +268,7 @@ export class Engine {
         return this.startPlanning(task, who);
       case "task.comment": {
         const text = msg.text.trim() || fail("Say something.");
-        task.comments.push({ id: crypto.randomUUID(), author: who, text, at: now(), anchor: msg.anchor ?? null });
+        task.comments.push(await this.comment(who, text, { anchor: msg.anchor ?? null }));
         this.save(task);
         return;
       }
@@ -309,7 +312,7 @@ export class Engine {
       case "task.answer": {
         const q = task.question ?? fail("There's no question waiting.");
         task.question = null;
-        task.comments.push({ id: crypto.randomUUID(), author: who, text: msg.text, at: now(), anchor: `Q: ${q.text}`, via: null });
+        task.comments.push(await this.comment(who, msg.text, { anchor: `Q: ${q.text}` }));
         this.event(task, who, `answered: ${msg.text}`);
         this.save(task);
         if (!(await this.type(task, `${who} answered your question ("${q.text}"): ${msg.text}`))) await this.pump();
@@ -344,7 +347,7 @@ export class Engine {
         if (hand.reason === "mergeFailed") return this.resolveMergeFailed(task, who, option?.title ?? null, msg.note.trim());
         task.hand = null;
         const decision = [option ? `Go with: ${option.title} — ${option.detail}` : null, msg.note.trim() || null].filter(Boolean).join("\n");
-        if (decision) task.comments.push({ id: crypto.randomUUID(), author: who, text: decision, at: now(), anchor: `Hand: ${hand.summary}`, via: null });
+        if (decision) task.comments.push(await this.comment(who, decision, { anchor: `Hand: ${hand.summary}` }));
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
         if (hand.reason === "reviewLoop" && task.autoReview) task.autoReview.maxRounds += 2;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0, discard: false, cleaned: false });
@@ -1581,6 +1584,12 @@ export class Engine {
     this.save(task, false);
   }
 
+  /** A person's comment, with the members it @mentions. */
+  private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null } = {}): Promise<Comment> {
+    const mentions = mentionsIn(text, await this.hooks.members(), author);
+    return { id: crypto.randomUUID(), author, text, at: opts.at ?? now(), anchor: opts.anchor ?? null, via: opts.via ?? null, mentions: mentions.length ? mentions : null };
+  }
+
   /** A person's pick on a "didn't merge" hand. Its task is reviewing with no session, so the
    *  generic resolve (type into the session, or pump) wouldn't move it. */
   private async resolveMergeFailed(task: Task, who: string, option: string | null, note: string) {
@@ -1588,9 +1597,10 @@ export class Engine {
     // A note with no pick is guidance for the builder.
     const pick = option ?? (note ? MERGE_FIX : fail("Pick a way forward."));
     if (pick !== "Cancel it" && task.state !== "reviewing") fail("It's not waiting to merge any more.");
+    const decision = await this.comment(who, [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), { anchor: `Hand: ${hand.summary}` });
     const picked = () => {
       task.hand = null;
-      task.comments.push({ id: crypto.randomUUID(), author: who, text: [`Go with: ${pick}`, note || null].filter(Boolean).join("\n"), at: now(), anchor: `Hand: ${hand.summary}`, via: null });
+      task.comments.push({ ...decision, at: now() });
     };
     if (pick === MERGE_RETRY) {
       // The hand stays up until the merge has started: if it can't (its machine is offline, say),
