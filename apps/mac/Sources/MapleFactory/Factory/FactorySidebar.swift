@@ -107,6 +107,8 @@ struct FactorySidebar: View {
             .scrollIndicators(.never)
         }
         .padding(.horizontal, 12)
+        // A demo script's `ui:settings`: Settings opens without the menu.
+        .onReceive(NotificationCenter.default.publisher(for: AppState.demoSettings)) { _ in openSettings() }
         .overlay(alignment: .topTrailing) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13))

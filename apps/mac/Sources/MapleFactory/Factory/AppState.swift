@@ -1383,6 +1383,8 @@ final class AppState {
         }
     }
 
+    static let demoSettings = Notification.Name("AppState.demoSettings")
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
     /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
@@ -1414,6 +1416,7 @@ final class AppState {
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
+                case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -1434,6 +1437,12 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
+            case "click": toggleTask(parts[1])
+            case "dblclick": openFocus(parts[1])
+            case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+            case "panel": toggleTaskPanel()
+            case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
