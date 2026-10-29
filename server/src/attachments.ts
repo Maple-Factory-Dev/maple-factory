@@ -91,7 +91,7 @@ export function sniffProof(b: Uint8Array): string | null {
 }
 
 /** The task ids `PUT /runner/proof/<task>` takes. */
-const TASK_ID = /^[A-Z][A-Z0-9]{0,5}-\d+$/;
+const TASK_ID = /^[A-Z][A-Z0-9]{0,9}-\d+$/;
 
 /** PUT /runner/proof/<task>?runner=<machine>&name=<file name>, with that machine's token: a `prove` call's
  *  file (runner/src/proof.rs `upload`). It's kept like an attachment, so members fetch it at the key. */

@@ -57,7 +57,7 @@ export default {
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 
-    const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,5}-\d+)$/);
+    const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,9}-\d+)$/);
     if (link) return taskLink(link[1]);
 
     if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
