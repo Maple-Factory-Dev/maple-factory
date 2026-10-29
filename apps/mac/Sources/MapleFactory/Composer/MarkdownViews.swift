@@ -9,14 +9,15 @@ enum MarkdownBlock {
     case bullet(String)
     case numbered(Int, String)
     case quote(String)
-    case code([String])
+    /// A fenced block and its language tag, lowercased (```swift → "swift"), when it has one.
+    case code(language: String?, lines: [String])
     case paragraph(String)
     case rule
 
     static func parse(_ source: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         var paragraph: [String] = []
-        var code: [String]? = nil
+        var fence: (indent: Int, language: String?, lines: [String])? = nil
 
         func flush() {
             if !paragraph.isEmpty {
@@ -28,18 +29,22 @@ enum MarkdownBlock {
         for raw in source.components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
 
-            if line.hasPrefix("```") {
-                if let lines = code {
-                    blocks.append(.code(lines))
-                    code = nil
+            if let open = fence {
+                // Only a bare run of backticks closes the block; "```swift" inside it is code.
+                if line.hasPrefix("```"), line.allSatisfy({ $0 == "`" }) {
+                    blocks.append(.code(language: open.language, lines: open.lines))
+                    fence = nil
                 } else {
-                    flush()
-                    code = []
+                    // An indented fence (under a list item, say) indents its lines the same amount.
+                    let indent = min(open.indent, raw.prefix(while: { $0 == " " }).count)
+                    fence?.lines.append(String(raw.dropFirst(indent)))
                 }
                 continue
             }
-            if code != nil {
-                code?.append(raw)
+            if line.hasPrefix("```") {
+                flush()
+                let tag = line.dropFirst(3).split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first
+                fence = (raw.prefix(while: { $0 == " " }).count, tag.map { $0.lowercased() }, [])
                 continue
             }
 
@@ -68,7 +73,7 @@ enum MarkdownBlock {
                 paragraph.append(line)
             }
         }
-        if let lines = code { blocks.append(.code(lines)) }
+        if let open = fence { blocks.append(.code(language: open.language, lines: open.lines)) }
         flush()
         return blocks
     }
@@ -142,12 +147,39 @@ struct MarkdownPreview: View {
                     .font(.system(size: baseSize))
                     .foregroundStyle(Theme.textFaint)
             }
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                view(for: block)
+            // Runs of list items sit closer together than the paragraphs around them.
+            ForEach(Array(Self.grouped(blocks).enumerated()), id: \.offset) { _, group in
+                if group.count == 1 {
+                    view(for: group[0])
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(group.enumerated()), id: \.offset) { _, block in
+                            view(for: block)
+                        }
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
+    }
+
+    private static func grouped(_ blocks: [MarkdownBlock]) -> [[MarkdownBlock]] {
+        func isListItem(_ block: MarkdownBlock) -> Bool {
+            switch block {
+            case .bullet, .numbered, .task: true
+            default: false
+            }
+        }
+        var groups: [[MarkdownBlock]] = []
+        for block in blocks {
+            if isListItem(block), let last = groups.last?.last, isListItem(last) {
+                groups[groups.count - 1].append(block)
+            } else {
+                groups.append([block])
+            }
+        }
+        return groups
     }
 
     @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
@@ -182,13 +214,28 @@ struct MarkdownPreview: View {
                 .foregroundStyle(Theme.textMuted)
                 .padding(.leading, 12)
                 .overlay(alignment: .leading) { Rectangle().fill(Theme.fillSelected).frame(width: 3) }
-        case let .code(lines):
-            Text(lines.joined(separator: "\n"))
-                .font(.system(size: baseSize - 1.5, design: .monospaced))
-                .foregroundStyle(Theme.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill))
+        case let .code(language, lines):
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(CodeHighlighter.highlight(lines.joined(separator: "\n"), language: language))
+                    .font(.system(size: baseSize - 1.5, design: .monospaced))
+                    .foregroundStyle(Theme.Syntax.plain)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 10)
+                    .padding(.top, language == nil ? 10 : 24)
+                    .padding(.bottom, 10)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill))
+            .overlay(alignment: .topTrailing) {
+                if let language {
+                    Text(language)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Theme.textFaint)
+                        .padding(.horizontal, 9)
+                        .padding(.top, 6)
+                }
+            }
         case let .paragraph(text):
             Text(inline(text))
                 .font(.system(size: baseSize))
@@ -205,9 +252,23 @@ struct MarkdownPreview: View {
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(text)
+        for run in result.runs {
+            if run.inlinePresentationIntent?.contains(.code) == true {
+                result[run.range].backgroundColor = Theme.fill
+            }
+            // Only web and mail links open; anything else (javascript:, file:) stays plain text.
+            if let url = run.link, !["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+                result[run.range].link = nil
+            }
+        }
         for person in FactoryData.people {
-            guard let handle = person.github, let range = result.range(of: "@\(handle)") else { continue }
-            result[range].foregroundColor = Theme.mention
+            guard let handle = person.github else { continue }
+            var rest = result.startIndex..<result.endIndex
+            while let range = result[rest].range(of: "@\(handle)") {
+                result[range].foregroundColor = Theme.mention
+                result[range].inlinePresentationIntent = .stronglyEmphasized
+                rest = range.upperBound..<result.endIndex
+            }
         }
         return result
     }
