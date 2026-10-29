@@ -201,7 +201,7 @@ struct FactoryMenu: View {
             }
         }
         if !client.savedFactories.isEmpty { Divider() }
-        Button("Add new factory…") { state.startOnboarding() }
+        Button("Add new factory…", systemImage: "plus") { state.startOnboarding() }
         if client.isSignedIn {
             Button("Sign out of \(client.workspaceName)") {
                 client.signOut()
