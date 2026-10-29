@@ -122,7 +122,8 @@ pub fn verify(key: &VerifyingKey, manifest: &[u8], sig: &[u8]) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub version: Version,
-    #[serde(default)]
+    /// release-runner.mjs writes `published_at`; `publishedAt` is what this struct's casing says.
+    #[serde(default, alias = "published_at")]
     pub published_at: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
@@ -397,6 +398,13 @@ mod tests {
         assert!(Manifest::parse(br#"{"version":"1.0","targets":{}}"#).is_err());
         assert!(Manifest::parse(br#"{"version":"1.0.0"}"#).is_err());
         assert!(Manifest::parse(b"not json").is_err());
+    }
+
+    #[test]
+    fn manifests_as_the_release_script_writes_them() {
+        let m = Manifest::parse(br#"{"version":"0.38.0","published_at":"2026-10-29T22:56:07.917Z","notes":"Runner updates show their progress.","targets":{}}"#).unwrap();
+        assert_eq!(m.published_at.as_deref(), Some("2026-10-29T22:56:07.917Z"));
+        assert_eq!(m.notes.as_deref(), Some("Runner updates show their progress."));
     }
 
     #[test]
