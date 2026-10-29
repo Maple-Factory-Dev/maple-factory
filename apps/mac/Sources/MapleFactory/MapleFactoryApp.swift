@@ -162,10 +162,18 @@ struct ContentView: View {
                 }
                 .onChange(of: [state.destination.hashValue, state.tasks.count], initial: true) { state.keepSelectionInGoal() }
                 .onChange(of: client.hasSnapshot ? client.factoryGoals.map(\.name) : nil, initial: true) { _, names in
-                    // The mock's starting goal isn't one of the workspace's: open the focused task's goal, the first, or the inbox.
-                    guard client.isSignedIn, let names else { return }
+                    // The page this factory was last on, the first time its goals land; else, the mock's starting goal
+                    // isn't one of the workspace's: open the focused task's goal, the first, or the inbox.
+                    guard client.isSignedIn, let names else {
+                        // Loading a factory (switched to, or joined in onboarding): its own last page comes back once it lands.
+                        if client.isSignedIn { state.pageRestored = false }
+                        return
+                    }
                     let open = state.focusedTask
-                    guard let next = AppState.destinationAfterSnapshot(state.destination, goals: names, focusedGoal: open.map { state.task($0).goal }) else { return }
+                    let remembered = state.pageRestored || state.demoLaunch ? nil : client.server.flatMap { LastPage.load(factory: $0) }
+                    defer { state.pageRestored = true }
+                    guard let next = AppState.destinationAfterSnapshot(state.destination, goals: names, focusedGoal: open.map { state.task($0).goal },
+                                                                       remembered: remembered) else { return }
                     state.destination = next
                     state.focusedTask = open
                 }

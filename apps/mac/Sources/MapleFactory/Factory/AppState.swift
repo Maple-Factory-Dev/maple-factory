@@ -28,6 +28,19 @@ struct MergeGate {
     var canMerge: Bool { proofsReady && checksReady && reviewsReady && autoReviewReady }
 }
 
+/// The page each saved factory was last on, under `lastPage.<host>` so factories don't share one.
+enum LastPage {
+    static func key(_ factory: URL) -> String { "lastPage.\(SavedFactory.key(factory))" }
+
+    static func load(factory: URL, defaults: UserDefaults = AppDefaults) -> Destination? {
+        defaults.string(forKey: key(factory)).flatMap(Destination.init(encoded:))
+    }
+
+    static func store(_ destination: Destination, factory: URL, defaults: UserDefaults = AppDefaults) {
+        defaults.set(destination.encoded, forKey: key(factory))
+    }
+}
+
 @MainActor @Observable
 final class AppState {
     // MARK: Navigation
@@ -36,8 +49,12 @@ final class AppState {
         didSet {
             focusedTask = nil
             isComposing = false
+            rememberPage()
         }
     }
+    /// This factory's last page has been reopened (or there was none), so a move now is the person's to remember.
+    /// Until then the mock's starting goal, or the inbox a factory switch lands on, would overwrite it.
+    var pageRestored = false
     var layout: GoalLayout = .board {
         didSet { focusedTask = nil }
     }
@@ -192,6 +209,7 @@ final class AppState {
 
     /// Another factory opened: a goal or task from the last one mustn't stay on screen.
     func didSwitchFactory() {
+        pageRestored = false
         closeFocus()
         isComposing = false
         destination = .inbox
@@ -272,10 +290,23 @@ final class AppState {
 
     /// Where to land once the workspace's goals are known, or nil to stay put: a goal that isn't the
     /// workspace's (the mock's starting one) gives way to the focused task's goal, else the first, else the inbox.
-    nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?) -> Destination? {
+    /// `remembered`, the page this factory was last on, wins while it's still there: any page that isn't a goal,
+    /// or a goal the workspace still has.
+    nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?,
+                                                     remembered: Destination? = nil) -> Destination? {
+        if let remembered {
+            let exists = if case .goal(let name) = remembered { goals.contains(name) } else { true }
+            if exists { return remembered == current ? nil : remembered }
+        }
         guard case .goal(let name) = current, !goals.contains(name) else { return nil }
         if let focusedGoal, goals.contains(focusedGoal) { return .goal(focusedGoal) }
         return goals.first.map(Destination.goal) ?? .inbox
+    }
+
+    /// Saves the page for this factory once its own landing is done; demo launches (and `-destination`) never do.
+    private func rememberPage() {
+        guard pageRestored, !demoLaunch, let client, client.isSignedIn, client.hasSnapshot, let server = client.server else { return }
+        LastPage.store(destination, factory: server)
     }
 
     var tasks: [FactoryTask] {
@@ -1556,18 +1587,8 @@ final class AppState {
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
-        switch defaults.string(forKey: "destination") {
-        case "inbox": destination = .inbox
-        case "mytasks": destination = .myTasks
-        case "scratchpad": destination = .scratchpad
-        case "usage": destination = .usage
-        case "hands": destination = .needsHand
-        case "activity": destination = .activity
-        case "machines": destination = .machines
-        case "requests": destination = .intake
-        case "goals": destination = .allGoals
-        case let goal?: destination = .goal(goal)
-        case nil: break
+        if let argument = defaults.string(forKey: "destination") {
+            destination = Destination(argument: argument)
         }
         if let task = defaults.string(forKey: "task") {
             selectedTask = task
