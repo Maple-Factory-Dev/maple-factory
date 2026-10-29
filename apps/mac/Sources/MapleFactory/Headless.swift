@@ -11,6 +11,8 @@ nonisolated(unsafe) let AppDefaults: UserDefaults = Headless.isOn ? Headless.def
 /// `scripts/headless.sh` wraps it. Other flags: `-name` (the PNG's name; defaults to `-destination`),
 /// `-appearance light|dark|both`, `-settle 1.5` (seconds before the shot), `-frames N` and `-fps 10`
 /// (a frame sequence, for video), `-timeout 60`, `-height 1000`, `-instance` (the defaults suite's name).
+/// `-snapshot` makes it a demo launch, so a signed-out run shows the mockup; `-mock NO` shows what a
+/// fresh install does instead: the connect-to-a-factory screen.
 enum Headless {
     static let isOn = isOn(arguments: ProcessInfo.processInfo.arguments)
     static let suiteName = suiteName(arguments: ProcessInfo.processInfo.arguments, pid: ProcessInfo.processInfo.processIdentifier)
