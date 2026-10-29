@@ -172,11 +172,24 @@ function inboxView() {
     !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, or a change is ready for your review, it shows up here."));
 }
 
+/** Waiting for a session with nobody on it, as the server's queue reads it (the Mac app's Queued column). */
+function isQueued(t) {
+  if (t.worker || t.hand || t.question) return false;
+  if (t.state === "planning") return true;
+  if (t.state === "building") return Boolean(t.waiting);
+  return t.state === "reviewing" && t.autoReview?.rounds.at(-1)?.verdict === "inProgress";
+}
+const rank = (t) => t.queueRank ?? t.createdAt;
+const scheduled = (t) => t.startAt != null && t.startAt > Date.now();
+const queueLine = (t) => scheduled(t) ? `Starts ${new Date(t.startAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : t.waiting || "Waiting for a slot";
+
 function tasksView() {
-  const active = [...state.tasks.values()].filter((t) => t.state !== "merged" && t.state !== "cancelled").sort((a, b) => b.updatedAt - a.updatedAt);
+  const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
+  const active = [...state.tasks.values()].filter((t) => t.state !== "merged" && t.state !== "cancelled" && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
+    queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
     h("h2", {}, `In flight · ${active.length}`),
     active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || STATE_TITLE[t.state]))) : h("div", { class: "card empty" }, "Nothing in flight."),
     done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
@@ -274,6 +287,10 @@ function decisions(t) {
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
     if (!passed) buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "The review agent is still on it."));
+  }
+  if (isQueued(t)) {
+    buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top" }) }, "Move to top"));
+    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, "Start now"));
   }
   if (t.state !== "merged") {
     // Waiting on its plan's approval, nothing is running to retry; requesting a change plans again.
