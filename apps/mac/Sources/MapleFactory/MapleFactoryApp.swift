@@ -22,6 +22,10 @@ struct MapleFactoryApp: App {
         let client = FactoryClient()
         let state = AppState()
         state.client = client
+        // A fresh install is signed out: connect to a factory, never the mockup, unless this is a demo.
+        if AppState.launchesToOnboarding(signedIn: client.isSignedIn, demo: state.demoLaunch) {
+            state.showOnboarding = true
+        }
         _client = State(initialValue: client)
         _state = State(initialValue: state)
         if Headless.isOn { AppDelegate.headless = (state, client) }
@@ -73,7 +77,14 @@ struct MapleFactoryApp: App {
                 if client.isSignedIn {
                     Button("Sign Out of \(client.workspaceName)") {
                         client.signOut()
-                        if client.isSignedIn { state.didSwitchFactory() }
+                        if client.isSignedIn {
+                            state.didSwitchFactory()
+                        } else if !state.demoLaunch {
+                            // That was the last factory: connect to another rather than fall into the mockup.
+                            state.didSwitchFactory()
+                            state.onboardingCanCancel = false
+                            withAnimation(.easeInOut(duration: 0.35)) { state.showOnboarding = true }
+                        }
                     }
                 }
 

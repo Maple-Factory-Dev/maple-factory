@@ -161,7 +161,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "mockview", "onboarding", "onboardingAuto", "onboardingFromWorkspace"]
+                                        "mockview", "onboarding", "onboardingAuto", "onboardingStep", "onboardingFromWorkspace"]
 
     /// `-mock YES`/`NO` decides; otherwise any demo flag makes it a demo. A fresh install has none.
     nonisolated static func showsMock(arguments: [String]) -> Bool {
