@@ -768,11 +768,87 @@ final class AppState {
         mutate(&tasks[index])
     }
 
+    // MARK: Actions in flight
+
+    /// An approval or merge sent to the factory that the task doesn't show yet.
+    struct InFlight {
+        enum Kind { case approvePlan, approveChanges, merge }
+        let kind: Kind
+        let startedAt: Date
+    }
+
+    /// By task: what was sent and when, so its button can show it's working.
+    var inFlight: [String: InFlight] = [:]
+    private static let inFlightTimeout: Duration = .seconds(30)
+
+    /// True from sending `kind` until the task shows its result, the server refuses something, or
+    /// the timeout passes.
+    func isInFlight(_ id: String, _ kind: InFlight.Kind) -> Bool {
+        guard let entry = inFlight[id], entry.kind == kind,
+              Date().timeIntervalSince(entry.startedAt) < 30 else { return false }
+        return !landed(kind, on: task(id))
+    }
+
+    /// Whether the task already shows what `kind` asked for.
+    private func landed(_ kind: InFlight.Kind, on task: FactoryTask) -> Bool {
+        let me = FactoryData.me.id
+        switch kind {
+        case .approvePlan: return task.approvals.contains { $0.id == me } || task.state != .awaitingApproval
+        case .approveChanges: return task.reviews.contains { $0.id == me }
+        case .merge: return task.state == .merged || task.pr?.state == .merged
+        }
+    }
+
+    /// Records `kind` as sent for the task; false when it's already in flight, so a second click sends nothing.
+    private func beginInFlight(_ id: String, _ kind: InFlight.Kind) -> Bool {
+        guard !isInFlight(id, kind) else { return false }
+        let startedAt = Date()
+        withAnimation(.snappy(duration: 0.2)) { inFlight[id] = InFlight(kind: kind, startedAt: startedAt) }
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.inFlightTimeout)
+            guard let entry = self.inFlight[id], entry.startedAt == startedAt else { return }
+            let stillWaiting = !self.landed(kind, on: self.task(id))
+            withAnimation(.snappy(duration: 0.2)) { self.inFlight[id] = nil }
+            if stillWaiting {
+                self.showToast("Still waiting on the factory for \(id)…", icon: "hourglass", color: Theme.State.awaitingApproval)
+            }
+        }
+        return true
+    }
+
+    private func endInFlight(_ id: String) {
+        withAnimation(.snappy(duration: 0.2)) { inFlight[id] = nil }
+    }
+
+    /// The server refused something: every button that was waiting comes back, with its reason.
+    func serverRefused(_ message: String) {
+        withAnimation(.snappy(duration: 0.2)) { inFlight.removeAll() }
+        showToast(message, icon: "exclamationmark.triangle.fill", color: Theme.State.cancelled)
+    }
+
+    /// Demo scripts only: holds a mock action in flight for a moment, so its busy state can be seen.
+    private func afterDemoDelay(_ id: String, _ kind: InFlight.Kind, _ apply: @escaping () -> Void) -> Bool {
+        guard UserDefaults.standard.string(forKey: "actions") != nil else { return false }
+        guard beginInFlight(id, kind) else { return true }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            self.endInFlight(id)
+            apply()
+        }
+        return true
+    }
+
     func approvePlan(_ id: String) {
         if let client, isLive {
+            guard beginInFlight(id, .approvePlan) else { return }
             client.send(.taskApprovePlan(.init(id: id)))
             return
         }
+        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id) }) { return }
+        approvePlanInMockup(id)
+    }
+
+    private func approvePlanInMockup(_ id: String) {
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -863,9 +939,15 @@ final class AppState {
 
     func approveChanges(_ id: String) {
         if let client, isLive {
+            guard beginInFlight(id, .approveChanges) else { return }
             client.send(.taskApproveChanges(.init(id: id)))
             return
         }
+        if afterDemoDelay(id, .approveChanges, { self.approveChangesInMockup(id) }) { return }
+        approveChangesInMockup(id)
+    }
+
+    private func approveChangesInMockup(_ id: String) {
         let me = FactoryData.me
         withAnimation(.snappy(duration: 0.3)) {
             update(id) { task in
@@ -901,9 +983,14 @@ final class AppState {
 
     func merge(_ id: String, byFactory: Bool = false) {
         if let client, isLive {
-            if !byFactory { client.send(.taskMerge(.init(id: id))) }
+            if !byFactory, beginInFlight(id, .merge) { client.send(.taskMerge(.init(id: id))) }
             return
         }
+        if !byFactory, afterDemoDelay(id, .merge, { self.mergeInMockup(id, byFactory: false) }) { return }
+        mergeInMockup(id, byFactory: byFactory)
+    }
+
+    private func mergeInMockup(_ id: String, byFactory: Bool) {
         let number = task(id).pr?.number
         withAnimation(.snappy(duration: 0.35)) {
             update(id) { task in

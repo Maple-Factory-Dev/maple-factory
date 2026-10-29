@@ -172,6 +172,8 @@ struct DecisionButtons<Content: View>: View {
 }
 
 struct RequestChangesButton: View {
+    /// Off while the approval or merge beside it is in flight.
+    var enabled = true
     var action: () -> Void
 
     var body: some View {
@@ -187,8 +189,11 @@ struct RequestChangesButton: View {
                     .fill(Theme.fill)
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
             )
+            .opacity(enabled ? 1 : 0.5)
             .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+            .onTapGesture { if enabled { action() } }
+            .disabled(!enabled)
+            .animation(.snappy(duration: 0.2), value: enabled)
     }
 }
 
@@ -217,9 +222,12 @@ struct ApprovalBlock: View {
                 PendingSignOffRow(text: iApproved ? "Needs one more approver" : "Waiting on you", highlight: !iApproved)
             }
             if !iApproved {
+                let approving = state.isInFlight(task.id, .approvePlan)
                 DecisionButtons {
-                    PrimaryButton(title: "Approve plan", icon: "checkmark") { state.approvePlan(task.id) }
-                    RequestChangesButton(action: onRequestChanges)
+                    PrimaryButton(title: "Approve plan", icon: "checkmark", busy: approving, busyTitle: "Approving…") {
+                        state.approvePlan(task.id)
+                    }
+                    RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
                 .padding(.top, 2)
             }
@@ -271,15 +279,20 @@ struct ReviewActions: View {
                 .frame(height: 32)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.State.merged.opacity(0.1)))
             } else {
+                let approving = state.isInFlight(task.id, .approveChanges)
+                let merging = state.isInFlight(task.id, .merge)
                 DecisionButtons {
                     if !gate.reviewsReady && !iReviewed {
-                        PrimaryButton(title: "Approve changes", icon: "checkmark") { state.approveChanges(task.id) }
+                        PrimaryButton(title: "Approve changes", icon: "checkmark", busy: approving, busyTitle: "Approving…") {
+                            state.approveChanges(task.id)
+                        }
                     } else {
-                        PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: gate.canMerge) {
+                        PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: gate.canMerge,
+                                      busy: merging, busyTitle: "Merging #\(task.pr?.number ?? 0)…") {
                             state.merge(task.id)
                         }
                     }
-                    RequestChangesButton(action: onRequestChanges)
+                    RequestChangesButton(enabled: !approving && !merging, action: onRequestChanges)
                 }
             }
 
@@ -328,13 +341,21 @@ struct PrimaryButton: View {
     let title: String
     let icon: String
     var enabled = true
+    /// Sent and waiting on the factory: a spinner and `busyTitle`, and taps do nothing.
+    var busy = false
+    var busyTitle: String? = nil
     var color = Theme.approve
     var action: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 11, weight: .bold))
-            Text(title)
+            if busy {
+                ProgressView().controlSize(.mini).tint(.white)
+            } else {
+                Image(systemName: icon).font(.system(size: 11, weight: .bold))
+            }
+            Text(busy ? busyTitle ?? title : title)
+                .contentTransition(.opacity)
         }
         .font(.system(size: 13, weight: .medium))
         .foregroundStyle(enabled ? .white : Theme.textFaint)
@@ -342,9 +363,14 @@ struct PrimaryButton: View {
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity)
         .frame(height: 32)
-        .background(RoundedRectangle(cornerRadius: 8).fill(enabled ? color : Theme.fill))
+        .background(RoundedRectangle(cornerRadius: 8).fill(enabled ? color.opacity(busy ? 0.7 : 1) : Theme.fill))
         .contentShape(Rectangle())
-        .onTapGesture { if enabled { action() } }
+        .onTapGesture { if enabled && !busy { action() } }
+        .disabled(!enabled || busy)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(busy ? busyTitle ?? title : title)
+        .accessibilityAddTraits(.isButton)
+        .animation(.snappy(duration: 0.2), value: busy)
     }
 }
 
