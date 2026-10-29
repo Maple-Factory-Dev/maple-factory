@@ -440,10 +440,14 @@ final class AppState {
         var chosen = false
         if goal != nil { chosen = true } else if case .goal = destination { chosen = true }
         // A Draft with AI left running (or finished, not yet in the composer) carries on: a plain
-        // New Task comes back to it as it was left.
+        // New Task comes back to it as it was left. A composer opened for something else (a request,
+        // a note, a goal) isn't that draft's, so it's stopped rather than left to fill this one in.
         let resuming = aiDraftPending && goal == nil && title.isEmpty && body.isEmpty && fromNote == nil
-        if !aiDraftPending { aiDraftID = nil }
         if !resuming {
+            if aiDraftPending, let draft = aiDraft, draft.state == .choosing || draft.state == .reading {
+                showToast("Stopped the Draft with AI that was running", icon: "sparkles", color: Theme.State.planning)
+            }
+            cancelAIDraft()
             draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
         }
         withAnimation(.snappy(duration: 0.3)) {
@@ -452,8 +456,10 @@ final class AppState {
         }
     }
 
-    /// Closes the composer. A Draft with AI that's running keeps going, to come back to.
+    /// Closes the composer. A Draft with AI that's running keeps going, to come back to; one that
+    /// failed while open has been seen, so it isn't brought back.
     func cancelCompose() {
+        if aiDraft?.state == .failed { aiDraftID = nil }
         withAnimation(.snappy(duration: 0.3)) { isComposing = false }
     }
 
@@ -551,6 +557,8 @@ final class AppState {
             client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
                                           plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID,
                                           repo: draft.repo.flatMap { goal.repos.contains($0) ? $0 : nil })))
+            // The task's sent: a draft still running (or failed, or waiting on a goal) is done with.
+            cancelAIDraft()
             withAnimation(.snappy(duration: 0.3)) {
                 isComposing = false
                 destination = .goal(draft.goal)

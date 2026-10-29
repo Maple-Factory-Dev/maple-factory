@@ -32,6 +32,7 @@ export class Drafts {
     if (!raw) return null;
     const saved = JSON.parse(raw) as Saved;
     saved.draft.log ??= [];
+    saved.draft.logFrom ??= 0;
     return saved;
   }
 
@@ -64,7 +65,7 @@ export class Drafts {
     if (goal && (!picked || picked.archived)) throw new Error("That goal isn't there any more.");
     const draft: Draft = {
       id, idea: text, agent: agent || "claude", state: picked ? "reading" : "choosing", machine: null,
-      goal: picked?.id ?? null, also: [], newGoal: null, why: null, title: null, brief: null, doneWhen: [], progress: "Starting…", log: [], error: null,
+      goal: picked?.id ?? null, also: [], newGoal: null, why: null, title: null, brief: null, doneWhen: [], progress: "Starting…", log: [], logFrom: 0, error: null,
     };
     const saved = { draft, owner };
     const machine = await this.machine(saved);
@@ -103,7 +104,11 @@ export class Drafts {
     if (!line.text) return;
     if (kind === "tool") draft.progress = line.text.slice(0, 200);
     const last = draft.log.at(-1);
-    if (last?.kind !== line.kind || last.text !== line.text) draft.log = capped([...draft.log, line]);
+    if (last?.kind !== line.kind || last.text !== line.text) {
+      const log = [...draft.log, line];
+      draft.log = capped(log);
+      draft.logFrom += log.length - draft.log.length;
+    }
     this.save(saved);
   }
 

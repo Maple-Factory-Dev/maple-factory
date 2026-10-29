@@ -495,7 +495,7 @@ struct AIDraftCard: View {
             .foregroundStyle(Theme.State.planning)
             .help(running ? "See what \(agentName(draft)) is thinking and reading" : "See what \(agentName(draft)) thought and read")
             if state.watchingAIDraft {
-                DraftTranscript(lines: draft.log, running: running)
+                DraftTranscript(lines: draft.log, from: Int(draft.logFrom), running: running)
             }
         }
     }
@@ -578,6 +578,8 @@ struct AIDraftCard: View {
 /// while it runs.
 struct DraftTranscript: View {
     let lines: [Wire.DraftLine]
+    /// The first kept line's number, so each line keeps its id as older ones are cut.
+    let from: Int
     let running: Bool
 
     var body: some View {
@@ -587,7 +589,7 @@ struct DraftTranscript: View {
                     if lines.isEmpty {
                         Text("Nothing yet…").foregroundStyle(Theme.textFaint)
                     }
-                    ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                    ForEach(Array(zip(from..., lines)), id: \.0) { i, line in
                         Text(line.text)
                             .foregroundStyle(line.kind == .tool ? Theme.textMuted : Theme.text)
                             .opacity(line.kind == .tool ? 0.8 : 1)
@@ -608,7 +610,7 @@ struct DraftTranscript: View {
                     .fill(Theme.editorBG)
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
             )
-            .onAppear { proxy.scrollTo(running ? AnyHashable("end") : AnyHashable(lines.count - 1), anchor: .bottom) }
+            .onAppear { proxy.scrollTo(running ? AnyHashable("end") : AnyHashable(from + lines.count - 1), anchor: .bottom) }
             // The whole log, not its count: once capped it stays at 200 lines as new ones come in.
             .onChange(of: lines) {
                 guard running else { return }

@@ -1575,9 +1575,11 @@ public enum Wire {
         public var progress: String?
         /// What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed.
         public var log: [DraftLine]
+        /// How many earlier lines were cut from the log, so the first kept line is line number `logFrom`.
+        public var logFrom: UInt64
         public var error: String?
 
-        public init(id: String, idea: String, agent: String, state: DraftState, machine: String? = nil, goal: String? = nil, also: [String] = [], newGoal: NewGoalIdea? = nil, why: String? = nil, title: String? = nil, brief: String? = nil, doneWhen: [String] = [], progress: String? = nil, log: [DraftLine] = [], error: String? = nil) {
+        public init(id: String, idea: String, agent: String, state: DraftState, machine: String? = nil, goal: String? = nil, also: [String] = [], newGoal: NewGoalIdea? = nil, why: String? = nil, title: String? = nil, brief: String? = nil, doneWhen: [String] = [], progress: String? = nil, log: [DraftLine] = [], logFrom: UInt64, error: String? = nil) {
             self.id = id
             self.idea = idea
             self.agent = agent
@@ -1592,6 +1594,7 @@ public enum Wire {
             self.doneWhen = doneWhen
             self.progress = progress
             self.log = log
+            self.logFrom = logFrom
             self.error = error
         }
 
@@ -1611,6 +1614,7 @@ public enum Wire {
             doneWhen = try c.decodeIfPresent([String].self, forKey: .doneWhen) ?? []
             progress = try c.decodeIfPresent(String.self, forKey: .progress)
             log = try c.decodeIfPresent([DraftLine].self, forKey: .log) ?? []
+            logFrom = try c.decode(UInt64.self, forKey: .logFrom)
             error = try c.decodeIfPresent(String.self, forKey: .error)
         }
     }

@@ -123,11 +123,15 @@ if (lines.length > 200 || bytes > 40_000) throw new Error(`the log isn't capped:
 const expected = [...script.filter((l, i) => i !== 3), { kind: "tool", text: "Reading README.md" }].map((l) => ({ kind: l.kind, text: l.text.slice(0, 1000) }));
 const tailOf = expected.slice(-lines.length);
 if (JSON.stringify(lines) !== JSON.stringify(tailOf)) throw new Error(`the log is out of order or wrong:\n${JSON.stringify(lines.slice(-4))}\nwanted\n${JSON.stringify(tailOf.slice(-4))}`);
+// Each kept line keeps its number: line i of an update is line logFrom + i of everything said.
+const misnumbered = mine.find((d) => JSON.stringify(d.log) !== JSON.stringify(expected.slice(d.logFrom, d.logFrom + d.log.length)));
+if (misnumbered) throw new Error(`logFrom doesn't number the kept lines: logFrom ${misnumbered.logFrom}, first line "${misnumbered.log[0]?.text.slice(0, 24)}"`);
+if (last.logFrom + last.log.length !== expected.length) throw new Error(`logFrom ${last.logFrom} + ${last.log.length} kept isn't the ${expected.length} lines said`);
 const repeated = running.some((d) => d.log.some((l, i) => i > 0 && l.text === d.log[i - 1].text && l.kind === d.log[i - 1].kind));
 if (repeated) throw new Error("a line said twice in a row was logged twice");
 const stillReading = running.at(-1);
 if (stillReading.progress !== "Reading README.md") throw new Error(`progress isn't the latest tool step: ${stillReading.progress}`);
-step(`draft ${last.state} after ${running.length} updates; its log reached 200 lines, then kept the last ${lines.length} of ${expected.length} lines (${bytes} characters, under 40,000), in order, the repeat dropped, starting "${lines[0].text.slice(0, 24)}" and ending "${lines.at(-1).text}"`);
+step(`draft ${last.state} after ${running.length} updates; its log reached 200 lines, then kept the last ${lines.length} of ${expected.length} lines (${bytes} characters, under 40,000), in order, the repeat dropped, numbered from line ${last.logFrom}, starting "${lines[0].text.slice(0, 24)}" and ending "${lines.at(-1).text}"`);
 step(`the log survives draft.done: "${last.title}" is ready with ${last.log.length} lines`);
 runner.close();
 process.exit(0);

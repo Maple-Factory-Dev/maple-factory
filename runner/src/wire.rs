@@ -1134,6 +1134,8 @@ pub struct Draft {
     /// What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed.
     #[serde(default)]
     pub log: Vec<DraftLine>,
+    /// How many earlier lines were cut from the log, so the first kept line is line number `logFrom`.
+    pub log_from: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

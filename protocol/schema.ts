@@ -525,6 +525,7 @@ export const structs: Record<string, Struct> = {
       doneWhen: "string[]",
       progress: "string?",
       log: "DraftLine[]",
+      logFrom: "u64",
       error: "string?",
     },
     fieldDocs: {
@@ -533,6 +534,7 @@ export const structs: Record<string, Struct> = {
       why: "Why that goal (or a new one).",
       progress: "What it's doing now: \"Reading lib/session.ts\".",
       log: "What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed.",
+      logFrom: "How many earlier lines were cut from the log, so the first kept line is line number `logFrom`.",
     },
   },
   GoalFollow: {

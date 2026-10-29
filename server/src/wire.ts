@@ -658,6 +658,8 @@ export interface Draft {
   progress?: string | null;
   /** What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed. */
   log: DraftLine[];
+  /** How many earlier lines were cut from the log, so the first kept line is line number `logFrom`. */
+  logFrom: number;
   error?: string | null;
 }
 
