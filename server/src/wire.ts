@@ -841,6 +841,67 @@ export interface StatsCostRow {
   unpriced: number;
 }
 
+export interface StatsFindingCell {
+  kind: FindingKind;
+  severity: Severity;
+  count: number;
+}
+
+/** Where findings land: a folder, by the file's first two folders. */
+export interface StatsFindingArea {
+  /** "server/src", "(root)" for a file at the top, "(no file)" when the finding names none. */
+  key: string;
+  count: number;
+  tasks: number;
+  /** Blockers and majors. */
+  serious: number;
+}
+
+export interface StatsFindingOutcomes {
+  fixed: number;
+  disputed: number;
+  open: number;
+  /** Findings of tasks that are gone, whose status wasn't kept. */
+  unknown: number;
+  /** Rounds from the one that raised a finding to the one that saw it fixed. */
+  roundsToFixMedian?: number | null;
+}
+
+/** Findings raised on one agent's work. */
+export interface StatsFindingAgent {
+  agent: string;
+  rounds: number;
+  findings: number;
+  serious: number;
+  perRound?: number | null;
+}
+
+export interface StatsFindingRow {
+  task: string;
+  title: string;
+  kind: FindingKind;
+  severity: Severity;
+  text: string;
+  file?: string | null;
+  area: string;
+  /** None for a task that's gone. */
+  status?: FindingStatus | null;
+  raisedIn: number;
+  /** When its round came in. */
+  at: number;
+}
+
+/** The window's review findings, from their text, file and status. */
+export interface StatsFindings {
+  matrix: StatsFindingCell[];
+  /** Most findings first, up to 12. */
+  areas: StatsFindingArea[];
+  outcomes: StatsFindingOutcomes;
+  byAgent: StatsFindingAgent[];
+  /** Newest first, up to 60. */
+  recent: StatsFindingRow[];
+}
+
 /** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
 export interface StatsSummary {
   days: number;
@@ -867,6 +928,8 @@ export interface StatsSummary {
   costByRole: StatsCostRow[];
   /** Keyed "agent · model". */
   costByAgent: StatsCostRow[];
+  /** The findings breakdown; none from a server older than it. */
+  findings?: StatsFindings | null;
 }
 
 /** First message on every connection, so a server that missed messages catches up. */

@@ -2856,6 +2856,126 @@ public enum Wire {
         }
     }
 
+    public struct StatsFindingCell: Codable, Hashable, Sendable {
+        public var kind: FindingKind
+        public var severity: Severity
+        public var count: UInt32
+
+        public init(kind: FindingKind, severity: Severity, count: UInt32) {
+            self.kind = kind
+            self.severity = severity
+            self.count = count
+        }
+    }
+
+    /// Where findings land: a folder, by the file's first two folders.
+    public struct StatsFindingArea: Codable, Hashable, Sendable {
+        /// "server/src", "(root)" for a file at the top, "(no file)" when the finding names none.
+        public var key: String
+        public var count: UInt32
+        public var tasks: UInt32
+        /// Blockers and majors.
+        public var serious: UInt32
+
+        public init(key: String, count: UInt32, tasks: UInt32, serious: UInt32) {
+            self.key = key
+            self.count = count
+            self.tasks = tasks
+            self.serious = serious
+        }
+    }
+
+    public struct StatsFindingOutcomes: Codable, Hashable, Sendable {
+        public var fixed: UInt32
+        public var disputed: UInt32
+        public var open: UInt32
+        /// Findings of tasks that are gone, whose status wasn't kept.
+        public var unknown: UInt32
+        /// Rounds from the one that raised a finding to the one that saw it fixed.
+        public var roundsToFixMedian: Double?
+
+        public init(fixed: UInt32, disputed: UInt32, open: UInt32, unknown: UInt32, roundsToFixMedian: Double? = nil) {
+            self.fixed = fixed
+            self.disputed = disputed
+            self.open = open
+            self.unknown = unknown
+            self.roundsToFixMedian = roundsToFixMedian
+        }
+    }
+
+    /// Findings raised on one agent's work.
+    public struct StatsFindingAgent: Codable, Hashable, Sendable {
+        public var agent: String
+        public var rounds: UInt32
+        public var findings: UInt32
+        public var serious: UInt32
+        public var perRound: Double?
+
+        public init(agent: String, rounds: UInt32, findings: UInt32, serious: UInt32, perRound: Double? = nil) {
+            self.agent = agent
+            self.rounds = rounds
+            self.findings = findings
+            self.serious = serious
+            self.perRound = perRound
+        }
+    }
+
+    public struct StatsFindingRow: Codable, Hashable, Sendable {
+        public var task: String
+        public var title: String
+        public var kind: FindingKind
+        public var severity: Severity
+        public var text: String
+        public var file: String?
+        public var area: String
+        /// None for a task that's gone.
+        public var status: FindingStatus?
+        public var raisedIn: UInt32
+        /// When its round came in.
+        public var at: UInt64
+
+        public init(task: String, title: String, kind: FindingKind, severity: Severity, text: String, file: String? = nil, area: String, status: FindingStatus? = nil, raisedIn: UInt32, at: UInt64) {
+            self.task = task
+            self.title = title
+            self.kind = kind
+            self.severity = severity
+            self.text = text
+            self.file = file
+            self.area = area
+            self.status = status
+            self.raisedIn = raisedIn
+            self.at = at
+        }
+    }
+
+    /// The window's review findings, from their text, file and status.
+    public struct StatsFindings: Codable, Hashable, Sendable {
+        public var matrix: [StatsFindingCell]
+        /// Most findings first, up to 12.
+        public var areas: [StatsFindingArea]
+        public var outcomes: StatsFindingOutcomes
+        public var byAgent: [StatsFindingAgent]
+        /// Newest first, up to 60.
+        public var recent: [StatsFindingRow]
+
+        public init(matrix: [StatsFindingCell] = [], areas: [StatsFindingArea] = [], outcomes: StatsFindingOutcomes, byAgent: [StatsFindingAgent] = [], recent: [StatsFindingRow] = []) {
+            self.matrix = matrix
+            self.areas = areas
+            self.outcomes = outcomes
+            self.byAgent = byAgent
+            self.recent = recent
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            matrix = try c.decodeIfPresent([StatsFindingCell].self, forKey: .matrix) ?? []
+            areas = try c.decodeIfPresent([StatsFindingArea].self, forKey: .areas) ?? []
+            outcomes = try c.decode(StatsFindingOutcomes.self, forKey: .outcomes)
+            byAgent = try c.decodeIfPresent([StatsFindingAgent].self, forKey: .byAgent) ?? []
+            recent = try c.decodeIfPresent([StatsFindingRow].self, forKey: .recent) ?? []
+        }
+    }
+
     /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
     public struct StatsSummary: Codable, Hashable, Sendable {
         public var days: UInt32
@@ -2882,8 +3002,10 @@ public enum Wire {
         public var costByRole: [StatsCostRow]
         /// Keyed "agent · model".
         public var costByAgent: [StatsCostRow]
+        /// The findings breakdown; none from a server older than it.
+        public var findings: StatsFindings?
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = []) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -2903,6 +3025,7 @@ public enum Wire {
             self.costTotal = costTotal
             self.costByRole = costByRole
             self.costByAgent = costByAgent
+            self.findings = findings
         }
 
         public init(from decoder: Decoder) throws {
@@ -2926,6 +3049,7 @@ public enum Wire {
             costTotal = try c.decodeIfPresent(StatsCostRow.self, forKey: .costTotal)
             costByRole = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByRole) ?? []
             costByAgent = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByAgent) ?? []
+            findings = try c.decodeIfPresent(StatsFindings.self, forKey: .findings)
         }
     }
 

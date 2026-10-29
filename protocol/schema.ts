@@ -674,6 +674,49 @@ export const structs: Record<string, Struct> = {
       unpriced: "Sessions with tokens but no $ figure (Codex).",
     },
   },
+  StatsFindingCell: { fields: { kind: "FindingKind", severity: "Severity", count: "u32" } },
+  StatsFindingArea: {
+    doc: "Where findings land: a folder, by the file's first two folders.",
+    fields: { key: "string", count: "u32", tasks: "u32", serious: "u32" },
+    fieldDocs: { key: "\"server/src\", \"(root)\" for a file at the top, \"(no file)\" when the finding names none.", serious: "Blockers and majors." },
+  },
+  StatsFindingOutcomes: {
+    fields: { fixed: "u32", disputed: "u32", open: "u32", unknown: "u32", roundsToFixMedian: "f64?" },
+    fieldDocs: {
+      unknown: "Findings of tasks that are gone, whose status wasn't kept.",
+      roundsToFixMedian: "Rounds from the one that raised a finding to the one that saw it fixed.",
+    },
+  },
+  StatsFindingAgent: {
+    doc: "Findings raised on one agent's work.",
+    fields: { agent: "string", rounds: "u32", findings: "u32", serious: "u32", perRound: "f64?" },
+  },
+  StatsFindingRow: {
+    fields: {
+      task: "string",
+      title: "string",
+      kind: "FindingKind",
+      severity: "Severity",
+      text: "string",
+      file: "string?",
+      area: "string",
+      status: "FindingStatus?",
+      raisedIn: "u32",
+      at: "u64",
+    },
+    fieldDocs: { status: "None for a task that's gone.", at: "When its round came in." },
+  },
+  StatsFindings: {
+    doc: "The window's review findings, from their text, file and status.",
+    fields: {
+      matrix: "StatsFindingCell[]",
+      areas: "StatsFindingArea[]",
+      outcomes: "StatsFindingOutcomes",
+      byAgent: "StatsFindingAgent[]",
+      recent: "StatsFindingRow[]",
+    },
+    fieldDocs: { areas: "Most findings first, up to 12.", recent: "Newest first, up to 60." },
+  },
   StatsSummary: {
     doc: "The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.",
     fields: {
@@ -696,6 +739,7 @@ export const structs: Record<string, Struct> = {
       costTotal: "StatsCostRow?",
       costByRole: "StatsCostRow[]",
       costByAgent: "StatsCostRow[]",
+      findings: "StatsFindings?",
     },
     fieldDocs: {
       costByRole: "planner, builder, reviewer, …",
@@ -703,6 +747,7 @@ export const structs: Record<string, Struct> = {
       inferred: "Rows in the window worked out from older tasks' history rather than recorded as they happened.",
       handsByReason: "medianMs: how long they stayed up.",
       topTasks: "The tasks with the most touchpoints, most first.",
+      findings: "The findings breakdown; none from a server older than it.",
     },
   },
 };
