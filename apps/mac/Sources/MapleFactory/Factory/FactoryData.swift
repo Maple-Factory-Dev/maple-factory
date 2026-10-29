@@ -77,8 +77,12 @@ enum FactoryData {
         Calendar.current.date(byAdding: .day, value: offset, to: timelineStart)!
     }
 
-    @MainActor static func dueLabel(_ goal: Goal) -> String {
-        date(goal.dueOffset).formatted(.dateTime.month(.abbreviated).day())
+    @MainActor static func dueLabel(_ goal: Goal) -> String? {
+        goal.dueOffset.map { date($0).formatted(.dateTime.month(.abbreviated).day()) }
+    }
+
+    static func isOverdue(_ goal: Goal) -> Bool {
+        goal.dueOffset.map { $0 < todayOffset } ?? false
     }
 
     // MARK: Goals
@@ -106,7 +110,7 @@ enum FactoryData {
     ]
 
     @MainActor static func goal(named name: String) -> Goal {
-        goals.first { $0.name == name } ?? Goal(name: name, color: Theme.textMuted, dueOffset: todayOffset, lead: me, summary: "")
+        goals.first { $0.name == name } ?? Goal(name: name, color: Theme.textMuted, dueOffset: nil, lead: me, summary: "")
     }
 
     // MARK: Tasks
