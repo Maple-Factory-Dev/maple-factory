@@ -21,6 +21,14 @@ enum Headless {
         return defaults
     }()
 
+    /// Empties the suite and deletes its plist, so runs leave nothing in ~/Library/Preferences.
+    static func removeSuite(_ name: String = suiteName) {
+        UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+        CFPreferencesAppSynchronize(name as CFString)
+        let plist = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/\(name).plist")
+        try? FileManager.default.removeItem(at: plist)
+    }
+
     static func isOn(arguments: [String]) -> Bool { value("snapshot", in: arguments) != nil }
 
     static func suiteName(arguments: [String], pid: Int32) -> String {
@@ -98,7 +106,10 @@ enum Headless {
         let timeout = number("timeout", 60)
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(timeout))
-            self.errors.append("timed out after \(Int(timeout))s")
+            guard !self.finished else { return }
+            self.errors.append("timed out after \(Int(timeout))s; timeout.png is where it got to")
+            // What was on screen, to see where it got stuck.
+            if let image = self.render() { self.write(image, to: "timeout") }
             self.finish()
         }
         Task { @MainActor in
@@ -184,7 +195,7 @@ enum Headless {
         if let data = try? JSONSerialization.data(withJSONObject: done, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: dir.appendingPathComponent("done.json"))
         }
-        AppDefaults.removePersistentDomain(forName: Headless.suiteName)
+        Headless.removeSuite()
         exit(errors.isEmpty ? 0 : 1)
     }
 }

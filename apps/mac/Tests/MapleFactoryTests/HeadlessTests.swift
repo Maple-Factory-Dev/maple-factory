@@ -26,7 +26,7 @@ struct HeadlessTests {
     @Test func suiteNeverTouchesStandard() {
         let name = Headless.suiteName(arguments: ["-instance", "tests-\(UUID().uuidString)"], pid: 0)
         let suite = UserDefaults(suiteName: name)!
-        defer { suite.removePersistentDomain(forName: name) }
+        defer { Headless.removeSuite(name) }
         let key = "headlessTest.factoryURL"
         UserDefaults.standard.removeObject(forKey: key)
         suite.set("http://localhost:9999", forKey: key)

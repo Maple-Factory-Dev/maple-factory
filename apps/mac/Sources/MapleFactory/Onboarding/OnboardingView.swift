@@ -663,6 +663,8 @@ struct OnboardingView: View {
         AppDefaults.set(Array(recent.prefix(5)), forKey: "recentFactories")
         client.signIn(result)
         signedIn = result
+        // A headless run has nobody to click Open workspace: on to the `-destination` it asked for.
+        if Headless.isOn { return state.finishOnboarding(workspace: client.workspaceName) }
         withAnimation(.snappy(duration: 0.4)) { step = .ready }
     }
 }
