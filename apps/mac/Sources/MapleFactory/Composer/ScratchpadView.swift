@@ -20,6 +20,25 @@ struct ScratchpadView: View {
         .onChange(of: state.notes.map(\.id), initial: true) { _, ids in
             if !ids.contains(where: { $0 == state.selectedNote }) { state.selectedNote = ids.first }
         }
+        .confirmationDialog(
+            "Delete \u{201C}\(deleting.map { $0.title.isEmpty ? "Untitled note" : $0.title } ?? "")\u{201D}?",
+            isPresented: Binding(get: { state.deletingNote != nil }, set: { if !$0 { state.deletingNote = nil } }),
+            titleVisibility: .visible,
+            presenting: deleting
+        ) { note in
+            Button("Delete Note", role: .destructive) { state.deleteNote(note.id) }
+            Button("Cancel", role: .cancel) { state.deletingNote = nil }
+        } message: { note in
+            if let taskID = note.taskID {
+                Text("This can't be undone. \(taskID) stays; only the note goes.")
+            } else {
+                Text("This can't be undone.")
+            }
+        }
+    }
+
+    private var deleting: Note? {
+        state.notes.first { $0.id == state.deletingNote }
     }
 
     private var noteList: some View {
@@ -86,6 +105,11 @@ struct ScratchpadView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Theme.fillSelected : .clear))
         .contentShape(Rectangle())
         .onTapGesture { state.selectedNote = note.id }
+        .contextMenu {
+            Button("Turn into Task") { state.startCompose(title: note.title, body: note.body, fromNote: note.id) }
+            Divider()
+            Button("Delete Note…", role: .destructive) { state.deletingNote = note.id }
+        }
     }
 }
 
@@ -126,6 +150,14 @@ private struct NoteEditor: View {
                             state.openFocus(taskID)
                         }
                     }
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 30, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill))
+                        .contentShape(Rectangle())
+                        .onTapGesture { state.deletingNote = note.id }
+                        .help("Delete note")
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.right.square").font(.system(size: 11))
                         Text("Turn into task")

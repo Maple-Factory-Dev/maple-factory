@@ -261,6 +261,8 @@ final class AppState {
         if let client, isLive { client.follow(goal: goal.name, following) } else { mockFollows[goal.name] = following }
     }
     var selectedNote: UUID? = FactoryData.seedNotes.first?.id
+    /// The note the delete confirmation is asking about.
+    var deletingNote: UUID? = nil
 
     // MARK: Seen state
 
@@ -617,6 +619,17 @@ final class AppState {
         let note = Note(id: UUID(), title: "", body: "", updated: "now")
         notes.insert(note, at: 0)
         selectedNote = note.id
+    }
+
+    /// Removes a note for good and selects its neighbour: the next one, or the previous one if it was last.
+    func deleteNote(_ id: UUID) {
+        deletingNote = nil
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+        var remaining = notes
+        remaining.remove(at: index)
+        if selectedNote == id { selectedNote = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id }
+        notes = remaining
+        showToast("Note deleted", icon: "trash")
     }
 
     // MARK: Navigation actions
