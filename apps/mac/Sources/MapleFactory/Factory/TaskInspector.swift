@@ -161,7 +161,7 @@ private struct BriefPeek: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            MarkdownPreview(source: brief, baseSize: 12.5, fitsImages: true)
+            MarkdownPreview(source: brief, baseSize: 12.5, thumbnails: true)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
                 .frame(maxHeight: Self.cap, alignment: .top)

@@ -188,8 +188,8 @@ struct MarkdownTextView: NSViewRepresentable {
 struct LinkedImage: View {
     let alt: String
     let path: String
-    /// Fill the column instead of showing at most the image's own width (capped at 720pt).
-    var fillsWidth = false
+    /// A thumbnail for a narrow column: at most the column's width and 140pt tall, instead of up to 720pt wide.
+    var thumbnail = false
     @Environment(FactoryClient.self) private var client: FactoryClient?
     @State private var image: NSImage?
     @State private var failed: String?
@@ -202,9 +202,9 @@ struct LinkedImage: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: fillsWidth ? .infinity : min(image.size.width, 720), alignment: .leading)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+                    .frame(maxWidth: thumbnail ? .infinity : min(image.size.width, 720), maxHeight: thumbnail ? 140 : nil, alignment: .leading)
                     .help(alt)
             } else if let failed {
                 status(icon: "exclamationmark.triangle", "\(alt): \(failed)")
