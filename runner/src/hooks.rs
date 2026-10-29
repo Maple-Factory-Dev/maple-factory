@@ -54,6 +54,8 @@ impl Hooks {
                 "UserPromptSubmit": hook(None),
                 "PreToolUse": hook(Some("*")),
                 "PostToolUse": hook(Some("*")),
+                // Says which tool and input a permission prompt is about; prints nothing, so Claude still asks.
+                "PermissionRequest": hook(Some("*")),
                 "Notification": hook(None),
                 "Stop": hook(None),
             },
@@ -135,8 +137,9 @@ impl Activity {
 /// the hub applies to each `session.activity` (`applyActivity` in control/src/activity.ts):
 /// a bare "working" keeps the step it was on; Claude's generic "needs your permission" after a
 /// question keeps the question's text; the question goes once it isn't waiting; the task and the
-/// summary stay until there's a new one.
-pub fn next_state(prev: Option<&AgentState>, u: ActivityUpdate, summary: Option<String>, question: Option<Value>, at: u64) -> AgentState {
+/// summary stay until there's a new one. `tool` is a PreToolUse's `permission` payload, kept so a
+/// permission notification without a PermissionRequest hook before it can say what it's about.
+pub fn next_state(prev: Option<&AgentState>, u: ActivityUpdate, summary: Option<String>, question: Option<Value>, tool: Option<Value>, at: u64) -> AgentState {
     let was = |state: &str| prev.is_some_and(|p| p.state == state);
     let prev_message = prev.and_then(|p| p.message.clone());
     let keep_step = u.state == "working" && u.message.is_none() && u.task.is_none() && was("working");
@@ -145,16 +148,26 @@ pub fn next_state(prev: Option<&AgentState>, u: ActivityUpdate, summary: Option<
         m.ends_with("needs your permission") || m.ends_with("needs your attention")
     };
     let keep_question = u.state == "waiting" && was("waiting") && prev_message.is_some() && u.message.as_deref().is_none_or(generic);
+    let prev_tool = prev.and_then(|p| p.pending_tool.clone());
+    // Without the PermissionRequest hook, Claude's "needs your permission to use Bash" is about the
+    // tool its last PreToolUse was about to use.
+    let asks_permission = u.message.as_deref().is_some_and(|m| m.to_lowercase().contains("needs your permission"));
+    let fallback = || asks_permission.then(|| prev_tool.clone().map(|p| json!({ "permission": p }))).flatten();
     AgentState {
         state: u.state,
         message: if keep_step || keep_question { prev_message } else { u.message },
         question: match u.state {
-            "waiting" => question.or_else(|| prev.and_then(|p| p.question.clone())),
+            "waiting" => question.or_else(|| prev.and_then(|p| p.question.clone())).or_else(fallback),
             _ => None,
         },
         task: u.task.or_else(|| prev.and_then(|p| p.task.clone())),
         summary: summary.filter(|s| !s.trim().is_empty()).or_else(|| prev.and_then(|p| p.summary.clone())),
         at,
+        pending_tool: match (tool, u.state) {
+            (Some(t), _) => Some(t),
+            (None, "waiting") => prev_tool,
+            _ => None,
+        },
     }
 }
 
@@ -218,6 +231,35 @@ fn pending_question(payload: &Value) -> Option<Value> {
     (!questions.is_empty()).then(|| json!({ "questions": questions }))
 }
 
+const MAX_DETAIL: usize = 1_200;
+
+/// What a tool call would do, for a permission prompt's card: `{tool, summary, detail, warning?}`.
+/// The detail is the Bash command, the file, the URL or the search; other tools get their input as JSON.
+pub fn permission(payload: &Value) -> Option<Value> {
+    let tool = tool_name(payload)?;
+    if matches!(tool, "AskUserQuestion" | "ExitPlanMode") {
+        return None;
+    }
+    let input = payload.get("tool_input").cloned().unwrap_or(Value::Null);
+    let field = |k: &str| input.get(k).and_then(Value::as_str).map(str::to_string).filter(|s| !s.trim().is_empty());
+    let detail = match tool {
+        "Bash" => field("command"),
+        "Edit" | "MultiEdit" | "Write" | "Read" | "NotebookEdit" => field("file_path").or_else(|| field("notebook_path")),
+        "WebFetch" => field("url"),
+        "WebSearch" => field("query"),
+        "Grep" | "Glob" => field("pattern"),
+        _ => None,
+    }
+    .or_else(|| input.as_object().filter(|o| !o.is_empty()).map(|_| input.to_string()));
+    let warning = ["warning", "reason"].iter().find_map(|k| payload.get(*k).and_then(Value::as_str)).map(|w| truncate(w, 280)).filter(|w| !w.is_empty());
+    Some(json!({
+        "tool": tool,
+        "summary": describe_tool(payload).unwrap_or_else(|| tool.to_string()),
+        "detail": detail.map(|d| truncate(&d, MAX_DETAIL)),
+        "warning": warning,
+    }))
+}
+
 /// A short description of a tool call: "Editing hub.ts", "Running npm test".
 fn describe_tool(payload: &Value) -> Option<String> {
     let name = payload.get("tool_name")?.as_str()?;
@@ -255,6 +297,7 @@ fn classify(agent: &str, payload: &Value) -> Option<Activity> {
             "PreToolUse" if tool_name(payload) == Some("AskUserQuestion") => Some(Activity::Waiting(Some(describe_question(payload)))),
             "PreToolUse" if tool_name(payload) == Some("ExitPlanMode") => Some(Activity::Waiting(Some("Wants you to review a plan".into()))),
             "PreToolUse" | "PostToolUse" => Some(Activity::Working(describe_tool(payload))),
+            "PermissionRequest" => Some(Activity::Waiting(Some(format!("Claude needs your permission to use {}", tool_name(payload)?)))),
             // The idle reminder comes a minute after Claude finished; it's still just done.
             "Notification" if payload.get("notification_type").and_then(Value::as_str) == Some("idle_prompt") => None,
             "Notification" => Some(Activity::Waiting(text("message"))),
@@ -353,8 +396,15 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             }
             if let Some(activity) = classify(agent, &event["payload"]) {
                 let summary = matches!(activity, Activity::Done(_)).then(|| summary(agent, &event["payload"])).flatten();
-                let question = (agent == "claude").then(|| pending_question(&event["payload"])).flatten();
-                sessions.set_activity(id, activity, summary, question);
+                let payload = &event["payload"];
+                let claude = |event: &str| agent == "claude" && payload.get("hook_event_name").and_then(Value::as_str) == Some(event);
+                let question = if claude("PermissionRequest") {
+                    permission(payload).map(|p| json!({ "permission": p }))
+                } else {
+                    (agent == "claude").then(|| pending_question(payload)).flatten()
+                };
+                let tool = claude("PreToolUse").then(|| permission(payload)).flatten();
+                sessions.set_activity(id, activity, summary, question, tool);
             }
         });
     }
@@ -474,24 +524,77 @@ mod tests {
     #[test]
     fn keeps_the_latest_state_like_the_hub() {
         let q = json!({ "questions": [{ "question": "Lunch?" }] });
-        let s1 = next_state(None, Activity::Started("fix it".into()).update(), None, None, 1);
+        let s1 = next_state(None, Activity::Started("fix it".into()).update(), None, None, None, 1);
         assert_eq!((s1.state, s1.task.as_deref(), s1.message.as_deref()), ("working", Some("fix it"), None));
-        let s2 = next_state(Some(&s1), Activity::Working(Some("Editing a.rs".into())).update(), None, None, 2);
+        let s2 = next_state(Some(&s1), Activity::Working(Some("Editing a.rs".into())).update(), None, None, None, 2);
         // A bare "working" keeps the step; the task stays.
-        let s3 = next_state(Some(&s2), Activity::Working(None).update(), None, None, 3);
+        let s3 = next_state(Some(&s2), Activity::Working(None).update(), None, None, None, 3);
         assert_eq!((s3.message.as_deref(), s3.task.as_deref(), s3.at), (Some("Editing a.rs"), Some("fix it"), 3));
         // A question, then Claude's generic notification: the question and its text stay.
-        let s4 = next_state(Some(&s3), Activity::Waiting(Some("Lunch?".into())).update(), None, Some(q.clone()), 4);
-        let s5 = next_state(Some(&s4), Activity::Waiting(Some("Claude needs your permission".into())).update(), None, None, 5);
+        let s4 = next_state(Some(&s3), Activity::Waiting(Some("Lunch?".into())).update(), None, Some(q.clone()), None, 4);
+        let s5 = next_state(Some(&s4), Activity::Waiting(Some("Claude needs your permission".into())).update(), None, None, None, 5);
         assert_eq!((s5.state, s5.message.as_deref(), s5.question.as_ref()), ("waiting", Some("Lunch?"), Some(&q)));
         // A specific message replaces it.
-        let s6 = next_state(Some(&s5), Activity::Waiting(Some("Claude needs your permission to use Bash".into())).update(), None, None, 6);
+        let s6 = next_state(Some(&s5), Activity::Waiting(Some("Claude needs your permission to use Bash".into())).update(), None, None, None, 6);
         assert_eq!(s6.message.as_deref(), Some("Claude needs your permission to use Bash"));
         // Anything but waiting drops the question; done keeps its summary.
-        let s7 = next_state(Some(&s6), Activity::Done(None).update(), Some("All green.".into()), None, 7);
+        let s7 = next_state(Some(&s6), Activity::Done(None).update(), Some("All green.".into()), None, None, 7);
         assert_eq!((s7.state, s7.question.as_ref(), s7.summary.as_deref(), s7.message.as_deref()), ("done", None, Some("All green."), None));
-        let s8 = next_state(Some(&s7), Activity::Started("next".into()).update(), Some("  ".into()), None, 8);
+        let s8 = next_state(Some(&s7), Activity::Started("next".into()).update(), Some("  ".into()), None, None, 8);
         assert_eq!((s8.task.as_deref(), s8.summary.as_deref()), (Some("next"), Some("All green.")));
+    }
+
+    #[test]
+    fn permission_prompts_carry_the_tool_and_detail() {
+        let request = json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+            "tool_input": { "command": "rm -rf build && npm run build", "description": "Rebuild" }, "permission_suggestions": [] });
+        assert_eq!(state("claude", request.clone()), Some(("waiting", Some("Claude needs your permission to use Bash".into()))));
+        let p = permission(&request).unwrap();
+        assert_eq!(p, json!({ "tool": "Bash", "summary": "Rebuild", "detail": "rm -rf build && npm run build", "warning": null }));
+        let edit = permission(&json!({ "tool_name": "Write", "tool_input": { "file_path": "/a/b/hub.ts", "content": "x" } })).unwrap();
+        assert_eq!((edit["summary"].as_str(), edit["detail"].as_str()), (Some("Writing hub.ts"), Some("/a/b/hub.ts")));
+        let mcp = permission(&json!({ "tool_name": "mcp__github__create_issue", "tool_input": { "title": "Hi" } })).unwrap();
+        assert_eq!(mcp["detail"], r#"{"title":"Hi"}"#);
+        // Long commands are capped.
+        let long = permission(&json!({ "tool_name": "Bash", "tool_input": { "command": "x".repeat(5000) } })).unwrap();
+        assert!(long["detail"].as_str().unwrap().chars().count() <= MAX_DETAIL + 1);
+        // Questions and plans have their own cards.
+        assert_eq!(permission(&json!({ "tool_name": "AskUserQuestion", "tool_input": {} })), None);
+    }
+
+    #[test]
+    fn permission_payload_clears_once_working_again() {
+        let bash = json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "npm test" } });
+        let p = permission(&bash).unwrap();
+        let s1 = next_state(None, Activity::Working(Some("Run the tests".into())).update(), None, None, None, 1);
+        let s2 = next_state(Some(&s1), classify("claude", &bash).unwrap().update(), None, Some(json!({ "permission": p.clone() })), None, 2);
+        assert_eq!((s2.state, s2.question.as_ref()), ("waiting", Some(&json!({ "permission": p.clone() }))));
+        // Claude's own notification after it keeps the payload.
+        let s3 = next_state(Some(&s2), Activity::Waiting(Some("Claude needs your permission to use Bash".into())).update(), None, None, None, 3);
+        assert_eq!(s3.question, Some(json!({ "permission": p.clone() })));
+        // Approved: its PostToolUse is working, and the payload goes.
+        let s4 = next_state(Some(&s3), Activity::Working(Some("Run the tests".into())).update(), None, None, None, 4);
+        assert_eq!((s4.state, s4.question.as_ref(), s4.pending_tool.as_ref()), ("working", None, None));
+        let s5 = next_state(Some(&s3), Activity::Done(None).update(), None, None, None, 5);
+        assert_eq!(s5.question, None);
+    }
+
+    #[test]
+    fn permission_falls_back_to_the_last_tool() {
+        let pre = json!({ "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": { "command": "git push --force" } });
+        let tool = permission(&pre);
+        let s1 = next_state(None, classify("claude", &pre).unwrap().update(), None, None, tool.clone(), 1);
+        assert_eq!((s1.state, s1.question.as_ref()), ("working", None));
+        let s2 = next_state(Some(&s1), Activity::Waiting(Some("Claude needs your permission to use Bash".into())).update(), None, None, None, 2);
+        assert_eq!(s2.question, Some(json!({ "permission": tool.clone().unwrap() })));
+        assert_eq!(s2.question.as_ref().unwrap()["permission"]["detail"], "git push --force");
+        // Other waits aren't about the tool.
+        let s3 = next_state(Some(&s1), Activity::Waiting(Some("Claude is waiting for your input".into())).update(), None, None, None, 3);
+        assert_eq!(s3.question, None);
+        // Once its PostToolUse is in, the tool is forgotten.
+        let s4 = next_state(Some(&s1), Activity::Working(None).update(), None, None, None, 4);
+        let s5 = next_state(Some(&s4), Activity::Waiting(Some("Claude needs your permission to use Bash".into())).update(), None, None, None, 5);
+        assert_eq!(s5.question, None);
     }
 
     #[test]

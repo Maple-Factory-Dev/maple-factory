@@ -375,12 +375,13 @@ impl Sessions {
     }
 
     /// `question`: what Claude Code's AskUserQuestion is asking, while it waits for the answer.
-    pub fn set_activity(&self, id: Uuid, activity: Activity, summary: Option<String>, question: Option<serde_json::Value>) {
+    /// `tool`: the tool a PreToolUse is about to use (`hooks::permission`), in case it asks permission.
+    pub fn set_activity(&self, id: Uuid, activity: Activity, summary: Option<String>, question: Option<serde_json::Value>, tool: Option<serde_json::Value>) {
         let u = activity.update();
         let mut inner = self.inner.lock().unwrap();
         let Some(s) = inner.get_mut(&id) else { return };
         let at = stamp();
-        s.agent = Some(hooks::next_state(s.agent.as_ref(), u.clone(), summary.clone(), question.clone(), at));
+        s.agent = Some(hooks::next_state(s.agent.as_ref(), u.clone(), summary.clone(), question.clone(), tool, at));
         // Emitted under the lock, so the outbox has events in the order their `at`s say.
         let _ = (u, summary, question);
         if let Some(activity) = s.agent.as_ref().map(wire_activity) {
