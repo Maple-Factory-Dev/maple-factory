@@ -45,10 +45,22 @@ Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_C
 Admins keep per-repo secrets in Settings → Secrets (names, who changed them and when; values are never
 shown again). They live in OrgHub's SQLite, each value sealed with AES-GCM (a fresh IV, the repo and name
 as additional data) under a key derived with HKDF from `SECRETS_KEY`. A runner gets a repo's values only
-for a task assigned to it, as environment variables in the task's sessions, or with
+for a planning, building or reviewing task assigned to it, as environment variables in the task's sessions, or with
 `maple-runner secrets pull` in its owner's checkout (into a gitignored `.env.local`, mode 0600). Every
 change and every release is in the D1 `audit` table (`secret.set`, `secret.deleted`, `secret.pulled`),
 by name only.
+
+What that does and doesn't guard on a runner's machine:
+
+- A task's agent has its own repo's values in its environment, so it can read them; scrubbing only keeps
+  them out of what the runner sends the factory (logs, proofs, last output).
+- `secrets pull` asks the runner over its local socket, which every session can reach. The runner refuses
+  a request from a process inside one of its sessions (it walks up from the asking process to the
+  session's pane), so an agent can't pull another repo's values. Run `secrets pull` from your own
+  terminal. A process that detaches itself from its session can get past that check: the socket is as
+  private as the user account the runner runs as, and anything running as that user can read the values.
+- The tmux command that starts a session with secrets goes on tmux's stdin, not its arguments, so other
+  users on the machine can't see the values with `ps`.
 
 `SECRETS_KEY` is a Worker secret when you set one; otherwise `/setup` (or the first secret saved) generates
 one into D1's `settings` table and never replaces it. **Back it up**: without it no stored value can be

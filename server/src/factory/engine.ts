@@ -69,6 +69,8 @@ export class FactoryError extends Error {}
 
 const now = () => Date.now();
 const branchName = (task: Task) => task.id.toLowerCase();
+/** A task's id releases its repo's secrets to its machine only in these states. */
+const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
 const fail = (message: string): never => {
   throw new FactoryError(message);
 };
@@ -1043,7 +1045,7 @@ export class Engine {
     }
   }
 
-  /** A repo's secret values, to a machine with a task assigned to it on that repo, or (no task: the
+  /** A repo's secret values, to a machine with a planning, building or reviewing task on that repo assigned to it, or (no task: the
    *  `maple-runner secrets pull` CLI) to a machine whose owner is a member. Every release is audited. */
   private async releaseSecrets(machine: string, msg: Extract<RunnerMessage, { type: "secrets.request" }>) {
     const reply = (values: Record<string, string> | null, error: string | null, code: string | null) =>
@@ -1054,6 +1056,8 @@ export class Engine {
     if (msg.taskId) {
       const task = this.store.task(msg.taskId);
       if (!task || task.machine !== machine) return reply(null, "That task isn't assigned to this machine.", "forbidden");
+      // Only while an agent works on it there: a merged or cancelled task keeps its last machine.
+      if (!SECRET_STATES.has(task.state)) return reply(null, `${task.id} isn't being planned, built or reviewed (it's ${task.state}).`, "forbidden");
       const taskRepoName = taskRepo(task, this.store.goal(task.goal) ?? null);
       if (taskRepoName?.toLowerCase() !== repo.toLowerCase()) return reply(null, `${task.id} works on ${taskRepoName ?? "no repo"}, not ${repo}.`, "forbidden");
       actor = task.id;

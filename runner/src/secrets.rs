@@ -11,9 +11,17 @@
 //! everything the runner sends the hub (agents' MCP calls and proofs, session ends' last output,
 //! activity) and in git's error messages (`tasks::scrub`).
 //!
+//! The tmux command that starts such a session goes to tmux on its stdin, not in its argv, which
+//! any user on the machine can read with `ps`.
+//!
 //! The CLI can't open a second hub connection (the hub keeps the newest runner with a name), so
 //! `secrets pull` and `secrets list` ask the running runner over its local hook socket, one line
-//! `{"secrets":{"repo":"owner/name"}}`, answered with `{"values":{…}}` or `{"error":"…"}`.
+//! `{"secrets":{"repo":"owner/name"}}`, answered with `{"values":{…}}` or `{"error":"…"}`. Every
+//! session can reach that socket, so the runner refuses a request from a process in one of its
+//! sessions (found by walking up from the socket peer's pid): an agent, prompt-injected or not,
+//! can't use the owner's pull to read another repo's values. A process that detaches itself from
+//! its session (double-forks to launchd/init) gets past that check; the socket is only as private
+//! as the user account it runs under.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -184,7 +192,15 @@ pub async fn recover(tmux: &crate::tmux::Tmux, session: &str) {
 }
 
 /// A `{"secrets":{"repo"}}` line from the hook socket: the CLI's pull, for the machine's owner.
-pub async fn serve(sessions: &crate::sessions::Sessions, line: &Value) -> Value {
+/// `peer` is the asking process; one inside a session (an agent, or anything it ran) is refused,
+/// so a task's agent gets its own repo's values in its environment and no other repo's.
+pub async fn serve(sessions: &crate::sessions::Sessions, peer: Option<u32>, line: &Value) -> Value {
+    let Some(peer) = peer else {
+        return json!({ "error": "The runner couldn't tell which process asked, so it won't answer." });
+    };
+    if sessions.hosts(peer).await {
+        return json!({ "error": "Secrets can't be pulled from inside a factory session; run `maple-runner secrets pull` in your own terminal." });
+    }
     let Some(repo) = line.get("repo").and_then(Value::as_str).filter(|r| r.contains('/')) else {
         return json!({ "error": "Which repo? Give it as owner/name." });
     };
@@ -441,13 +457,23 @@ mod tests {
         let hooks = crate::hooks::Hooks::prepare(&home, &format!("t{tag}")).unwrap();
         let sessions = crate::sessions::Sessions::start(tx, tmux, hooks).await.unwrap();
         let id = Uuid::new_v4();
-        let env = vec![("API_KEY".to_string(), value.clone()), ("DB_URL".to_string(), "postgres://u:p@h/db".to_string())];
-        sessions.open(id, "shell", wt.to_str().unwrap(), None, None, &[], None, false, 120, 30, None, &env).await.unwrap();
+        // Sent on tmux's stdin in its command language, so quotes, `$`, `\` and newlines must survive.
+        let tricky = "it's \"p$w\\d\"\nline 2 #{x};";
+        let env = vec![("API_KEY".to_string(), value.clone()), ("DB_URL".to_string(), tricky.to_string())];
+        let info = sessions.open(id, "shell", wt.to_str().unwrap(), None, None, &[], None, false, 120, 30, None, &env).await.unwrap();
 
         let tmux = crate::tmux::Tmux::new(&format!("t{tag}"), &home).unwrap();
         let name = format!("maple-{id}");
         assert_eq!(tmux.run(&["show-environment", "-t", &name, "API_KEY"]).await.unwrap().trim(), format!("API_KEY={value}"));
+        assert_eq!(tmux.run(&["show-environment", "-t", &name, "DB_URL"]).await.unwrap(), format!("DB_URL={tricky}\n"));
         assert_eq!(tmux.run(&["show-options", "-v", "-t", &name, OPTION]).await.unwrap().trim(), "API_KEY DB_URL");
+        // The hook socket won't hand a session (its pane, or anything under it) the owner's pull.
+        let pane = info.pid.unwrap();
+        assert!(sessions.hosts(pane).await);
+        assert!(!sessions.hosts(std::process::id()).await);
+        let refused = serve(&sessions, Some(pane), &json!({ "repo": "acme/other" })).await;
+        assert!(refused["error"].as_str().unwrap().contains("inside a factory session"), "{refused}");
+        assert!(serve(&sessions, None, &json!({ "repo": "acme/other" })).await.get("error").is_some());
         // The shell in the session has it: the typed line says `$API_KEY`, only its output has the value.
         tmux.run(&["send-keys", "-t", &name, "echo \"got:$API_KEY\"", "Enter"]).await.unwrap();
         let mut screen = String::new();

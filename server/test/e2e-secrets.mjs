@@ -210,8 +210,14 @@ if (pulled.length < 3 || !deleted.some((a) => JSON.parse(a.detail).name === "OTH
 if (JSON.stringify(audits()).includes(VALUE) || JSON.stringify(audits()).includes(OTHER)) throw new Error("a value is in the audit");
 step(`audit: secret.pulled ${pulled.at(-1).detail}; secret.deleted ${deleted.at(-1).detail}; no values`);
 
-// Tidy up: the task, the leftover secret, and the other machines back on.
+// A cancelled task still names its last machine, but its id no longer opens anything.
 admin.send({ type: "task.cancel", id: taskId });
+await admin.wait(`${taskId} cancelled`, () => admin.tasks.get(taskId)?.state === "cancelled");
+const stale = await near.request(REPO, taskId);
+if (stale.values || stale.code !== "forbidden") throw new Error(`a cancelled task's id still released: ${JSON.stringify(stale)}`);
+step(`${near.id} asking with cancelled ${taskId} refused: "${stale.error}"`);
+
+// Tidy up: the leftover secret, and the other machines back on.
 admin.send({ type: "secrets.delete", repo: REPO, name: "API_KEY" });
 for (const m of admin.machines.filter((x) => x.id !== near.id && x.id !== far.id && x.owner === admin.snapshot.me.login)) {
   admin.send({ type: "machine.settings", machine: m.id, settings: { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null } });

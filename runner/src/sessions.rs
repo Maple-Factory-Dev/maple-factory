@@ -153,6 +153,16 @@ impl Sessions {
         Ok(sessions)
     }
 
+    /// Whether `pid` runs inside one of this runner's sessions: a pane's process or anything it started.
+    pub async fn hosts(&self, pid: u32) -> bool {
+        let mut roots: HashSet<u32> = self.inner.lock().unwrap().values().filter_map(|s| s.info.pid).collect();
+        // The tmux server is every pane's parent, including a pane from before this runner started.
+        if let Ok(out) = self.tmux.run(&["display-message", "-p", "#{pid}"]).await {
+            roots.extend(out.trim().parse::<u32>().ok());
+        }
+        crate::ports::descends_from(pid, &roots).await
+    }
+
     pub fn emit(&self, msg: Outbound) {
         let _ = self.outbox.send(Event::Text(msg));
     }
@@ -260,7 +270,8 @@ impl Sessions {
         for (key, value) in meta {
             args.extend([";".into(), "set-option".into(), "-t".into(), name.clone(), key.into(), value]);
         }
-        let out = match self.tmux.run(&args).await {
+        // With secrets in its `-e`s the command goes on tmux's stdin: argv is public to `ps`.
+        let out = match if env.is_empty() { self.tmux.run(&args).await } else { self.tmux.run_hidden(&args).await } {
             Ok(out) => out,
             Err(e) => {
                 self.ports.lock().unwrap().remove(&id);

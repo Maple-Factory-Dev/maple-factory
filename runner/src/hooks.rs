@@ -369,6 +369,7 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
     loop {
         let (mut stream, _) = listener.accept().await?;
         let sessions = sessions.clone();
+        let peer = stream.peer_cred().ok().and_then(|c| c.pid()).and_then(|p| u32::try_from(p).ok());
         tokio::spawn(async move {
             let (read, mut write) = stream.split();
             let mut buf = Vec::new();
@@ -382,7 +383,7 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
                 return;
             }
             if let Some(request) = event.get("secrets") {
-                let mut line = serde_json::to_vec(&crate::secrets::serve(&sessions, request).await).unwrap_or_default();
+                let mut line = serde_json::to_vec(&crate::secrets::serve(&sessions, peer, request).await).unwrap_or_default();
                 line.push(b'\n');
                 let _ = write.write_all(&line).await;
                 return;
