@@ -1109,6 +1109,37 @@ final class AppState {
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
     }
 
+    // MARK: Owner
+
+    /// Whether you can give `id` to someone else: its owner or an admin can. Anyone can take a task over.
+    func canReassign(_ id: String) -> Bool {
+        guard let client, isLive else { return true }
+        return task(id).owner.github == FactoryData.me.github || client.me?.role == "admin"
+    }
+
+    /// Makes `login` the task's owner: its next sessions prefer their machines, and its open hand is theirs.
+    func assign(_ id: String, to login: String) {
+        let was = task(id).owner
+        guard login != was.github else { return }
+        let person = FactoryData.people.first { $0.github == login } ?? LiveAdapter.person(login, members: client?.members ?? [])
+        let mine = login == FactoryData.me.github
+        let change: (inout FactoryTask) -> Void = { task in
+            task.owner = person
+            if task.hand?.assignee.github == was.github { task.hand?.assignee = person }
+        }
+        if let client, isLive {
+            // The owner chip and its row change at once; the server's update confirms it.
+            client.expect(id, change)
+            client.send(.taskAssign(.init(id: id, owner: login)))
+        } else {
+            update(id) { task in
+                change(&task)
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: mine ? "Took it over" : "Assigned it to @\(login)", when: "now"), at: 0)
+            }
+        }
+        showToast(mine ? "You took over \(id)" : "Gave \(id) to \(person.firstName)", icon: "person.crop.circle.badge.checkmark")
+    }
+
     // MARK: Queue
 
     /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
