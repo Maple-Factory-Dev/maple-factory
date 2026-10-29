@@ -125,6 +125,7 @@ const TOOLS: Tool[] = [
         output: list(str(""), "Its output's lines (the last 60 are kept)."),
         passed: int("Tests passed."),
         failed: int("Tests failed."),
+        file: str("For a screenshot or video: the full path of a PNG, JPEG, WebP, MP4, MOV or WebM (video at most 25 MB, others 5 MB) saved under ~/.cache/maple-proof/<this task's branch>/, never in the worktree. The runner uploads it."),
       },
       ["item", "kind", "summary"],
     ),

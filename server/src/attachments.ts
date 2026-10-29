@@ -83,7 +83,7 @@ export function sniffProof(b: Uint8Array): string | null {
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "video/webm";
   if (!b.includes(0)) {
     try {
-      new TextDecoder("utf-8", { fatal: true }).decode(b);
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b);
       return "text/plain";
     } catch {}
   }

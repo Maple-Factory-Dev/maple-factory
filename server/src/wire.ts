@@ -266,7 +266,7 @@ export interface Evidence {
   output: string[];
   passed?: number | null;
   failed?: number | null;
-  /** An uploaded image or video's path under /api/files/. */
+  /** An uploaded image or video's link, /attachments/<id>/<name> (members fetch it there). */
   file?: string | null;
   /** The agent's role, or the login of the person who attested. */
   by: string;

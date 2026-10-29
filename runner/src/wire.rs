@@ -642,7 +642,7 @@ pub struct Evidence {
     pub passed: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<u32>,
-    /// An uploaded image or video's path under /api/files/.
+    /// An uploaded image or video's link, /attachments/<id>/<name> (members fetch it there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     /// The agent's role, or the login of the person who attested.
