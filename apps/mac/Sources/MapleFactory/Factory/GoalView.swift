@@ -264,8 +264,7 @@ private struct BoardCard: View {
 
     var body: some View {
         let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position)
-            .onTapGesture(count: 2) { state.openFocus(task.id) }
-            .onTapGesture { state.toggleTask(task.id) }
+            .taskClicks(task.id)
             .contextMenu {
                 TaskActionButtons(task: task, confirmCancel: $confirmCancel, schedule: { scheduling = true })
             }
@@ -575,5 +574,28 @@ struct TaskProgressFooter: View {
                     Capsule().fill(task.state.color).frame(width: proxy.size.width * progress)
                 }
             }
+    }
+}
+
+/// A click opens the task per the "When you click a task" setting. Double-click opens the full view
+/// only in the panel mode; in the full-view mode it would hold back every single click.
+private struct TaskClicks: ViewModifier {
+    let id: String
+    @Environment(AppState.self) private var state
+
+    func body(content: Content) -> some View {
+        if state.taskOpening == .panel {
+            content
+                .onTapGesture(count: 2) { state.openFocus(id) }
+                .onTapGesture { state.toggleTask(id) }
+        } else {
+            content.onTapGesture { state.toggleTask(id) }
+        }
+    }
+}
+
+extension View {
+    func taskClicks(_ id: String) -> some View {
+        modifier(TaskClicks(id: id))
     }
 }
