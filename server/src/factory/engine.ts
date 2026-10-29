@@ -357,13 +357,19 @@ export class Engine {
         const priv = this.store.private(task.id);
         if (priv.merging) fail("It's merging now.");
         if (priv.finishing) fail("It's pushing its work now; retry once that's done.");
+        // Its first session hasn't said where its worktree is yet; a new one would make it again.
+        if (task.worker && !priv.worktree) fail("It's still starting; retry in a moment.");
         // Whatever's running stops, and a new session starts in its place.
         this.closeWorker(task, "cancelled");
         task.liveLog = null;
         const was = task.state;
         if (was === "cancelled") {
-          // Back to the stage it was in: reviewing what it pushed, building its plan, or planning.
-          task.state = task.pr ? "reviewing" : task.plan.length ? "building" : "planning";
+          // Back to the stage it was in: reviewing what it pushed, building its approved plan, its plan
+          // waiting for approval, or planning.
+          task.state = task.pr ? "reviewing"
+            : !task.plan.length ? "planning"
+            : task.approvals.length >= task.approvalsNeeded ? "building"
+            : "awaitingApproval";
           if (task.pr?.state === "closed") await this.reopenPull(task, who);
         } else if (was === "awaitingApproval") {
           task.state = "planning";
