@@ -69,3 +69,23 @@ test("code over several lines becomes a fenced block", () => {
 test("an unknown format throws", () => {
   assert.throws(() => applyFormat("a", 0, 0, "strike"));
 });
+
+// The @ picker: what's being typed after an `@`, and who it matches.
+import { matchMembers, mentionAt } from "../web/app/editor.js";
+
+test("an @ starts a mention at the start, after a space or punctuation, not inside an email", () => {
+  assert.deepEqual(mentionAt("@", 1), { start: 0, query: "" });
+  assert.deepEqual(mentionAt("hey @bo", 7), { start: 4, query: "bo" });
+  assert.deepEqual(mentionAt("(@b", 3), { start: 1, query: "b" });
+  assert.equal(mentionAt("mail a@b", 8), null);
+  assert.equal(mentionAt("@bob done", 9), null);
+  assert.deepEqual(mentionAt("@bob done", 4), { start: 0, query: "bob" });
+});
+
+test("members match by login first, then by name, then anywhere", () => {
+  const members = [{ login: "carol" }, { login: "bob", name: "Robert Smith" }, { login: "abby", name: "Abby B" }, { login: "zed", name: "Bea" }];
+  assert.deepEqual(matchMembers(members, "b").map((m) => m.login), ["bob", "abby", "zed"]);
+  assert.deepEqual(matchMembers(members, "smi").map((m) => m.login), ["bob"]);
+  assert.deepEqual(matchMembers(members, "").map((m) => m.login), ["abby", "bob", "carol", "zed"]);
+  assert.deepEqual(matchMembers(members, "q"), []);
+});

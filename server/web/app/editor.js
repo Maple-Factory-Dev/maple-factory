@@ -28,6 +28,27 @@ export function applyFormat(text, start, end, format) {
   return { text: text.slice(0, start) + insert + text.slice(end), insert, cursor: start + insert.length };
 }
 
+/** The `@name` being typed just before the cursor: where its `@` is and what follows it, or null.
+ *  Not after a word character, so `a@b.com` doesn't start one. */
+export function mentionAt(text, cursor) {
+  const m = /(^|[^\w.@/-])@([A-Za-z0-9-]{0,39})$/.exec(text.slice(0, cursor));
+  return m ? { start: cursor - m[2].length - 1, query: m[2] } : null;
+}
+
+/** Members whose login or name starts with the query (logins first), then ones that contain it; at most `limit`. */
+export function matchMembers(members, query, limit = 6) {
+  const q = query.toLowerCase();
+  const score = (m) => {
+    const login = m.login.toLowerCase();
+    const name = (m.name ?? "").toLowerCase();
+    if (login.startsWith(q)) return 0;
+    if (name.startsWith(q) || name.split(/\s+/).some((w) => w.startsWith(q))) return 1;
+    return login.includes(q) || name.includes(q) ? 2 : -1;
+  };
+  return members.map((m) => [score(m), m]).filter(([s]) => s >= 0)
+    .sort((a, b) => a[0] - b[0] || a[1].login.localeCompare(b[1].login)).slice(0, limit).map(([, m]) => m);
+}
+
 // Icons drawn in a 16-point box, stroked like SF Symbols at a small size.
 const ICONS = {
   heading: "M3 3v10M10 3v10M3 8h7M12.5 8.5l1.5-1v5.5",
@@ -61,8 +82,9 @@ function icon(d) {
 
 /** The editor: a card with Write/Preview tabs and the toolbar, the text box, and a footer. The box is
  *  `.textarea`; `.clear()` empties it and goes back to Write. Every change fires the box's input
- *  event, so callers' oninput (and their dirty tracking) see toolbar edits too. */
-export function markdownEditor({ value = "", placeholder = "Write in Markdown…", rows = 8, minHeight, oninput, onblur, onsubmit, keep } = {}, h) {
+ *  event, so callers' oninput (and their dirty tracking) see toolbar edits too. With `members` (a
+ *  function returning the org's members), typing `@` lists them to pick from. */
+export function markdownEditor({ value = "", placeholder = "Write in Markdown…", rows = 8, minHeight, oninput, onblur, onsubmit, keep, members } = {}, h) {
   const box = h("textarea", { class: "md-input", placeholder, rows, oninput, onblur, style: minHeight ? `min-height:${minHeight}` : null });
   box.value = value;
   const preview = h("div", { class: "md-preview", hidden: true });
@@ -82,6 +104,53 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
     box.setSelectionRange(out.cursor, out.cursor);
   };
 
+  // The @ picker: who matches what's typed after the `@` before the cursor.
+  const picker = h("div", { class: "md-mentions", role: "listbox", hidden: true });
+  let picking = null; // { start, query, matches, index }
+  const closePicker = () => {
+    picking = null;
+    picker.hidden = true;
+  };
+  const drawPicker = () => {
+    picker.replaceChildren(...picking.matches.map((m, i) => h("div", {
+      class: `md-mention${i === picking.index ? " on" : ""}`, role: "option", "aria-selected": i === picking.index,
+      // mousedown, so the box keeps its focus and the cursor.
+      onmousedown: (e) => { e.preventDefault(); pick(m); },
+    },
+    m.avatarUrl ? h("img", { class: "md-avatar", src: m.avatarUrl, alt: "" }) : h("span", { class: "md-avatar" }, m.login[0].toUpperCase()),
+    h("span", { class: "md-mention-name" }, m.name || m.login), h("span", { class: "md-mention-login" }, `@${m.login}`))));
+    picker.hidden = false;
+    picker.children[picking.index]?.scrollIntoView?.({ block: "nearest" });
+  };
+  const updatePicker = () => {
+    const at = members && !previewing && box.selectionStart === box.selectionEnd ? mentionAt(box.value, box.selectionStart) : null;
+    const matches = at ? matchMembers(members() ?? [], at.query) : [];
+    if (!matches.length) return closePicker();
+    const same = picking && picking.start === at.start;
+    picking = { ...at, matches, index: same ? Math.min(picking.index, matches.length - 1) : 0 };
+    drawPicker();
+  };
+  function pick(member) {
+    const { start } = picking;
+    const end = box.selectionStart;
+    closePicker();
+    box.focus();
+    box.setSelectionRange(start, end);
+    const insert = `@${member.login} `;
+    if (!document.execCommand?.("insertText", false, insert) || box.value.slice(start, start + insert.length) !== insert) {
+      box.value = box.value.slice(0, start) + insert + box.value.slice(end);
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    box.setSelectionRange(start + insert.length, start + insert.length);
+    closePicker();
+  }
+  if (members) {
+    box.addEventListener("input", updatePicker);
+    box.addEventListener("click", updatePicker);
+    box.addEventListener("keyup", (e) => (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") && updatePicker());
+    box.addEventListener("blur", closePicker);
+  }
+
   const write = h("button", { type: "button", class: "md-tab on", onclick: () => show(false) }, "Write");
   const look = h("button", { type: "button", class: "md-tab", onclick: () => show(true) }, "Preview");
   const tools = h("div", { class: "md-tools" }, TOOLS.map((t) => t
@@ -91,7 +160,7 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
     : h("span", { class: "md-divider" })));
   const wrap = h("div", { class: "md-editor", "data-keep": keep },
     h("div", { class: "md-head" }, h("div", { class: "md-tabs" }, write, look), tools),
-    box, preview,
+    h("div", { class: "md-body" }, box, picker), preview,
     h("div", { class: "md-foot" },
       h("span", { class: "md-keys" }, "⌘B bold · ⌘I italic · ⌘K link"), h("span", { class: "spacer" }),
       h("span", { class: "md-m" }, "M"), "Markdown supported"));
@@ -106,6 +175,7 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
       preview.replaceChildren(box.value.trim() ? markdown(box.value, h) : h("p", { class: "md-nothing" }, "Nothing to preview"));
     }
     previewing = on;
+    closePicker();
     box.hidden = on;
     preview.hidden = !on;
     wrap.classList.toggle("previewing", on);
@@ -120,6 +190,25 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
   }
 
   box.addEventListener("keydown", (e) => {
+    if (picking && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const n = picking.matches.length;
+      const move = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+      if (move) {
+        e.preventDefault();
+        picking.index = (picking.index + move + n) % n;
+        return drawPicker();
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+        e.preventDefault();
+        return pick(picking.matches[picking.index]);
+      }
+      if (e.key === "Escape") {
+        // Only the picker closes, not whatever the editor sits in.
+        e.preventDefault();
+        e.stopPropagation();
+        return closePicker();
+      }
+    }
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
     const format = !e.shiftKey && KEYS[e.key.toLowerCase()];
     if (format) {

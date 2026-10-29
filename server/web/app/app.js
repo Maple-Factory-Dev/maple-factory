@@ -250,7 +250,7 @@ function newTaskView(r) {
 
   // Only the text boxes are kept across re-renders; the selects, checkbox and buttons rebuild from `composer`.
   const title = h("input", { type: "text", "data-keep": "new:title", placeholder: "What should change?", value: composer.title, oninput: (e) => (composer.title = e.target.value) });
-  const brief = markdownEditor({ value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
+  const brief = markdownEditor({ members: () => state.members, value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
   const goalSelect = h("select", { onchange: (e) => { composer.goal = e.target.value; composer.repo = null; render(); } },
     goals.map((g) => h("option", { value: g.id, selected: g.id === composer.goal }, g.name)));
   const repoSelect = repos.length > 1 && h("select", { onchange: (e) => (composer.repo = e.target.value) },
@@ -377,7 +377,7 @@ function noteView(id) {
     $("note-status").textContent = "Saving…";
   };
   const title = h("input", { type: "text", class: "note-title", placeholder: "Untitled note", value: text.title, oninput: edit("title") });
-  const body = markdownEditor({ value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
+  const body = markdownEditor({ members: () => state.members, value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
   const turn = () => {
     if (!text.title.trim() && !text.body.trim()) return toast("Write something first.");
     if (noteSaves.has(id)) saveNote(id, true);
@@ -602,7 +602,7 @@ function compose(t, key, placeholder, label, submit) {
     submit(text);
     editor.clear();
   };
-  const editor = markdownEditor({ placeholder, rows: 2, onsubmit: go }, h);
+  const editor = markdownEditor({ members: () => state.members, placeholder, rows: 2, onsubmit: go }, h);
   return h("div", { class: "compose", "data-keep": `${t.id}:${key}` }, editor, h("div", {}, h("button", { class: "btn small", onclick: go }, label)));
 }
 
@@ -614,7 +614,7 @@ function draftEditor(t) {
   draftEdits.set(t.id, edits);
   const dirty = () => edits.title.trim() !== t.title || edits.brief !== t.brief;
   const title = h("input", { type: "text", placeholder: "Title", value: edits.title, oninput: (e) => { edits.title = e.target.value; mark(); } });
-  const brief = markdownEditor({ value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
+  const brief = markdownEditor({ members: () => state.members, value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
   const status = h("span", { class: "muted", style: "font-size:13px" });
   const mark = () => (status.textContent = dirty() ? "Unsaved changes" : "");
   mark();
