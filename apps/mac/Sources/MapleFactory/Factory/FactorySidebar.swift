@@ -5,6 +5,8 @@ struct FactorySidebar: View {
     @Environment(FactoryClient.self) private var client
     @Environment(\.openSettings) private var openSettings
     @AppStorage("settingsTab") private var settingsTab = "repos"
+    /// The row a dragged goal would land above, for the insertion line.
+    @State private var goalDropTarget: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -45,9 +47,14 @@ struct FactorySidebar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     sectionHeader("Goals") { if client.isSignedIn { state.goalSheet = .new } }
                     VStack(spacing: 2) {
+                        if state.isLoadingFactory { GoalsSkeleton().frame(maxWidth: .infinity, alignment: .leading) }
                         // Only the goals you follow; the rest (and archived ones) are a click away in All goals.
-                        ForEach(state.sidebarGoals) { goal in
+                        // Drag them into your own order; a goal dropped on a row lands above it.
+                        let goals = state.isLoadingFactory ? [] : state.sidebarGoals
+                        ForEach(Array(goals.enumerated()), id: \.element.id) { index, goal in
                             goalRow(goal).opacity(state.isFollowing(goal) ? 1 : 0.6)
+                                .draggable(goal.name) { goalRow(goal).frame(width: 200) }
+                                .goalDrop(id: goal.name, target: $goalDropTarget) { dropGoal($0, at: index) }
                         }
                         if !FactoryData.goals.isEmpty {
                             row(selected: state.destination == .allGoals) {
@@ -57,8 +64,9 @@ struct FactorySidebar: View {
                             }
                             .foregroundStyle(Theme.textMuted)
                             .onTapGesture { state.destination = .allGoals }
+                            .goalDrop(id: "All goals", target: $goalDropTarget) { dropGoal($0, at: goals.count) }
                         }
-                        if client.isSignedIn && client.goals.isEmpty {
+                        if client.isSignedIn && client.hasSnapshot && client.goals.isEmpty {
                             row(selected: false) {
                                 Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
                                 Text("New goal")
@@ -86,20 +94,27 @@ struct FactorySidebar: View {
                     if client.isSignedIn {
                         sectionHeader("Machines") { state.closeFocus(); state.destination = .machines }
                         VStack(spacing: 2) {
-                            ForEach(client.machines, id: \.id) { machine in liveMachineRow(machine) }
+                            ForEach(client.sidebarMachines, id: \.id) { machine in liveMachineRow(machine) }
                         }
                     } else {
                         sectionHeader("Machines") { state.machineSheet = .new }
                         VStack(spacing: 2) {
-                            ForEach(state.machines) { machine in machineRow(machine) }
+                            ForEach(state.machines.filter { $0.isMine || $0.teamSlots > 0 || $0.lendIdle }) { machine in machineRow(machine) }
                         }
                     }
                 }
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
+
+            // Pinned under the scroll area, so it's always at the very bottom while an update is in play.
+            UpdateFooter()
+                .animation(.easeOut(duration: 0.2), value: Updater.shared.phase.showsInFooter)
+                .padding(.horizontal, -12)
         }
         .padding(.horizontal, 12)
+        // A demo script's `ui:settings`: Settings opens without the menu.
+        .onReceive(NotificationCenter.default.publisher(for: AppState.demoSettings)) { _ in openSettings() }
         .overlay(alignment: .topTrailing) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13))
@@ -146,6 +161,12 @@ struct FactorySidebar: View {
             }
         }
         .onTapGesture { state.destination = destination }
+    }
+
+    private func dropGoal(_ name: String, at index: Int) -> Bool {
+        guard let goal = state.sidebarGoals.first(where: { $0.name == name }) else { return false }
+        state.moveGoal(goal, .to(index))
+        return true
     }
 
     private func goalRow(_ goal: Goal) -> some View {
@@ -205,14 +226,16 @@ struct FactorySidebar: View {
             } else if machine.pause != nil {
                 Image(systemName: "pause.fill").font(.system(size: 9)).foregroundStyle(Theme.State.awaitingApproval)
             }
-            SlotPips(machine: machine, size: 6)
+            SlotPips(machine: machine, size: 6, teamOnly: !machine.isMine)
         }
         .onTapGesture { state.closeFocus(); state.destination = .machines }
         .help("\(machine.isMine ? "Your" : "\(machine.owner.firstName)'s") \(machine.model) · \(machine.status.title) · \(machine.sessions.count) of \(machine.capacity) slots busy")
     }
 
     private func liveMachineRow(_ machine: Wire.Machine) -> some View {
-        row(selected: state.destination == .machines && state.focusedTask == nil) {
+        let mine = machine.owner == client.me?.login
+        let owner = LiveAdapter.person(machine.owner, members: client.members)
+        return row(selected: state.destination == .machines && state.focusedTask == nil) {
             Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                 .font(.system(size: 12))
                 .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.State.cancelled)
@@ -220,14 +243,18 @@ struct FactorySidebar: View {
             Text(machine.name)
                 .lineLimit(1)
                 .foregroundStyle(machine.online ? Theme.text.opacity(0.8) : Theme.textMuted)
+            if !mine {
+                AgentAvatar(agent: owner, size: 13)
+            }
             Spacer()
             if !machine.online {
                 Image(systemName: "wifi.slash").font(.system(size: 10)).foregroundStyle(Theme.State.cancelled)
             }
-            LivePips(machine: machine, size: 6)
+            LivePips(machine: machine, size: 6, sharedOnly: !mine)
         }
         .onTapGesture { state.closeFocus(); state.destination = .machines }
-        .help("\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")")
+        .help(mine ? "Yours · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")"
+              : "Shared by \(owner.firstName) · \(machine.online ? "\(LivePips.sharedCount(machine, tasks: client.tasks)) team slots" : "offline")")
     }
 
     private func agentRow(_ agent: Agent, state taskState: TaskState, task: String) -> some View {
@@ -251,5 +278,133 @@ struct FactorySidebar: View {
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.fillSelected : .clear))
             .contentShape(Rectangle())
+    }
+}
+
+/// Where an app update is, at the foot of the sidebar: checking, on offer, downloading, ready to relaunch.
+/// Nothing at all while there's no update in play (up to date is a toast instead).
+struct UpdateFooter: View {
+    private var updater = Updater.shared
+
+    var body: some View {
+        let phase = updater.phase
+        if phase.showsInFooter {
+            VStack(spacing: 0) {
+                Rectangle().fill(Theme.stroke).frame(height: 1)
+                // The buttons sit on the title's line, so the line under it has the footer's whole width
+                // (the version and its What's new link don't fit beside them).
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center, spacing: 9) {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 13))
+                            .foregroundStyle(iconColor(phase))
+                            .frame(width: 16)
+                        Text(phase.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            if let action = phase.action, let label = phase.buttonLabel {
+                                button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
+                            }
+                            if phase.isDismissible {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .frame(width: 16, height: 16)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { updater.dismiss() }
+                                    .help("Not now")
+                            }
+                        }
+                    }
+                    Group {
+                        if phase.isBusy {
+                            HStack(spacing: 6) {
+                                if let progress = phase.progress {
+                                    ProgressView(value: progress)
+                                    Text(phase.detail ?? "")
+                                        .font(.system(size: 10.5).monospacedDigit())
+                                        .foregroundStyle(Theme.textMuted)
+                                        .frame(width: 30, alignment: .trailing)
+                                } else {
+                                    ProgressView()
+                                }
+                            }
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                            .tint(Theme.accent)
+                        } else if let detail = phase.detail {
+                            HStack(spacing: 0) {
+                                Text(detail)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .lineLimit(1)
+                                    .help(detail)
+                                if phase.showsReleaseNotesLink, let url = updater.releaseNotesURL {
+                                    Text(" · ")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Theme.textMuted)
+                                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Theme.accent)
+                                        .lineLimit(1)
+                                        .fixedSize()
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { NSWorkspace.shared.open(url) }
+                                        .pointerStyle(.link)
+                                        .help("See the release notes")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.leading, 25)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private func iconColor(_ phase: UpdatePhase) -> Color {
+        switch phase {
+        case .failed: Theme.warning
+        case .available, .readyToRelaunch: Theme.accent
+        default: Theme.textMuted
+        }
+    }
+
+    private func button(_ title: String, prominent: Bool, action: @escaping () -> Void) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(prominent ? Theme.onAccent : Theme.text)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(prominent ? Theme.accent : Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(prominent ? .clear : Theme.stroke))
+            )
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+    }
+}
+
+private extension View {
+    /// Takes a goal dragged onto this sidebar row, with an accent line above it while one hovers.
+    func goalDrop(id: String, target: Binding<String?>, perform: @escaping (String) -> Bool) -> some View {
+        overlay(alignment: .top) {
+            if target.wrappedValue == id {
+                Capsule().fill(Theme.accent).frame(height: 2).offset(y: -2).allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: String.self) { names, _ in
+            target.wrappedValue = nil
+            return names.first.map(perform) ?? false
+        } isTargeted: { over in
+            if over { target.wrappedValue = id } else if target.wrappedValue == id { target.wrappedValue = nil }
+        }
     }
 }

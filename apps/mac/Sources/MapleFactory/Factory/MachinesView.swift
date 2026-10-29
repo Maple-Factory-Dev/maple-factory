@@ -67,7 +67,7 @@ struct MachinesView: View {
             .frame(maxWidth: 1160, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .defaultScrollAnchor(UserDefaults.standard.string(forKey: "scroll") == "bottom" ? .bottom : .top)
+        .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
     }
 
     private func stat(_ value: String, _ label: String, color: Color) -> some View {
@@ -430,8 +430,28 @@ private struct SlotRow: View {
 struct SlotPips: View {
     let machine: Machine
     var size: CGFloat = 6
+    /// A teammate's machine: only the slots it lends the team.
+    var teamOnly = false
 
     var body: some View {
+        if teamOnly { team } else { all }
+    }
+
+    /// Its team slots, or every slot the owner isn't using when it lends idle ones too.
+    private var team: some View {
+        let count = machine.lendIdle ? max(machine.teamSlots, machine.capacity - machine.personalUsed) : machine.teamSlots
+        return HStack(spacing: size * 0.4) {
+            ForEach(0..<count, id: \.self) { slot in
+                let used = slot < machine.teamUsed
+                RoundedRectangle(cornerRadius: size * 0.3)
+                    .fill(machine.status.isOffline && used ? Theme.State.cancelled : used ? Theme.accent : Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: size * 0.3).strokeBorder(used ? .clear : Theme.accent.opacity(0.5)))
+                    .frame(width: size, height: size)
+            }
+        }
+    }
+
+    private var all: some View {
         HStack(spacing: size * 0.4) {
             ForEach(0..<machine.capacity, id: \.self) { slot in
                 let isTeam = slot < machine.teamSlots

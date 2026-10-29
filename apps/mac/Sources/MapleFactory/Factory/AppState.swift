@@ -45,14 +45,19 @@ final class AppState {
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
+    /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.
+    var attestingItem: String? = nil
+    var attestReason = ""
+    /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
+    var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
     /// written on every toggle while the panel opened by default, so it's true for most people.
     private static let panelKey = "taskPanelOpen"
     private static var panelLeftOpen: Bool {
-        UserDefaults.standard.removeObject(forKey: "taskPanel")
-        return UserDefaults.standard.bool(forKey: panelKey)
+        AppDefaults.removeObject(forKey: "taskPanel")
+        return AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
@@ -67,26 +72,39 @@ final class AppState {
         }
     }
 
-    /// Clicking the task already open in the panel closes the panel; any other task opens.
+    /// What a click on a card or row does: the full task view by default, or a peek in the panel.
+    var taskOpening = TaskOpening.stored() {
+        didSet { AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key) }
+    }
+
+    nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
+
+    /// In the panel mode, clicking the task already open in the panel closes it; any other task opens.
+    nonisolated static func clickAction(opening: TaskOpening, panelOpen: Bool, selected: String, id: String) -> ClickAction {
+        if opening == .fullView { return .focus }
+        return panelOpen && selected == id ? .closePanel : .openPanel
+    }
+
+    /// A single click on a board card, list or inbox row, or timeline bar.
     func toggleTask(_ id: String) {
-        if showInspector, selectedTask == id {
-            closeTaskPanel()
-        } else {
-            openTask(id)
+        switch AppState.clickAction(opening: taskOpening, panelOpen: showInspector, selected: selectedTask, id: id) {
+        case .focus: openFocus(id)
+        case .openPanel: openTask(id)
+        case .closePanel: closeTaskPanel()
         }
     }
 
     /// ×, Esc or clicking the open card again; in a full-width window the close sticks across launches.
     func closeTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector = false }
-        if !isCompact { UserDefaults.standard.set(false, forKey: AppState.panelKey) }
+        if !isCompact { AppDefaults.set(false, forKey: AppState.panelKey) }
     }
 
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
     /// (in a full-width window; a narrow one hides and floats the panel on its own).
     func toggleTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
-        if !isCompact { UserDefaults.standard.set(showInspector, forKey: AppState.panelKey) }
+        if !isCompact { AppDefaults.set(showInspector, forKey: AppState.panelKey) }
     }
 
     // MARK: Machines
@@ -132,10 +150,10 @@ final class AppState {
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
     /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
-    var showOnboarding = UserDefaults.standard.bool(forKey: "onboarding") || UserDefaults.standard.bool(forKey: "onboardingAuto")
-        || UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    var showOnboarding = AppDefaults.bool(forKey: "onboarding") || AppDefaults.bool(forKey: "onboardingAuto")
+        || AppDefaults.bool(forKey: "onboardingFromWorkspace")
     /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
-    var onboardingCanCancel = UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    var onboardingCanCancel = AppDefaults.bool(forKey: "onboardingFromWorkspace")
 
     func startOnboarding() {
         onboardingCanCancel = true
@@ -157,16 +175,16 @@ final class AppState {
 
     var windowWidth: CGFloat = 1600
     /// Icon rail instead of the full sidebar. Narrow windows force it on; the full sidebar then floats over the content.
-    var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    var sidebarCollapsed = AppDefaults.bool(forKey: "sidebarCollapsed")
     /// What the user picked at full width, restored when the window widens again.
-    private var sidebarPreference = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    private var sidebarPreference = AppDefaults.bool(forKey: "sidebarCollapsed")
 
     /// Around half a laptop screen: the inspector floats and the sidebar becomes a rail.
     var isCompact: Bool { windowWidth < 1180 }
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
             && ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -182,7 +200,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = UserDefaults.standard.bool(forKey: AppState.panelKey)
+                showInspector = AppDefaults.bool(forKey: AppState.panelKey)
             }
         }
     }
@@ -191,7 +209,7 @@ final class AppState {
         withAnimation(.snappy(duration: 0.25)) { sidebarCollapsed.toggle() }
         if !isCompact {
             sidebarPreference = sidebarCollapsed
-            UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed")
+            AppDefaults.set(sidebarCollapsed, forKey: "sidebarCollapsed")
         }
     }
 
@@ -201,6 +219,18 @@ final class AppState {
     /// everything here is the design mockup's.
     var client: FactoryClient?
     var isLive: Bool { client?.isSignedIn == true }
+    /// Signed in, but the factory's first snapshot hasn't landed: show the loader, not the mock's goal.
+    var isLoadingFactory: Bool { Self.isLoading(signedIn: client?.isSignedIn == true, hasSnapshot: client?.hasSnapshot == true) }
+
+    nonisolated static func isLoading(signedIn: Bool, hasSnapshot: Bool) -> Bool { signedIn && !hasSnapshot }
+
+    /// Where to land once the workspace's goals are known, or nil to stay put: a goal that isn't the
+    /// workspace's (the mock's starting one) gives way to the focused task's goal, else the first, else the inbox.
+    nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?) -> Destination? {
+        guard case .goal(let name) = current, !goals.contains(name) else { return nil }
+        if let focusedGoal, goals.contains(focusedGoal) { return .goal(focusedGoal) }
+        return goals.first.map(Destination.goal) ?? .inbox
+    }
 
     var tasks: [FactoryTask] {
         get { isLive ? client?.factoryTasks ?? [] : mockTasks }
@@ -221,6 +251,11 @@ final class AppState {
                                          when: "4m", via: "Slack #maple-requests"))
         }
         if task.hand != nil { task.needsYou = true }
+        // The mockup's queue: what's waiting for a slot, in the order it was approved.
+        if let at = FactoryData.queuedTasks.firstIndex(where: { $0.id == task.id }), task.detail.hasPrefix("Queued") {
+            task.queued = true
+            task.queueRank = Double(at)
+        }
         return task
     }
     /// Change requests and comments sent from this session.
@@ -282,7 +317,23 @@ final class AppState {
 
     /// The sidebar's goals: the ones you follow, plus the one you're looking at.
     var sidebarGoals: [Goal] {
-        FactoryData.activeGoals.filter { isFollowing($0) || destination == .goal($0.name) }
+        let shown = FactoryData.activeGoals.filter { isFollowing($0) || destination == .goal($0.name) }
+        guard let client, isLive else { return GoalOrder.apply(shown, order: mockGoalOrder, key: \.name) }
+        return GoalOrder.apply(shown, order: client.goalOrder) { client.goal(named: $0.name)?.id }
+    }
+
+    /// The mockup's personal goal order, by name; the live one is saved per factory by the client.
+    private var mockGoalOrder: [String]? = nil
+
+    /// Moves a sidebar goal and saves the whole sidebar's order as yours.
+    func moveGoal(_ goal: Goal, _ move: GoalOrder.Move) {
+        let names = GoalOrder.move(goal.name, to: move, in: sidebarGoals.map(\.name))
+        guard let client, isLive else { mockGoalOrder = GoalOrder.saving(names, over: mockGoalOrder); return }
+        client.goalOrder = GoalOrder.saving(names.compactMap { client.goal(named: $0)?.id }, over: client.goalOrder)
+    }
+
+    func canMoveGoal(_ goal: Goal, _ move: GoalOrder.Move) -> Bool {
+        GoalOrder.canMove(goal.name, move, in: sidebarGoals.map(\.name))
     }
 
     // MARK: Archiving goals
@@ -373,13 +424,34 @@ final class AppState {
     }
 
     /// Derived from live task state, so acting on a task clears its inbox item on its own.
+    // MARK: Task opening
+
+    /// Whether clicking a task opens its full view or peeks at it in the side panel.
+    nonisolated enum TaskOpening: String, CaseIterable {
+        case fullView, panel
+
+        static let key = "taskOpening"
+
+        var title: String {
+            switch self {
+            case .fullView: "Open the full view"
+            case .panel: "Peek in the side panel"
+            }
+        }
+
+        /// The saved choice; the full view until someone picks otherwise.
+        static func stored(_ defaults: UserDefaults = AppDefaults) -> TaskOpening {
+            TaskOpening(rawValue: defaults.string(forKey: key) ?? "") ?? .fullView
+        }
+    }
+
     // MARK: Goal scope
 
     /// Inbox, Needs a hand and Activity show the goals you follow unless you ask for all of them.
     enum GoalScope: String { case following, all }
 
-    var goalScope: GoalScope = GoalScope(rawValue: UserDefaults.standard.string(forKey: "goalScope") ?? "") ?? .following {
-        didSet { UserDefaults.standard.set(goalScope.rawValue, forKey: "goalScope") }
+    var goalScope: GoalScope = GoalScope(rawValue: AppDefaults.string(forKey: "goalScope") ?? "") ?? .following {
+        didSet { AppDefaults.set(goalScope.rawValue, forKey: "goalScope") }
     }
 
     private var followedGoalNames: Set<String> { Set(FactoryData.goals.filter(isFollowing).map(\.name)) }
@@ -919,6 +991,111 @@ final class AppState {
         showToast("Renamed \(id)", icon: "pencil")
     }
 
+    // MARK: Queue
+
+    /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
+    func queue(_ id: String, before: String?) {
+        let rank = rank(for: id, before: before)
+        if let client, isLive {
+            // Reordered here at once, as the factory will: no wait for its echo after a drop.
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.queueRank = rank } }
+            client.send(.taskQueue(.init(id: id, before: before)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.queueRank = rank
+                joinQueue(&task)
+            }
+        }
+    }
+
+    /// The rank that puts `id` ahead of `before` ("top": the front; none: the back), as the factory works it out.
+    private func rank(for id: String, before: String?) -> Double {
+        let line = queueOrder.filter { $0.id != id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            return at > 0 ? (line[at - 1].queueRank + target.queueRank) / 2 : target.queueRank - 1000
+        }
+        return (line.map(\.queueRank).max() ?? 0) + 1
+    }
+
+    func moveToTop(_ id: String) { queue(id, before: "top") }
+    func moveToBottom(_ id: String) { queue(id, before: nil) }
+
+    /// Holds a task until `at`, keeping its place; a draft joins the queue.
+    func schedule(_ id: String, at: Date) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, startAt: UInt64(at.timeIntervalSince1970 * 1000))))
+            return
+        }
+        update(id) { task in
+            task.startAt = at
+            joinQueue(&task)
+        }
+    }
+
+    /// Clears its schedule and puts it at the front.
+    func startNow(_ id: String) {
+        if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true)))
+            return
+        }
+        let first = queueOrder.first { $0.id != id }
+        update(id) { task in
+            task.startAt = nil
+            if let first { task.queueRank = first.queueRank - 1 }
+            joinQueue(&task)
+        }
+    }
+
+    /// Starts its next session now, over its machine's slot count: the front, no schedule, forced.
+    func forceStart(_ id: String) {
+        if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true, force: true)))
+            return
+        }
+        startNow(id)
+    }
+
+    /// Takes its schedule off, keeping its place.
+    func unschedule(_ id: String) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, clearSchedule: true)))
+            return
+        }
+        update(id) { task in
+            task.startAt = nil
+            joinQueue(&task)
+        }
+    }
+
+    /// The mockup's queue: a draft goes to planning.
+    private func joinQueue(_ task: inout FactoryTask) {
+        if task.state == .drafting { task.state = .planning }
+        task.queued = true
+        task.detail = task.scheduled ? "Scheduled" : "Waiting for a free slot"
+    }
+
+    /// Every queued task, front first.
+    var queueOrder: [FactoryTask] {
+        tasks.filter(\.queued).sorted { $0.queueRank < $1.queueRank }
+    }
+
     func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         mutate(&tasks[index])
@@ -944,6 +1121,9 @@ final class AppState {
               Date().timeIntervalSince(entry.startedAt) < 30 else { return false }
         return !landed(kind, on: task(id))
     }
+
+    /// Some button is still waiting on what it sent; headless `shot:` waits this out.
+    var isBusy: Bool { inFlight.contains { isInFlight($0.key, $0.value.kind) } }
 
     /// Whether the task already shows what `kind` asked for.
     private func landed(_ kind: InFlight.Kind, on task: FactoryTask) -> Bool {
@@ -984,7 +1164,7 @@ final class AppState {
 
     /// Demo scripts only: holds a mock action in flight for a moment, so its busy state can be seen.
     private func afterDemoDelay(_ id: String, _ kind: InFlight.Kind, _ apply: @escaping () -> Void) -> Bool {
-        guard UserDefaults.standard.string(forKey: "actions") != nil else { return false }
+        guard AppDefaults.string(forKey: "actions") != nil else { return false }
         guard beginInFlight(id, kind) else { return true }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.2))
@@ -1031,16 +1211,18 @@ final class AppState {
         }
     }
 
+    /// What answering a raised hand sends. Retry with no session running is a real retry, so the server
+    /// repairs the task's state; a task's agent is set from its stage even when nothing runs, so check the worker.
+    static func handAnswer(_ task: FactoryTask, option: String?, note: String) -> Wire.ClientMessage {
+        if option == "Cancel it" { return .taskCancel(.init(id: task.id)) }
+        if option == "Retry" && task.worker == nil { return .taskRetry(.init(id: task.id)) }
+        return .taskResolveHand(.init(id: task.id, option: option, note: note))
+    }
+
     /// Answers a raised hand: the agent takes the chosen option (plus any note) and gets moving again.
     func resolveHand(_ id: String, option: HandRaise.Option?, note: String) {
         if let client, isLive {
-            if option?.title == "Cancel it" {
-                client.send(.taskCancel(.init(id: id)))
-            } else if option?.title == "Retry" && task(id).agent == nil {
-                client.send(.taskRetry(.init(id: id)))
-            } else {
-                client.send(.taskResolveHand(.init(id: id, option: option?.title, note: note)))
-            }
+            client.send(Self.handAnswer(task(id), option: option?.title, note: note))
             return
         }
         guard let hand = task(id).hand else { return }
@@ -1324,7 +1506,7 @@ final class AppState {
 
     /// Launch arguments like `-destination inbox -layout timeline -inspector NO` jump straight to a view.
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
@@ -1357,7 +1539,8 @@ final class AppState {
             isComposing = true
         }
         if let script = defaults.string(forKey: "actions") {
-            Task { @MainActor in await self.play(script) }
+            scriptFinished = false
+            Task { @MainActor in await self.play(script); self.scriptFinished = true }
         }
     }
 
@@ -1373,14 +1556,25 @@ final class AppState {
         }
     }
 
+    /// False while an `-actions` script is still playing, so a headless run waits for it.
+    @ObservationIgnored private(set) var scriptFinished = true
+
+    /// One step of a demo script, `name:argument…`; nil when it has no argument.
+    nonisolated static func demoAction(_ command: String) -> [String]? {
+        let parts = command.trimmingCharacters(in: .whitespaces).split(separator: ":").map(String.init)
+        return parts.count >= 2 ? parts : nil
+    }
+
+    static let demoSettings = Notification.Name("AppState.demoSettings")
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
     /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
+    /// Headless (`-snapshot`), `shot:approved` renders the window to approved.png between actions.
     private func play(_ script: String) async {
-        for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+        for command in script.split(separator: ";") {
             try? await Task.sleep(for: .seconds(1))
-            let parts = command.split(separator: ":").map(String.init)
-            guard parts.count >= 2 else { continue }
+            guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
             case "review": approveChanges(parts[1])
@@ -1390,12 +1584,35 @@ final class AppState {
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
             case "retry": retry(parts[1])
+            // The queue: Move to top / bottom, a card dropped on another (`drop:<id>:<before>`),
+            // Schedule… with a quick pick (`scheduleask:<id>`, then `schedule:<id>:tonight`), Start now.
+            case "top": moveToTop(parts[1])
+            case "bottom": moveToBottom(parts[1])
+            case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "scheduleask": schedulingTask = parts[1]
+            case "schedule":
+                schedulingTask = nil
+                let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
+                schedule(parts[1], at: pick.date())
+            // A Done when item's Attest…, its reason typed in (`attesttype:<text>`), then Attest.
+            case "attestask": attestReason = ""; attestingItem = "\(parts[1])#\(parts.count > 2 ? parts[2] : "0")"
+            case "attesttype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    attestReason.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+            case "attest":
+                attestingItem = nil
+                attest(parts[1], item: parts.count > 2 ? Int(parts[2]) ?? 0 : 0, reason: attestReason)
+                attestReason = ""
+            case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
+            case "shot": await Headless.shot(parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
@@ -1404,6 +1621,7 @@ final class AppState {
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
+                case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -1424,6 +1642,12 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
+            case "click": toggleTask(parts[1])
+            case "dblclick": openFocus(parts[1])
+            case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+            case "panel": toggleTaskPanel()
+            case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

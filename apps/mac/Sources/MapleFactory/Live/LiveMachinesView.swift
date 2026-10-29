@@ -61,6 +61,11 @@ struct LiveMachinesView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.State.awaitingApproval)
                             .lineLimit(1)
+                        if task.waiting?.contains("free slot") == true, task.state == .planning || task.state == .building {
+                            Button { state.forceStart(task.id) } label: { Label("Run now", systemImage: "bolt") }
+                                .controlSize(.small)
+                                .help("Start it now, over the machine's slot count")
+                        }
                     }
                     .padding(.horizontal, 12)
                     .frame(height: 36)
@@ -183,7 +188,7 @@ struct LiveMachinesView: View {
 
     /// `-liveSession first` opens the first live session, for screenshots.
     private func openFromLaunchArgs() {
-        guard UserDefaults.standard.string(forKey: "liveSession") == "first" else { return }
+        guard AppDefaults.string(forKey: "liveSession") == "first" else { return }
         Task { @MainActor in
             for _ in 0..<40 {
                 if let machine = client.machines.first(where: { !$0.sessions.isEmpty }), let first = machine.sessions.first {
@@ -788,10 +793,50 @@ struct MemberAvatar: View {
 
 /// A dot per live session, coloured by what its agent is doing.
 struct LivePips: View {
+    @Environment(FactoryClient.self) private var client
     let machine: Wire.Machine
     var size: CGFloat = 6
+    /// A teammate's machine: only the slots it lends the team, filled by their work on it.
+    var sharedOnly = false
+
+    /// The slots a machine lends the team: its team slots, or every slot the owner isn't using when it
+    /// lends idle ones too.
+    static func sharedCount(_ machine: Wire.Machine, tasks: [Wire.Task]) -> Int {
+        guard let settings = machine.settings else { return 0 }
+        let team = Int(settings.teamSlots)
+        guard settings.lendIdle else { return team }
+        let capacity = Int(machine.capacity ?? settings.capacity ?? settings.teamSlots)
+        let own = machine.sessions.count - teamSessions(machine, tasks: tasks).count
+        return max(team, capacity - own)
+    }
+
+    /// Sessions running teammates' work: those whose task isn't the owner's. When none of the sessions'
+    /// tasks can be found, every session counts.
+    static func teamSessions(_ machine: Wire.Machine, tasks: [Wire.Task]) -> [Wire.LiveSession] {
+        let owners = machine.sessions.map { live in live.session.taskId.flatMap { id in tasks.first { $0.id == id } }?.owner }
+        guard owners.contains(where: { $0 != nil }) else { return machine.sessions }
+        return zip(machine.sessions, owners).filter { $0.1 != machine.owner }.map(\.0)
+    }
 
     var body: some View {
+        if sharedOnly { shared } else { all }
+    }
+
+    private var shared: some View {
+        let count = Self.sharedCount(machine, tasks: client.tasks)
+        let used = Array(Self.teamSessions(machine, tasks: client.tasks).prefix(count))
+        return HStack(spacing: size * 0.5) {
+            ForEach(0..<count, id: \.self) { slot in
+                if slot < used.count {
+                    Circle().fill(machine.online ? (used[slot].activity?.state ?? .idle).color : Theme.textFaint).frame(width: size, height: size)
+                } else {
+                    Circle().strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1).frame(width: size, height: size)
+                }
+            }
+        }
+    }
+
+    private var all: some View {
         HStack(spacing: size * 0.5) {
             if machine.sessions.isEmpty {
                 Circle().strokeBorder(Theme.textFaint, lineWidth: 1).frame(width: size, height: size)

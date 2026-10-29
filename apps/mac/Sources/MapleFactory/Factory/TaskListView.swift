@@ -9,6 +9,8 @@ struct TaskListView: View {
     /// The task whose row's context menu asked to cancel it.
     @SwiftUI.State private var cancelling: FactoryTask?
     @SwiftUI.State private var renaming: FactoryTask?
+    /// The task whose row's context menu asked to schedule it.
+    @SwiftUI.State private var scheduling: String?
 
     var body: some View {
         ScrollView {
@@ -79,6 +81,7 @@ struct TaskListView: View {
                 .lineLimit(1)
 
             if task.hand != nil { NeedsHandBadge() } else if task.needsYou { NeedsYouBadge() }
+            if task.scheduled, let at = task.startAt { ScheduleBadge(at: at) }
 
             Spacer(minLength: 16)
 
@@ -118,11 +121,14 @@ struct TaskListView: View {
         }
         .overlay(alignment: .bottom) { Hairline().padding(.leading, 24) }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { state.openFocus(task.id) }
-        .onTapGesture { state.toggleTask(task.id) }
+        .taskClicks(task.id)
         .contextMenu {
             TaskActionButtons(task: task, confirmCancel: Binding(get: { cancelling?.id == task.id }, set: { cancelling = $0 ? task : nil }),
-                              rename: Binding(get: { renaming?.id == task.id }, set: { renaming = $0 ? task : nil }))
+                              rename: Binding(get: { renaming?.id == task.id }, set: { renaming = $0 ? task : nil }),
+                              schedule: { scheduling = task.id })
+        }
+        .popover(isPresented: Binding(get: { scheduling == task.id }, set: { if !$0 { scheduling = nil } }), arrowEdge: .bottom) {
+            SchedulePopover(task: task)
         }
     }
 }

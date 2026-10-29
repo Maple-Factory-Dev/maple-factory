@@ -5,7 +5,7 @@
 // closes the pull request); Retry starts a new planner or builder in place of a running one, runs
 // review again in reviewing, and brings a cancelled task back where it was, reopening its pull
 // request (or building again, when GitHub won't reopen it); a merged task can't be retried or
-// cancelled.
+// cancelled, queued or forced.
 
 const [base = "http://localhost:8788", folder = "/tmp/mfgh/greeter", gh = "http://localhost:18803"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -156,6 +156,8 @@ await wait("merged", () => tasks.get(d)?.state === "merged", 60000);
 step(`${d}: merged`);
 step(`${d}: Retry is refused: "${await refused("retry", { type: "task.retry", id: d }, /merged/)}"`);
 step(`${d}: Cancel is refused: "${await refused("cancel", { type: "task.cancel", id: d }, /finished/)}"`);
+step(`${d}: Queueing it is refused: "${await refused("queue", { type: "task.queue", id: d, before: "top" }, /finished/)}"`);
+step(`${d}: Forcing it is refused: "${await refused("force", { type: "task.queue", id: d, force: true }, /finished/)}"`);
 
 // ---- archived ----
 send({ type: "goal.archive", id: goal.id, archived: true });

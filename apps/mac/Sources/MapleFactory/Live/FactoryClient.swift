@@ -57,11 +57,20 @@ import Security
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
-        get { _ = picksChanged; return UserDefaults.standard.stringArray(forKey: picksKey) }
-        set { UserDefaults.standard.set(newValue, forKey: picksKey); picksChanged += 1 }
+        get { _ = picksChanged; return AppDefaults.stringArray(forKey: picksKey) }
+        set { AppDefaults.set(newValue, forKey: picksKey); picksChanged += 1 }
     }
     private var picksChanged = 0
-    private var picksKey: String { "sidebarPeople.\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
+    private var picksKey: String { "sidebarPeople.\(serverKey)" }
+
+    /// The order this person put their sidebar goals in, by goal id, per factory; nil until they move one.
+    var goalOrder: [String]? {
+        get { _ = goalOrderChanged; return AppDefaults.stringArray(forKey: goalOrderKey) }
+        set { AppDefaults.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
+    }
+    private var goalOrderChanged = 0
+    private var goalOrderKey: String { "sidebarGoalOrder.\(serverKey)" }
+    private var serverKey: String { "\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
 
     /// The people in the sidebar: their picks, else whoever shares a GitHub team with them (everyone
     /// when they're on none). Always them first.
@@ -72,6 +81,23 @@ import Security
             ?? (me.teams.isEmpty ? others : others.filter { !Set($0.teams).isDisjoint(with: me.teams) })
         return [members.first { $0.login == me.login } ?? me] + shown
     }
+
+    /// The machines in the sidebar: yours, then teammates' that have team slots open. The Machines page
+    /// still lists them all.
+    var sidebarMachines: [Wire.Machine] { Self.sidebarMachines(machines, me: me?.login) }
+
+    static func sidebarMachines(_ machines: [Wire.Machine], me: String?) -> [Wire.Machine] {
+        guard let me else { return machines }
+        let mine = machines.filter { $0.owner == me }
+        let shared = machines.filter { $0.owner != me && isShared($0) }
+        return mine + shared
+    }
+
+    /// Whether a machine lends anything to the team; one with no settings yet lends nothing.
+    static func isShared(_ machine: Wire.Machine) -> Bool {
+        guard let settings = machine.settings else { return false }
+        return settings.teamSlots > 0 || settings.lendIdle
+    }
     private(set) var acceptances: [Wire.RiskAcceptance] = []
     /// The policy and acceptances as the views' models.
     private(set) var riskPolicy: RiskPolicy?
@@ -79,6 +105,8 @@ import Security
     /// A passing line from the factory ("ATL-3 merged"), for the app's toast.
     private(set) var toast: (text: String, taskID: String?, at: Date)?
     private(set) var status: Status = .signedOut
+    /// Whether this factory's first snapshot has landed. A reconnect keeps it, so the old content stays up.
+    private(set) var hasSnapshot = false
     /// The last thing the server refused, shown as a toast-like line.
     var notice: String?
 
@@ -98,11 +126,11 @@ import Security
     }
 
     init() {
-        if let saved = UserDefaults.standard.string(forKey: "factoryURL"), let url = URL(string: saved),
+        if let saved = AppDefaults.string(forKey: "factoryURL"), let url = URL(string: saved),
            let token = Keychain.read(account: saved) {
             server = url
             self.token = token
-            org = UserDefaults.standard.string(forKey: "factoryOrg") ?? ""
+            org = AppDefaults.string(forKey: "factoryOrg") ?? ""
         }
         // A socket can die quietly while the Mac sleeps or the app sits in the background; catch up
         // with a fresh snapshot rather than leave every list as it was.
@@ -121,22 +149,30 @@ import Security
         connect()
     }
 
+    /// Shows a change before the factory echoes it (a card dropped in the queue lands at once);
+    /// the task's next `task.updated` replaces it with what the factory did.
+    func expect(_ id: String, _ change: (inout FactoryTask) -> Void) {
+        guard let index = factoryTasks.firstIndex(where: { $0.id == id }) else { return }
+        change(&factoryTasks[index])
+    }
+
     // MARK: Session
 
     func signIn(_ result: SignInResult) {
+        if result.server != server { hasSnapshot = false }
         server = result.server
         token = result.token
         me = result.member
         org = result.org
-        UserDefaults.standard.set(result.server.absoluteString, forKey: "factoryURL")
-        UserDefaults.standard.set(result.org, forKey: "factoryOrg")
+        AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
+        AppDefaults.set(result.org, forKey: "factoryOrg")
         Keychain.write(result.token, account: result.server.absoluteString)
         connect()
     }
 
     func signOut() {
         if let server { Keychain.delete(account: server.absoluteString) }
-        UserDefaults.standard.removeObject(forKey: "factoryURL")
+        AppDefaults.removeObject(forKey: "factoryURL")
         disconnect()
         server = nil
         token = nil
@@ -146,6 +182,7 @@ import Security
         goals = []
         tasks = []
         rebuild()
+        hasSnapshot = false
         status = .signedOut
     }
 
@@ -254,6 +291,7 @@ import Security
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
             rebuild()
+            hasSnapshot = true
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
@@ -743,15 +781,16 @@ import Security
 
 /// The factory token, in the login keychain under the factory's URL. A plain-http (local dev)
 /// factory's token goes in defaults instead: every rebuild of an unsigned dev app would otherwise
-/// ask for keychain access, and a localhost dev token guards nothing.
+/// ask for keychain access, and a localhost dev token guards nothing. A headless run keeps every
+/// token in its own wiped defaults, so it never replaces the real app's keychain item for a URL.
 enum Keychain {
     private static let service = "dev.maplefactory.app"
     private static let devKey = "devFactoryTokens"
 
-    private static func isDev(_ account: String) -> Bool { account.hasPrefix("http://") }
+    static func isDev(_ account: String, headless: Bool = Headless.isOn) -> Bool { headless || account.hasPrefix("http://") }
 
     static func read(account: String) -> String? {
-        if isDev(account) { return (UserDefaults.standard.dictionary(forKey: devKey) as? [String: String])?[account] }
+        if isDev(account) { return (AppDefaults.dictionary(forKey: devKey) as? [String: String])?[account] }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
             kSecAttrAccount as String: account, kSecReturnData as String: true,
@@ -764,9 +803,9 @@ enum Keychain {
     static func write(_ value: String, account: String) {
         delete(account: account)
         if isDev(account) {
-            var tokens = UserDefaults.standard.dictionary(forKey: devKey) as? [String: String] ?? [:]
+            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
             tokens[account] = value
-            UserDefaults.standard.set(tokens, forKey: devKey)
+            AppDefaults.set(tokens, forKey: devKey)
             return
         }
         let item: [String: Any] = [
@@ -778,9 +817,9 @@ enum Keychain {
 
     static func delete(account: String) {
         if isDev(account) {
-            var tokens = UserDefaults.standard.dictionary(forKey: devKey) as? [String: String] ?? [:]
+            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
             tokens[account] = nil
-            UserDefaults.standard.set(tokens, forKey: devKey)
+            AppDefaults.set(tokens, forKey: devKey)
             return
         }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]

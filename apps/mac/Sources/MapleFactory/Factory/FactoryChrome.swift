@@ -6,7 +6,10 @@ struct FactoryTopBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if state.isComposing {
+            if state.isLoadingFactory {
+                // No title or layout picker until the factory says what's there.
+                EmptyView()
+            } else if state.isComposing {
                 composeBreadcrumb
             } else if let focused = state.focusedTask {
                 focusBreadcrumb(state.task(focused))
@@ -55,7 +58,6 @@ struct FactoryTopBar: View {
             .padding(.trailing, 6)
 
             AppearanceButton()
-            if !state.isCompact { iconButton("line.3.horizontal.decrease") }
             iconButton("sidebar.right", active: state.showInspector && state.focusedTask == nil)
                 .onTapGesture { state.toggleTaskPanel() }
                 .help("Toggle task panel (⌥⌘I)")

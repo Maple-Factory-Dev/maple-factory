@@ -268,9 +268,13 @@ export interface Evidence {
   failed?: number | null;
   /** An uploaded image or video's path under /api/files/. */
   file?: string | null;
-  /** The agent's role, or a login for "I checked it". */
+  /** The agent's role, or the login of the person who attested. */
   by: string;
   at: number;
+  /** A person signed it off themselves instead of the agent proving it. */
+  attested?: boolean | null;
+  /** Why they attested, if they said. */
+  reason?: string | null;
 }
 
 export interface DoneItem {
@@ -517,6 +521,12 @@ export interface Task {
   /** Tasks that must merge before it starts building, e.g. the API change a web change uses. */
   after: string[];
   followUps: FollowUp[];
+  /** Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt. */
+  queueRank?: number | null;
+  /** Don't start its next session before this (ms); cleared once that session starts. */
+  startAt?: number | null;
+  /** Its next session skips the wait for a free slot; cleared once it starts. */
+  force?: boolean | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -1234,6 +1244,20 @@ export interface ClientMessage_TaskRetry {
   id: string;
 }
 
+/** Reorder or schedule a task's place in the queue for sessions. A draft is sent to planning. */
+export interface ClientMessage_TaskQueue {
+  type: "task.queue";
+  id: string;
+  /** Move it ahead of this task; "top": the front of the queue. None moves it to the back, unless startAt or clearSchedule is given (they keep its place). */
+  before?: string | null;
+  /** Hold it until then (ms). */
+  startAt?: number | null;
+  /** Start it as soon as there's room. */
+  clearSchedule?: boolean | null;
+  /** Start its next session now, over the machine's slot count. */
+  force?: boolean | null;
+}
+
 /** Run the pull request's failed CI checks again. */
 export interface ClientMessage_TaskRerunChecks {
   type: "task.rerunChecks";
@@ -1253,7 +1277,7 @@ export interface ClientMessage_TaskMove {
   id: string;
 }
 
-/** "I checked it" for a Done when item. */
+/** Attest to a Done when item yourself, with an optional reason. */
 export interface ClientMessage_TaskCheckedIt {
   type: "task.checkedIt";
   id: string;
@@ -1269,8 +1293,8 @@ export interface ClientMessage_TaskMockupChange {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";

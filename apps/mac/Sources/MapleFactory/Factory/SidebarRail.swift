@@ -49,7 +49,7 @@ struct SidebarRail: View {
 
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(state.sidebarGoals) { goal in
+                    ForEach(state.isLoadingFactory ? [] : state.sidebarGoals) { goal in
                         let stats = state.stats(for: goal)
                         let selected = state.destination == .goal(goal.name)
                         item(goal.name, detail: "\(stats.merged) of \(stats.total) merged", selected: selected) {
@@ -74,7 +74,7 @@ struct SidebarRail: View {
                     divider
 
                     if client.isSignedIn {
-                        ForEach(client.machines, id: \.id) { machine in
+                        ForEach(client.sidebarMachines, id: \.id) { machine in
                             item(machine.name,
                                  detail: "\(machine.owner == client.me?.login ? "Yours" : machine.owner) · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")",
                                  selected: state.destination == .machines && state.focusedTask == nil,
@@ -83,13 +83,13 @@ struct SidebarRail: View {
                                     Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                                         .font(.system(size: 14))
                                         .foregroundStyle(machine.online ? Theme.text.opacity(0.75) : Theme.textFaint)
-                                    LivePips(machine: machine, size: 4)
+                                    LivePips(machine: machine, size: 4, sharedOnly: machine.owner != client.me?.login)
                                 }
                             }
                             .onTapGesture { state.closeFocus(); state.destination = .machines }
                         }
                     } else {
-                    ForEach(state.machines) { machine in
+                    ForEach(state.machines.filter { $0.isMine || $0.teamSlots > 0 || $0.lendIdle }) { machine in
                         item(machine.id,
                              detail: "\(machine.isMine ? "Yours" : "\(machine.owner.firstName)'s") · \(machine.status.isOffline ? machine.status.title : "\(machine.sessions.count)/\(machine.capacity) busy")",
                              selected: state.destination == .machines && state.focusedTask == nil,
@@ -98,7 +98,7 @@ struct SidebarRail: View {
                                 Image(systemName: machine.kind.icon)
                                     .font(.system(size: 14))
                                     .foregroundStyle(machine.status == .sleeping ? Theme.textFaint : Theme.text.opacity(0.75))
-                                SlotPips(machine: machine, size: 4)
+                                SlotPips(machine: machine, size: 4, teamOnly: !machine.isMine)
                             }
                         }
                         .onTapGesture { state.closeFocus(); state.destination = .machines }
@@ -109,6 +109,8 @@ struct SidebarRail: View {
             .scrollIndicators(.never)
             .frame(maxHeight: .infinity, alignment: .top)
 
+            updateItem
+
             item("Expand sidebar", detail: "⌃⌘S") {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13))
@@ -118,6 +120,31 @@ struct SidebarRail: View {
             .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The sidebar footer's update, folded down to an icon: a ring fills while it downloads, and a
+    /// click does what the footer's button would.
+    @ViewBuilder private var updateItem: some View {
+        let updater = Updater.shared
+        let phase = updater.phase
+        if phase.isVisible {
+            item(phase.title, detail: phase.detail) {
+                ZStack {
+                    if phase.isBusy {
+                        ProgressRing(progress: phase.progress ?? 0, color: Theme.accent, size: 20)
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Theme.text.opacity(0.75))
+                    } else {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 15))
+                            .foregroundStyle(phase.action == .install || phase.action == .relaunch ? Theme.accent : Theme.textMuted)
+                    }
+                }
+            }
+            .onTapGesture { if let action = phase.action { updater.perform(action) } }
+            .padding(.bottom, 2)
+        }
     }
 
     private var divider: some View {

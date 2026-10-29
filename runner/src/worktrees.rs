@@ -855,8 +855,9 @@ fn short(sha: &str) -> &str {
 /// lost: a session in it (`session_cwds`), uncommitted changes, or commits that aren't in the pull
 /// request. HEAD must be one of `heads` (the PR's head, the commit the task pushed) or an ancestor of
 /// one; for a merged PR it's also enough that every commit is on a remote or the default branch.
-/// The branch goes with `git branch -d`, or `-D` only when HEAD matched what's on GitHub. Remote
-/// branches are never touched. A worktree that's already gone is fine (the branch still goes).
+/// The branch goes with `git branch -d`, or `-D` only when HEAD matched what's on GitHub, and with it
+/// its `origin/` tracking ref. Remote branches are never touched. A worktree that's already gone is
+/// fine (the branch still goes).
 pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Removed> {
     let name = w.branch.strip_prefix(BRANCH_PREFIX).ok_or_else(|| anyhow!("`{}` isn't a task branch.", w.branch))?;
     valid_name(name)?;
@@ -904,8 +905,12 @@ pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Rem
         None => git(&root, &["rev-parse", "--verify", "--quiet", &branch_ref]).await.ok().map(|s| s.trim().to_string()),
     };
     let Some(tip) = tip else {
+        let mut message = format!("{} and {} were already gone", w.cwd, w.branch);
+        if let Some(dropped) = drop_tracking_ref(&root, w.branch).await {
+            message = format!("{message}, {dropped}");
+        }
         poke(true);
-        return Ok(Removed { message: format!("{} and {} were already gone", w.cwd, w.branch), branch_deleted: false, deleting: None });
+        return Ok(Removed { message, branch_deleted: false, deleting: None });
     };
 
     // Is everything at `tip` on GitHub? It's the PR's head (or the push), or behind it.
@@ -955,6 +960,7 @@ pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Rem
             Ok(()) => {
                 branch_deleted = true;
                 done.push(format!("deleted branch {}", w.branch));
+                done.extend(drop_tracking_ref(&root, w.branch).await);
             }
             Err(e) => {
                 tracing::warn!("kept branch {}: {e}", w.branch);
@@ -968,6 +974,20 @@ pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Rem
         message = format!("{} was already gone", w.cwd);
     }
     Ok(Removed { message, branch_deleted, deleting })
+}
+
+/// Deletes the stale `origin/<branch>` ref a deleted task branch leaves behind, if it's there.
+/// Best-effort: says what it did, or nothing.
+async fn drop_tracking_ref(root: &Path, branch: &str) -> Option<String> {
+    let tracking = format!("refs/remotes/origin/{branch}");
+    git(root, &["show-ref", "--verify", "--quiet", &tracking]).await.ok()?;
+    match git(root, &["update-ref", "-d", &tracking]).await {
+        Ok(_) => Some(format!("dropped origin/{branch}")),
+        Err(e) => {
+            tracing::warn!("kept origin/{branch}: {e}");
+            None
+        }
+    }
 }
 
 /// Deletes empty folders from a removed worktree's up to `.worktrees/<repo>`.
@@ -1098,6 +1118,29 @@ mod tests {
         assert!(done.branch_deleted && !wt.exists(), "{}", done.message);
         finish(done.deleting).await;
         assert!(asides(&repo.join("x")).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// After a merge: the worktree, the local branch and the stale origin/agent/… ref all go.
+    #[tokio::test]
+    async fn cleanup_after_a_merge_drops_the_tracking_ref_too() {
+        let (root, repo, wt, head) = repo_with_task("tracking");
+        let (wts, repos) = (wt.to_string_lossy().into_owned(), repo.to_string_lossy().into_owned());
+        let bare = root.join("origin.git");
+        sh(&root, &["init", "--quiet", "--bare", bare.to_str().unwrap()]);
+        sh(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        sh(&repo, &["push", "--quiet", "origin", "main", "agent/fix"]);
+        sh(&repo, &["fetch", "--quiet", "origin"]);
+        assert_eq!(sh(&repo, &["rev-parse", "refs/remotes/origin/agent/fix"]), head);
+        // The factory merged it and deleted the branch on GitHub; this checkout still tracks it.
+        sh(&bare, &["branch", "-D", "agent/fix"]);
+        let heads = [head];
+        let done = remove_task(&[], work(&wts, &repos, true, &heads)).await.unwrap();
+        assert!(done.branch_deleted && done.message.contains("dropped origin/agent/fix"), "{}", done.message);
+        finish(done.deleting).await;
+        assert!(!wt.exists());
+        assert!(!sh(&repo, &["worktree", "list"]).contains("/fix"));
+        assert_eq!(sh(&repo, &["branch", "-a", "--list", "*agent/fix"]), "");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

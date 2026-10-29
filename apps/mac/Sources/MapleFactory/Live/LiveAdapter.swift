@@ -31,6 +31,15 @@ import SwiftUI
         }
     }
 
+    /// Who a steer reaches when no session is running: a reviewing steer goes back to the builder.
+    static func stageAgent(_ state: Wire.TaskState) -> Agent? {
+        switch state {
+        case .planning, .awaitingApproval: role("planner")
+        case .building, .reviewing: role("builder")
+        default: nil
+        }
+    }
+
     /// "now", "4m", "2h", "3d": how the mockup labels times.
     static func ago(_ ms: UInt64) -> String {
         let seconds = max(0, Date().timeIntervalSince1970 - Double(ms) / 1000)
@@ -62,7 +71,8 @@ import SwiftUI
 
         var task = FactoryTask(id: t.id, goal: goalName, title: t.title, state: state(t.state),
                                detail: detail(t), span: start...max(start + 1, day(t.updatedAt) + 1), updated: ago(t.updatedAt))
-        task.agent = t.worker.map { role($0.role.rawValue) }
+        // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
+        task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
         task.owner = who(t.owner)
         task.machine = t.machine
@@ -100,7 +110,7 @@ import SwiftUI
         task.doneWhen = t.doneWhen.map { item in
             DoneCriterion(text: item.text, proof: proofKind(item.proof), status: proofStatus(item.status), evidence: item.evidence.map(evidence))
         }
-        task.liveLog = t.waiting ?? t.liveLog
+        task.liveLog = t.waiting.map { $0.hasPrefix("Scheduled") ? "Scheduled" : $0 } ?? t.liveLog
         task.footprint = t.diff.map { ($0.files.count, ($0.added + $0.removed).int, false) } ?? t.footprint.map { ($0.files.int, $0.lines.int, $0.estimated) }
         task.areas = t.risk?.areas ?? []
         task.plannedRisk = t.risk.map { riskLevel($0.level) } ?? .low
@@ -127,7 +137,22 @@ import SwiftUI
         task.mockups = t.mockups.map(mockup)
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
+        task.queued = queued(t)
+        task.queueRank = t.queueRank ?? Double(t.createdAt)
+        task.startAt = t.startAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         return task
+    }
+
+    /// Waiting for a session with nobody on it, as the factory's queue reads it: planning, building
+    /// (one the factory has said why it's waiting; otherwise it's finishing), or a review round in progress.
+    static func queued(_ t: Wire.Task) -> Bool {
+        guard t.worker == nil, t.hand == nil, t.question == nil else { return false }
+        switch t.state {
+        case .planning: return true
+        case .building: return t.waiting != nil
+        case .reviewing: return t.autoReview?.rounds.last?.verdict == .inProgress
+        default: return false
+        }
     }
 
     static func needsYou(_ t: Wire.Task, me: String?) -> Bool {
@@ -141,7 +166,8 @@ import SwiftUI
     private static func detail(_ t: Wire.Task) -> String {
         if t.hand != nil { return "Needs a hand" }
         if t.question != nil { return "Asked a question" }
-        if let waiting = t.waiting { return waiting }
+        // A schedule shows as its own badge; the server's line has the time in UTC.
+        if let waiting = t.waiting { return waiting.hasPrefix("Scheduled") ? "Scheduled" : waiting }
         switch t.state {
         case .drafting: return "Draft"
         case .planning: return t.worker == nil ? "Waiting for a planner" : "Drafting the plan"
@@ -290,7 +316,8 @@ import SwiftUI
     }
 
     private static func evidence(_ e: Wire.Evidence) -> DoneCriterion.Evidence {
-        switch e.kind {
+        if e.attested == true { return .attested(by: e.by, reason: e.reason, when: ago(e.at)) }
+        return switch e.kind {
         case .tests: .tests(suite: e.summary, passed: Int(e.passed ?? 0), failed: Int(e.failed ?? 0))
         case .terminal, .other: .terminal(command: e.command ?? e.summary, output: e.output.isEmpty ? [e.summary] : e.output)
         case .screenshot: .screenshot(caption: e.summary)
@@ -421,42 +448,54 @@ extension TicketLink {
 }
 
 /// Lays its children out in rows, wrapping when the next one doesn't fit.
+/// A child wider than the row is given the row's width and wraps inside it, so the layout never
+/// grows past the width it's offered.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
+    /// The gap between rows; the same as `spacing` unless given.
+    var lineSpacing: CGFloat?
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = rows(width: proposal.width ?? .infinity, subviews: subviews)
-        let height = rows.map { $0.map { $0.size.height }.max() ?? 0 }.reduce(0) { $0 + $1 } + spacing * CGFloat(max(rows.count - 1, 0))
-        let width = rows.map { row in row.map(\.size.width).reduce(0, +) + spacing * CGFloat(max(row.count - 1, 0)) }.max() ?? 0
-        return CGSize(width: width, height: height)
+        let width = proposal.width ?? .infinity
+        return Self.arrange(sizes(width: width, subviews: subviews), width: width, spacing: spacing, lineSpacing: lineSpacing ?? spacing).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(width: bounds.width, subviews: subviews) {
-            var x = bounds.minX
-            let height = row.map(\.size.height).max() ?? 0
-            for item in row {
-                item.view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
-                x += item.size.width + spacing
-            }
-            y += height + spacing
+        let arranged = Self.arrange(sizes(width: bounds.width, subviews: subviews), width: bounds.width, spacing: spacing, lineSpacing: lineSpacing ?? spacing)
+        for (view, frame) in zip(subviews, arranged.frames) {
+            view.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
         }
     }
 
-    private func rows(width: CGFloat, subviews: Subviews) -> [[(view: LayoutSubview, size: CGSize)]] {
-        var rows: [[(view: LayoutSubview, size: CGSize)]] = [[]]
-        var x: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > width, !(rows.last?.isEmpty ?? true) {
-                rows.append([])
+    /// Each child at its ideal size, or at the row's width (and however tall that makes it) when
+    /// its ideal is wider.
+    private func sizes(width: CGFloat, subviews: Subviews) -> [CGSize] {
+        subviews.map { view in
+            let ideal = view.sizeThatFits(.unspecified)
+            guard ideal.width > width else { return ideal }
+            return view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        }
+    }
+
+    /// Where each size goes, left to right in rows no wider than `width`, and the size of the whole.
+    /// A size wider than `width` is clamped to it and gets a row of its own. Rows are `lineSpacing`
+    /// apart, or `spacing` when it's not given.
+    static func arrange(_ sizes: [CGSize], width: CGFloat, spacing: CGFloat, lineSpacing: CGFloat? = nil) -> (frames: [CGRect], size: CGSize) {
+        var frames: [CGRect] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for size in sizes {
+            let size = CGSize(width: min(size.width, width), height: size.height)
+            if x > 0, x + size.width > width {
+                y += rowHeight + (lineSpacing ?? spacing)
                 x = 0
+                rowHeight = 0
             }
-            rows[rows.count - 1].append((view, size))
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            widest = max(widest, x + size.width)
+            rowHeight = max(rowHeight, size.height)
             x += size.width + spacing
         }
-        return rows
+        return (frames, CGSize(width: widest, height: frames.isEmpty ? 0 : y + rowHeight))
     }
 }
 

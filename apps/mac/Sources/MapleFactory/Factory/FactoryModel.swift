@@ -32,6 +32,19 @@ enum TaskState: CaseIterable, Identifiable {
         }
     }
 
+    /// What kind of task lands in this state's column, for the empty column's tooltip.
+    var emptyHint: String {
+        switch self {
+        case .drafting: "Tasks land here while their brief is still being written."
+        case .planning: "Tasks land here while a planner works out how to build them."
+        case .awaitingApproval: "Tasks land here once their plan is ready and waiting on your approval."
+        case .building: "Tasks land here while a builder works through the approved plan."
+        case .reviewing: "Tasks land here once their build is proven and waiting on a review."
+        case .merged: "Tasks land here once their branch is merged."
+        case .cancelled: "Tasks land here when they're cancelled."
+        }
+    }
+
     var color: Color {
         switch self {
         case .drafting: Theme.State.drafting
@@ -132,6 +145,8 @@ struct DoneCriterion: Identifiable {
         case video(caption: String, duration: String)
         case terminal(command: String, output: [String])
         case tests(suite: String, passed: Int, failed: Int)
+        /// A person signed it off themselves instead of the agent proving it.
+        case attested(by: String, reason: String?, when: String)
     }
 
     let text: String
@@ -224,6 +239,24 @@ struct FactoryTask: Identifiable {
     var intakeID: String? = nil
     /// Screens and terminal output the planner drew for the change.
     var mockups: [Mockup] = []
+    /// Waiting for its next session (to plan, build or review) with nobody on it: on the board's Queued column.
+    var queued = false
+    /// Its place in the queue: lower starts first.
+    var queueRank: Double = 0
+    /// Held until then, when it was scheduled.
+    var startAt: Date? = nil
+
+    /// What its next session does, while it's queued.
+    var nextStep: String {
+        switch state {
+        case .planning: "Plan"
+        case .reviewing: "Review"
+        default: "Build"
+        }
+    }
+
+    /// Scheduled for later than now.
+    var scheduled: Bool { startAt.map { $0 > Date() } ?? false }
 
     var proven: Int { doneWhen.filter { $0.status == .proven }.count }
 

@@ -19,7 +19,7 @@ struct TaskFocusView: View {
         self.task = task
         _mode = State(initialValue: task.isSteerable ? .steer : .comment)
         // `-tab diff` opens straight onto the diff, handy for screenshots and demos.
-        let start: Tab = switch UserDefaults.standard.string(forKey: "tab") {
+        let start: Tab = switch AppDefaults.string(forKey: "tab") {
         case "diff": .diff
         case "session": .session
         default: .overview
@@ -92,6 +92,7 @@ struct TaskFocusView: View {
     private var documentLayout: some View {
         VStack(spacing: 0) {
             ScrollView {
+              ScrollViewReader { proxy in
                 VStack(alignment: .leading, spacing: 30) {
                     header
                     StageTrack(task: task)
@@ -125,9 +126,16 @@ struct TaskFocusView: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: mainWidth + railWidth + 120, alignment: .leading)
                 .frame(maxWidth: .infinity)
+                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos.
+                .task {
+                    guard AppDefaults.string(forKey: "scroll") == "doneWhen" else { return }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    proxy.scrollTo("doneWhen", anchor: .top)
+                }
+              }
             }
             // `-scroll bottom` opens at the timeline, handy for screenshots.
-            .defaultScrollAnchor(UserDefaults.standard.string(forKey: "scroll") == "bottom" ? .bottom : .top)
+            .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
             .onDisappear { appState.markSeen(task.id) }
 
             HStack(alignment: .bottom, spacing: 40) {
@@ -305,7 +313,7 @@ struct TaskFocusView: View {
 
             if !task.mockups.isEmpty { MockupsSection(task: task) }
             if !task.plan.isEmpty { PlanSection(task: task) }
-            if !task.doneWhen.isEmpty { DoneWhenSection(task: task) }
+            if !task.doneWhen.isEmpty { DoneWhenSection(task: task).id("doneWhen") }
 
             TaskTimeline(task: task, comments: comments, requests: requests)
         }

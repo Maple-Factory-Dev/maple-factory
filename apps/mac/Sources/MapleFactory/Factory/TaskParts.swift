@@ -65,10 +65,11 @@ struct TaskActionsMenu<Label: View>: View {
     @ViewBuilder var label: Label
     @State private var confirmCancel = false
     @State private var rename = false
+    @State private var scheduling = false
 
     var body: some View {
         Menu {
-            TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename)
+            TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
         } label: {
             label
         }
@@ -76,6 +77,7 @@ struct TaskActionsMenu<Label: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Task actions")
+        .popover(isPresented: $scheduling, arrowEdge: .bottom) { SchedulePopover(task: task) }
         .cancelTaskConfirmation(task: task, isPresented: Binding(
             get: { confirmCancel || appState.confirmingCancel == task.id },
             set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
@@ -84,19 +86,40 @@ struct TaskActionsMenu<Label: View>: View {
     }
 }
 
-/// Everything you can do to a task, for a menu or a row's context menu, in three groups: next
-/// (Send to planning, Retry, Cancel task…), editing (Rename…, teammates' machines) and getting at
-/// it (pull request, branch, ID). Cancel and Rename only ask; the caller shows the confirmation
-/// (`cancelTaskConfirmation`) and the alert (`renameTask`).
+/// Everything you can do to a task, for a menu or a row's context menu: the queue's (Move to top,
+/// Schedule…, Start now, Run now; Queue on a draft), then what to do next (Send to planning, Retry,
+/// Cancel task…), editing (Rename…, teammates' machines) and getting at it (pull request, branch,
+/// ID). Cancel and Rename only ask; the caller shows the confirmation (`cancelTaskConfirmation`) and
+/// the alert (`renameTask`).
 struct TaskActionButtons: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     @Binding var confirmCancel: Bool
     @Binding var rename: Bool
+    /// Shows the Schedule… popover; without it there's no Schedule….
+    var schedule: (() -> Void)? = nil
 
     private var open: Bool { task.state != .merged && task.state != .cancelled }
 
     var body: some View {
+        if task.queued {
+            Button { appState.moveToTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
+            Button { appState.moveToBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
+            if let schedule {
+                Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
+            }
+            Button { appState.startNow(task.id) } label: { Label("Start now", systemImage: "play") }
+            if task.state == .planning || task.state == .building {
+                Button { appState.forceStart(task.id) } label: { Label("Run now, skip the slot wait", systemImage: "bolt") }
+            }
+            Divider()
+        } else if task.state == .drafting {
+            Button { appState.queue(task.id, before: nil) } label: { Label("Queue", systemImage: "list.number") }
+            if let schedule {
+                Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
+            }
+            Divider()
+        }
         if task.state != .merged {
             if task.state == .drafting {
                 Button { appState.plan(task.id) } label: { Label("Send to planning", systemImage: "paperplane") }
@@ -193,7 +216,7 @@ struct QuestionBlock: View {
     @State private var replying = false
     @State private var reply = ""
 
-    private var options: [String] { appState.isLive ? task.questionOptions : ["Auto-provision", "Require invite"] }
+    private var options: [String] { task.questionOptions }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -229,22 +252,15 @@ struct QuestionBlock: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
             }
-            FlowLayout(spacing: 6) {
-                ForEach(options + ["Reply…"], id: \.self) { answer in
-                    Text(answer)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 10)
-                        .frame(height: 26)
-                        .background(
-                            Capsule()
-                                .fill(Theme.cardBG)
-                                .overlay(Capsule().strokeBorder(Theme.stroke))
-                        )
-                        .contentShape(Capsule())
-                        .onTapGesture {
-                            if answer == "Reply…" { replying = true } else { appState.answer(task.id, text: answer) }
-                        }
+            if options.allSatisfy({ $0.count <= 32 }) {
+                FlowLayout(spacing: 6) {
+                    ForEach(options + ["Reply…"], id: \.self) { answer in chip(answer) }
+                }
+            } else {
+                // Long answers read as full-width rows that wrap, like a hand-raise's options.
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(options, id: \.self) { answer in optionRow(answer) }
+                    chip("Reply…")
                 }
             }
             if replying {
@@ -268,6 +284,7 @@ struct QuestionBlock: View {
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Theme.State.planning.opacity(0.08))
@@ -277,6 +294,45 @@ struct QuestionBlock: View {
 }
 
 extension QuestionBlock {
+    private func chip(_ answer: String) -> some View {
+        Text(answer)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                Capsule()
+                    .fill(Theme.cardBG)
+                    .overlay(Capsule().strokeBorder(Theme.stroke))
+            )
+            .contentShape(Capsule())
+            .onTapGesture { pick(answer) }
+    }
+
+    private func optionRow(_ answer: String) -> some View {
+        Text(answer)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .lineSpacing(2)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Theme.cardBG)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .onTapGesture { pick(answer) }
+    }
+
+    private func pick(_ answer: String) {
+        if answer == "Reply…" { replying = true } else { appState.answer(task.id, text: answer) }
+    }
+
     private func sendReply() {
         let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -799,7 +855,8 @@ struct TaskComposer: View {
         VStack(alignment: .leading, spacing: 12) {
             if task.isSteerable, let agent = task.agent {
                 HStack(spacing: 2) {
-                    modeTab("Steer \(agent.name)", icon: "sparkle", mode: .steer)
+                    // On a plan waiting for approval, steering means asking for the next version of it.
+                    modeTab(task.state == .awaitingApproval ? "Revise plan" : "Steer \(agent.name)", icon: "sparkle", mode: .steer)
                     modeTab("Comment", icon: "bubble.left", mode: .comment)
                     Spacer()
                     if steering, task.state == .building {
@@ -866,11 +923,21 @@ struct TaskComposer: View {
                         .strokeBorder(steering && focused.wrappedValue ? Theme.State.planning.opacity(0.6) : Theme.stroke)
                 )
         )
+        // The view may have been built before the task had an agent: once it can be steered, steer by default
+        // so Request changes reaches the agent rather than landing as a comment.
+        .onChange(of: task.isSteerable) { _, steerable in
+            if steerable { mode = .steer }
+        }
     }
 
     private var placeholder: String {
-        guard mode == .steer, task.isSteerable, let agent = task.agent else { return "Comment or @mention someone…" }
+        guard mode == .steer, task.isSteerable, let agent = task.agent else {
+            // Say so up front, so a comment on a plan isn't mistaken for a revision that never comes.
+            if task.state == .awaitingApproval, task.isSteerable { return "Comment for teammates; doesn't send the plan back to \(task.agent?.name ?? "the planner")…" }
+            return "Comment or @mention someone…"
+        }
         switch task.state {
+        case .awaitingApproval: return "What should \(agent.name) change for plan v\(task.planVersion + 1)?"
         case .building: return "Tell \(agent.name) what to change mid-build…"
         case .reviewing: return "What should \(agent.name) fix before merge?"
         default: return "Tell \(agent.name) what to change in the plan…"
