@@ -17,16 +17,12 @@ struct FindingsView: View {
     private static let severities: [Wire.Severity] = [.blocker, .major, .minor]
 
     var body: some View {
-        ScrollViewReader { proxy in
-            content
-                .onReceive(NotificationCenter.default.publisher(for: AppState.demoFindings)) { note in
-                    demo(note.object as? [String] ?? [], proxy: proxy)
-                }
-        }
+        content
+            .onReceive(NotificationCenter.default.publisher(for: AppState.demoFindings)) { demo($0.object as? [String] ?? []) }
     }
 
-    /// A demo script's step, as the click it stands for (AppState.demoFindings).
-    private func demo(_ parts: [String], proxy: ScrollViewProxy) {
+    /// A demo script's step, as the click it stands for (AppState.demoFindings); StatisticsView scrolls to the list.
+    private func demo(_ parts: [String]) {
         guard let f = summary.findings, let verb = parts.first else { return }
         let arg = parts.dropFirst().joined(separator: ":")
         withAnimation(.snappy(duration: 0.3)) {
@@ -35,8 +31,7 @@ struct FindingsView: View {
                 kind = Wire.FindingKind(rawValue: parts[1])
                 severity = Wire.Severity(rawValue: parts[2])
             case "area": area = area == arg ? nil : arg
-            case "list": proxy.scrollTo("findings-list", anchor: .top)
-            case "row": if let r = visible(f).dropFirst(Int(arg) ?? 0).first, state.isLive { state.openFocus(r.task) }
+            case "row": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { open(r.task) }
             default: break
             }
         }
@@ -346,7 +341,7 @@ struct FindingsView: View {
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { if state.isLive { state.openFocus(r.task) } }
+        .onTapGesture { open(r.task) }
         .help("Open \(r.task)")
     }
 
@@ -364,6 +359,11 @@ struct FindingsView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    /// Its task, when there is one to open: live, or the mockup's own (signed out).
+    private func open(_ task: String) {
+        if state.isLive || state.tasks.contains(where: { $0.id == task }) { state.openFocus(task) }
     }
 
     // MARK: Pieces

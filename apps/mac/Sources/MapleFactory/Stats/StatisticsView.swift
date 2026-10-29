@@ -43,6 +43,7 @@ struct StatisticsView: View {
                 switch (note.object as? [String])?.first {
                 case "open": section = "findings"
                 case "back": section = nil
+                case "list": withAnimation(.snappy(duration: 0.4)) { proxy.scrollTo("findings-list", anchor: .top) }
                 default: break
                 }
             }
@@ -639,20 +640,21 @@ extension Wire.StatsFindings {
             byAgent: [.init(agent: "claude", rounds: 66, findings: 81, serious: 48, perRound: 1.23),
                       .init(agent: "codex", rounds: 17, findings: 31, serious: 20, perRound: 1.82)],
             recent: [
-                row("ATL-147", "Passkey sign-in", .code, .major, "The WebAuthn challenge is stored in a cookie without SameSite, so a cross-site POST can replay it.", "lib/auth/passkey.ts:88", "lib/auth", .open, 4, 3),
-                row("ATL-147", "Passkey sign-in", .proof, .major, "The screenshot shows Safari only; the plan asked for Chrome and Firefox too.", nil, "(no file)", .open, 4, 3),
-                row("ONB-88", "Invite flow", .code, .minor, "inviteUrl() builds the link by string concatenation; use URL so the token is escaped.", "app/api/invites/route.ts:41", "app/api", .fixed, 2, 9),
-                row("BIL-212", "Proration on plan change", .scope, .blocker, "customer.subscription.updated arriving after a newer event either drops a real downgrade or re-applies a stale plan.", "app/api/webhooks/stripe/route.ts:64", "app/api", .fixed, 2, 20),
-                row("BIL-212", "Proration on plan change", .code, .major, "Event ids aren't unique-indexed; a race can process the same event twice.", "db/migrations/0044_stripe_events.sql", "db/migrations", .fixed, 2, 20),
-                row("ATL-147", "Passkey sign-in", .code, .major, "Refresh tokens survive sign-out; revoke the token family too.", "lib/auth/refresh.ts", "lib/auth", .fixed, 2, 26),
-                row("ATL-141", "Sign-out everywhere", .scope, .blocker, "Edge session cache isn't purged in every region, so other devices stay signed in for up to 60s.", "lib/session/edge-cache.ts:52", "lib/session", .disputed, 2, 40),
-                row("ONB-80", "Welcome email", .proof, .major, "No Outlook render attached; Outlook is where table layouts usually break.", nil, "(no file)", .fixed, 2, 52),
-                row("ONB-80", "Welcome email", .code, .major, "Email used a <style> block, which Gmail strips.", "emails/invite.tsx", "emails", .fixed, 1, 60),
-                row("BIL-207", "Annual plans", .risk, .major, "The price migration rewrites live subscriptions without a dry run.", "db/migrations/0041_annual.sql", "db/migrations", .fixed, 1, 75),
-                row("BIL-207", "Annual plans", .code, .minor, "PlanPicker re-renders on every keystroke; memoise the price table.", "components/billing/PlanPicker.tsx", "components/billing", .open, 1, 75),
-                row("ATL-139", "JWT hardening", .risk, .major, "jwtVerify() doesn't pin algorithms; pass { algorithms: ['HS256'] }.", "lib/auth/jwt.ts:21", "lib/auth", .fixed, 1, 110),
-                row("ATL-139", "JWT hardening", .code, .blocker, "verifyToken() isn't awaited in withAuth, so the promise is always truthy and any token passes.", "lib/auth/middleware.ts:38", "lib/auth", .fixed, 1, 110),
-                row("ONB-71", "Docs links", .code, .minor, "README still links the old setup guide.", "README.md", "(root)", nil, 1, 300),
+                row("ATL-147", "Refresh-token rotation with reuse detection", .code, .major, "A reused refresh token revokes only itself; revoke the whole token family so a stolen one can't keep a session alive.", "lib/auth/refresh.ts:88", "lib/auth", .open, 3, 3),
+                row("ATL-147", "Refresh-token rotation with reuse detection", .proof, .major, "The test output shows rotation but not reuse detection; run the reuse case too.", nil, "(no file)", .open, 3, 3),
+                row("ONB-19", "Invite-teammates step", .code, .minor, "inviteUrl() builds the link by string concatenation; use URL so the token is escaped.", "app/api/invites/route.ts:41", "app/api", .fixed, 2, 9),
+                row("BIL-91", "Idempotency keys on Stripe webhooks", .scope, .blocker, "customer.subscription.updated arriving after a newer event either drops a real downgrade or re-applies a stale plan.", "app/api/webhooks/stripe/route.ts:64", "app/api", .fixed, 2, 20),
+                row("BIL-91", "Idempotency keys on Stripe webhooks", .code, .major, "Event ids aren't unique-indexed; a race can process the same event twice.", "db/migrations/0044_stripe_events.sql", "db/migrations", .fixed, 2, 20),
+                row("ATL-150", "Sign out across all devices", .code, .major, "Refresh tokens survive sign-out; revoke the token family too.", "lib/auth/refresh.ts", "lib/auth", .fixed, 2, 26),
+                row("ATL-150", "Sign out across all devices", .scope, .blocker, "Edge session cache isn't purged in every region, so other devices stay signed in for up to 60s.", "lib/session/edge-cache.ts:52", "lib/session", .disputed, 2, 40),
+                row("ONB-19", "Invite-teammates step", .proof, .major, "No Outlook render attached; Outlook is where table layouts usually break.", nil, "(no file)", .fixed, 2, 52),
+                row("ONB-19", "Invite-teammates step", .code, .major, "Email used a <style> block, which Gmail strips.", "emails/invite.tsx", "emails", .fixed, 1, 60),
+                row("BIL-93", "Usage-based metering pipeline", .risk, .major, "The backfill migration rewrites live usage rows without a dry run.", "db/migrations/0041_usage.sql", "db/migrations", .fixed, 1, 75),
+                row("BIL-93", "Usage-based metering pipeline", .code, .minor, "UsageChart re-renders on every tick; memoise the series.", "components/billing/UsageChart.tsx", "components/billing", .open, 1, 75),
+                row("ATL-141", "Replace jsonwebtoken with jose", .risk, .major, "jwtVerify() doesn't pin algorithms; pass { algorithms: ['HS256'] }.", "lib/auth/jwt.ts:21", "lib/auth", .fixed, 1, 110),
+                row("ATL-144", "Extract auth middleware from route handlers", .code, .blocker, "verifyToken() isn't awaited in withAuth, so the promise is always truthy and any token passes.", "lib/auth/middleware.ts:38", "lib/auth", .fixed, 1, 110),
+                row("ATL-144", "Extract auth middleware from route handlers", .code, .major, "withAuth swallows the error and returns 200 with an empty body; return 401.", "app/api/projects/route.ts:17", "app/api", .fixed, 1, 112),
+                row("ONB-21", "Workspace templates picker", .code, .minor, "README still links the old setup guide.", "README.md", "(root)", nil, 1, 300),
             ]
         )
     }
