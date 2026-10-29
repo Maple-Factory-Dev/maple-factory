@@ -237,6 +237,24 @@ struct FactoryTask: Identifiable {
     var intakeID: String? = nil
     /// Screens and terminal output the planner drew for the change.
     var mockups: [Mockup] = []
+    /// Waiting for its next session (to plan, build or review) with nobody on it: on the board's Queued column.
+    var queued = false
+    /// Its place in the queue: lower starts first.
+    var queueRank: Double = 0
+    /// Held until then, when it was scheduled.
+    var startAt: Date? = nil
+
+    /// What its next session does, while it's queued.
+    var nextStep: String {
+        switch state {
+        case .planning: "Plan"
+        case .reviewing: "Review"
+        default: "Build"
+        }
+    }
+
+    /// Scheduled for later than now.
+    var scheduled: Bool { startAt.map { $0 > Date() } ?? false }
 
     var proven: Int { doneWhen.filter { $0.status == .proven }.count }
 

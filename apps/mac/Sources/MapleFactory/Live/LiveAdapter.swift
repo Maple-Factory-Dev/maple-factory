@@ -110,7 +110,7 @@ import SwiftUI
         task.doneWhen = t.doneWhen.map { item in
             DoneCriterion(text: item.text, proof: proofKind(item.proof), status: proofStatus(item.status), evidence: item.evidence.map(evidence))
         }
-        task.liveLog = t.waiting ?? t.liveLog
+        task.liveLog = t.waiting.map { $0.hasPrefix("Scheduled") ? "Scheduled" : $0 } ?? t.liveLog
         task.footprint = t.diff.map { ($0.files.count, ($0.added + $0.removed).int, false) } ?? t.footprint.map { ($0.files.int, $0.lines.int, $0.estimated) }
         task.areas = t.risk?.areas ?? []
         task.plannedRisk = t.risk.map { riskLevel($0.level) } ?? .low
@@ -137,7 +137,22 @@ import SwiftUI
         task.mockups = t.mockups.map(mockup)
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
+        task.queued = queued(t)
+        task.queueRank = t.queueRank ?? Double(t.createdAt)
+        task.startAt = t.startAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         return task
+    }
+
+    /// Waiting for a session with nobody on it, as the factory's queue reads it: planning, building
+    /// (one the factory has said why it's waiting; otherwise it's finishing), or a review round in progress.
+    static func queued(_ t: Wire.Task) -> Bool {
+        guard t.worker == nil, t.hand == nil, t.question == nil else { return false }
+        switch t.state {
+        case .planning: return true
+        case .building: return t.waiting != nil
+        case .reviewing: return t.autoReview?.rounds.last?.verdict == .inProgress
+        default: return false
+        }
     }
 
     static func needsYou(_ t: Wire.Task, me: String?) -> Bool {
@@ -151,7 +166,8 @@ import SwiftUI
     private static func detail(_ t: Wire.Task) -> String {
         if t.hand != nil { return "Needs a hand" }
         if t.question != nil { return "Asked a question" }
-        if let waiting = t.waiting { return waiting }
+        // A schedule shows as its own badge; the server's line has the time in UTC.
+        if let waiting = t.waiting { return waiting.hasPrefix("Scheduled") ? "Scheduled" : waiting }
         switch t.state {
         case .drafting: return "Draft"
         case .planning: return t.worker == nil ? "Waiting for a planner" : "Drafting the plan"

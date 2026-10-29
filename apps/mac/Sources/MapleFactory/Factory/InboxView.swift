@@ -209,8 +209,7 @@ struct InboxView: View {
         .padding(.vertical, 11)
         .background(selected ? Theme.fillSubtle : .clear)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { state.openFocus(task.id) }
-        .onTapGesture { state.toggleTask(task.id) }
+        .taskClicks(task.id)
     }
 
     @ViewBuilder private func actionButton(_ item: InboxItem) -> some View {
