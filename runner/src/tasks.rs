@@ -597,7 +597,8 @@ pub async fn open(
 }
 
 /// A task's worktree that's already there (`cwd`), for a new session in it: nothing is fetched or
-/// branched, and it must still be on the task's branch, `agent/<name>`.
+/// branched, and it must still be on the task's branch, `agent/<name>`. One left on a detached HEAD
+/// (a merge that didn't switch back) is put back on the branch first when nothing would be lost.
 pub async fn existing(cwd: &str, req: &crate::worktrees::Request) -> Result<String> {
     valid_name(&req.name)?;
     let want = format!("{BRANCH_PREFIX}{}", req.name);
@@ -606,10 +607,32 @@ pub async fn existing(cwd: &str, req: &crate::worktrees::Request) -> Result<Stri
         bail!("The task's worktree {cwd} isn't there any more.");
     }
     let branch = git(&dir, &["rev-parse", "--abbrev-ref", "HEAD"], None).await.map_err(|_| anyhow!("{cwd} isn't a git worktree."))?;
-    if branch.trim() != want {
-        bail!("{cwd} is on {}, not the task's branch {want}.", branch.trim());
+    match branch.trim() {
+        "HEAD" => reattach(&dir, cwd, &want).await?,
+        b if b != want => bail!("{cwd} is on {b}, not the task's branch {want}."),
+        _ => {}
     }
     Ok(cwd.to_string())
+}
+
+/// Puts a detached worktree back on `want`. A half-done merge is aborted, and a merge commit the push
+/// never delivered may be dropped, but not a commit of real work that only HEAD holds.
+async fn reattach(dir: &Path, cwd: &str, want: &str) -> Result<()> {
+    let at = git(dir, &["rev-parse", "--short", "HEAD"], None).await.map(|s| s.trim().to_string()).unwrap_or_default();
+    let stuck = |why: String| anyhow!("{cwd} is detached at {at}, not on the task's branch {want}: {why}");
+    let local = format!("refs/heads/{want}");
+    if git(dir, &["rev-parse", "--verify", "--quiet", &local], None).await.is_err() {
+        return Err(stuck("the branch is gone.".into()));
+    }
+    let _ = git(dir, &["merge", "--abort"], None).await;
+    let only_head = git(dir, &["rev-list", "--no-merges", "HEAD", "--not", &local, "--remotes"], None).await?;
+    let n = only_head.lines().filter(|l| !l.trim().is_empty()).count();
+    if n > 0 {
+        return Err(stuck(format!("HEAD has {n} commit{} not on the branch, so it's left as it is.", if n == 1 { "" } else { "s" })));
+    }
+    git(dir, &["checkout", "--quiet", want], None).await.map_err(|e| stuck(format!("switching back failed ({e}).")))?;
+    tracing::info!("{cwd} was detached at {at}: put it back on {want}");
+    Ok(())
 }
 
 /// Makes a task's worktree. The checkout is the folder the task names, else this machine's checkout
