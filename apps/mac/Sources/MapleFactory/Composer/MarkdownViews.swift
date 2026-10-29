@@ -153,6 +153,8 @@ struct BriefReading {
 struct MarkdownPreview: View {
     let source: String
     var baseSize: CGFloat = 13.5
+    /// Images as thumbnails that fit a narrow column (LinkedImage.thumbnail).
+    var thumbnails = false
 
     var body: some View {
         let blocks = MarkdownBlock.parse(source)
@@ -261,7 +263,7 @@ struct MarkdownPreview: View {
         case .rule:
             Hairline()
         case let .image(alt, path):
-            LinkedImage(alt: alt, path: path)
+            LinkedImage(alt: alt, path: path, thumbnail: thumbnails)
         case let .file(name, path):
             AttachmentChip(name: name, path: path)
         }

@@ -69,14 +69,7 @@ struct TaskInspector: View {
                         TaskSection(title: "Changes requested") { ChangeRequestList(task: task, requests: openRequests) }
                     }
                     if !task.brief.isEmpty {
-                        TaskSection(title: "Brief") {
-                            Text(task.brief)
-                                .font(Theme.uiFont)
-                                .foregroundStyle(Theme.text.opacity(0.88))
-                                .lineSpacing(4)
-                                .lineLimit(4)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        TaskSection(title: "Brief") { BriefPeek(brief: task.brief, openFull: openFull) }
                     }
                     if hasSummaries {
                         PeekGroup {
@@ -157,6 +150,38 @@ struct TaskInspector: View {
 }
 
 /// The six pipeline stages as a connected track, with everything up to the current state filled in.
+/// The brief, rendered, but only its top: a long one fades out under a "Show all" that opens the full view.
+private struct BriefPeek: View {
+    let brief: String
+    let openFull: () -> Void
+    @State private var height: CGFloat = 0
+
+    private static let cap: CGFloat = 180
+    private var overflows: Bool { height > Self.cap + 1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MarkdownPreview(source: brief, baseSize: 12.5, thumbnails: true)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
+                .frame(maxHeight: Self.cap, alignment: .top)
+                .clipped()
+                .mask {
+                    LinearGradient(stops: [.init(color: .black, location: overflows ? 0.7 : 1), .init(color: .black.opacity(overflows ? 0 : 1), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+            if overflows {
+                Text("Show all")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: openFull)
+                    .help("Open full view (⌘↩)")
+            }
+        }
+    }
+}
+
 struct PipelineStepper: View {
     let state: TaskState
 
