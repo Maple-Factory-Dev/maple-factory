@@ -20,6 +20,7 @@ import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
 import type { StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
+import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
 import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
@@ -75,7 +76,7 @@ const fail = (message: string): never => {
 export class Engine {
   private drafts: Drafts;
 
-  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake) {
+  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
       sendTo: (login, message) => hooks.sendTo(login, message),
       machines: () => hooks.machines(),
@@ -153,6 +154,24 @@ export class Engine {
         this.store.saveRepos(repos.filter((r) => r !== repo));
         await audit(this.env, who, "repo.removed", null, { name: repo.name });
         this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+        return;
+      }
+      case "secrets.set":
+      case "secrets.delete": {
+        if (member.role !== "admin") fail("Only admins can change a repo's secrets.");
+        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name
+          ?? fail(`${msg.repo} isn't one of the org's repos.`);
+        const name = msg.name.trim();
+        if (msg.type === "secrets.set") {
+          try {
+            await this.secrets.set(repo, name, msg.value, who);
+          } catch (e) {
+            fail((e as Error).message);
+          }
+        } else if (!this.secrets.delete(repo, name)) fail(`${repo} has no secret called ${name}.`);
+        // Which one and who, never the value.
+        await audit(this.env, who, msg.type === "secrets.set" ? "secret.set" : "secret.deleted", repo, { repo, name });
+        this.hooks.broadcast({ type: "secrets.updated", secrets: this.secrets.list() });
         return;
       }
       case "policy.save": {
@@ -1018,9 +1037,40 @@ export class Engine {
         }
         return null;
       }
+      case "secrets.request": return this.releaseSecrets(machine, msg), null;
       default:
         return null;
     }
+  }
+
+  /** A repo's secret values, to a machine with a task assigned to it on that repo, or (no task: the
+   *  `maple-runner secrets pull` CLI) to a machine whose owner is a member. Every release is audited. */
+  private async releaseSecrets(machine: string, msg: Extract<RunnerMessage, { type: "secrets.request" }>) {
+    const reply = (values: Record<string, string> | null, error: string | null, code: string | null) =>
+      this.toRunner(machine, { type: "secrets.reply", reqId: msg.reqId, values, error, code });
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name;
+    if (!repo) return reply(null, `${msg.repo} isn't one of the org's repos.`, "unknown_repo");
+    let actor: string;
+    if (msg.taskId) {
+      const task = this.store.task(msg.taskId);
+      if (!task || task.machine !== machine) return reply(null, "That task isn't assigned to this machine.", "forbidden");
+      const taskRepoName = taskRepo(task, this.store.goal(task.goal) ?? null);
+      if (taskRepoName?.toLowerCase() !== repo.toLowerCase()) return reply(null, `${task.id} works on ${taskRepoName ?? "no repo"}, not ${repo}.`, "forbidden");
+      actor = task.id;
+    } else {
+      const owner = (await this.hooks.machines()).find((m) => m.id === machine)?.owner;
+      if (!owner || !(await this.hooks.members()).some((m) => m.login === owner)) return reply(null, "This machine's owner isn't a member of the org.", "forbidden");
+      actor = owner;
+    }
+    let values: Record<string, string>;
+    try {
+      values = await this.secrets.values(repo);
+    } catch (e) {
+      console.error("secrets: couldn't open", repo, e);
+      return reply(null, "The factory couldn't decrypt this repo's secrets (was SECRETS_KEY changed?).", "decrypt");
+    }
+    await audit(this.env, `machine:${machine}`, "secret.pulled", repo, { machine, repo, task: msg.taskId ?? null, for: actor, names: Object.keys(values).sort() });
+    return reply(values, null, null);
   }
 
   /** A session ended. The ones the factory closed are already marked; anything else is unplanned. */

@@ -10,6 +10,7 @@ import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
+import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
@@ -29,10 +30,12 @@ export class OrgHub extends DurableObject<Env> {
   private store: Store;
   private engine: Engine;
   private intake: Intake;
+  private secrets: Secrets;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.store = new Store(ctx.storage.sql);
+    this.secrets = new Secrets(ctx.storage.sql, env);
     this.intake = new Intake(this.store, {
       broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
       waitUntil: (p) => ctx.waitUntil(p),
@@ -53,7 +56,7 @@ export class OrgHub extends DurableObject<Env> {
         const set = await ctx.storage.getAlarm();
         if (set == null || set > at) await ctx.storage.setAlarm(at);
       })()),
-    }, this.intake);
+    }, this.intake, this.secrets);
   }
 
   /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again;
@@ -298,6 +301,7 @@ export class OrgHub extends DurableObject<Env> {
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
           intake: this.intake.list(),
+          secrets: this.secrets.list(),
           repos: this.store.repos(),
           runnerLatest: await this.runnerLatest(),
           serverVersion: SERVER_VERSION,
