@@ -380,6 +380,7 @@ export class Engine {
       case "task.merge": {
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
         if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
+        if (this.store.private(task.id).merging) fail("It's merging now.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
@@ -1158,7 +1159,8 @@ export class Engine {
 
   private merged(msg: Extract<RunnerMessage, { type: "task.merged" }>) {
     const task = this.store.task(msg.taskId);
-    if (!task || !task.pr) return;
+    // Already merged: a second answer (a webhook after the merge call's own) changes nothing.
+    if (!task || !task.pr || task.state === "merged") return;
     task.liveLog = null;
     this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false });
     if (!msg.ok) {
