@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.40.0 — 2026-10-29
+
+Runner updates report Installing before they download, so the app shows what's coming; the release notes and date now reach the Mac app's What's new.
+
 ## 0.39.0 — 2026-10-29
 
 Turn off auto-merges, and goal due dates.
