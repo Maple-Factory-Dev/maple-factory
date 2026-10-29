@@ -157,6 +157,13 @@ select { appearance: none; padding-right: 30px; cursor: pointer;
 .check { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--stroke); }
 .check:first-child { border-top: 0; }
 .mark { flex: none; width: 18px; text-align: center; }
+.check-head { display: flex; align-items: baseline; gap: 6px 8px; flex-wrap: wrap; }
+.check-head .check-text { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.check-head .pill { flex: none; }
+.check-head .btn { flex: none; }
+.attest { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 10px; background: var(--raised); }
+.attest b { font-size: 13.5px; }
+.attest input { width: 100%; min-width: 0; box-sizing: border-box; }
 .ok { color: var(--merged); } .bad { color: var(--cancelled); } .wait { color: var(--awaiting); }
 pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); border-radius: 8px; padding: 8px 10px; font: 12px/1.5 var(--mono); overflow-x: auto; white-space: pre; }
 
