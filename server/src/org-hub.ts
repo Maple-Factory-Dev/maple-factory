@@ -272,6 +272,7 @@ export class OrgHub extends DurableObject<Env> {
           tasks: this.store.tasks(),
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
+          prompts: this.store.prompts(),
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),

@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, PromptAdditions, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -269,6 +269,16 @@ export class Store {
 
   savePolicy(policy: RiskPolicy) {
     this.set("policy", JSON.stringify(policy));
+  }
+
+  /** The org's additions to every session's prompt, by role. */
+  prompts(): PromptAdditions {
+    const saved = this.get("prompts");
+    return { planner: "", builder: "", reviewer: "", ...(saved ? JSON.parse(saved) : {}) };
+  }
+
+  savePrompts(prompts: PromptAdditions) {
+    this.set("prompts", JSON.stringify(prompts));
   }
 
   /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */
