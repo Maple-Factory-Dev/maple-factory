@@ -38,6 +38,20 @@ import Testing
         #expect(task.agent?.name == FactoryData.reviewer.name)
     }
 
+    /// A stage agent doesn't mean a session is running: Retry on such a task must still send task.retry.
+    @Test func retryWithNoSessionSendsTaskRetry() throws {
+        for state in ["planning", "awaitingApproval", "building", "reviewing"] {
+            let task = adapt(try task(state: state))
+            #expect(task.agent != nil)
+            #expect(AppState.handAnswer(task, option: "Retry", note: "") == .taskRetry(.init(id: "MF-1")))
+        }
+    }
+
+    @Test func retryWithARunningSessionResolvesTheHand() throws {
+        let task = adapt(try task(state: "building", worker: "builder"))
+        #expect(AppState.handAnswer(task, option: "Retry", note: "n") == .taskResolveHand(.init(id: "MF-1", option: "Retry", note: "n")))
+    }
+
     @Test func finishedWorkHasNoAgent() throws {
         #expect(adapt(try task(state: "merged")).agent == nil)
         #expect(!adapt(try task(state: "drafting")).isSteerable)

@@ -991,16 +991,18 @@ final class AppState {
         }
     }
 
+    /// What answering a raised hand sends. Retry with no session running is a real retry, so the server
+    /// repairs the task's state; a task's agent is set from its stage even when nothing runs, so check the worker.
+    static func handAnswer(_ task: FactoryTask, option: String?, note: String) -> Wire.ClientMessage {
+        if option == "Cancel it" { return .taskCancel(.init(id: task.id)) }
+        if option == "Retry" && task.worker == nil { return .taskRetry(.init(id: task.id)) }
+        return .taskResolveHand(.init(id: task.id, option: option, note: note))
+    }
+
     /// Answers a raised hand: the agent takes the chosen option (plus any note) and gets moving again.
     func resolveHand(_ id: String, option: HandRaise.Option?, note: String) {
         if let client, isLive {
-            if option?.title == "Cancel it" {
-                client.send(.taskCancel(.init(id: id)))
-            } else if option?.title == "Retry" && task(id).agent == nil {
-                client.send(.taskRetry(.init(id: id)))
-            } else {
-                client.send(.taskResolveHand(.init(id: id, option: option?.title, note: note)))
-            }
+            client.send(Self.handAnswer(task(id), option: option?.title, note: note))
             return
         }
         guard let hand = task(id).hand else { return }
