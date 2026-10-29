@@ -287,7 +287,10 @@ struct ReviewActions: View {
                 let approving = state.isInFlight(task.id, .approveChanges)
                 let merging = state.isInFlight(task.id, .merge)
                 DecisionButtons {
-                    if !gate.reviewsReady && !iReviewed {
+                    if !gate.autoReviewReady && !gate.reviewsReady && !iReviewed {
+                        // The server refuses approvals until the reviewer passes the round, so say so instead of failing silently.
+                        PrimaryButton(title: "Approve after review", icon: "hourglass", enabled: false) {}
+                    } else if !gate.reviewsReady && !iReviewed {
                         PrimaryButton(title: "Approve changes", icon: "checkmark", busy: approving, busyTitle: "Approving…") {
                             state.approveChanges(task.id)
                         }
