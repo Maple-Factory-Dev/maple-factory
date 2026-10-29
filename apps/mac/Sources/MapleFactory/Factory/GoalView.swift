@@ -363,7 +363,7 @@ struct SchedulePopover: View {
             }
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 340)
     }
 }
 
