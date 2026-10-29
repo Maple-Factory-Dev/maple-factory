@@ -923,6 +923,20 @@ export class Engine {
         await this.ended(msg.end);
         return null;
       }
+      case "session.cost": {
+        // Filed under the session's task and role; anything the factory didn't start is dropped.
+        const c = msg.cost;
+        const s = this.store.session(c.session);
+        const task = s && this.store.task(s.task);
+        if (!s || !task) return null;
+        this.store.recordSessionCost({
+          session: s.id, task: task.id, goal: task.goal, role: s.role, agent: c.agent || s.agent, model: c.model ?? null,
+          costUsd: c.costUsd ?? null,
+          tokens: { input: c.inputTokens, output: c.outputTokens, cacheRead: c.cacheReadTokens, cacheWrite: c.cacheWriteTokens },
+          updated: Date.now(),
+        });
+        return null;
+      }
       case "task.started": {
         const task = this.store.task(msg.taskId);
         if (!task) return null;

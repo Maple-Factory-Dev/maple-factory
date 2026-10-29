@@ -240,6 +240,10 @@ export class MachineHub extends DurableObject<Env> {
         await this.publish({ ...machine, usage: [...kept, ...fresh] });
         return;
       }
+      case "session.cost":
+        // Only factory sessions' spend is kept; personal sessions stay on the machine.
+        if (machine.sessions.find((s) => s.session.id === msg.cost.session)?.session.taskId) await this.toFactory(machine.id, msg);
+        return;
       case "mcp.request": {
         const reply = (await this.toFactory(machine.id, msg)) as { result?: unknown; error?: string } | null;
         this.toRunner({ type: "mcp.response", reqId: msg.reqId, result: reply?.result ?? null, error: reply?.error ?? (reply?.result ? null : "The factory didn't answer.") });
