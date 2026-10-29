@@ -1,0 +1,70 @@
+# maple-runner changelog
+
+Newest first. A release adds its `## <version> — <date>` section here before running
+`scripts/release-runner.mjs`, which takes that section as the manifest's notes (unless `--notes` is given) and
+publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
+"What's new" for runners.
+
+## 0.39.0 — 2026-10-29
+
+Turn off auto-merges, and goal due dates.
+
+## 0.38.0 — 2026-10-29
+
+Take over or reassign a task.
+
+## 0.37.0 — 2026-10-29
+
+Each session's cost, by role and by agent and model.
+
+## 0.36.0 — 2026-10-29
+
+@mention teammates in comments.
+
+## 0.35.0 — 2026-10-29
+
+Efforts link tasks into a bigger piece of work; admins add to agents' prompts for the org or a goal.
+
+## 0.34.0 — 2026-10-29
+
+Factory statistics for admins, and a new /setup and welcome page.
+
+## 0.33.0 — 2026-10-29
+
+A session's permission prompt shows on its task, with Yes and No.
+
+## 0.32.0 — 2026-10-29
+
+Screenshot and video proofs, uploaded by the runner and shown to members.
+
+## 0.31.0 — 2026-10-28
+
+Run now starts a queued task without waiting for a free slot.
+
+## 0.30.0 — 2026-10-28
+
+Attest to a Done when item yourself, with an optional reason.
+
+## 0.29.0 — 2026-10-28
+
+Bare maple-runner prints a colorized command list and the runner is `maple-runner run` (services installed before still run).
+
+## 0.28.0 — 2026-10-28
+
+A task queue with order and schedules; the web app loads again (0.6.0 and 0.7.0 declared cancelling twice).
+
+## 0.27.0 — 2026-10-28
+
+A merged task's branch is deleted on GitHub, and its stale tracking ref dropped.
+
+## 0.26.0 — 2026-10-28
+
+Tolerates enum values a newer server adds; Retry puts a detached worktree back on its branch.
+
+## 0.25.0 — 2026-10-28
+
+A merge that fails raises a Didn't merge hand to send back, retry or cancel.
+
+## 0.24.0 — 2026-10-28
+
+Attachments, Draft with AI transcripts, approval waiting on the automatic review.

@@ -1855,6 +1855,13 @@ final class AppState {
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), and its What's New sheet.
+            case "runnerupdate":
+                for _ in 0..<300 {
+                    if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.send(.machineUpdate(.init(machine: machine.id))); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "accept":
