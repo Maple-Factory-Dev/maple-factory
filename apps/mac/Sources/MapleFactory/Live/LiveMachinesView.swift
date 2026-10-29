@@ -76,6 +76,7 @@ struct LiveMachinesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                if client.status == .tooNew { TooNewBanner() }
 
                 if client.machines.isEmpty {
                     emptyState
@@ -597,6 +598,7 @@ struct ConnectionPill: View {
         case .live: ("Live · \(client.server?.host() ?? "")", Theme.State.merged)
         case .connecting: ("Connecting…", Theme.textMuted)
         case .reconnecting(let attempt, let reason): ("\(reason) Retrying\(attempt > 1 ? " (\(attempt))" : "")…", Theme.State.awaitingApproval)
+        case .tooNew: ("Update needed", Theme.State.awaitingApproval)
         case .signedOut: ("Signed out", Theme.textFaint)
         }
         HStack(spacing: 5) {
@@ -611,6 +613,39 @@ struct ConnectionPill: View {
     }
 }
 
+/// The factory sent something this build can't read, so the feed is down until the app is updated.
+struct TooNewBanner: View {
+    private var updater: Updater { .shared }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.down.app.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.State.awaitingApproval)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(FactoryClient.tooNewMessage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text("It sends things this version of the app can't read yet. Machines and tasks come back once you update.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+            }
+            Spacer(minLength: 8)
+            // Without a feed (`swift run`), Sparkle is inert: send them to the download page instead.
+            PrimaryButton(title: "Check for Updates", icon: "arrow.down.circle", enabled: !updater.available || updater.canCheck, color: Theme.accent) {
+                if updater.available { updater.checkForUpdates() } else { NSWorkspace.shared.open(URL(string: "https://maplefactory.dev")!) }
+            }
+            .fixedSize()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.State.awaitingApproval.opacity(0.08))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.awaitingApproval.opacity(0.3)))
+        )
+    }
+}
+
 // MARK: Formatting
 
 extension Wire.AgentState {
@@ -619,7 +654,7 @@ extension Wire.AgentState {
         case .working: Theme.State.building
         case .waiting: Theme.State.awaitingApproval
         case .done: Theme.State.merged
-        case .idle: Theme.State.drafting
+        case .idle, .other: Theme.State.drafting
         }
     }
 
@@ -629,6 +664,7 @@ extension Wire.AgentState {
         case .waiting: "Waiting for someone"
         case .done: "Finished its turn"
         case .idle: "Ready"
+        case .other: "Busy"
         }
     }
 }
@@ -656,7 +692,7 @@ extension Wire.EndCause {
         case .runnerUpdated: "Runner restarted"
         case .authExpired: "Login expired"
         case .usageLimit: "Usage limit"
-        case .unknown: "Ended, cause unknown"
+        case .unknown, .other: "Ended, cause unknown"
         }
     }
 
@@ -672,6 +708,7 @@ extension Wire.EndCause {
         case .authExpired: "The agent's login needs renewing on that machine."
         case .usageLimit: "The account hit its session or weekly limit."
         case .unknown: "The runner couldn't tell what ended it."
+        case .other: "It ended for a reason this version of the app doesn't know."
         }
     }
 
@@ -686,7 +723,7 @@ extension Wire.EndCause {
         case .runnerUpdated: "arrow.triangle.2.circlepath"
         case .authExpired: "key.fill"
         case .usageLimit: "gauge.with.dots.needle.100percent"
-        case .unknown: "questionmark"
+        case .unknown, .other: "questionmark"
         }
     }
 
@@ -695,7 +732,7 @@ extension Wire.EndCause {
         case .exited: Theme.State.merged
         case .killed, .runnerUpdated: Theme.State.drafting
         case .machineSlept, .usageLimit, .authExpired: Theme.State.awaitingApproval
-        case .signaled, .outOfMemory, .tmuxLost, .unknown: Theme.State.cancelled
+        case .signaled, .outOfMemory, .tmuxLost, .unknown, .other: Theme.State.cancelled
         }
     }
 }

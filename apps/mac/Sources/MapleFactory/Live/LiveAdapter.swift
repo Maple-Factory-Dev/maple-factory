@@ -156,9 +156,11 @@ import SwiftUI
             case .passed: return t.reviewsNeeded == 0 ? "Ready to merge" : "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
             case .changesRequested: return "Changes requested"
             case .escalated: return "Escalated"
+            case .other: return "In review"
             }
         case .merged: return t.pr.map { "#\($0.number) merged" } ?? "Merged"
         case .cancelled: return "Cancelled"
+        case .other: return "In progress"
         }
     }
 
@@ -171,6 +173,8 @@ import SwiftUI
         case .reviewing: .reviewing
         case .merged: .merged
         case .cancelled: .cancelled
+        // A state a newer factory added: show it as work in progress.
+        case .other: .building
         }
     }
 
@@ -214,7 +218,7 @@ import SwiftUI
     static func riskLevel(_ level: Wire.RiskLevel) -> RiskLevel {
         switch level {
         case .low: .low
-        case .medium: .medium
+        case .medium, .other: .medium
         case .high: .high
         }
     }
@@ -255,13 +259,13 @@ import SwiftUI
         switch p {
         case .done: .done
         case .active: .active
-        case .pending: .pending
+        case .pending, .other: .pending
         }
     }
 
     private static func changeStatus(_ s: Wire.ChangeStatus) -> ChangeRequest.Status {
         switch s {
-        case .queued: .queued
+        case .queued, .other: .queued
         case .applying: .applying
         case .applied: .applied
         }
@@ -271,14 +275,14 @@ import SwiftUI
         switch k {
         case .screenshot: .screenshot
         case .video: .video
-        case .terminal: .terminal
+        case .terminal, .other: .terminal
         case .tests: .tests
         }
     }
 
     private static func proofStatus(_ s: Wire.ProofStatus) -> DoneCriterion.Status {
         switch s {
-        case .pending: .pending
+        case .pending, .other: .pending
         case .proving: .proving
         case .proven: .proven
         case .failed: .failed
@@ -288,7 +292,7 @@ import SwiftUI
     private static func evidence(_ e: Wire.Evidence) -> DoneCriterion.Evidence {
         switch e.kind {
         case .tests: .tests(suite: e.summary, passed: Int(e.passed ?? 0), failed: Int(e.failed ?? 0))
-        case .terminal: .terminal(command: e.command ?? e.summary, output: e.output.isEmpty ? [e.summary] : e.output)
+        case .terminal, .other: .terminal(command: e.command ?? e.summary, output: e.output.isEmpty ? [e.summary] : e.output)
         case .screenshot: .screenshot(caption: e.summary)
         case .video: .video(caption: e.summary, duration: "")
         }
@@ -297,7 +301,7 @@ import SwiftUI
     private static func prState(_ s: Wire.PRState) -> PullRequest.State {
         switch s {
         case .draft: .draft
-        case .open: .open
+        case .open, .other: .open
         case .closed: .closed
         case .merged: .merged
         }
@@ -305,7 +309,7 @@ import SwiftUI
 
     private static func check(_ c: Wire.CICheck) -> CICheck {
         let status: CICheck.Status = switch c.status {
-        case .queued: .queued
+        case .queued, .other: .queued
         case .running: .running
         case .passed: .passed
         case .failed: .failed
@@ -317,7 +321,7 @@ import SwiftUI
         let verdict = { (v: Wire.CheckVerdict) -> ReviewCheck.Verdict in
             switch v {
             case .met: .met
-            case .partial: .partial
+            case .partial, .other: .partial
             case .missed: .missed
             }
         }
@@ -328,7 +332,7 @@ import SwiftUI
                 case .changesRequested: .changesRequested
                 case .passed: .passed
                 case .escalated: .escalated
-                case .inProgress: .inProgress
+                case .inProgress, .other: .inProgress
                 }
                 return ReviewRound(number: round.number.int, verdict: v, found: round.found.int, when: ago(round.at), fix: round.fix)
             },
@@ -339,16 +343,16 @@ import SwiftUI
                 let kind: ReviewFinding.Kind = switch f.kind {
                 case .scope: .scope
                 case .proof: .proof
-                case .code: .code
+                case .code, .other: .code
                 case .risk: .risk
                 }
                 let severity: ReviewFinding.Severity = switch f.severity {
                 case .blocker: .blocker
                 case .major: .major
-                case .minor: .minor
+                case .minor, .other: .minor
                 }
                 let status: ReviewFinding.Status = switch f.status {
-                case .open: .open
+                case .open, .other: .open
                 case .fixed: .fixed(round: Int(f.fixedIn ?? f.raisedIn))
                 case .disputed: .disputed
                 }
@@ -365,6 +369,7 @@ import SwiftUI
         case .overBudget: .overBudget
         case .sessionEnded: .sessionEnded
         case .mergeFailed: .mergeFailed
+        case .other: .other
         }
         return HandRaise(reason: reason, since: ago(h.at), assignee: assignee, headline: reason.title, explanation: h.summary, tried: [],
                          options: h.options.map { HandRaise.Option(title: $0.title, detail: $0.detail, recommended: $0.recommended) })
@@ -372,7 +377,7 @@ import SwiftUI
 
     private static func mockup(_ m: Wire.Mockup) -> Mockup {
         let status: Mockup.Status = switch m.status {
-        case .proposed: .proposed
+        case .proposed, .other: .proposed
         case .approved: .approved
         case .changesRequested: .changesRequested
         }

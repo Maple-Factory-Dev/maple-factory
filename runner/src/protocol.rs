@@ -673,6 +673,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn values_a_newer_server_adds_still_decode() {
+        use crate::wire::{EndCause, HandReason, TaskState};
+        let reason: HandReason = serde_json::from_str(r#""somethingNew""#).unwrap();
+        assert_eq!(reason, HandReason::Other);
+        assert_eq!(serde_json::from_str::<HandReason>(r#""mergeFailed""#).unwrap(), HandReason::MergeFailed);
+        assert_eq!(serde_json::from_str::<TaskState>(r#""somethingNew""#).unwrap(), TaskState::Other);
+        // EndCause has its own `unknown`, which doubles as the catch-all.
+        assert_eq!(serde_json::from_str::<EndCause>(r#""somethingNew""#).unwrap(), EndCause::Unknown);
+        // A whole message the runner doesn't know is still dropped, not fatal.
+        let msg: Inbound = serde_json::from_str(r#"{"type":"something.new","reason":"somethingNew"}"#).unwrap();
+        assert!(matches!(msg, Inbound::Unknown));
+    }
+
+    #[test]
     fn update_messages() {
         let msg: Inbound = serde_json::from_str(r#"{"type":"runner.update"}"#).unwrap();
         assert!(matches!(msg, Inbound::RunnerUpdate));

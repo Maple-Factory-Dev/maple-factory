@@ -264,7 +264,7 @@ struct FactoryStatusBar: View {
                     .onTapGesture { state.destination = .usage; state.focusedTask = nil }
                     .help("\(account.title): the busiest of your plan accounts. Click for all of them.")
                 }
-                Text(client.status == .live ? "Live" : client.status == .connecting ? "Connecting…" : "Reconnecting…")
+                Text(client.status == .live ? "Live" : client.status == .connecting ? "Connecting…" : client.status == .tooNew ? "Update needed" : "Reconnecting…")
             } else {
             HStack(spacing: 5) {
                 ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
