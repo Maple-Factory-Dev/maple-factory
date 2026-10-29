@@ -371,7 +371,10 @@ private struct ScreenshotProof: View {
 }
 
 /// The screen recording a runner uploaded: its first frame and length, and it plays in place on a click.
-private struct VideoProof: View {
+struct VideoProof: View {
+    /// A demo script's `play:video`: the video proofs on screen start playing.
+    static let demoPlay = Notification.Name("VideoProof.demoPlay")
+
     let caption: String
     let path: String
     @Environment(FactoryClient.self) private var client: FactoryClient?
@@ -390,11 +393,7 @@ private struct VideoProof: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
             } else if let file {
-                Button {
-                    let player = AVPlayer(url: file)
-                    self.player = player
-                    player.play()
-                } label: {
+                Button { play(file) } label: {
                     ZStack {
                         if let poster {
                             Image(nsImage: poster).resizable().aspectRatio(contentMode: .fit)
@@ -430,6 +429,15 @@ private struct VideoProof: View {
         }
         .task(id: path) { await load() }
         .onDisappear { player?.pause() }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPlay)) { _ in
+            if let file, player == nil { play(file) }
+        }
+    }
+
+    private func play(_ file: URL) {
+        let player = AVPlayer(url: file)
+        self.player = player
+        player.play()
     }
 
     private var aspect: CGFloat {
