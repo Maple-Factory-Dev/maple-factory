@@ -19,8 +19,13 @@ struct MergeGate {
     let reviewsNeeded: Int
     let reviewsReady: Bool
     let autoMerge: Bool
+    /// The factory's own reviewer has passed the latest round; the server refuses approvals and merges until then.
+    let autoReviewReady: Bool
+    let autoReviewDetail: String?
+    /// The round still under way, if the reviewer is working on one now.
+    let autoReviewRound: Int?
 
-    var canMerge: Bool { proofsReady && checksReady && reviewsReady }
+    var canMerge: Bool { proofsReady && checksReady && reviewsReady && autoReviewReady }
 }
 
 @MainActor @Observable
@@ -294,6 +299,16 @@ final class AppState {
         let unproven = task.doneWhen.filter { $0.status != .proven }.count
         let required = task.pr?.checks.filter(\.required) ?? []
         let reviewsNeeded = risk?.reviews ?? 1
+        let round = task.autoReview?.current
+        let autoReviewDetail: String? = task.autoReview.map { _ in
+            switch round?.verdict {
+            case .inProgress?: "Round \(round!.number) in progress"
+            case .changesRequested?: "Changes requested"
+            case .escalated?: "Escalated"
+            case .passed?: "Passed"
+            case nil: "Waiting for the reviewer"
+            }
+        }
 
         return MergeGate(
             proofsReady: unproven == 0,
@@ -303,7 +318,10 @@ final class AppState {
             failedChecks: required.filter { $0.status == .failed }.count,
             reviewsNeeded: reviewsNeeded,
             reviewsReady: task.reviews.count >= reviewsNeeded,
-            autoMerge: risk?.autoMerge ?? false
+            autoMerge: risk?.autoMerge ?? false,
+            autoReviewReady: task.autoReview == nil || round?.verdict == .passed,
+            autoReviewDetail: autoReviewDetail,
+            autoReviewRound: round?.verdict == .inProgress ? round?.number : nil
         )
     }
 
@@ -938,6 +956,11 @@ final class AppState {
     }
 
     func approveChanges(_ id: String) {
+        // Covers the inbox and URL paths too: the server would only refuse it.
+        guard mergeGate(for: task(id)).autoReviewReady else {
+            showToast("Wait for the automatic review to pass first", icon: "hourglass", color: Theme.textMuted)
+            return
+        }
         if let client, isLive {
             guard beginInFlight(id, .approveChanges) else { return }
             client.send(.taskApproveChanges(.init(id: id)))
@@ -1199,6 +1222,18 @@ final class AppState {
         }
     }
 
+    /// Stand-in for the factory's reviewer finishing its round, so the unlock can be shown in mockup mode.
+    private func passAutoReview(_ id: String) {
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                guard var review = task.autoReview, let round = review.current, round.verdict != .passed else { return }
+                review.rounds[review.rounds.count - 1] = ReviewRound(number: round.number, verdict: .passed, found: 0, when: "now")
+                task.autoReview = review
+                task.activity.insert(ActivityItem(who: review.reviewer.name, text: "Passed review round \(round.number)", when: "now"), at: 0)
+            }
+        }
+    }
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second, so flows can be shown (or screenshotted) without clicking.
     private func play(_ script: String) async {
@@ -1209,6 +1244,7 @@ final class AppState {
             switch parts[0] {
             case "approve": approvePlan(parts[1])
             case "review": approveChanges(parts[1])
+            case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
