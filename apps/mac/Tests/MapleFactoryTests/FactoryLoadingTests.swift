@@ -35,3 +35,46 @@ struct FactoryLoadingTests {
         #expect(AppState.destinationAfterSnapshot(.myTasks, goals: [], focusedGoal: nil) == nil)
     }
 }
+
+/// Relaunching reopens the page this factory was last on, while it's still there.
+struct LastPageTests {
+    @Test func encodingRoundTrips() {
+        let all: [Destination] = [.inbox, .myTasks, .activity, .scratchpad, .usage, .needsHand, .machines, .intake, .allGoals,
+                                  .goal("Maple Factory"), .goal("inbox"), .goal("goal:odd")]
+        for destination in all { #expect(Destination(encoded: destination.encoded) == destination) }
+        #expect(Destination.goal("inbox").encoded == "goal:inbox")
+        #expect(Destination.inbox.encoded == "inbox")
+        #expect(Destination(encoded: "nonsense") == nil)
+    }
+
+    @Test func rememberedGoalWins() {
+        #expect(AppState.destinationAfterSnapshot(.goal("Auth overhaul"), goals: ["Website", "Maple Factory"], focusedGoal: nil,
+                                                  remembered: .goal("Maple Factory")) == .goal("Maple Factory"))
+    }
+
+    @Test func removedGoalFallsBackToFirst() {
+        #expect(AppState.destinationAfterSnapshot(.goal("Auth overhaul"), goals: ["Website", "Maple Factory"], focusedGoal: nil,
+                                                  remembered: .goal("Gone")) == .goal("Website"))
+    }
+
+    @Test func nonGoalPageRestores() {
+        #expect(AppState.destinationAfterSnapshot(.goal("Auth overhaul"), goals: ["Website"], focusedGoal: nil, remembered: .myTasks) == .myTasks)
+        // A factory switch lands on the inbox first; its remembered goal still opens.
+        #expect(AppState.destinationAfterSnapshot(.inbox, goals: ["Website", "Maple Factory"], focusedGoal: nil,
+                                                  remembered: .goal("Maple Factory")) == .goal("Maple Factory"))
+        #expect(AppState.destinationAfterSnapshot(.inbox, goals: ["Website"], focusedGoal: nil, remembered: .inbox) == nil)
+    }
+
+    @Test func factoriesKeepSeparatePages() throws {
+        let suite = "dev.maplefactory.tests.lastpage"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let one = URL(string: "https://one.example.com")!, two = URL(string: "http://two.example.com:8080")!
+        #expect(LastPage.load(factory: one, defaults: defaults) == nil)
+        LastPage.store(.goal("Maple Factory"), factory: one, defaults: defaults)
+        LastPage.store(.inbox, factory: two, defaults: defaults)
+        #expect(LastPage.load(factory: one, defaults: defaults) == .goal("Maple Factory"))
+        #expect(LastPage.load(factory: two, defaults: defaults) == .inbox)
+        #expect(LastPage.key(two) == "lastPage.two.example.com:8080")
+    }
+}
