@@ -480,6 +480,51 @@ struct ApprovalBlock: View {
                 }
                 .padding(.top, 2)
             }
+            // Not now: parked, and nothing runs on it until someone picks it up.
+            SecondaryButton(title: "Send to backlog", enabled: !state.isInFlight(task.id, .approvePlan)) {
+                state.sendToBacklog(task.id)
+            }
+        }
+    }
+}
+
+/// A parked task: nothing runs on it until someone approves its plan, asks for changes or plans it.
+struct BacklogBlock: View {
+    @Environment(AppState.self) private var state
+    let task: FactoryTask
+    var onRequestChanges: () -> Void
+
+    var body: some View {
+        let planned = !task.plan.isEmpty
+        let approving = state.isInFlight(task.id, .approvePlan)
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: TaskState.backlog.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.State.backlog)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("In the backlog: nothing runs until you pick it up")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text(planned ? "Plan v\(task.planVersion) is kept. Approve it to build, or ask for changes first."
+                                 : "Not planned yet. Edit its brief, then send it to planning.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if planned {
+                DecisionButtons {
+                    PrimaryButton(title: "Approve & build", icon: "hammer", busy: approving, busyTitle: "Approving…") {
+                        state.approvePlan(task.id)
+                    }
+                    RequestChangesButton(enabled: !approving, action: onRequestChanges)
+                }
+            }
+            SecondaryButton(title: "Send to planning", enabled: !approving) {
+                state.plan(task.id)
+            }
         }
     }
 }

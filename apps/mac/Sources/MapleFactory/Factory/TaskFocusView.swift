@@ -353,6 +353,9 @@ struct TaskFocusView: View {
             if task.state == .awaitingApproval {
                 railCard { ApprovalBlock(task: task, onRequestChanges: requestChanges) }
             }
+            if task.state == .backlog {
+                railCard { BacklogBlock(task: task, onRequestChanges: requestChanges) }
+            }
             if task.state == .reviewing {
                 railCard {
                     VStack(alignment: .leading, spacing: 12) {
@@ -558,10 +561,11 @@ struct StageTrack: View {
     let task: FactoryTask
 
     var body: some View {
-        let current = TaskState.pipeline.firstIndex(of: task.state)
+        let stages = TaskState.stages(for: task.state)
+        let current = stages.firstIndex(of: task.state)
 
         HStack(alignment: .top, spacing: 0) {
-            ForEach(Array(TaskState.pipeline.enumerated()), id: \.offset) { index, stage in
+            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
                 let reached = current.map { index <= $0 } ?? false
                 let isCurrent = index == current
 
@@ -594,7 +598,7 @@ struct StageTrack: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, index < TaskState.pipeline.count - 1 ? 6 : 0)
+                .padding(.trailing, index < stages.count - 1 ? 6 : 0)
             }
         }
     }
@@ -603,6 +607,7 @@ struct StageTrack: View {
         switch task.state {
         case .planning: task.question == nil ? "Agent is drafting" : "Blocked on a question"
         case .awaitingApproval: "\(task.approvals.count) of \(task.approvalsNeeded) approvals"
+        case .backlog: task.plan.isEmpty ? "Not planned" : "Plan v\(task.planVersion)"
         case .building: task.plan.isEmpty ? "In progress" : "Step \((task.activeStep ?? 0) + 1) of \(task.plan.count)"
         case .reviewing:
             if let round = task.autoReview?.current {

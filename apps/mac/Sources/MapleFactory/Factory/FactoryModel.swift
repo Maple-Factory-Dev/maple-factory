@@ -9,6 +9,11 @@ enum TaskState: CaseIterable, Identifiable {
     /// or a plan waiting for approval can be parked in `backlog`.
     static let pipeline: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged]
 
+    /// The stages a task's own track shows: Backlog only while it's parked there, since most never are.
+    static func stages(for state: TaskState) -> [TaskState] {
+        pipeline.filter { $0 != .backlog || state == .backlog }
+    }
+
     var title: String {
         switch self {
         case .drafting: "Drafting"
@@ -27,7 +32,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .drafting: "pencil.line"
         case .planning: "list.bullet.indent"
         case .awaitingApproval: "hand.raised"
-        case .backlog: "tray"
+        case .backlog: "tray.full"
         case .building: "hammer"
         case .reviewing: "eye"
         case .merged: "arrow.triangle.merge"
