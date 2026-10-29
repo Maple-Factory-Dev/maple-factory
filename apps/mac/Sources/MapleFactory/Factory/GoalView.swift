@@ -212,6 +212,18 @@ struct BoardColumns: View {
                     state.queue(dropped, before: task.id)
                 }
             }
+            // An empty queue keeps a roomy box to drop a draft into.
+            if queued.isEmpty {
+                Text("Drag a draft here to queue it")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 60)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    )
+            }
         }
         .overlay {
             RoundedRectangle(cornerRadius: 12)
@@ -404,11 +416,12 @@ private struct EmptyColumnRail: View {
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
                 .fixedSize()
-                .rotationEffect(.degrees(90))
-                .frame(width: 20, height: 112)
+                .modifier(Upright())
         }
         .padding(.vertical, 12)
-        .frame(width: 44, height: 168, alignment: .top)
+        // At least as tall as a short column; a long title makes the rail taller instead of spilling.
+        .frame(width: 44, alignment: .top)
+        .frame(minHeight: 168, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Theme.columnBG.opacity(0.5))
@@ -416,6 +429,25 @@ private struct EmptyColumnRail: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .help(taskState.emptyHint)
+    }
+}
+
+/// Turns its content a quarter turn and lays it out at the turned size, so a vertical title
+/// takes up exactly as much height as it's long.
+private struct Upright: ViewModifier {
+    func body(content: Content) -> some View {
+        Turned { content.rotationEffect(.degrees(90)) }
+    }
+
+    private struct Turned: Layout {
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            let size = subviews.first?.sizeThatFits(.unspecified) ?? .zero
+            return CGSize(width: size.height, height: size.width)
+        }
+
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: .unspecified)
+        }
     }
 }
 
