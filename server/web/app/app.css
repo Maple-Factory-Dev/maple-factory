@@ -49,6 +49,12 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; text-decoration: none; border-top: 1px solid var(--stroke); }
 .item:first-child { border-top: 0; }
 .item:hover { background: var(--fill); }
+.item.mention-row { align-items: center; padding: 0 14px 0 0; }
+.item.mention-row > .item { flex: 1; min-width: 0; border-top: 0; }
+.item.mention-row > .item:hover, .item.mention-row:hover { background: none; }
+.item.mention-row:hover > .item { background: var(--fill); }
+.item.mention-row > .item > div { min-width: 0; }
+.item.mention-row .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .title { font-weight: 550; }
 .item .sub { font-size: 13px; color: var(--muted); }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 8px; }
