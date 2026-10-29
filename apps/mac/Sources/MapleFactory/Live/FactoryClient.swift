@@ -52,6 +52,8 @@ import Security
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
+    /// The org's additions to every session's prompt, by role; nil from an older server.
+    private(set) var prompts: Wire.PromptAdditions?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
     /// The newest released runner, when the factory has a release to offer.
@@ -236,6 +238,7 @@ import Security
         drafts = [:]
         follows = [:]
         policy = nil
+        prompts = nil
         acceptances = []
         repos = []
         runnerLatest = nil
@@ -346,6 +349,7 @@ import Security
             FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
             policy = snapshot.policy
             acceptances = snapshot.acceptances
+            prompts = snapshot.prompts
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
@@ -416,6 +420,8 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+        case .promptsUpdated(let update):
+            prompts = update.prompts
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
@@ -502,6 +508,11 @@ import Security
     func save(policy: RiskPolicy) {
         riskPolicy = policy
         send(.policySave(.init(policy: LiveAdapter.wire(policy))))
+    }
+
+    /// Admins only; the server trims them and says so with prompts.updated.
+    func save(prompts: Wire.PromptAdditions) {
+        send(.promptsSave(.init(prompts: prompts)))
     }
 
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {

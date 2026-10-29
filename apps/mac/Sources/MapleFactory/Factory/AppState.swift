@@ -1699,6 +1699,12 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
+            // Edit Goal… on a goal, by its name or task prefix: `editgoal:MF`. Signing in, it waits for the goal to arrive.
+            case "editgoal":
+                for _ in 0..<300 {
+                    if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { goalSheet = .edit(goal.id); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // A video proof's play button on screen, clicked: `play:video`.

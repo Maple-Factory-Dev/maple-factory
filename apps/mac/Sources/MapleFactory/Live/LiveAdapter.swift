@@ -570,3 +570,15 @@ extension LiveAdapter {
         return UsageWindow(label: label, span: w.label, used: used, resetsIn: resetsIn, resetsAt: resetsAt, elapsed: elapsed, runsOutAt: runsOut)
     }
 }
+
+extension LiveAdapter {
+    static let noPrompts = Wire.PromptAdditions(planner: "", builder: "", reviewer: "")
+
+    /// A goal's prompt additions to save: none when every field is empty, so an untouched goal stays as it was.
+    static func prompts(_ p: Wire.PromptAdditions) -> Wire.PromptAdditions? {
+        let trimmed = Wire.PromptAdditions(planner: p.planner.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           builder: p.builder.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           reviewer: p.reviewer.trimmingCharacters(in: .whitespacesAndNewlines))
+        return trimmed == noPrompts ? nil : trimmed
+    }
+}
