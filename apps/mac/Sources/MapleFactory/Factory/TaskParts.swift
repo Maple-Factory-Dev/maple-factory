@@ -139,8 +139,18 @@ struct TaskActionButtons: View {
             if task.state == .drafting {
                 Button { appState.plan(task.id) } label: { Label("Send to planning", systemImage: "paperplane") }
             }
-            // Waiting on its plan's approval, nothing is running to retry; request changes instead.
-            if task.state != .drafting && task.state != .awaitingApproval {
+            if task.state == .backlog {
+                // Picked up again: planned again (or for the first time), or its plan approved and built.
+                Button { appState.plan(task.id) } label: { Label(task.plan.isEmpty ? "Send to planning" : "Plan again", systemImage: "paperplane") }
+                if !task.plan.isEmpty {
+                    Button { appState.approvePlan(task.id) } label: { Label("Approve & build", systemImage: "hammer") }
+                }
+            }
+            if task.state == .drafting || task.state == .awaitingApproval {
+                Button { appState.sendToBacklog(task.id) } label: { Label("Send to backlog", systemImage: TaskState.backlog.icon) }
+            }
+            // Waiting on its plan's approval or in the backlog, nothing is running to retry; request changes instead.
+            if task.state != .drafting && task.state != .awaitingApproval && task.state != .backlog {
                 Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
             }
             if task.state != .cancelled {
@@ -910,7 +920,7 @@ struct TaskComposer: View {
             if task.isSteerable, let agent = task.agent {
                 HStack(spacing: 2) {
                     // On a plan waiting for approval, steering means asking for the next version of it.
-                    modeTab(task.state == .awaitingApproval ? "Revise plan" : "Steer \(agent.name)", icon: "sparkle", mode: .steer)
+                    modeTab(task.state == .awaitingApproval || task.state == .backlog ? "Revise plan" : "Steer \(agent.name)", icon: "sparkle", mode: .steer)
                     modeTab("Comment", icon: "bubble.left", mode: .comment)
                     Spacer()
                     if steering, task.state == .building {
@@ -1004,11 +1014,11 @@ struct TaskComposer: View {
     private var placeholder: String {
         guard mode == .steer, task.isSteerable, let agent = task.agent else {
             // Say so up front, so a comment on a plan isn't mistaken for a revision that never comes.
-            if task.state == .awaitingApproval, task.isSteerable { return "Comment for teammates; doesn't send the plan back to \(task.agent?.name ?? "the planner")…" }
+            if task.state == .awaitingApproval || task.state == .backlog, task.isSteerable { return "Comment for teammates; doesn't send the plan back to \(task.agent?.name ?? "the planner")…" }
             return "Comment or @mention someone…"
         }
         switch task.state {
-        case .awaitingApproval: return "What should \(agent.name) change for plan v\(task.planVersion + 1)?"
+        case .awaitingApproval, .backlog: return "What should \(agent.name) change for plan v\(task.planVersion + 1)?"
         case .building: return "Tell \(agent.name) what to change mid-build…"
         case .reviewing: return "What should \(agent.name) fix before merge?"
         default: return "Tell \(agent.name) what to change in the plan…"
