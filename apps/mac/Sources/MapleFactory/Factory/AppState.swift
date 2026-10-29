@@ -459,16 +459,27 @@ final class AppState {
         }()
         var chosen = false
         if goal != nil { chosen = true } else if case .goal = destination { chosen = true }
-        draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
-        cancelAIDraft()
+        // A Draft with AI left running (or finished, not yet in the composer) carries on: a plain
+        // New Task comes back to it as it was left. A composer opened for something else (a request,
+        // a note, a goal) isn't that draft's, so it's stopped rather than left to fill this one in.
+        let resuming = aiDraftPending && goal == nil && title.isEmpty && body.isEmpty && fromNote == nil
+        if !resuming {
+            if aiDraftPending, let draft = aiDraft, draft.state == .choosing || draft.state == .reading {
+                showToast("Stopped the Draft with AI that was running", icon: "sparkles", color: Theme.State.planning)
+            }
+            cancelAIDraft()
+            draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
+        }
         withAnimation(.snappy(duration: 0.3)) {
             focusedTask = nil
             isComposing = true
         }
     }
 
+    /// Closes the composer. A Draft with AI that's running keeps going, to come back to; one that
+    /// failed while open has been seen, so it isn't brought back.
     func cancelCompose() {
-        cancelAIDraft()
+        if aiDraft?.state == .failed { aiDraftID = nil }
         withAnimation(.snappy(duration: 0.3)) { isComposing = false }
     }
 
@@ -481,7 +492,18 @@ final class AppState {
     /// A goal Draft with AI suggested, for the goal sheet to start from.
     var goalPrefill: Wire.NewGoalIdea? = nil
 
+    /// Whether the Draft with AI card shows what the agent has said and done.
+    var watchingAIDraft = false
+
     var aiDraft: Wire.Draft? { aiDraftID.flatMap { client?.drafts[$0] } }
+
+    /// A Draft with AI the composer should come back to: still running, or done with its result
+    /// (or its question, or why it failed) not yet in the composer.
+    var aiDraftPending: Bool {
+        guard let id = aiDraftID else { return false }
+        guard let draft = aiDraft else { return true }
+        return draft.state != .ready || appliedAIDraft != id
+    }
 
     /// Has an agent read the code (or pick a goal first) and fill in the title, brief and Done when.
     func draftWithAI() {
@@ -555,6 +577,8 @@ final class AppState {
             client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
                                           plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID,
                                           repo: draft.repo.flatMap { goal.repos.contains($0) ? $0 : nil })))
+            // The task's sent: a draft still running (or failed, or waiting on a goal) is done with.
+            cancelAIDraft()
             withAnimation(.snappy(duration: 0.3)) {
                 isComposing = false
                 destination = .goal(draft.goal)
@@ -1235,7 +1259,8 @@ final class AppState {
     }
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
-    /// one action per second, so flows can be shown (or screenshotted) without clicking.
+    /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
+    /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
     private func play(_ script: String) async {
         for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             try? await Task.sleep(for: .seconds(1))
@@ -1250,10 +1275,14 @@ final class AppState {
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
+            case "idea": draft.title = parts.dropFirst().joined(separator: ":")
+            case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
                 case "cancel": cancelCompose()
+                case "draft": draftWithAI()
+                case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
                 default: break

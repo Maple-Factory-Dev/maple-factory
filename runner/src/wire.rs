@@ -120,6 +120,16 @@ pub enum DraftState {
     Failed,
 }
 
+/// A line of a draft's transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DraftLineKind {
+    /// Something the agent said or thought.
+    Text,
+    /// Something it did: "Reading lib/session.ts".
+    Tool,
+}
+
 /// What archiving a goal does with its tasks that haven't merged or been cancelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1083,6 +1093,14 @@ pub struct NewGoalIdea {
     pub repos: Vec<String>,
 }
 
+/// One line of what a draft's agent said or did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftLine {
+    pub kind: DraftLineKind,
+    pub text: String,
+}
+
 /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1113,6 +1131,11 @@ pub struct Draft {
     /// What it's doing now: "Reading lib/session.ts".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
+    /// What it has said and done so far, oldest first: the last 200 lines or so, kept once it's ready or failed.
+    #[serde(default)]
+    pub log: Vec<DraftLine>,
+    /// How many earlier lines were cut from the log, so the first kept line is line number `logFrom`.
+    pub log_from: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -1273,11 +1296,13 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
-    /// What a draft's agent is doing.
+    /// What a draft's agent is doing (a `tool` line, the default) or saying (`text`).
     #[serde(rename = "draft.progress")]
     DraftProgress {
         id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<DraftLineKind>,
     },
     /// A draft's agent finished: its last message, or why it couldn't.
     #[serde(rename = "draft.done")]

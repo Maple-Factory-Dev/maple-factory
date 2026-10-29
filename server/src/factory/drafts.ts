@@ -3,7 +3,7 @@
 // belongs to (from the goals' names and summaries alone), then, in a throwaway worktree of that
 // goal's code, what the task should say. Drafts live in the OrgHub's kv and only their owner sees them.
 
-import type { Draft, Goal, Machine, ServerToClient, ServerToRunner } from "../wire.ts";
+import type { Draft, DraftLine, DraftLineKind, Goal, Machine, ServerToClient, ServerToRunner } from "../wire.ts";
 import type { Store } from "./store.ts";
 
 type Deps = {
@@ -19,12 +19,21 @@ type Saved = { draft: Draft; owner: string };
 /** The id a draft's run goes by on the runner (its token requests and its worktree's name). */
 export const RUN_PREFIX = "draft-";
 
+/** How much of what a draft's agent said and did it keeps: its last lines, up to about this much. */
+export const LOG_LINES = 200;
+export const LOG_BYTES = 40_000;
+const LINE_CHARS = 1_000;
+
 export class Drafts {
   constructor(private store: Store, private deps: Deps) {}
 
   private load(id: string): Saved | null {
     const raw = this.store.get(`draft:${id}`);
-    return raw ? (JSON.parse(raw) as Saved) : null;
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as Saved;
+    saved.draft.log ??= [];
+    saved.draft.logFrom ??= 0;
+    return saved;
   }
 
   private save(saved: Saved) {
@@ -56,7 +65,7 @@ export class Drafts {
     if (goal && (!picked || picked.archived)) throw new Error("That goal isn't there any more.");
     const draft: Draft = {
       id, idea: text, agent: agent || "claude", state: picked ? "reading" : "choosing", machine: null,
-      goal: picked?.id ?? null, also: [], newGoal: null, why: null, title: null, brief: null, doneWhen: [], progress: "Starting…", error: null,
+      goal: picked?.id ?? null, also: [], newGoal: null, why: null, title: null, brief: null, doneWhen: [], progress: "Starting…", log: [], logFrom: 0, error: null,
     };
     const saved = { draft, owner };
     const machine = await this.machine(saved);
@@ -86,10 +95,20 @@ export class Drafts {
     this.store.set(`draft:${id}`, JSON.stringify({ ...saved, draft: { ...saved.draft, state: "failed", error: "Cancelled.", progress: null } }));
   }
 
-  progress(runId: string, machine: string, text: string) {
+  /** A line of what the agent is doing (`tool`, which is also its `progress`) or saying (`text`), added to its log. */
+  progress(runId: string, machine: string, text: string, kind: DraftLineKind = "tool") {
     const saved = this.forRun(runId, machine);
     if (!saved || (saved.draft.state !== "choosing" && saved.draft.state !== "reading")) return;
-    saved.draft.progress = text.slice(0, 200);
+    const { draft } = saved;
+    const line: DraftLine = { kind, text: text.trim().slice(0, LINE_CHARS) };
+    if (!line.text) return;
+    if (kind === "tool") draft.progress = line.text.slice(0, 200);
+    const last = draft.log.at(-1);
+    if (last?.kind !== line.kind || last.text !== line.text) {
+      const log = [...draft.log, line];
+      draft.log = capped(log);
+      draft.logFrom += log.length - draft.log.length;
+    }
     this.save(saved);
   }
 
@@ -179,6 +198,14 @@ export class Drafts {
   private async stop(saved: Saved) {
     if (saved.draft.machine) await this.deps.toRunner(saved.draft.machine, { type: "draft.cancel", id: RUN_PREFIX + saved.draft.id });
   }
+}
+
+/** The last `LOG_LINES` of a log, and fewer if they come to more than about `LOG_BYTES`. */
+function capped(log: DraftLine[]): DraftLine[] {
+  const kept = log.slice(-LOG_LINES);
+  let bytes = kept.reduce((n, l) => n + l.text.length, 0);
+  while (kept.length > 1 && bytes > LOG_BYTES) bytes -= kept.shift()!.text.length;
+  return kept;
 }
 
 /** The last JSON object in an agent's answer (it may say something around it, or fence it). */
