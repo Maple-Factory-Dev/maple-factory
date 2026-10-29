@@ -349,6 +349,9 @@ import Security
             }
         }
         for gone in notes where !edited.contains(where: { $0.id == gone.id }) {
+            // A save still waiting out its delay would otherwise go after the delete and bring the note back.
+            unsaved[gone.id]?.cancel()
+            unsaved[gone.id] = nil
             send(.noteDelete(.init(id: gone.id.uuidString.lowercased())))
         }
         notes = edited
