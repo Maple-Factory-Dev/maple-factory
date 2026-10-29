@@ -43,7 +43,7 @@ struct MapleFactoryApp: App {
             }
             CommandGroup(after: .sidebar) {
                 Button(state.showInspector ? "Hide Task Panel" : "Show Task Panel") {
-                    withAnimation(.snappy(duration: 0.25)) { state.showInspector.toggle() }
+                    state.toggleTaskPanel()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
 
@@ -311,7 +311,7 @@ extension ContentView {
             if client.isSignedIn { LiveMachinesView() } else { MachinesView() }
         case .intake: IntakeView()
         case .allGoals: AllGoalsView()
-        case .goal(let name): GoalView(goal: FactoryData.goal(named: name))
+        case .goal(let name): GoalView(name: name)
         }
     }
 }

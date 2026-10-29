@@ -3,7 +3,10 @@ import SwiftUI
 struct GoalView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
-    let goal: Goal
+    let name: String
+
+    /// Read from the live goals as the view draws, so a rename, new lead or due date shows at once.
+    private var goal: Goal { FactoryData.goal(named: name) }
 
     private var tasks: [FactoryTask] { state.tasks(for: goal) }
 
@@ -136,7 +139,11 @@ struct BoardColumns: View {
     @Environment(AppState.self) private var state
     let tasks: [FactoryTask]
 
+    /// Whether columns are cut off past the trailing edge, so the board fades there.
+    @State private var moreTrailing = false
+
     var body: some View {
+        // In a narrow window the columns overflow: a scrollbar shows and the cut-off edge fades.
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(TaskState.allCases) { taskState in
@@ -145,8 +152,22 @@ struct BoardColumns: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
-        .scrollIndicators(.never)
+        .scrollIndicators(.automatic)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentSize.width - geometry.visibleRect.maxX > 1
+        } action: { _, more in
+            withAnimation(.easeOut(duration: 0.15)) { moreTrailing = more }
+        }
+        .mask {
+            HStack(spacing: 0) {
+                Rectangle()
+                LinearGradient(colors: [.black, .black.opacity(moreTrailing ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 24)
+            }
+        }
     }
 
     private func column(_ taskState: TaskState) -> some View {
@@ -174,7 +195,7 @@ struct BoardColumns: View {
             // A column hugs its cards until they outgrow the window, then scrolls on its own.
             ViewThatFits(in: .vertical) {
                 cards(columnTasks)
-                ScrollView { cards(columnTasks) }.scrollIndicators(.never)
+                ScrollView { cards(columnTasks).padding(.trailing, 6) }.scrollIndicators(.automatic)
             }
 
             if columnTasks.isEmpty {
@@ -198,9 +219,9 @@ struct BoardColumns: View {
     private func cards(_ columnTasks: [FactoryTask]) -> some View {
         VStack(spacing: 8) {
             ForEach(columnTasks) { task in
-                TaskCard(task: task, selected: task.id == state.selectedTask)
+                TaskCard(task: task, selected: task.id == state.openedTask)
                     .onTapGesture(count: 2) { state.openFocus(task.id) }
-                    .onTapGesture { state.selectedTask = task.id }
+                    .onTapGesture { state.toggleTask(task.id) }
             }
         }
     }

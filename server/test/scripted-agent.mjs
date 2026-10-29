@@ -9,7 +9,8 @@
 //
 // Planner: submits a two-step plan with a terminal and a screen mockup ("[cross-repo]": plus a part
 // for the goal's next repo). Builder: commits a file,
-// proves both items and finishes. Reviewer: asks for changes in round 1, passes round 2.
+// proves both items and finishes ("## It didn't merge": merges its base in and resolves the conflicts).
+// Reviewer: asks for changes in round 1, passes round 2.
 
 import net from "node:net";
 import { execFileSync } from "node:child_process";
@@ -105,6 +106,7 @@ async function planner() {
 
 async function builder() {
   const { data } = await call("get_task");
+  if (prompt.includes("## It didn't merge")) return mergeFix();
   const fixing = /asked for changes|## Change requests to apply/.test(prompt);
   if (prompt.includes("[hand]") && !fixing) {
     await call("raise_hand", {
@@ -144,9 +146,37 @@ async function builder() {
   say(done.summary);
 }
 
+// "## It didn't merge": bring the branch up to date with its base, keeping both sides of any
+// conflicting file's lines, and push. The merge commit names the change request it applies.
+async function mergeFix() {
+  const base = prompt.match(/bring it up to date with origin\/(\S+) and/)[1];
+  const [, id, text] = prompt.match(/^- \((C\d+)\) [^:]+: (The branch doesn't merge.*)$/m);
+  say(`merging origin/${base} (${id})`);
+  await call("progress", { note: `Merging origin/${base} for ${id}` });
+  git("fetch", "--quiet", "origin", base);
+  const as = ["-c", "user.name=Scripted", "-c", "user.email=scripted@maple.invalid"];
+  try {
+    git(...as, "merge", "--no-edit", "--quiet", `origin/${base}`);
+  } catch {
+    for (const file of git("diff", "--name-only", "--diff-filter=U").split("\n").filter(Boolean)) {
+      const side = (n) => { try { return git("show", `:${n}:${file}`).split("\n"); } catch { return []; } };
+      const ours = side(2);
+      writeFileSync(file, [...ours, ...side(3).filter((l) => !ours.includes(l))].join("\n") + "\n");
+      git("add", file);
+      say(`resolved ${file}`);
+    }
+    git(...as, "commit", "--quiet", "-m", `Merge origin/${base} (${id}: ${text})`);
+  }
+  await call("progress", { applied: [id] });
+  await call("prove", { item: 1, kind: "terminal", summary: "hello.txt keeps the greeting after the merge", command: "cat hello.txt", output: git("show", "HEAD:hello.txt").split("\n") });
+  const done = await call("finish", { summary: `Merged origin/${base} into the branch and resolved the conflicts.` });
+  say(done.summary);
+}
+
 async function reviewer() {
   const open = [...prompt.matchAll(/- \((R\d+\.\d+)\)/g)].map((m) => m[1]);
-  const first = !/Open findings from earlier rounds/.test(prompt);
+  // A branch that already took review's fix (say, one sent back because it didn't merge) passes.
+  const first = !/Open findings from earlier rounds/.test(prompt) && !(existsSync("hello.txt") && readFileSync("hello.txt", "utf8").includes("as review asked"));
   const verdict = first ? "changesRequested" : "passed";
   const review = await call("submit_review", {
     verdict,

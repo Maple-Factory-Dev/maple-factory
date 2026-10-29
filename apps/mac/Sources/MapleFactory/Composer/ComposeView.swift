@@ -414,7 +414,7 @@ struct AIDraftCard: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 6) {
                 switch draft?.state {
-                case nil, .choosing?, .reading?: working(draft)
+                case nil, .choosing?, .reading?, .other?: working(draft)
                 case .needsGoal?: newGoal(draft!)
                 case .ready?: ready(draft!)
                 case .failed?: failed(draft!)

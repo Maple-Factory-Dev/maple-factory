@@ -52,7 +52,7 @@ struct SidebarRail: View {
                             AgentAvatar(agent: entry.person, size: 22, online: true)
                         }
                         .onTapGesture {
-                            if let viewing = entry.viewing { state.selectedTask = viewing; state.showInspector = true }
+                            if let viewing = entry.viewing { state.openTask(viewing) }
                         }
                     }
 

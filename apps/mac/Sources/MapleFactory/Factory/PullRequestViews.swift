@@ -13,7 +13,7 @@ struct PullRequestCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 SectionLabel(title: "Pull request")
-                prStateChip
+                PRStateChip(state: pr.state)
                 Spacer()
                 if pr.isLocal {
                     Text("#\(pr.number)").monospacedDigit()
@@ -85,24 +85,6 @@ struct PullRequestCard: View {
             .prefix(3)
             .joined(separator: "-")
         return "\(task.id.lowercased())-\(slug)"
-    }
-
-    private var prStateChip: some View {
-        let (label, icon, color): (String, String, Color) = switch pr.state {
-        case .draft: ("Draft", "circle.dashed", Theme.textMuted)
-        case .open: ("Open", "arrow.triangle.pull", Theme.State.merged)
-        case .merged: ("Merged", "arrow.triangle.merge", Theme.State.planning)
-        case .closed: ("Closed", "xmark.circle", Theme.State.cancelled)
-        }
-        return HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 9.5, weight: .semibold))
-            Text(label)
-        }
-        .font(.system(size: 10.5, weight: .semibold))
-        .foregroundStyle(color)
-        .padding(.horizontal, 6)
-        .frame(height: 18)
-        .background(Capsule().fill(color.opacity(0.13)))
     }
 
     private func checkRow(_ check: CICheck) -> some View {
@@ -192,5 +174,28 @@ struct ToastView: View {
                 .overlay(Capsule().strokeBorder(Theme.stroke))
                 .shadow(color: .black.opacity(0.2), radius: 14, y: 6)
         )
+    }
+}
+
+/// Draft, open, merged or closed, as a small colored chip.
+struct PRStateChip: View {
+    let state: PullRequest.State
+
+    var body: some View {
+        let (label, icon, color): (String, String, Color) = switch state {
+        case .draft: ("Draft", "circle.dashed", Theme.textMuted)
+        case .open: ("Open", "arrow.triangle.pull", Theme.State.merged)
+        case .merged: ("Merged", "arrow.triangle.merge", Theme.State.planning)
+        case .closed: ("Closed", "xmark.circle", Theme.State.cancelled)
+        }
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 9.5, weight: .semibold))
+            Text(label)
+        }
+        .font(.system(size: 10.5, weight: .semibold))
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .frame(height: 18)
+        .background(Capsule().fill(color.opacity(0.13)))
     }
 }

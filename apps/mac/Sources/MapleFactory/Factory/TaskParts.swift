@@ -258,7 +258,17 @@ struct RequestChangesButton: View {
     var action: () -> Void
 
     var body: some View {
-        Text("Request changes")
+        SecondaryButton(title: "Request changes", enabled: enabled, action: action)
+    }
+}
+
+struct SecondaryButton: View {
+    let title: String
+    var enabled = true
+    var action: () -> Void
+
+    var body: some View {
+        Text(title)
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(Theme.text)
             .lineLimit(1)
@@ -368,6 +378,22 @@ struct ReviewActions: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.State.merged.opacity(0.1)))
+            } else if let hand = task.hand, hand.reason == .mergeFailed {
+                // The merge failed: a person picks how it goes on, so Merge gives way to the hand's options.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: hand.reason.icon).foregroundStyle(hand.reason.color)
+                    Text(hand.explanation).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 12))
+                DecisionButtons {
+                    PrimaryButton(title: "Send back to fix", icon: "arrow.uturn.backward") {
+                        state.resolveHand(task.id, option: hand.options.first { $0.title == "Send it back to fix" }, note: "")
+                    }
+                    SecondaryButton(title: "Retry merge") {
+                        state.resolveHand(task.id, option: hand.options.first { $0.title == "Try the merge again" }, note: "")
+                    }
+                    RequestChangesButton(action: onRequestChanges)
+                }
             } else {
                 let approving = state.isInFlight(task.id, .approveChanges)
                 let merging = state.isInFlight(task.id, .merge)
@@ -409,6 +435,9 @@ struct ReviewActions: View {
         let risk = state.risk(for: task)
         let level = risk?.level.title.lowercased() ?? "this"
         let (icon, text, color): (String, String, Color) = {
+            if task.hand?.reason == .mergeFailed {
+                return ("hand.raised", "Nothing merges it again until someone picks a way forward.", Theme.textMuted)
+            }
             if !gate.autoReviewReady {
                 switch task.autoReview?.current?.verdict {
                 case .changesRequested?:
@@ -585,6 +614,124 @@ struct ActivityFeed: View {
     }
 }
 
+// MARK: - Peek
+
+/// Short stand-ins the task panel shows in place of whole sections; the full view has the rest.
+
+/// One line for a section: what it is, how far along, and a tap to open it.
+struct PeekRow<Trailing: View>: View {
+    let icon: String
+    let title: String
+    var detail: String? = nil
+    let action: () -> Void
+    @ViewBuilder var trailing: Trailing
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.text)
+            if let detail {
+                Text("· \(detail)")
+                    .font(.system(size: 12.5).monospacedDigit())
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            trailing
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Theme.textFaint)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(hovered ? Theme.fill : .clear)
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture(perform: action)
+    }
+}
+
+extension PeekRow where Trailing == EmptyView {
+    init(icon: String, title: String, detail: String? = nil, action: @escaping () -> Void) {
+        self.init(icon: icon, title: title, detail: detail, action: action) { EmptyView() }
+    }
+}
+
+/// Peek rows stacked in one bordered box, divided by hairlines.
+struct PeekGroup<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Group(subviews: content) { rows in
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    row
+                    if index < rows.count - 1 { Hairline().padding(.leading, 36) }
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.fillSubtle)
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+        )
+    }
+}
+
+/// The pull request as one row: number, state and checks, opening it on GitHub (or the full view for a local repo).
+struct PullRequestRow: View {
+    @Environment(\.openURL) private var openURL
+    let pr: PullRequest
+    let openFull: () -> Void
+
+    private var checks: String? {
+        guard !pr.checks.isEmpty else { return nil }
+        let passed = pr.checks.filter { $0.status == .passed }.count
+        return "\(passed) of \(pr.checks.count) checks"
+    }
+
+    var body: some View {
+        PeekRow(icon: "arrow.triangle.pull", title: "#\(pr.number)", detail: checks, action: {
+            if pr.isLocal { openFull() } else { openURL(pr.url) }
+        }) {
+            PRStateChip(state: pr.state)
+        }
+        .help(pr.isLocal ? "A local repo: open the full view for its branch" : pr.url.absoluteString)
+    }
+}
+
+/// The latest comments, with how many earlier ones the full view holds.
+struct DiscussionPeek: View {
+    let comments: [Comment]
+    var shown = 2
+    let openFull: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                SectionLabel(title: "Discussion")
+                Spacer()
+                if comments.count > shown {
+                    Text("\(comments.count - shown) more")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textMuted)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: openFull)
+                        .help("Open full view (⌘↩)")
+                }
+            }
+            DiscussionList(comments: Array(comments.suffix(shown)))
+        }
+    }
+}
+
 // MARK: - Composer
 
 /// One input for both audiences: steer the task's agent, or comment to teammates.
@@ -642,6 +789,7 @@ struct TaskComposer: View {
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
+                .onExitCommand { focused.wrappedValue = false }
                 .onSubmit(send)
 
             HStack {
