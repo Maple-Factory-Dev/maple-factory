@@ -107,6 +107,9 @@ export class Engine {
         const goal = { ...msg.goal, prefix: msg.goal.prefix.trim().toUpperCase() };
         if (!/^[A-Z][A-Z0-9]{0,9}$/.test(goal.prefix)) fail("A goal's prefix is 1–10 letters or digits, starting with a letter.");
         if (!goal.name.trim()) fail("A goal needs a name.");
+        // Epoch ms, or none: an empty due means no due date.
+        goal.due ??= null;
+        if (goal.due !== null && !(Number.isSafeInteger(goal.due) && goal.due > 0)) fail("A goal's due date is a time in epoch milliseconds, or none.");
         if (!goal.id) goal.id = crypto.randomUUID();
         // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.
         if (!goal.lead?.trim()) goal.lead = who;
