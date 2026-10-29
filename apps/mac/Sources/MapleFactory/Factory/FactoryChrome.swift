@@ -6,7 +6,10 @@ struct FactoryTopBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if state.isComposing {
+            if state.isLoadingFactory {
+                // No title or layout picker until the factory says what's there.
+                EmptyView()
+            } else if state.isComposing {
                 composeBreadcrumb
             } else if let focused = state.focusedTask {
                 focusBreadcrumb(state.task(focused))

@@ -47,9 +47,10 @@ struct FactorySidebar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     sectionHeader("Goals") { if client.isSignedIn { state.goalSheet = .new } }
                     VStack(spacing: 2) {
+                        if state.isLoadingFactory { GoalsSkeleton().frame(maxWidth: .infinity, alignment: .leading) }
                         // Only the goals you follow; the rest (and archived ones) are a click away in All goals.
                         // Drag them into your own order; a goal dropped on a row lands above it.
-                        let goals = state.sidebarGoals
+                        let goals = state.isLoadingFactory ? [] : state.sidebarGoals
                         ForEach(Array(goals.enumerated()), id: \.element.id) { index, goal in
                             goalRow(goal).opacity(state.isFollowing(goal) ? 1 : 0.6)
                                 .draggable(goal.name) { goalRow(goal).frame(width: 200) }
@@ -65,7 +66,7 @@ struct FactorySidebar: View {
                             .onTapGesture { state.destination = .allGoals }
                             .goalDrop(id: "All goals", target: $goalDropTarget) { dropGoal($0, at: goals.count) }
                         }
-                        if client.isSignedIn && client.goals.isEmpty {
+                        if client.isSignedIn && client.hasSnapshot && client.goals.isEmpty {
                             row(selected: false) {
                                 Image(systemName: "plus.circle").font(.system(size: 12)).frame(width: 16)
                                 Text("New goal")

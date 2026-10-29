@@ -49,7 +49,7 @@ struct SidebarRail: View {
 
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(state.sidebarGoals) { goal in
+                    ForEach(state.isLoadingFactory ? [] : state.sidebarGoals) { goal in
                         let stats = state.stats(for: goal)
                         let selected = state.destination == .goal(goal.name)
                         item(goal.name, detail: "\(stats.merged) of \(stats.total) merged", selected: selected) {

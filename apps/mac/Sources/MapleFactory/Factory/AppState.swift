@@ -168,7 +168,7 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
             && ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -203,6 +203,18 @@ final class AppState {
     /// everything here is the design mockup's.
     var client: FactoryClient?
     var isLive: Bool { client?.isSignedIn == true }
+    /// Signed in, but the factory's first snapshot hasn't landed: show the loader, not the mock's goal.
+    var isLoadingFactory: Bool { Self.isLoading(signedIn: client?.isSignedIn == true, hasSnapshot: client?.hasSnapshot == true) }
+
+    nonisolated static func isLoading(signedIn: Bool, hasSnapshot: Bool) -> Bool { signedIn && !hasSnapshot }
+
+    /// Where to land once the workspace's goals are known, or nil to stay put: a goal that isn't the
+    /// workspace's (the mock's starting one) gives way to the focused task's goal, else the first, else the inbox.
+    nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?) -> Destination? {
+        guard case .goal(let name) = current, !goals.contains(name) else { return nil }
+        if let focusedGoal, goals.contains(focusedGoal) { return .goal(focusedGoal) }
+        return goals.first.map(Destination.goal) ?? .inbox
+    }
 
     var tasks: [FactoryTask] {
         get { isLive ? client?.factoryTasks ?? [] : mockTasks }
