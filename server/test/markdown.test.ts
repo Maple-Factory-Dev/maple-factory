@@ -84,3 +84,69 @@ test("a javascript: link renders without an anchor", () => {
   walk(tree);
   assert.deepEqual(anchors, ["https://maplefactory.dev"]);
 });
+
+const ID = "0b7c2a7e-1f2d-4c3b-9a8e-5d6f7a8b9c0d";
+
+test("a line that's just an image is an image block; just an attachment link is a file block", () => {
+  assert.deepEqual(parse(`Before\n![screenshot-1.png](/attachments/${ID}/screenshot-1.png)\nafter`), [
+    { type: "paragraph", inline: [{ type: "text", text: "Before" }] },
+    { type: "image", alt: "screenshot-1.png", src: `/attachments/${ID}/screenshot-1.png` },
+    { type: "paragraph", inline: [{ type: "text", text: "after" }] },
+  ]);
+  assert.deepEqual(parse("![logo](https://maplefactory.dev/logo.png)"), [{ type: "image", alt: "logo", src: "https://maplefactory.dev/logo.png" }]);
+  assert.deepEqual(parse(`[log.txt](/attachments/${ID}/log.txt)`), [{ type: "file", name: "log.txt", path: `/attachments/${ID}/log.txt` }]);
+  // A link line to anywhere else stays an ordinary link.
+  assert.equal(parse("[docs](https://example.com)")[0].type, "paragraph");
+});
+
+test("javascript:, data: and http: images are refused and show their alt text", () => {
+  for (const src of ["javascript:alert(1)", "data:image/png;base64,AAAA", "http://example.com/a.png", "/attachments/nope/a.png", "//evil.com/a.png"]) {
+    const blocks = parse(`![alt text](${src})`);
+    assert.equal(blocks[0].type, "paragraph", src);
+    assert.deepEqual(blocks[0].inline, [{ type: "text", text: "alt text" }], src);
+    const tree = render(blocks, h);
+    assert.ok(!tags(tree).includes("img"), src);
+    assert.ok(!tags(tree).includes("a"), src);
+  }
+  assert.ok(!JSON.stringify(parse("[x](javascript:alert(1))")).includes('"file"'));
+});
+
+test("an image inside a sentence is an inline image; attachment links open on ordinary links", () => {
+  assert.deepEqual(inline(`see ![shot](/attachments/${ID}/a.png) here`), [
+    { type: "text", text: "see " },
+    { type: "image", alt: "shot", src: `/attachments/${ID}/a.png` },
+    { type: "text", text: " here" },
+  ]);
+  assert.deepEqual(inline(`the [log](/attachments/${ID}/log.txt) file`), [
+    { type: "text", text: "the " },
+    { type: "link", href: `/attachments/${ID}/log.txt`, children: [{ type: "text", text: "log" }] },
+    { type: "text", text: " file" },
+  ]);
+  assert.deepEqual(inline("wow! [ok]"), [{ type: "text", text: "wow! [ok]" }]);
+});
+
+test("render() builds an <img> inside a link, and a file chip", () => {
+  const tree = render(parse(`![shot.png](/attachments/${ID}/shot.png)\n\n[log.txt](/attachments/${ID}/log.txt)`), h);
+  const [img, file] = tree.children;
+  assert.equal(img.tag, "a");
+  assert.equal(img.attrs.class, "md-img");
+  assert.equal(img.attrs.href, `/attachments/${ID}/shot.png`);
+  assert.equal(img.attrs.target, "_blank");
+  assert.equal(img.children[0].tag, "img");
+  assert.equal(img.children[0].attrs.src, `/attachments/${ID}/shot.png`);
+  assert.equal(img.children[0].attrs.alt, "shot.png");
+  assert.equal(typeof img.children[0].attrs.onerror, "function");
+  assert.equal(file.tag, "a");
+  assert.equal(file.attrs.class, "md-file");
+  assert.equal(file.attrs.href, `/attachments/${ID}/log.txt`);
+  assert.ok(texts(file).includes("log.txt"));
+});
+
+test("the editor's empty-src upload placeholder is a muted line", () => {
+  const blocks = parse("![Uploading shot.png…]()");
+  assert.deepEqual(blocks, [{ type: "image", alt: "Uploading shot.png…", src: "" }]);
+  const [p] = render(blocks, h).children;
+  assert.equal(p.tag, "p");
+  assert.equal(p.attrs.class, "md-uploading");
+  assert.deepEqual(texts(p), ["Uploading shot.png…"]);
+});
