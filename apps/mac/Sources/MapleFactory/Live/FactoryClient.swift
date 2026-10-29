@@ -227,6 +227,8 @@ import Security
             ends.insert(EndRecord(machine: ended.machine, end: ended.end), at: 0)
             if ends.count > 50 { ends.removeLast(ends.count - 50) }
         case .taskUpdated(let update):
+            let previous = tasks.first { $0.id == update.task.id }
+            defer { notify(was: previous, now: update.task) }
             if let index = tasks.firstIndex(where: { $0.id == update.task.id }) {
                 tasks[index] = update.task
                 factoryTasks[index] = adapt(update.task)
@@ -280,6 +282,30 @@ import Security
         case .unknown:
             break
         }
+    }
+
+    /// A banner when a task newly needs you; the snapshot never calls this, so reconnecting stays quiet.
+    private func notify(was old: Wire.Task?, now task: Wire.Task) {
+        let me = me?.login
+        let needed = old.map { LiveAdapter.needsYou($0, me: me) } ?? false
+        let needs = LiveAdapter.needsYou(task, me: me)
+        let handRaised = old?.hand == nil && task.hand != nil && task.hand?.assignee == me
+        guard needs else {
+            if needed { Notifier.shared.clear(task: task.id) }
+            return
+        }
+        guard !needed || handRaised else { return }
+        let reason: Notifier.Reason
+        if task.hand?.assignee == me, let hand = factoryTasks.first(where: { $0.id == task.id })?.hand {
+            reason = .hand(hand.reason)
+        } else if task.question != nil && task.owner == me {
+            reason = .question
+        } else if task.state == .awaitingApproval {
+            reason = .approval
+        } else {
+            reason = .review
+        }
+        Notifier.shared.notify(task: task, reason: reason)
     }
 
     private func adapt(_ task: Wire.Task) -> FactoryTask {

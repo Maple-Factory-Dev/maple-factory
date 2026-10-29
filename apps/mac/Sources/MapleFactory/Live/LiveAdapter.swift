@@ -130,7 +130,7 @@ enum LiveAdapter {
         return task
     }
 
-    private static func needsYou(_ t: Wire.Task, me: String?) -> Bool {
+    static func needsYou(_ t: Wire.Task, me: String?) -> Bool {
         guard let me else { return false }
         if t.hand?.assignee == me || (t.question != nil && t.owner == me) { return true }
         if t.state == .awaitingApproval && !t.approvals.contains(me) { return true }
