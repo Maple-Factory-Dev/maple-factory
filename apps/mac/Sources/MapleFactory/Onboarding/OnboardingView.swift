@@ -18,6 +18,7 @@ struct OnboardingView: View {
     /// Went back to the workspace: anything still in flight lands nowhere.
     @State private var cancelled = false
     /// `-onboardingAuto` and `-onboardingStep` play the scripted demo instead of talking to a server.
+    private static var autoConnected = false
     private let demo = AppDefaults.bool(forKey: "onboardingAuto") || AppDefaults.string(forKey: "onboardingStep") != nil
 
     enum Step: Int { case url, connecting, signIn, authorizing, ready }
@@ -81,7 +82,9 @@ struct OnboardingView: View {
         .onAppear {
             // `-onboardingURL localhost:8788` fills in a real address and connects; add
             // `-onboardingContinue YES` to sign in too. For screenshots of the real flow.
-            if let address = AppDefaults.string(forKey: "onboardingURL") {
+            // Once a launch: signed out again later, it stays on the connect screen like the real app.
+            if let address = AppDefaults.string(forKey: "onboardingURL"), !Self.autoConnected {
+                Self.autoConnected = true
                 url = address
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(0.8))

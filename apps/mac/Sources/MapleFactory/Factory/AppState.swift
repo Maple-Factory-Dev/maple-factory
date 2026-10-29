@@ -150,13 +150,38 @@ final class AppState {
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
     /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
+    /// Signed out, the app opens at onboarding too; `-mock YES` (or any flag that drives the demo,
+    /// see `showsMock`) opens the design mockup's workspace instead, and `-mock NO` never does.
     var showOnboarding = AppDefaults.bool(forKey: "onboarding") || AppDefaults.bool(forKey: "onboardingAuto")
         || AppDefaults.bool(forKey: "onboardingFromWorkspace")
     /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
     var onboardingCanCancel = AppDefaults.bool(forKey: "onboardingFromWorkspace")
+    /// A demo or screenshot launch: signed out, it shows the mockup rather than onboarding.
+    let demoLaunch = AppState.showsMock(arguments: ProcessInfo.processInfo.arguments)
+
+    /// Launch flags that drive the mockup, so a launch with any of them is a demo.
+    nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
+                                        "mockview", "onboardingStep"]
+    /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
+    nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
+
+    /// `-mock YES`/`NO` decides; otherwise any demo flag, or demo switch that's on, makes it a demo.
+    /// A fresh install has none.
+    nonisolated static func showsMock(arguments: [String]) -> Bool {
+        func isOn(_ value: String) -> Bool { ["yes", "true", "1"].contains(value.lowercased()) }
+        if let mock = Headless.value("mock", in: arguments) { return isOn(mock) }
+        return demoFlags.contains { Headless.value($0, in: arguments) != nil }
+            || demoSwitches.contains { Headless.value($0, in: arguments).map(isOn) == true }
+    }
+
+    /// Signed out and not a demo: there's no factory to show, so connect to one.
+    nonisolated static func launchesToOnboarding(signedIn: Bool, demo: Bool) -> Bool { !signedIn && !demo }
+
+    /// Esc / "Back to…" only when there's a workspace to go back to: a factory, or the demo's mockup.
+    nonisolated static func onboardingCancellable(signedIn: Bool, demo: Bool) -> Bool { signedIn || demo }
 
     func startOnboarding() {
-        onboardingCanCancel = true
+        onboardingCanCancel = Self.onboardingCancellable(signedIn: client?.isSignedIn == true, demo: demoLaunch)
         withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
     }
 
@@ -172,7 +197,21 @@ final class AppState {
         destination = .inbox
     }
 
-    /// `workspace`: the factory just joined, or the demo's when there's none.
+    /// Signs out of this factory: on to the next saved one, or, the last gone, connect to another
+    /// rather than fall into the mockup (which only a demo launch goes back to).
+    func signOut() {
+        guard let client else { return }
+        client.signOut()
+        if client.isSignedIn {
+            didSwitchFactory()
+        } else if !demoLaunch {
+            didSwitchFactory()
+            onboardingCanCancel = false
+            withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
+        }
+    }
+
+    /// `workspace`: the factory just joined, or the demo's when there's none (only demo launches get there).
     func finishOnboarding(workspace: String = "Studio Workspace") {
         withAnimation(.easeInOut(duration: 0.45)) { showOnboarding = false }
         showToast("Welcome to \(workspace)", icon: "hand.wave.fill")
@@ -1632,6 +1671,7 @@ final class AppState {
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
+                case "signout": signOut()
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")

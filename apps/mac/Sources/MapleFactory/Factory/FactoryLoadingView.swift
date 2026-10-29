@@ -35,7 +35,7 @@ struct FactoryLoadingView: View {
                     .transition(.opacity)
             }
             HStack(spacing: 8) {
-                SecondaryButton(title: "Sign Out") { client.signOut() }
+                SecondaryButton(title: "Sign Out") { state.signOut() }
                 SecondaryButton(title: "Connect to Another Factory…") { state.startOnboarding() }
             }
             .fixedSize()

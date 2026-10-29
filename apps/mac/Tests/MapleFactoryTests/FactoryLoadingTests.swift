@@ -13,7 +13,7 @@ struct FactoryLoadingTests {
     }
 
     @Test func notLoadingSignedOut() {
-        // Demo mode opens straight to the mock.
+        // Nothing to load: a fresh launch opens onboarding, and a demo launch (-mock YES, -snapshot…) the mock.
         #expect(!AppState.isLoading(signedIn: false, hasSnapshot: false))
     }
 
