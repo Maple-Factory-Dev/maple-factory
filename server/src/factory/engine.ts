@@ -1069,6 +1069,8 @@ export class Engine {
       console.error("secrets: couldn't open", repo, e);
       return reply(null, "The factory couldn't decrypt this repo's secrets (was SECRETS_KEY changed?).", "decrypt");
     }
+    // Every task session asks; only a release of something is worth a row.
+    if (!Object.keys(values).length) return reply(values, null, null);
     await audit(this.env, `machine:${machine}`, "secret.pulled", repo, { machine, repo, task: msg.taskId ?? null, for: actor, names: Object.keys(values).sort() });
     return reply(values, null, null);
   }
