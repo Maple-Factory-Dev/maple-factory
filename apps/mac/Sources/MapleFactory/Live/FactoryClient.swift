@@ -345,7 +345,8 @@ import Security
         }
     }
 
-    private func apply(_ message: Wire.ServerToClient) {
+    /// One message from the feed (internal for tests).
+    func apply(_ message: Wire.ServerToClient) {
         switch message {
         case .snapshot(let snapshot):
             attempt = 0
@@ -433,6 +434,10 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+        case .runnerReleased(let update):
+            // The hub's hourly look at the release feed: every outdated badge and What's new follows.
+            runnerLatest = update.runnerLatest
+            runnerReleases = update.runnerReleases
         case .promptsUpdated(let update):
             prompts = update.prompts
         case .policyUpdated(let update):
