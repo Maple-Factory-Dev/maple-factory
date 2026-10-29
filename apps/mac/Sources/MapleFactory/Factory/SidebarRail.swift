@@ -7,7 +7,7 @@ struct SidebarRail: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            item(client.workspaceName, detail: "Connect to another factory") {
+            item(client.workspaceName, detail: "Connect to another factory (Esc to go back)") {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Theme.accent)

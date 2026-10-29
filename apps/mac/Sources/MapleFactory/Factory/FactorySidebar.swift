@@ -11,7 +11,7 @@ struct FactorySidebar: View {
             WorkspaceSwitcher()
                 .contentShape(Rectangle())
                 .onTapGesture { state.startOnboarding() }
-                .help("Connect to another factory")
+                .help("Connect to another factory (Esc to go back)")
                 .padding(.top, 48)
                 .padding(.bottom, 14)
 
