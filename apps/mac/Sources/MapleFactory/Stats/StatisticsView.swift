@@ -69,8 +69,8 @@ struct StatisticsView: View {
             StatTile(label: "Cycle time", value: duration(t.cycleMedianMs), detail: "median, to merge")
             StatTile(label: "First-try plans", value: percent(t.firstTryApproval), detail: t.avgPlanVersions.map { String(format: "%.1f versions on average", $0) } ?? "no approvals yet")
             StatTile(label: "Hands raised", value: "\(t.handsRaised)", detail: t.handOpenMedianMs.map { "up \(duration($0)) (median)" } ?? "\(t.handsOpen) up now")
-            StatTile(label: "Steers per task", value: t.steersPerTask.map { String(format: "%.1f", $0) } ?? "–", detail: "\(t.steers) steers, \(t.questions) questions")
-            StatTile(label: "Review rounds", value: t.reviewRoundsPerMerge.map { String(format: "%.1f", $0) } ?? "–", detail: "per merge · \(t.findings) findings")
+            StatTile(label: "Steers per task", value: t.steersPerTask.map { String(format: "%.1f", $0) } ?? "–", detail: "\(counted(t.steers, "steer")), \(counted(t.questions, "question"))")
+            StatTile(label: "Review rounds", value: t.reviewRoundsPerMerge.map { String(format: "%.1f", $0) } ?? "–", detail: "per merge · \(counted(t.findings, "finding"))")
         }
 
         twoUp {
@@ -80,7 +80,7 @@ struct StatisticsView: View {
 
         twoUp {
             BarList(title: "Hands by reason", note: "median time up", rows: s.handsByReason, label: handReason, trailing: { $0.medianMs.map(duration) })
-            BarList(title: "Review findings by kind", note: "\(t.reviewRounds) rounds", rows: s.findingsByKind, label: { $0.capitalized }, trailing: { _ in nil })
+            BarList(title: "Review findings by kind", note: counted(t.reviewRounds, "round"), rows: s.findingsByKind, label: { $0.capitalized }, trailing: { _ in nil })
         }
 
         twoUp {
@@ -207,8 +207,13 @@ struct StatisticsView: View {
     private func touchSummary(_ r: Wire.StatsTaskRow) -> String {
         [(r.hands, "hand"), (r.steers, "steer"), (r.questions, "question"), (r.reviewRounds, "round")]
             .filter { $0.0 > 0 }
-            .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }
+            .map { counted($0.0, $0.1) }
             .joined(separator: " · ")
+    }
+
+    /// "1 round", "2 rounds".
+    private func counted(_ n: some BinaryInteger, _ noun: String) -> String {
+        "\(n) \(noun)\(n == 1 ? "" : "s")"
     }
 
     private func metric(_ label: String, _ value: String) -> some View {
