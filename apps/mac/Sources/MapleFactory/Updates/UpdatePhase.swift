@@ -14,6 +14,9 @@ enum UpdatePhase: Equatable {
     case upToDate
     case failed(message: String)
 
+    /// The toast a check you started shows when there's nothing new (the footer stays out of it).
+    static let upToDateToast = "You're up to date — thanks for staying up to date"
+
     /// What the footer's one button does next.
     enum Action: Equatable { case install, cancel, relaunch, retry }
 
@@ -36,6 +39,9 @@ enum UpdatePhase: Equatable {
     }
 
     var isVisible: Bool { self != .idle }
+
+    /// Whether the sidebar footer shows it: up to date is a toast instead.
+    var showsInFooter: Bool { isVisible && self != .upToDate }
 
     /// Phases nobody has to answer, which clear themselves after a few seconds.
     var clearsItself: Bool {
