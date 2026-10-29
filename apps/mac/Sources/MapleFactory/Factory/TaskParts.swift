@@ -268,7 +268,11 @@ struct ReviewActions: View {
                         SignOffRow(person: person, text: "approved the changes")
                     }
                     if !gate.reviewsReady {
-                        PendingSignOffRow(text: iReviewed ? "Needs one more reviewer" : "Waiting on you", highlight: !iReviewed)
+                        if !gate.autoReviewReady && !iReviewed {
+                            PendingSignOffRow(text: "Waiting on the automatic review", highlight: false)
+                        } else {
+                            PendingSignOffRow(text: iReviewed ? "Needs one more reviewer" : "Waiting on you", highlight: !iReviewed)
+                        }
                     }
                 }
             }
@@ -324,6 +328,17 @@ struct ReviewActions: View {
         let risk = state.risk(for: task)
         let level = risk?.level.title.lowercased() ?? "this"
         let (icon, text, color): (String, String, Color) = {
+            if !gate.autoReviewReady {
+                switch task.autoReview?.current?.verdict {
+                case .changesRequested?:
+                    return ("arrow.triangle.2.circlepath", "The reviewer asked for changes; the builder is fixing them. You can approve once it passes.", Theme.textMuted)
+                case .escalated?:
+                    return ("exclamationmark.triangle", "The reviewer escalated this round. Approval unlocks once the automatic review passes.", Theme.textMuted)
+                default:
+                    let round = gate.autoReviewRound.map { "round \($0)" } ?? "its first round"
+                    return ("hourglass", "The factory's reviewer is on \(round). You can approve once it passes.", Theme.textMuted)
+                }
+            }
             if let acceptance = risk?.acceptance {
                 return ("bolt.shield", "\(acceptance.acceptedBy.firstName) accepted \(level) risk for \(task.goal). The factory merges once proofs and CI pass.", Theme.State.merged)
             }
