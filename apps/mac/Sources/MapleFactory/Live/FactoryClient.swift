@@ -61,7 +61,16 @@ import Security
         set { UserDefaults.standard.set(newValue, forKey: picksKey); picksChanged += 1 }
     }
     private var picksChanged = 0
-    private var picksKey: String { "sidebarPeople.\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
+    private var picksKey: String { "sidebarPeople.\(serverKey)" }
+
+    /// The order this person put their sidebar goals in, by goal id, per factory; nil until they move one.
+    var goalOrder: [String]? {
+        get { _ = goalOrderChanged; return UserDefaults.standard.stringArray(forKey: goalOrderKey) }
+        set { UserDefaults.standard.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
+    }
+    private var goalOrderChanged = 0
+    private var goalOrderKey: String { "sidebarGoalOrder.\(serverKey)" }
+    private var serverKey: String { "\(server?.host() ?? "")\(server?.port.map { ":\($0)" } ?? "")" }
 
     /// The people in the sidebar: their picks, else whoever shares a GitHub team with them (everyone
     /// when they're on none). Always them first.
