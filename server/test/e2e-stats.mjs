@@ -5,7 +5,9 @@
 // Checks: an admin's `stats.get` counts that task's merge, hand (and how long it was up), steer,
 // review round and its findings, and first-try plan; a member's gets "Only admins can see
 // statistics."; GET /api/stats?days=30 answers an admin with the same summary (and `raw=1` its event
-// rows) and a member with 403. Other machines of yours are paused for the run and resumed after.
+// rows) and a member with 403; the `session.cost` readings the runner sent for the planner and the builder
+// add up by role and by agent · model, a later lower reading doesn't lower a session's total, and a
+// personal session's spend isn't counted. Other machines of yours are paused for the run and resumed after.
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -47,6 +49,11 @@ runner.onmessage = (e) => {
 };
 toServer({ type: "hello", runnerId, hostname: runnerId, os: "macos", arch: "arm64", version: "0.0.0-fake", sessions: [], ended: [] });
 toServer({ type: "health", health: { cpu: 5, cores: 10, load1: 0.5, memUsed: 8e9, memTotal: 32e9, diskUsed: 2e11, diskTotal: 1e12, uptime: 1000, battery: null, agents: [{ name: "claude", version: "2.1.0", loggedIn: true }] } });
+// A session's spend so far, as the runner measures it from the agent's harness.
+const sessionCost = (session, costUsd, inputTokens, outputTokens, model = "claude-opus-5-5") => toServer({
+  type: "session.cost",
+  cost: { session, agent: "claude", model, costUsd, inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, durationMs: 60_000, observedAt: Date.now() },
+});
 let n = 0;
 const tool = (taskId, name, args = {}) => new Promise((resolve, reject) => {
   const reqId = `r${++n}`;
@@ -104,6 +111,8 @@ try {
 
   // Planner: plan v1, approved first try.
   await me.wait("the planner", () => opened.find((o) => o.taskId === id && sessions.get(id) === o.id && task()?.worker?.role === "planner"));
+  const plannerSession = sessions.get(id);
+  sessionCost(plannerSession, 0.75, 12_000, 1_500);
   await tool(id, "submit_plan", {
     summary: "One step.", steps: [{ text: "Do it", file: "a.txt" }], doneWhen: [{ text: "It's done", proof: "terminal" }],
     risk: { level: "low", reasons: [], areas: [] }, footprint: { files: 1, lines: 3 },
@@ -114,6 +123,14 @@ try {
 
   // Builder: raises a hand, which an admin answers; then a steer it applies.
   await me.wait("the builder", () => task()?.worker?.role === "builder" && sessions.get(id) === task().worker.session);
+  const builderSession = sessions.get(id);
+  sessionCost(builderSession, 2.5, 40_000, 6_000, "claude-sonnet-5-5");
+  // Its status line restarted and counts from zero again: the total stays.
+  sessionCost(builderSession, 0.25, 1_000, 100, "claude-sonnet-5-5");
+  // A personal session on the same machine: its spend isn't the factory's.
+  const personal = crypto.randomUUID();
+  toServer({ type: "session.opened", session: { id: personal, agent: "claude", cwd: "/tmp", pid: 2, startedAt: Date.now(), taskId: null } });
+  sessionCost(personal, 99, 1, 1);
   await tool(id, "raise_hand", { reason: "needsInput", summary: "Which file?", options: [{ title: "a.txt", detail: "The usual one", recommended: true }] });
   await me.wait("the hand", () => task()?.hand);
   await new Promise((r) => setTimeout(r, 1200));
@@ -148,6 +165,9 @@ try {
   for (const [k, want] of [["merged", 1], ["handsRaised", 1], ["steers", 1], ["reviewRounds", 1], ["findings", 1], ["approvals", 1], ["planVersions", 1]]) {
     if (delta(k) !== want) throw new Error(`${k} went up by ${delta(k)}, not ${want}`);
   }
+  // Factory-wide, the personal session's $99 isn't there: only the planner's and builder's $3.25.
+  const spent = Math.round(((after.costTotal?.costUsd ?? 0) - (before.costTotal?.costUsd ?? 0)) * 100) / 100;
+  if (spent !== 3.25) throw new Error(`factory-wide cost went up by $${spent}, not $3.25`);
   const mine = await statsFor(me, goal.id);
   const g = mine.totals;
   const want = { merged: 1, handsRaised: 1, steers: 1, reviewRounds: 1, findings: 1, approvals: 1, firstTryApproval: 1, reviewRoundsPerMerge: 1 };
@@ -178,6 +198,18 @@ try {
   const raw = await (await fetch(`${base}/api/stats?days=30&goal=${goal.id}&raw=1`, { headers: auth })).json();
   const kinds = [...new Set(raw.events.map((e) => e.kind))].sort();
   for (const k of ["hand.raised", "hand.resolved", "merged", "plan.approved", "plan.submitted", "review.round", "steer"]) if (!kinds.includes(k)) throw new Error(`raw events lack ${k}: ${kinds}`);
+  // Cost: what the planner and builder sessions reported, filed by role and by agent · model.
+  const costs = body;
+  const role = (k) => costs.costByRole.find((r) => r.key === k);
+  if (costs.costTotal?.costUsd !== 3.25 || costs.costTotal.sessions !== 2) throw new Error(`cost total: ${JSON.stringify(costs.costTotal)}`);
+  if (role("planner")?.costUsd !== 0.75 || role("planner").tokens !== 13_500) throw new Error(`planner cost: ${JSON.stringify(costs.costByRole)}`);
+  if (role("builder")?.costUsd !== 2.5 || role("builder").tokens !== 46_000) throw new Error(`builder cost (a lower reading lowered it?): ${JSON.stringify(costs.costByRole)}`);
+  const agentKeys = costs.costByAgent.map((r) => `${r.key}=${r.costUsd}`).join(", ");
+  if (agentKeys !== "claude · claude-sonnet-5-5=2.5, claude · claude-opus-5-5=0.75") throw new Error(`cost by agent: ${agentKeys}`);
+  if (costs.topTasks.find((r) => r.task === id)?.costUsd !== 3.25) throw new Error(`task cost: ${JSON.stringify(costs.topTasks)}`);
+  console.log(`  costByRole: ${JSON.stringify(costs.costByRole)}`);
+  console.log(`  costByAgent: ${JSON.stringify(costs.costByAgent)}`);
+  step(`cost: $${costs.costTotal.costUsd} over ${costs.costTotal.sessions} sessions (planner $0.75, builder $2.5; the lower reading and the personal session's $99 not counted)`);
   const no = await fetch(`${base}/api/stats?days=30`, { headers: { authorization: `Bearer ${member}` } });
   if (no.status !== 403) throw new Error(`member /api/stats: ${no.status}`);
   step(`GET /api/stats: admin 200 (merged ${body.totals.merged}; raw=1 has ${raw.events.length} events: ${kinds.join(", ")}), member ${no.status} "${await no.text()}"`);
