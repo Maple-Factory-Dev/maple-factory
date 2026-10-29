@@ -2071,8 +2071,10 @@ public enum Wire {
         public var startAt: UInt64?
         /// Its next session skips the wait for a free slot; cleared once it starts.
         public var force: Bool?
+        /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
+        public var effort: String?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2116,6 +2118,7 @@ public enum Wire {
             self.queueRank = queueRank
             self.startAt = startAt
             self.force = force
+            self.effort = effort
         }
 
         public init(from decoder: Decoder) throws {
@@ -2163,6 +2166,7 @@ public enum Wire {
             queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
+            effort = try c.decodeIfPresent(String.self, forKey: .effort)
         }
     }
 
@@ -3531,8 +3535,9 @@ public enum Wire {
         public var intake: String?
         public var repo: String?
         public var after: [String]?
+        public var effort: String?
 
-        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil) {
+        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil, effort: String? = nil) {
             self.goal = goal
             self.title = title
             self.brief = brief
@@ -3543,6 +3548,7 @@ public enum Wire {
             self.intake = intake
             self.repo = repo
             self.after = after
+            self.effort = effort
         }
 
         public init(from decoder: Decoder) throws {
@@ -3557,6 +3563,7 @@ public enum Wire {
             intake = try c.decodeIfPresent(String.self, forKey: .intake)
             repo = try c.decodeIfPresent(String.self, forKey: .repo)
             after = try c.decodeIfPresent([String].self, forKey: .after)
+            effort = try c.decodeIfPresent(String.self, forKey: .effort)
         }
     }
 
@@ -3566,13 +3573,16 @@ public enum Wire {
         public var brief: String?
         public var shareable: Bool?
         public var repo: String?
+        /// Put it in this effort; an empty string takes it out.
+        public var effort: String?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
             self.shareable = shareable
             self.repo = repo
+            self.effort = effort
         }
     }
 
