@@ -24,7 +24,7 @@ struct HeadlessTests {
 
     /// …and a headless run's suite never writes into them.
     @Test func suiteNeverTouchesStandard() {
-        let name = Headless.suiteName(arguments: ["-instance", "tests-\(UUID().uuidString)"], pid: 0)
+        let name = Headless.suiteName(arguments: ["-instance", "tests"], pid: 0)
         let suite = UserDefaults(suiteName: name)!
         defer { Headless.removeSuite(name) }
         let key = "headlessTest.factoryURL"

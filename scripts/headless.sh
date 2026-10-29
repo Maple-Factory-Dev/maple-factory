@@ -25,6 +25,8 @@ snapshot() {
   rm -f "$OUT/done.json"
   build
   "$BIN" -snapshot "$OUT" -instance "headless-$$" "$@" >"$OUT/app.log" 2>&1 || true
+  # The app empties its defaults suite; cfprefsd can still write the empty plist back after it quits.
+  rm -f "$HOME/Library/Preferences/dev.maplefactory.headless.headless-$$.plist"
   if [ ! -f "$OUT/done.json" ]; then
     echo "headless: the app quit without done.json; see $OUT/app.log" >&2
     tail -20 "$OUT/app.log" >&2

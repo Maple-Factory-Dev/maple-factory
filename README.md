@@ -38,6 +38,26 @@ or machine settings. Task links (`/t/<ID>`) open the Mac app and fall back to it
 End-to-end tests for each piece are in server/test (each says what it needs at the top). Launch flags for screenshots: `-onboardingURL localhost:8788
 -onboardingContinue YES` plays the real sign-in; `-destination machines -liveSession first` opens a terminal.
 
+### Testing without taking over the screen
+
+Someone is usually working on the Mac the factory builds on, so agents check the app headless instead of
+launching it in the foreground or using `screencapture`. `scripts/headless.sh` runs the app as a background
+app: no Dock icon, never activated, its window off screen, rendered to PNGs once the launch flags and
+`-actions` script have played. It keeps its own defaults, so it can't sign the real app out or move its sidebar.
+
+```sh
+scripts/headless.sh shot /tmp/out -destination inbox -actions 'approve:ATL-147; shot:approved'  # inbox.png, approved.png
+scripts/headless.sh shot /tmp/out -destination "Auth overhaul" -layout list -task ATL-147 -appearance both
+scripts/headless.sh video /tmp/approve.mp4 -actions 'approve:ATL-147; wait:2'   # -frames/-fps; needs ffmpeg
+scripts/headless.sh stack up        # an isolated dev stack: MAPLE_DEV_INSTANCE=agent, its own port, home and runner
+scripts/headless.sh live /tmp/out -destination machines   # signed in to that stack
+scripts/headless.sh stack down      # stops only that stack, never `dev` or a real maple-runner
+```
+
+`shot:<name>` in a script takes a frame between actions; `-settle`, `-timeout` (60s; a timeout writes
+timeout.png and exits 1), `-width`/`-height` and `-name` tune a run. Every result is listed in `<out>/done.json`.
+Any `MAPLE_DEV_INSTANCE` other than `dev` gives `scripts/dev-stack.sh` a separate stack in the same way.
+
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
 Runner tests: `cd runner && cargo test`.
 
