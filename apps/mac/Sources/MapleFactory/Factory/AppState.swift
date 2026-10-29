@@ -766,6 +766,25 @@ final class AppState {
         showToast("Copied a link to \(id)", icon: "link")
     }
 
+    func copyID(_ id: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(id, forType: .string)
+        showToast("Copied \(id)", icon: "number")
+    }
+
+    func copyBranch(_ id: String) {
+        let task = task(id)
+        guard let branch = task.gitBranch ?? task.pr?.branch else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(branch, forType: .string)
+        showToast("Copied \(branch)", icon: "arrow.triangle.branch")
+    }
+
+    func openPullRequest(_ id: String) {
+        guard let pr = task(id).pr, !pr.isLocal else { return }
+        NSWorkspace.shared.open(pr.url)
+    }
+
     /// The task's branch on GitHub; for a goal that names a folder, the command to check it out.
     func openBranch(_ id: String) {
         let task = task(id)
@@ -877,6 +896,22 @@ final class AppState {
             return
         }
         update(id) { $0.state = .planning }
+    }
+
+    /// A new title; empty or unchanged ones are ignored.
+    func rename(_ id: String, title: String) {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title != task(id).title else { return }
+        if let client, isLive {
+            client.send(.taskEdit(.init(id: id, title: title, brief: nil, shareable: nil)))
+            showToast("Renamed \(id)", icon: "pencil")
+            return
+        }
+        update(id) { task in
+            task.title = title
+            task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Renamed it to \(title)", when: "now"), at: 0)
+        }
+        showToast("Renamed \(id)", icon: "pencil")
     }
 
     func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {

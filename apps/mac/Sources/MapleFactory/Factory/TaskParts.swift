@@ -57,41 +57,51 @@ struct TaskOwnership: View {
     }
 }
 
-/// The ⋯ menu on a task: Retry and Cancel task…, with Cancel's confirmation. Nothing on a merged task.
+/// The ⋯ menu on a task: what to do next, editing it, and getting at it, with Cancel's confirmation
+/// and the Rename alert.
 struct TaskActionsMenu<Label: View>: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     @ViewBuilder var label: Label
     @State private var confirmCancel = false
+    @State private var rename = false
 
     var body: some View {
-        if task.state != .merged {
-            Menu {
-                TaskActionButtons(task: task, confirmCancel: $confirmCancel)
-            } label: {
-                label
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Task actions")
-            .cancelTaskConfirmation(task: task, isPresented: Binding(
-                get: { confirmCancel || appState.confirmingCancel == task.id },
-                set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
-            ))
+        Menu {
+            TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename)
+        } label: {
+            label
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Task actions")
+        .cancelTaskConfirmation(task: task, isPresented: Binding(
+            get: { confirmCancel || appState.confirmingCancel == task.id },
+            set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
+        ))
+        .renameTask(task: task, isPresented: $rename)
     }
 }
 
-/// Retry and Cancel task…, for a menu or a row's context menu. Cancel only asks; the caller shows
-/// the confirmation (`cancelTaskConfirmation`).
+/// Everything you can do to a task, for a menu or a row's context menu, in three groups: next
+/// (Send to planning, Retry, Cancel task…), editing (Rename…, teammates' machines) and getting at
+/// it (pull request, branch, ID). Cancel and Rename only ask; the caller shows the confirmation
+/// (`cancelTaskConfirmation`) and the alert (`renameTask`).
 struct TaskActionButtons: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     @Binding var confirmCancel: Bool
+    @Binding var rename: Bool
+
+    private var open: Bool { task.state != .merged && task.state != .cancelled }
+    private var branch: String? { task.gitBranch ?? task.pr?.branch }
 
     var body: some View {
         if task.state != .merged {
+            if task.state == .drafting {
+                Button { appState.plan(task.id) } label: { Label("Send to planning", systemImage: "paperplane") }
+            }
             // Waiting on its plan's approval, nothing is running to retry; request changes instead.
             if task.state != .drafting && task.state != .awaitingApproval {
                 Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
@@ -99,7 +109,22 @@ struct TaskActionButtons: View {
             if task.state != .cancelled {
                 Button(role: .destructive) { confirmCancel = true } label: { Label("Cancel task…", systemImage: "xmark.circle") }
             }
+            Divider()
         }
+        if open {
+            Button { rename = true } label: { Label("Rename…", systemImage: "pencil") }
+            Toggle(isOn: Binding(get: { task.shareable }, set: { appState.setShareable(task.id, $0) })) {
+                Label("Run on teammates' machines", systemImage: "person.3")
+            }
+            Divider()
+        }
+        if let pr = task.pr, !pr.isLocal {
+            Button { appState.openPullRequest(task.id) } label: { Label("Open pull request", systemImage: "arrow.up.right.square") }
+        }
+        if branch != nil {
+            Button { appState.copyBranch(task.id) } label: { Label("Copy branch name", systemImage: "arrow.triangle.branch") }
+        }
+        Button { appState.copyID(task.id) } label: { Label("Copy ID", systemImage: "number") }
     }
 }
 
@@ -107,6 +132,30 @@ extension View {
     /// Asks before cancelling `task`, saying what cancelling stops.
     func cancelTaskConfirmation(task: FactoryTask, isPresented: Binding<Bool>) -> some View {
         modifier(CancelTaskConfirmation(task: task, isPresented: isPresented))
+    }
+
+    /// Asks for `task`'s new title.
+    func renameTask(task: FactoryTask, isPresented: Binding<Bool>) -> some View {
+        modifier(RenameTask(task: task, isPresented: isPresented))
+    }
+}
+
+private struct RenameTask: ViewModifier {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+    @Binding var isPresented: Bool
+    @State private var title = ""
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Rename \(task.id)", isPresented: $isPresented) {
+                TextField("Title", text: $title)
+                Button("Rename") { appState.rename(task.id, title: title) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("A new title everyone sees on the board and in the sidebar.")
+            }
+            .onChange(of: isPresented) { if isPresented { title = task.title } }
     }
 }
 
