@@ -480,7 +480,7 @@ import Security
     func attachment(_ path: String) async throws -> Data {
         if let cached = Self.attachmentCache.object(forKey: path as NSString) { return cached as Data }
         guard let server, let token else { throw ClientError.message("Not signed in.") }
-        guard path.hasPrefix("/attachments/"), let url = URL(string: path, relativeTo: server)?.absoluteURL else {
+        guard Self.attachmentLink(path) != nil, let url = URL(string: path, relativeTo: server)?.absoluteURL else {
             throw ClientError.message("Not an attachment.")
         }
         var request = URLRequest(url: url)
@@ -492,18 +492,44 @@ import Security
         return data
     }
 
-    /// Saves an attachment to a temporary folder and opens it in its app.
+    /// `/attachments/<uuid>/<name>`, as the server's LINK pattern has it: its id and name, or nil for
+    /// anything else (`..`, other server paths), so the token never goes elsewhere.
+    nonisolated static func attachmentLink(_ path: String) -> (id: String, name: String)? {
+        guard let match = path.wholeMatch(of: /\/attachments\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([\w.\-]{1,120})/),
+              !match.2.contains(".."), !match.2.hasPrefix(".") else { return nil }
+        return (String(match.1), String(match.2))
+    }
+
+    /// Opened in their app with a click; anything else (scripts, .command, .app, .jar…) is only shown in Finder.
+    nonisolated static let safeToOpen: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "pdf",
+                                                      "txt", "log", "md", "json", "csv", "mp4", "mov", "webm"]
+
+    /// Saves an attachment to a temporary folder, quarantined like a browser download, then opens it in
+    /// its app if it's a known-safe type or shows it in Finder otherwise.
     func open(attachment path: String) async {
         do {
+            guard let link = Self.attachmentLink(path) else { throw ClientError.message("Not an attachment.") }
             let data = try await attachment(path)
-            let parts = path.split(separator: "/").suffix(2)
-            let folder = FileManager.default.temporaryDirectory.appending(path: "maple-attachments/\(parts.first ?? "file")")
+            let folder = FileManager.default.temporaryDirectory.appending(path: "maple-attachments/\(link.id)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let file = folder.appending(path: String(parts.last ?? "file"))
+            let file = folder.appending(path: link.name)
             try data.write(to: file)
-            NSWorkspace.shared.open(file)
+            Self.quarantine(file)
+            if Self.safeToOpen.contains(file.pathExtension.lowercased()) {
+                NSWorkspace.shared.open(file)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            }
         } catch {
             notice = Self.describe(error)
+        }
+    }
+
+    /// Marks a file as downloaded (`com.apple.quarantine`), so Gatekeeper checks it before it runs.
+    nonisolated static func quarantine(_ file: URL) {
+        let stamp = String(format: "0083;%08x;Maple Factory;", Int(Date().timeIntervalSince1970))
+        _ = file.withUnsafeFileSystemRepresentation { path in
+            stamp.withCString { setxattr(path, "com.apple.quarantine", $0, strlen($0), 0, 0) }
         }
     }
 

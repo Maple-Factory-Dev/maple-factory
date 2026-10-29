@@ -55,6 +55,10 @@ for (const name of ["../../etc/passwd", "..", "a/b.png", "a\\b.png", "x/../y.png
   const r = await upload(name, "x");
   check(r.status === 400, `the name ${JSON.stringify(name)} is refused (${r.status})`);
 }
+const dotted = await (await upload("notes.", "trailing")).json();
+check(dotted.name === "notes", `a trailing dot is dropped from the stored name (${dotted.name})`);
+const dottedRunner = await fetch(`${base}/runner${dotted.path}?runner=${runnerId}`, { headers: { authorization: `Bearer ${enrolled.token}` } });
+check(dottedRunner.status === 200, `the runner finds it by the name its link gives (${dottedRunner.status})`);
 const traversal = await fetch(`${base}/attachments/${att.path.split("/")[2]}/..%2F..%2Fsecret`, { headers: member });
 check(traversal.status === 400, `'..' in a fetched path is refused (${traversal.status})`);
 const big = await upload("big.bin", Buffer.alloc(25 * 1024 * 1024 + 1));

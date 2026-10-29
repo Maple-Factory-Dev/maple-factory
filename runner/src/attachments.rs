@@ -95,6 +95,7 @@ pub async fn add_with(result: &mut Value, home: &Path, origin: Option<(&str, &st
     }
     let id = task.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
     let mut listed = Vec::new();
+    let mut saved = 0;
     for link in &found {
         let got = match (folder(home, &id), origin) {
             (None, _) => Err("the task's id isn't a folder name".to_string()),
@@ -103,6 +104,7 @@ pub async fn add_with(result: &mut Value, home: &Path, origin: Option<(&str, &st
         };
         listed.push(match got {
             Ok(path) => {
+                saved += 1;
                 tracing::info!("task {id}'s attachment {} is at {}", link.name, path.display());
                 json!({ "name": link.name, "link": link.path(), "path": path.display().to_string() })
             }
@@ -116,8 +118,17 @@ pub async fn add_with(result: &mut Value, home: &Path, origin: Option<(&str, &st
         data.insert("attachments".into(), Value::Array(listed));
     }
     if let Some(summary) = result.get("summary").and_then(Value::as_str) {
-        let n = found.len();
-        result["summary"] = json!(format!("{summary} · {n} attachment{} saved locally: open each one's path to see it", if n == 1 { "" } else { "s" }));
+        result["summary"] = json!(format!("{summary} · {}", saved_note(saved, found.len() - saved)));
+    }
+}
+
+/// What `get_task`'s summary says about a task's attachments.
+fn saved_note(saved: usize, failed: usize) -> String {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    match (saved, failed) {
+        (s, 0) => format!("{s} attachment{} saved locally: open each one's path to see it", plural(s)),
+        (0, f) => format!("{f} attachment{} couldn't be fetched: see each one's error", plural(f)),
+        (s, f) => format!("{s} attachment{} saved locally (open each one's path), {f} couldn't be fetched (see its error)", plural(s)),
     }
 }
 
@@ -269,7 +280,7 @@ mod tests {
                 { "name": "layout-crash.log", "link": format!("/attachments/{B}/layout-crash.log"), "error": "404 Not Found: Not found." },
             ])
         );
-        assert!(result["summary"].as_str().unwrap().contains("2 attachments saved locally"));
+        assert!(result["summary"].as_str().unwrap().ends_with("1 attachment saved locally (open each one's path), 1 couldn't be fetched (see its error)"), "{}", result["summary"]);
         assert_eq!(std::fs::read(&path).unwrap(), png);
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         let first = heads.lock().unwrap().clone();
@@ -283,6 +294,12 @@ mod tests {
         assert_eq!(again.len(), 3);
         assert!(again[2].contains("layout-crash.log"), "{}", again[2]);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn the_summary_counts_saved_and_failed_apart() {
+        assert_eq!(saved_note(2, 0), "2 attachments saved locally: open each one's path to see it");
+        assert_eq!(saved_note(0, 1), "1 attachment couldn't be fetched: see each one's error");
     }
 
     #[tokio::test]

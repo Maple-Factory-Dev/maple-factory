@@ -16,11 +16,12 @@ const LINK = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(
 /** Shown in the browser rather than downloaded; anything else (HTML, SVG, scripts) is a download. */
 const INLINE = /^(image\/(png|jpeg|gif|webp|heic)|text\/plain|application\/pdf|video\/(mp4|quicktime|webm))$/;
 
-/** A file's name as it's stored: no folders or `..` (refused), other odd characters become dashes. */
+/** A file's name as it's stored: no folders or `..` (refused), other odd characters become dashes, and no
+ * trailing dots (a link's name ends before a sentence's full stop, so the runner couldn't ask for it). */
 export function storedName(raw: string): string | null {
   const name = raw.trim();
   if (!name || /[\/\\\0]/.test(name) || name.includes("..")) return null;
-  const clean = name.replace(/[^\w.\-]+/g, "-").replace(/^[.\-]+/, "").slice(-120);
+  const clean = name.replace(/[^\w.\-]+/g, "-").replace(/^[.\-]+/, "").slice(-120).replace(/\.+$/, "");
   return clean && !clean.includes("..") ? clean : null;
 }
 
