@@ -94,10 +94,20 @@ final class AppState {
     // MARK: Onboarding
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
+    /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
     var showOnboarding = UserDefaults.standard.bool(forKey: "onboarding") || UserDefaults.standard.bool(forKey: "onboardingAuto")
+        || UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
+    var onboardingCanCancel = UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
 
     func startOnboarding() {
+        onboardingCanCancel = true
         withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
+    }
+
+    /// Back to the workspace without connecting: the current factory stays as it was.
+    func cancelOnboarding() {
+        withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = false }
     }
 
     /// `workspace`: the factory just joined, or the demo's when there's none.
