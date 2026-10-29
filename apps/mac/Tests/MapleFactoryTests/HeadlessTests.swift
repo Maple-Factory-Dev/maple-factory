@@ -48,4 +48,21 @@ struct HeadlessTests {
         #expect(AppState.demoAction(" shot:after-merge ") == ["shot", "after-merge"])
         #expect(AppState.demoAction("shot") == nil)
     }
+
+    /// `shot:` right after `approve:` waits for the approval to land, not the 1s step between actions.
+    @MainActor @Test func shotWaitsForInFlightActions() async {
+        let start = ContinuousClock.now
+        let landsAt = start + .milliseconds(1200)
+        #expect(await Headless.untilIdle(timeout: .seconds(5)) { ContinuousClock.now < landsAt })
+        #expect(ContinuousClock.now - start >= .milliseconds(1200))
+        // Something that never lands gives up instead of hanging the run.
+        #expect(!(await Headless.untilIdle(timeout: .milliseconds(200)) { true }))
+    }
+
+    /// A headless run signed in to an https factory keeps its token out of the real app's keychain item.
+    @Test func headlessTokensSkipTheKeychain() {
+        #expect(Keychain.isDev("http://localhost:8787", headless: false))
+        #expect(!Keychain.isDev("https://factory.example.com", headless: false))
+        #expect(Keychain.isDev("https://factory.example.com", headless: true))
+    }
 }

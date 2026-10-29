@@ -50,7 +50,18 @@ enum Headless {
 
     /// Takes `<dir>/<name>.png` mid-script (`shot:<name>`); nothing when not headless.
     @MainActor static func shot(_ name: String) async {
-        await Snapshotter.shared?.shoot(name)
+        await Snapshotter.shared?.settleThenShoot(name)
+    }
+
+    /// Waits until `busy` is false (polling every 50ms), or `timeout` passes; false on timeout.
+    @MainActor static func untilIdle(timeout: Duration, _ busy: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while busy() {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return true
     }
 
     /// Called by AppDelegate: hides the app and starts the driver.
@@ -118,7 +129,7 @@ enum Headless {
             async let recording: Void = self.record(frames: frames)
             while !self.state.scriptFinished { try? await Task.sleep(for: .milliseconds(100)) }
             try? await Task.sleep(for: .seconds(self.number("settle", 1.5)))
-            await self.shoot(self.name)
+            await self.settleThenShoot(self.name)
             await recording
             self.finish()
         }
@@ -164,6 +175,16 @@ enum Headless {
         return CGImageDestinationFinalize(destination)
     }
 
+    /// Once no action is in flight (a demo's approve holds its button busy for 1.2s before it
+    /// applies) and its result has had a moment to animate in, shoots `name`.
+    func settleThenShoot(_ name: String) async {
+        if !(await Headless.untilIdle(timeout: .seconds(30), { state.isBusy })) {
+            errors.append("\(name): still waiting on an action after 30s")
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        await shoot(name)
+    }
+
     /// `<name>.png`, or `<name>-light.png` and `<name>-dark.png` for `-appearance both`.
     func shoot(_ name: String) async {
         let appearances: [(String, NSAppearance.Name?)] = switch AppDefaults.string(forKey: "appearance") {
@@ -175,6 +196,10 @@ enum Headless {
         for (suffix, appearance) in appearances {
             if let appearance {
                 NSApp.appearance = NSAppearance(named: appearance)
+                // Off screen, SwiftUI isn't told about the app's appearance; the window's own reaches it.
+                window?.appearance = NSAppearance(named: appearance)
+                window?.contentView?.needsLayout = true
+                window?.contentView?.needsDisplay = true
                 // A frame or two for SwiftUI to redraw in the new colors.
                 try? await Task.sleep(for: .milliseconds(400))
             }

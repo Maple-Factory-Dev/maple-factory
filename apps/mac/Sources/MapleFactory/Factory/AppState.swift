@@ -933,6 +933,9 @@ final class AppState {
         return !landed(kind, on: task(id))
     }
 
+    /// Some button is still waiting on what it sent; headless `shot:` waits this out.
+    var isBusy: Bool { inFlight.contains { isInFlight($0.key, $0.value.kind) } }
+
     /// Whether the task already shows what `kind` asked for.
     private func landed(_ kind: InFlight.Kind, on task: FactoryTask) -> Bool {
         let me = FactoryData.me.id

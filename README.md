@@ -43,7 +43,8 @@ End-to-end tests for each piece are in server/test (each says what it needs at t
 Someone is usually working on the Mac the factory builds on, so agents check the app headless instead of
 launching it in the foreground or using `screencapture`. `scripts/headless.sh` runs the app as a background
 app: no Dock icon, never activated, its window off screen, rendered to PNGs once the launch flags and
-`-actions` script have played. It keeps its own defaults, so it can't sign the real app out or move its sidebar.
+`-actions` script have played. It keeps its own defaults (and its tokens out of the keychain), so it can't
+sign the real app out or move its sidebar.
 
 ```sh
 scripts/headless.sh shot /tmp/out -destination inbox -actions 'approve:ATL-147; shot:approved'  # inbox.png, approved.png
@@ -54,9 +55,12 @@ scripts/headless.sh live /tmp/out -destination machines   # signed in to that st
 scripts/headless.sh stack down      # stops only that stack, never `dev` or a real maple-runner
 ```
 
-`shot:<name>` in a script takes a frame between actions; `-settle`, `-timeout` (60s; a timeout writes
+`shot:<name>` in a script takes a frame between actions, once anything still in flight (a demo approve
+holds its button busy for a moment) has landed; `-settle`, `-timeout` (60s; a timeout writes
 timeout.png and exits 1), `-width`/`-height` and `-name` tune a run. Every result is listed in `<out>/done.json`.
 Any `MAPLE_DEV_INSTANCE` other than `dev` gives `scripts/dev-stack.sh` a separate stack in the same way.
+`down` stops what `up` recorded in its pid files; a stack started before those existed is found by its
+port and runner home instead, so a real maple-runner is never matched.
 
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
 Runner tests: `cd runner && cargo test`.

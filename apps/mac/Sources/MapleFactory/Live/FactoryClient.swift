@@ -774,12 +774,13 @@ import Security
 
 /// The factory token, in the login keychain under the factory's URL. A plain-http (local dev)
 /// factory's token goes in defaults instead: every rebuild of an unsigned dev app would otherwise
-/// ask for keychain access, and a localhost dev token guards nothing.
+/// ask for keychain access, and a localhost dev token guards nothing. A headless run keeps every
+/// token in its own wiped defaults, so it never replaces the real app's keychain item for a URL.
 enum Keychain {
     private static let service = "dev.maplefactory.app"
     private static let devKey = "devFactoryTokens"
 
-    private static func isDev(_ account: String) -> Bool { account.hasPrefix("http://") }
+    static func isDev(_ account: String, headless: Bool = Headless.isOn) -> Bool { headless || account.hasPrefix("http://") }
 
     static func read(account: String) -> String? {
         if isDev(account) { return (AppDefaults.dictionary(forKey: devKey) as? [String: String])?[account] }

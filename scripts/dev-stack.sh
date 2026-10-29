@@ -5,6 +5,7 @@
 # MAPLE_DEV_INSTANCE=agent runs a second, separate stack beside it: its own runner home
 # (/tmp/mfh-agent), D1 state, logs, runner id (agent-mac) and a free port unless MAPLE_PORT says.
 # `down` stops only what this instance started (by pid), never another instance or a real runner.
+# A stack from before pid files is found by its port and runner home instead.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 INSTANCE=${MAPLE_DEV_INSTANCE:-dev}
@@ -34,9 +35,32 @@ kill_tree() {
   kill "$1" 2>/dev/null || true
 }
 stop() {
-  [ -f "$LOGS/$1.pid" ] || return 0
-  kill_tree "$(cat "$LOGS/$1.pid")"
-  rm -f "$LOGS/$1.pid"
+  if [ -f "$LOGS/$1.pid" ]; then
+    kill_tree "$(cat "$LOGS/$1.pid")"
+    rm -f "$LOGS/$1.pid"
+  else
+    stop_unrecorded "$1"
+  fi
+}
+# A stack started before pid files: the server is whatever listens on this instance's port (and
+# the wrangler/npx above it); the runner is a maple-runner whose HOME is this instance's runner home.
+stop_unrecorded() {
+  case "$1" in
+  server)
+    for pid in $(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null); do
+      top=$pid
+      while parent=$(ps -o ppid= -p "$top" | tr -d ' ') && [ "$parent" -gt 1 ] &&
+        ps -o command= -p "$parent" | grep -qE 'wrangler|npx|npm exec'; do top=$parent; done
+      kill_tree "$top"
+    done
+    ;;
+  runner)
+    for pid in $(pgrep -f "maple-runner$" 2>/dev/null); do
+      ps eww -o command= -p "$pid" | grep -q " HOME=$RUNNER_HOME " && kill_tree "$pid"
+    done
+    ;;
+  esac
+  return 0
 }
 
 case "${1:-up}" in
