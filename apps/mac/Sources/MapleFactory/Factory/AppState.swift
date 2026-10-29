@@ -1116,7 +1116,8 @@ final class AppState {
     }
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
-    /// one action per second, so flows can be shown (or screenshotted) without clicking.
+    /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
+    /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
     private func play(_ script: String) async {
         for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             try? await Task.sleep(for: .seconds(1))
@@ -1130,6 +1131,8 @@ final class AppState {
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
+            case "idea": draft.title = parts.dropFirst().joined(separator: ":")
+            case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
