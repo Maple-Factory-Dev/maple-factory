@@ -98,7 +98,7 @@ struct GeneralSettings: View {
                     ForEach(AppState.TaskOpening.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.radioGroup)
-                Text("⌥⌘I or the panel button in the toolbar still shows the side panel.")
+                Text("The task panel button in the toolbar (⌥⌘I) only works with Peek in the side panel.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
             }
         }
