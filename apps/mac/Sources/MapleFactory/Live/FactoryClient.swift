@@ -84,6 +84,8 @@ import Security
     private var socket: URLSessionWebSocketTask?
     private var generation = 0
     private var attempt = 0
+    /// When the feed last answered: a message, or a pong to a keep-alive ping.
+    private var lastHeard = Date()
 
     var isSignedIn: Bool { server != nil && token != nil }
 
@@ -100,6 +102,21 @@ import Security
             self.token = token
             org = UserDefaults.standard.string(forKey: "factoryOrg") ?? ""
         }
+        // A socket can die quietly while the Mac sleeps or the app sits in the background; catch up
+        // with a fresh snapshot rather than leave every list as it was.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.catchUp(force: true) }
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.catchUp(force: false) }
+        }
+    }
+
+    /// Reconnects (and so resubscribes) after a wake, or when the feed has been quiet longer than its pings allow.
+    private func catchUp(force: Bool) {
+        guard isSignedIn, force || Date().timeIntervalSince(lastHeard) > 45 else { return }
+        attempt = 0
+        connect()
     }
 
     // MARK: Session
@@ -142,6 +159,7 @@ import Security
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
         self.socket = socket
+        lastHeard = Date()
         socket.resume()
         send(.subscribe)
         Task { await receive(socket, gen: gen) }
@@ -157,6 +175,7 @@ import Security
         while gen == generation {
             do {
                 let message = try await socket.receive()
+                lastHeard = Date()
                 guard case .string(let text) = message, let data = text.data(using: .utf8) else { continue }
                 apply(try JSONDecoder().decode(Wire.ServerToClient.self, from: data))
             } catch {
@@ -172,7 +191,10 @@ import Security
         while gen == generation {
             try? await Task.sleep(for: .seconds(20))
             guard gen == generation else { return }
-            socket.sendPing { _ in }
+            socket.sendPing { error in
+                guard error == nil else { return }
+                Task { @MainActor in self.lastHeard = Date() }
+            }
         }
     }
 

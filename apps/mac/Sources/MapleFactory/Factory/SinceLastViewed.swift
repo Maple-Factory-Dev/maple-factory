@@ -66,7 +66,7 @@ struct SinceLastViewedBanner: View {
 
 extension FactoryData {
     /// Resolves an activity author ("Chris", "Maple-1", "Andrea Fomera") to a person or agent.
-    static func identity(named name: String) -> Agent? {
+    @MainActor static func identity(named name: String) -> Agent? {
         people.first { $0.name == name || $0.firstName == name } ?? agents.first { $0.name == name } ?? (reviewer.name == name ? reviewer : nil)
     }
 }

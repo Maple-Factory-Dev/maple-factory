@@ -311,7 +311,7 @@ extension ContentView {
             if client.isSignedIn { LiveMachinesView() } else { MachinesView() }
         case .intake: IntakeView()
         case .allGoals: AllGoalsView()
-        case .goal(let name): GoalView(goal: FactoryData.goal(named: name))
+        case .goal(let name): GoalView(name: name)
         }
     }
 }

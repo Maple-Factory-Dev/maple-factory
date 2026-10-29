@@ -103,7 +103,7 @@ struct BriefReading {
     let areas: [String]
     let mentions: [Person]
 
-    init(_ source: String) {
+    @MainActor init(_ source: String) {
         let blocks = MarkdownBlock.parse(source)
 
         summary = blocks.compactMap { if case let .paragraph(text) = $0 { text } else { nil } }.first ?? ""
