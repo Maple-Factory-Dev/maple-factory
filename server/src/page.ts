@@ -153,9 +153,10 @@ export function page(title: string, body: string, opts: PageOptions = {}): Respo
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html { background: var(--bg); }
   body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
-    font: 15.5px/1.55 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; position: relative; }
+    font: 15.5px/1.55 var(--sans); -webkit-font-smoothing: antialiased; position: relative; }
   body::before { content: ""; position: absolute; z-index: -1; inset: -120px 0 auto; height: 560px; pointer-events: none;
     background: radial-gradient(40rem 22rem at 50% 30%, var(--glow), transparent 70%); }
   .shell { width: 100%; max-width: 40rem; margin: 0 auto; padding: 28px 16px 40px; flex: 1; }
