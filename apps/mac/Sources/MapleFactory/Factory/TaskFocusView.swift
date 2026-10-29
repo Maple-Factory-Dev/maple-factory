@@ -239,7 +239,12 @@ struct TaskFocusView: View {
                 }
             }
             tabButton("Session", tab: .session, enabled: hasSession) {
-                if appState.isLive, let worker = task.worker {
+                if appState.isLive, let worker = task.worker, waiting != nil {
+                    HStack(spacing: 4) {
+                        Circle().fill(Theme.State.awaitingApproval).frame(width: 6, height: 6)
+                        Text("\(worker.role) waiting for you").foregroundStyle(Theme.State.awaitingApproval)
+                    }
+                } else if appState.isLive, let worker = task.worker {
                     HStack(spacing: 4) {
                         Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
                         Text("\(worker.role) live on \(client.machineName(worker.machine))").foregroundStyle(Theme.textMuted)
@@ -331,7 +336,20 @@ struct TaskFocusView: View {
         }
     }
 
+    /// The worker's session, when it's stopped waiting for someone (live only).
+    private var waiting: Wire.Activity? {
+        guard appState.isLive, let activity = client.workerActivity(for: task.worker), activity.state == .waiting else { return nil }
+        return activity
+    }
+
     @ViewBuilder private var decisionCards: some View {
+            // A raised hand (the folder-trust prompt) says it already; otherwise the prompt goes first.
+            if let waiting, let worker = task.worker, waiting.permission != nil || task.hand == nil {
+                PermissionPromptCard(task: task, role: worker.role, prompt: waiting.permission, message: waiting.message) {
+                    withAnimation(.snappy(duration: 0.2)) { tab = .session }
+                }
+                .id(waiting.at)
+            }
             if task.state == .awaitingApproval {
                 railCard { ApprovalBlock(task: task, onRequestChanges: requestChanges) }
             }
