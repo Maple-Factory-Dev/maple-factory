@@ -76,6 +76,7 @@ struct LiveMachinesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                if client.status == .tooNew { TooNewBanner() }
 
                 if client.machines.isEmpty {
                     emptyState
@@ -597,6 +598,7 @@ struct ConnectionPill: View {
         case .live: ("Live · \(client.server?.host() ?? "")", Theme.State.merged)
         case .connecting: ("Connecting…", Theme.textMuted)
         case .reconnecting(let attempt, let reason): ("\(reason) Retrying\(attempt > 1 ? " (\(attempt))" : "")…", Theme.State.awaitingApproval)
+        case .tooNew: ("Update needed", Theme.State.awaitingApproval)
         case .signedOut: ("Signed out", Theme.textFaint)
         }
         HStack(spacing: 5) {
@@ -608,6 +610,39 @@ struct ConnectionPill: View {
         .padding(.horizontal, 9)
         .frame(height: 24)
         .background(Capsule().fill(color.opacity(0.12)))
+    }
+}
+
+/// The factory sent something this build can't read, so the feed is down until the app is updated.
+struct TooNewBanner: View {
+    private var updater: Updater { .shared }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.down.app.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.State.awaitingApproval)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(FactoryClient.tooNewMessage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text("It sends things this version of the app can't read yet. Machines and tasks come back once you update.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+            }
+            Spacer(minLength: 8)
+            // Without a feed (`swift run`), Sparkle is inert: send them to the download page instead.
+            PrimaryButton(title: "Check for Updates", icon: "arrow.down.circle", enabled: !updater.available || updater.canCheck, color: Theme.accent) {
+                if updater.available { updater.checkForUpdates() } else { NSWorkspace.shared.open(URL(string: "https://maplefactory.dev")!) }
+            }
+            .fixedSize()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.State.awaitingApproval.opacity(0.08))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.awaitingApproval.opacity(0.3)))
+        )
     }
 }
 
