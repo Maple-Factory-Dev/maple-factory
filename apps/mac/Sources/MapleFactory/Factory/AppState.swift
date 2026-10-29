@@ -956,6 +956,11 @@ final class AppState {
     }
 
     func approveChanges(_ id: String) {
+        // Covers the inbox and URL paths too: the server would only refuse it.
+        guard mergeGate(for: task(id)).autoReviewReady else {
+            showToast("Wait for the automatic review to pass first", icon: "hourglass", color: Theme.textMuted)
+            return
+        }
         if let client, isLive {
             guard beginInFlight(id, .approveChanges) else { return }
             client.send(.taskApproveChanges(.init(id: id)))
