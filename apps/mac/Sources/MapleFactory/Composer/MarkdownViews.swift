@@ -155,9 +155,12 @@ struct MarkdownPreview: View {
     var baseSize: CGFloat = 13.5
     /// Images as thumbnails that fit a narrow column (LinkedImage.thumbnail).
     var thumbnails = false
+    @Environment(AppState.self) private var appState: AppState?
+    private var knownTasks: Set<String> { Set(appState?.tasks.map(\.id) ?? []) }
 
     var body: some View {
         let blocks = MarkdownBlock.parse(source)
+        let known = knownTasks
 
         VStack(alignment: .leading, spacing: 10) {
             if blocks.isEmpty {
@@ -180,6 +183,12 @@ struct MarkdownPreview: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
+        // A task reference opens that task in the panel; other links open as they always have.
+        .environment(\.openURL, OpenURLAction { url in
+            guard let id = TaskRefQuery.id(from: url) else { return .systemAction }
+            if known.contains(id) { appState?.openTask(id) }
+            return .handled
+        })
     }
 
     private static func grouped(_ blocks: [MarkdownBlock]) -> [[MarkdownBlock]] {
@@ -292,7 +301,21 @@ struct MarkdownPreview: View {
                 rest = range.upperBound..<result.endIndex
             }
         }
+        Self.linkTasks(in: &result, known: knownTasks)
         return result
+    }
+
+    /// Gives each known task ID (TaskRefQuery.references) a `maple-task://` link and the mention-style
+    /// accent; not inside code or an existing link.
+    static func linkTasks(in result: inout AttributedString, known: Set<String>) {
+        let plain = String(result.characters)
+        for ref in TaskRefQuery.references(in: plain, known: known) {
+            guard let span = Range<AttributedString.Index>(ref.range, in: result) else { continue }
+            if result[span].runs.contains(where: { $0.link != nil || $0.inlinePresentationIntent?.contains(.code) == true }) { continue }
+            result[span].link = TaskRefQuery.url(ref.id)
+            result[span].foregroundColor = Theme.accent
+            result[span].inlinePresentationIntent = .stronglyEmphasized
+        }
     }
 }
 
@@ -307,13 +330,21 @@ struct MarkdownEditor: View {
     @State private var previewing = false
     @State private var selection = NSRange(location: 0, length: 0)
     @State private var mention = MentionState()
+    @State private var taskRef = MentionState()
     @Environment(FactoryClient.self) private var client: FactoryClient?
+    @Environment(AppState.self) private var appState: AppState?
 
     private var mentionQuery: MentionQuery? {
         previewing || selection.length > 0 ? nil : mention.query(text, cursor: selection.location)
     }
     private var mentionCandidates: [Person] {
         mentionQuery.map { MentionQuery.matches(FactoryData.people, $0.query) } ?? []
+    }
+    private var taskQuery: TaskRefQuery? {
+        previewing || selection.length > 0 ? nil : taskRef.taskQuery(text, cursor: selection.location)
+    }
+    private var taskCandidates: [FactoryTask] {
+        taskQuery.map { TaskRefQuery.matches(appState?.tasks ?? [], $0.query) } ?? []
     }
 
     private enum Format {
@@ -353,7 +384,7 @@ struct MarkdownEditor: View {
                         // the text view's own paste.
                         MarkdownTextView(text: $text, selection: $selection, upload: client.flatMap { client in
                             client.isSignedIn ? { file in try await client.upload(data: file.data, filename: file.name, mime: file.mime) } : nil
-                        }, onKey: mentionKey)
+                        }, onKey: { mentionKey($0) || taskKey($0) })
                     }
                 }
             }
@@ -384,8 +415,18 @@ struct MarkdownEditor: View {
                     .padding(.leading, 12)
             }
         }
-        .zIndex(mentionCandidates.isEmpty ? 0 : 1)
+        // The tasks to reference after a `#`, in the same place.
+        .overlay(alignment: .bottomLeading) {
+            let candidates = taskCandidates
+            if !candidates.isEmpty {
+                TaskRefPicker(tasks: candidates, highlighted: min(taskRef.highlighted, candidates.count - 1), pick: pickTask)
+                    .offset(y: TaskRefPicker.height(candidates.count) - 34)
+                    .padding(.leading, 12)
+            }
+        }
+        .zIndex(mentionCandidates.isEmpty && taskCandidates.isEmpty ? 0 : 1)
         .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
+        .onChange(of: taskQuery?.range.location) { taskRef.highlighted = 0 }
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPreview)) { _ in previewing = true }
     }
 
@@ -399,6 +440,20 @@ struct MarkdownEditor: View {
     private func pickMention(_ person: Person) {
         guard let query = mentionQuery else { return }
         let out = query.inserting(person, into: text)
+        text = out.text
+        selection = NSRange(location: out.cursor, length: 0)
+    }
+
+    private func taskKey(_ key: MentionKey) -> Bool {
+        let candidates = taskCandidates
+        guard taskRef.handle(key, query: taskQuery, count: candidates.count) else { return false }
+        if key == .pick { pickTask(candidates[min(taskRef.highlighted, candidates.count - 1)]) }
+        return true
+    }
+
+    private func pickTask(_ task: FactoryTask) {
+        guard let query = taskQuery else { return }
+        let out = query.inserting(task, into: text)
         text = out.text
         selection = NSRange(location: out.cursor, length: 0)
     }
@@ -577,13 +632,142 @@ struct MentionState {
 
     /// Moves the highlight or closes; `pick` is the caller's. False when the picker isn't taking the key.
     mutating func handle(_ key: MentionKey, query: MentionQuery?, count: Int) -> Bool {
-        guard let query, count > 0 else { return false }
+        handle(key, at: query?.range.location, count: count)
+    }
+
+    /// The picker open at `location` (its trigger character's offset), or nil when there's none.
+    mutating func handle(_ key: MentionKey, at location: Int?, count: Int) -> Bool {
+        guard let location, count > 0 else { return false }
         switch key {
         case .up: highlighted = (highlighted - 1 + count) % count
         case .down: highlighted = (highlighted + 1) % count
-        case .close: dismissedAt = query.range.location
+        case .close: dismissedAt = location
         case .pick: break
         }
         return true
+    }
+}
+
+// MARK: - Task references
+
+/// The `#ref` being typed just before the cursor, for the task picker: MentionQuery with `#`. Not after
+/// a word character or `/`, so `a#b` and `example.com/page#top` don't start one.
+struct TaskRefQuery: Equatable {
+    /// The `#` and what's typed after it, as UTF-16 offsets (what NSTextView's selection uses).
+    let range: NSRange
+    let query: String
+
+    static func at(_ text: String, cursor: Int) -> TaskRefQuery? {
+        let ns = text as NSString
+        guard cursor <= ns.length else { return nil }
+        let before = ns.substring(to: cursor) as NSString
+        let regex = try! NSRegularExpression(pattern: #"(?:^|[^\w.#/&-])#([A-Za-z0-9-]{0,39})$"#)
+        guard let match = regex.firstMatch(in: before as String, range: NSRange(location: 0, length: before.length)) else { return nil }
+        let ref = match.range(at: 1)
+        return TaskRefQuery(range: NSRange(location: ref.location - 1, length: ref.length + 1), query: before.substring(with: ref))
+    }
+
+    /// The task whose ID is the query, then IDs that start with it, then a title word that does, then
+    /// anywhere; newest first within each, like the web's matchTasks.
+    static func matches(_ tasks: [FactoryTask], _ query: String, limit: Int = 6) -> [FactoryTask] {
+        let q = query.lowercased()
+        func score(_ t: FactoryTask) -> Int? {
+            let id = t.id.lowercased()
+            let title = t.title.lowercased()
+            if id == q { return 0 }
+            if id.hasPrefix(q) { return 1 }
+            if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains(where: { $0.hasPrefix(q) }) { return 2 }
+            return id.contains(q) || title.contains(q) ? 3 : nil
+        }
+        func number(_ t: FactoryTask) -> Int { Int(t.id.split(separator: "-").last ?? "") ?? 0 }
+        let scored = tasks.compactMap { t in score(t).map { (score: $0, task: t) } }
+        let sorted = scored.sorted {
+            if $0.score != $1.score { return $0.score < $1.score }
+            if number($0.task) != number($1.task) { return number($0.task) > number($1.task) }
+            return $0.task.id < $1.task.id
+        }
+        return sorted.prefix(limit).map(\.task)
+    }
+
+    /// The text with the `#query` swapped for the task's plain ID and a space, and where the cursor goes.
+    func inserting(_ task: FactoryTask, into text: String) -> (text: String, cursor: Int) {
+        let insert = "\(task.id) "
+        let replaced = (text as NSString).replacingCharacters(in: range, with: insert)
+        return (replaced, range.location + (insert as NSString).length)
+    }
+
+    /// Where `text` names one of `known`'s task IDs, bare (`MF-12`) or after a `#`, word-bounded, so
+    /// `UTF-8` (unknown) and `XMF-12` or `MF-12-b` (not on their own) aren't. Ranges include the `#`.
+    static func references(in text: String, known: Set<String>) -> [(range: NSRange, id: String)] {
+        guard !known.isEmpty else { return [] }
+        let regex = try! NSRegularExpression(pattern: #"(?<![\w#-])#?([A-Z][A-Z0-9]*-\d+)(?![\w-])"#)
+        let ns = text as NSString
+        return regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+            let id = ns.substring(with: match.range(at: 1))
+            return known.contains(id) ? (match.range, id) : nil
+        }
+    }
+
+    /// The link a reference gets in rendered Markdown; MarkdownPreview opens it in the task panel.
+    static let scheme = "maple-task"
+    static func url(_ id: String) -> URL? { URL(string: "\(scheme)://\(id)") }
+    static func id(from url: URL) -> String? {
+        guard url.scheme?.lowercased() == scheme else { return nil }
+        let id = url.absoluteString.dropFirst(scheme.count + 3)
+        return id.isEmpty ? nil : String(id)
+    }
+}
+
+/// A popover-style list of tasks to reference: the ID, a dot in its state's color, and its title.
+struct TaskRefPicker: View {
+    let tasks: [FactoryTask]
+    let highlighted: Int
+    let pick: (FactoryTask) -> Void
+
+    static func height(_ rows: Int) -> CGFloat { MentionPicker.height(rows) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                HStack(spacing: 8) {
+                    Circle().fill(task.state.color).frame(width: 7, height: 7)
+                        .help(task.state.title)
+                    Text(task.id)
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                        .fixedSize()
+                    Text(task.title)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 6).fill(index == highlighted ? Theme.accent.opacity(0.16) : .clear))
+                .contentShape(Rectangle())
+                .onTapGesture { pick(task) }
+            }
+        }
+        .padding(4)
+        .frame(width: 320)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.cardBG))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+        .shadow(color: .black.opacity(0.16), radius: 12, y: 6)
+    }
+}
+
+extension MentionState {
+    /// What's being typed after a `#`, unless the picker was closed there.
+    func taskQuery(_ text: String, cursor: Int) -> TaskRefQuery? {
+        guard let query = TaskRefQuery.at(text, cursor: cursor), query.range.location != dismissedAt else { return nil }
+        return query
+    }
+
+    /// `handle` for the task picker.
+    mutating func handle(_ key: MentionKey, query: TaskRefQuery?, count: Int) -> Bool {
+        handle(key, at: query?.range.location, count: count)
     }
 }

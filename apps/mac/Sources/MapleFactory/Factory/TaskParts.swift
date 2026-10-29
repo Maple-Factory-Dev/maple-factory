@@ -848,11 +848,16 @@ struct TaskComposer: View {
     @State private var draft = ""
     @State private var interruptNow = false
     @State private var mention = MentionState()
+    @State private var taskRef = MentionState()
 
-    // The box is a TextField, so its cursor isn't known: an `@name` at the end is what's being typed.
+    // The box is a TextField, so its cursor isn't known: an `@name` or `#ref` at the end is what's being typed.
     private var mentionQuery: MentionQuery? { mention.query(draft, cursor: (draft as NSString).length) }
     private var mentionCandidates: [Person] {
         mentionQuery.map { MentionQuery.matches(FactoryData.people, $0.query) } ?? []
+    }
+    private var taskQuery: TaskRefQuery? { taskRef.taskQuery(draft, cursor: (draft as NSString).length) }
+    private var taskCandidates: [FactoryTask] {
+        taskQuery.map { TaskRefQuery.matches(appState.tasks, $0.query) } ?? []
     }
 
     var body: some View {
@@ -901,10 +906,10 @@ struct TaskComposer: View {
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
-                .onExitCommand { if !mentionKey(.close) { focused.wrappedValue = false } }
-                .onSubmit { if !mentionKey(.pick) { send() } }
+                .onExitCommand { if !pickerKey(.close) { focused.wrappedValue = false } }
+                .onSubmit { if !pickerKey(.pick) { send() } }
                 .onKeyPress(keys: [.upArrow, .downArrow, .tab]) { press in
-                    mentionKey(press.key == .upArrow ? .up : press.key == .downArrow ? .down : .pick) ? .handled : .ignored
+                    pickerKey(press.key == .upArrow ? .up : press.key == .downArrow ? .down : .pick) ? .handled : .ignored
                 }
                 // Teammates to @mention, just above the box.
                 .overlay(alignment: .topLeading) {
@@ -914,7 +919,16 @@ struct TaskComposer: View {
                             .offset(y: -MentionPicker.height(candidates.count) - 8)
                     }
                 }
+                // Tasks to reference after a `#`, in the same place.
+                .overlay(alignment: .topLeading) {
+                    let candidates = taskCandidates
+                    if !candidates.isEmpty {
+                        TaskRefPicker(tasks: candidates, highlighted: min(taskRef.highlighted, candidates.count - 1)) { pickTask($0) }
+                            .offset(y: -TaskRefPicker.height(candidates.count) - 8)
+                    }
+                }
                 .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
+                .onChange(of: taskQuery?.range.location) { taskRef.highlighted = 0 }
                 .onReceive(NotificationCenter.default.publisher(for: Self.demoType)) { note in
                     mode = .comment
                     draft = note.userInfo?["text"] as? String ?? ""
@@ -1005,6 +1019,22 @@ struct TaskComposer: View {
     private func pickMention(_ person: Person) {
         guard let query = mentionQuery else { return }
         draft = query.inserting(person, into: draft).text
+        focused.wrappedValue = true
+    }
+
+    /// Whichever picker is open takes the key.
+    private func pickerKey(_ key: MentionKey) -> Bool { mentionKey(key) || taskKey(key) }
+
+    private func taskKey(_ key: MentionKey) -> Bool {
+        let candidates = taskCandidates
+        guard taskRef.handle(key, query: taskQuery, count: candidates.count) else { return false }
+        if key == .pick { pickTask(candidates[min(taskRef.highlighted, candidates.count - 1)]) }
+        return true
+    }
+
+    private func pickTask(_ task: FactoryTask) {
+        guard let query = taskQuery else { return }
+        draft = query.inserting(task, into: draft).text
         focused.wrappedValue = true
     }
 
