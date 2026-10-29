@@ -38,8 +38,10 @@ struct UpdateToastView: View {
                     .background(Capsule().fill(Theme.accent))
                     .contentShape(Capsule())
                     .onTapGesture { updater.updateAndRestart() }
+                    .transition(.opacity)
             } else {
                 progress(phase)
+                    .transition(.opacity)
             }
             Image(systemName: "xmark")
                 .font(.system(size: 9.5, weight: .semibold))
@@ -51,7 +53,10 @@ struct UpdateToastView: View {
         }
         .padding(.leading, 14)
         .padding(.trailing, 10)
-        .frame(width: 440, height: 50)
+        // 440 at least, wider once the progress (which outgrows the button) takes its place.
+        .frame(minWidth: 440)
+        .frame(height: 50)
+        .fixedSize(horizontal: true, vertical: false)
         .background(
             Capsule()
                 .fill(Theme.cardBG)
@@ -72,20 +77,21 @@ struct UpdateToastView: View {
 
     private func progress(_ phase: UpdatePhase) -> some View {
         HStack(spacing: 8) {
-            if phase.isBusy {
-                Group {
-                    if let fraction = phase.progress { ProgressView(value: fraction) } else { ProgressView() }
-                }
-                .progressViewStyle(.linear)
-                .controlSize(.mini)
-                .tint(Theme.accent)
-                .frame(width: 70)
+            // Kept in place once it's done (Restarting…), so the toast holds its width to the end.
+            Group {
+                if let fraction = phase.progress { ProgressView(value: fraction) } else { ProgressView() }
             }
+            .progressViewStyle(.linear)
+            .controlSize(.mini)
+            .tint(Theme.accent)
+            .frame(width: 70)
+            .opacity(phase.isBusy ? 1 : 0)
             Text(phase.updateToastProgressLabel ?? "")
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
                 .frame(minWidth: 96, alignment: .leading)
         }
+        .fixedSize()
     }
 }
