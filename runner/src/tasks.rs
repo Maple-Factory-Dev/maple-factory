@@ -156,17 +156,28 @@ pub struct Merge {
 
 /// Runs a merge and answers with `task.merged`. The worktree goes back to the task's branch either way.
 pub async fn run_merge(sessions: Sessions, m: Merge) {
-    let dir = expand_home(&m.cwd);
-    let merged = merge(&dir, &m).await;
-    // A conflicted merge blocks the checkout until it's aborted.
-    if merged.is_err() {
-        let _ = git(&dir, &["merge", "--abort"], None).await;
-    }
-    let _ = git(&dir, &["checkout", "--quiet", &m.branch], None).await;
+    let merged = merge_and_switch_back(&expand_home(&m.cwd), &m).await;
     sessions.emit(match merged {
         Ok(commit) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None },
         Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) },
     });
+}
+
+/// `merge`, then the worktree back on the task's branch, so a Retry doesn't find it detached.
+async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<String> {
+    let merged = merge(dir, m).await;
+    // A conflicted merge blocks the checkout until it's aborted.
+    if merged.is_err() {
+        let _ = git(dir, &["merge", "--abort"], None).await;
+    }
+    if let Err(e) = git(dir, &["checkout", "--quiet", &m.branch], None).await {
+        tracing::warn!("task {}: couldn't switch {} back to {} after the merge ({e:#}); resetting and trying again", m.task_id, m.cwd, m.branch);
+        let _ = git(dir, &["reset", "--quiet", "--merge"], None).await;
+        if let Err(e) = git(dir, &["checkout", "--quiet", &m.branch], None).await {
+            tracing::warn!("task {}: {} is left detached, not on {}: {e:#}", m.task_id, m.cwd, m.branch);
+        }
+    }
+    merged
 }
 
 async fn merge(dir: &Path, m: &Merge) -> Result<String> {
@@ -597,7 +608,8 @@ pub async fn open(
 }
 
 /// A task's worktree that's already there (`cwd`), for a new session in it: nothing is fetched or
-/// branched, and it must still be on the task's branch, `agent/<name>`.
+/// branched, and it must still be on the task's branch, `agent/<name>`. One left on a detached HEAD
+/// (a merge that didn't switch back) is put back on the branch first when nothing would be lost.
 pub async fn existing(cwd: &str, req: &crate::worktrees::Request) -> Result<String> {
     valid_name(&req.name)?;
     let want = format!("{BRANCH_PREFIX}{}", req.name);
@@ -606,10 +618,32 @@ pub async fn existing(cwd: &str, req: &crate::worktrees::Request) -> Result<Stri
         bail!("The task's worktree {cwd} isn't there any more.");
     }
     let branch = git(&dir, &["rev-parse", "--abbrev-ref", "HEAD"], None).await.map_err(|_| anyhow!("{cwd} isn't a git worktree."))?;
-    if branch.trim() != want {
-        bail!("{cwd} is on {}, not the task's branch {want}.", branch.trim());
+    match branch.trim() {
+        "HEAD" => reattach(&dir, cwd, &want).await?,
+        b if b != want => bail!("{cwd} is on {b}, not the task's branch {want}."),
+        _ => {}
     }
     Ok(cwd.to_string())
+}
+
+/// Puts a detached worktree back on `want`. A half-done merge is aborted, and a merge commit the push
+/// never delivered may be dropped, but not a commit of real work that only HEAD holds.
+async fn reattach(dir: &Path, cwd: &str, want: &str) -> Result<()> {
+    let at = git(dir, &["rev-parse", "--short", "HEAD"], None).await.map(|s| s.trim().to_string()).unwrap_or_default();
+    let stuck = |why: String| anyhow!("{cwd} is detached at {at}, not on the task's branch {want}: {why}");
+    let local = format!("refs/heads/{want}");
+    if git(dir, &["rev-parse", "--verify", "--quiet", &local], None).await.is_err() {
+        return Err(stuck("the branch is gone.".into()));
+    }
+    let _ = git(dir, &["merge", "--abort"], None).await;
+    let only_head = git(dir, &["rev-list", "--no-merges", "HEAD", "--not", &local, "--remotes"], None).await?;
+    let n = only_head.lines().filter(|l| !l.trim().is_empty()).count();
+    if n > 0 {
+        return Err(stuck(format!("HEAD has {n} commit{} not on the branch, so it's left as it is.", if n == 1 { "" } else { "s" })));
+    }
+    git(dir, &["checkout", "--quiet", want], None).await.map_err(|e| stuck(format!("switching back failed ({e}).")))?;
+    tracing::info!("{cwd} was detached at {at}: put it back on {want}");
+    Ok(())
 }
 
 /// Makes a task's worktree. The checkout is the folder the task names, else this machine's checkout
@@ -953,6 +987,76 @@ mod tests {
         assert!(err.contains("not the task's branch agent/other-0000"), "{err}");
         let gone = root.join("gone");
         assert!(format!("{:#}", existing(gone.to_str().unwrap(), &again).await.unwrap_err()).contains("isn't there any more"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A task worktree for `fix-1a2b` with one commit of the builder's work, its identity set for the merges.
+    async fn worktree(root: &Path, bare: &Path) -> (String, std::path::PathBuf) {
+        remote(bare, "a.txt");
+        let checkout = root.join("Projects/widgets");
+        sh(root, &["clone", "--quiet", bare.to_str().unwrap(), checkout.to_str().unwrap()]);
+        let emit = |m: Outbound| panic!("unexpected message {m:?}");
+        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(root, None)).await.unwrap();
+        let wt = expand_home(&s.worktree);
+        for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
+            sh(&wt, &["config", k, v]);
+        }
+        commit(&wt, "b.txt", "fixed\n", "the builder's work");
+        (s.worktree, wt)
+    }
+
+    /// Retry after a merge that left the worktree detached: it goes back on the task's branch when
+    /// nothing would be lost, and is refused (and left alone) when HEAD holds work of its own.
+    #[tokio::test]
+    async fn a_detached_worktree_is_put_back_on_its_branch() {
+        let root = tmp("detached");
+        let (cwd, wt) = worktree(&root, &root.join("remotes/widgets.git")).await;
+        let again = Request { existing: true, ..req("fix-1a2b") };
+        let tip = sh(&wt, &["rev-parse", "HEAD"]);
+
+        // Detached at the branch's tip.
+        sh(&wt, &["checkout", "--quiet", "--detach"]);
+        assert_eq!(existing(&cwd, &again).await.unwrap(), cwd);
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
+
+        // Left on the factory's merge commit, whose push failed.
+        sh(&wt, &["checkout", "--quiet", "--detach", "origin/main"]);
+        sh(&wt, &["merge", "--no-ff", "--quiet", "-m", "Fix it", "agent/fix-1a2b"]);
+        existing(&cwd, &again).await.unwrap();
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
+        assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), tip);
+
+        // Detached with a commit only HEAD holds: refused, and still detached there.
+        sh(&wt, &["checkout", "--quiet", "--detach"]);
+        commit(&wt, "c.txt", "mine\n", "work only HEAD has");
+        let mine = sh(&wt, &["rev-parse", "HEAD"]);
+        let err = format!("{:#}", existing(&cwd, &again).await.unwrap_err());
+        assert!(err.contains("is detached at") && err.contains("not on the task's branch agent/fix-1a2b") && err.contains("1 commit not on the branch"), "{err}");
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "");
+        assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), mine);
+
+        // On another branch: refused as before.
+        sh(&wt, &["checkout", "--quiet", "-b", "side"]);
+        let err = format!("{:#}", existing(&cwd, &again).await.unwrap_err());
+        assert!(err.contains("is on side, not the task's branch agent/fix-1a2b"), "{err}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A merge whose push is rejected still leaves the worktree on the task's branch.
+    #[tokio::test]
+    async fn a_merge_whose_push_fails_switches_back_to_the_branch() {
+        let root = tmp("merge-rejected");
+        let bare = root.join("remotes/widgets.git");
+        let (cwd, wt) = worktree(&root, &bare).await;
+        let hook = bare.join("hooks/pre-receive");
+        std::fs::write(&hook, "#!/bin/sh\necho rejected >&2\nexit 1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let m = Merge { task_id: "t1".into(), cwd: cwd.clone(), branch: "agent/fix-1a2b".into(), base: "main".into(), title: "Fix it".into() };
+        let err = format!("{:#}", merge_and_switch_back(&wt, &m).await.unwrap_err());
+        assert!(err.contains("rejected"), "{err}");
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
+        assert_eq!(sh(&wt, &["status", "--porcelain"]), "");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
