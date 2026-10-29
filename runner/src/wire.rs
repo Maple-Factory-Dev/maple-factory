@@ -637,6 +637,9 @@ pub struct MachineUpdate {
     /// The version it's updating to, once known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// The version it ran when the update was asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     /// Why it failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,

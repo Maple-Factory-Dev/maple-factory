@@ -247,6 +247,8 @@ export interface MachineUpdate {
   state: RunnerUpdateState;
   /** The version it's updating to, once known. */
   target?: string | null;
+  /** The version it ran when the update was asked for. */
+  from?: string | null;
   /** Why it failed. */
   message?: string | null;
   /** When it reached this state. */

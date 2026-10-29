@@ -110,10 +110,11 @@ export class OrgHub extends DurableObject<Env> {
         if (msg.type === "session.error" && msg.message) this.broadcast({ type: "error", message: `${machine}: ${msg.message}`, requestId: null });
         if (msg.type === "update.status") {
           // The machine's card shows where it is; a toast only for a failure, which is worth noticing elsewhere.
-          const update = fromNotice(this.updates.get(machine), msg);
+          const known = (await this.machines()).find((m) => m.id === machine);
+          const update = fromNotice(this.updates.get(machine), msg, known?.version ?? null);
           if (update) await this.setUpdate(machine, update, true);
           if (update?.state === "failed") {
-            const name = (await this.machines()).find((m) => m.id === machine)?.name ?? machine;
+            const name = known?.name ?? machine;
             this.broadcast({ type: "toast", text: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`, taskId: null });
           }
         }
@@ -394,7 +395,7 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
-        await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), message: null, at: Date.now() }, true);
+        await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), from: machine.version ?? null, message: null, at: Date.now() }, true);
         await audit(this.env, client.member.login, "runner.update", msg.machine);
         return;
       }

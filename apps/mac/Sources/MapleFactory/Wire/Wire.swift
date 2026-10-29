@@ -1536,14 +1536,17 @@ public enum Wire {
         public var state: RunnerUpdateState
         /// The version it's updating to, once known.
         public var target: String?
+        /// The version it ran when the update was asked for.
+        public var from: String?
         /// Why it failed.
         public var message: String?
         /// When it reached this state.
         public var at: UInt64
 
-        public init(state: RunnerUpdateState, target: String? = nil, message: String? = nil, at: UInt64) {
+        public init(state: RunnerUpdateState, target: String? = nil, from: String? = nil, message: String? = nil, at: UInt64) {
             self.state = state
             self.target = target
+            self.from = from
             self.message = message
             self.at = at
         }

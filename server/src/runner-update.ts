@@ -9,15 +9,18 @@ export const UPDATE_SHOWN_MS = 10 * 60_000;
 
 const RUNNING = new Set<MachineUpdate["state"]>(["checking", "installing", "restarting"]);
 
-/** A runner's `update.status` notice, onto the update it moves along. */
-export function fromNotice(prev: MachineUpdate | undefined, msg: { state?: string; version?: string | null; message?: string | null }, at = Date.now()): MachineUpdate | null {
+/** A runner's `update.status` notice, onto the update it moves along; `running` is the version the machine is on. */
+export function fromNotice(prev: MachineUpdate | undefined, msg: { state?: string; version?: string | null; message?: string | null }, running: string | null, at = Date.now()): MachineUpdate | null {
+  // A timed update (nobody asked) starts its own; one that's already over doesn't carry on.
+  if (prev && !RUNNING.has(prev.state)) prev = undefined;
   const target = msg.version ?? prev?.target ?? null;
+  const from = prev?.from ?? running;
   switch (msg.state) {
-    case "checking": return { state: "checking", target: prev?.target ?? null, message: null, at };
-    case "installing": return { state: "installing", target, message: null, at };
-    case "updating": return { state: "restarting", target, message: null, at };
-    case "up_to_date": return { state: "upToDate", target, message: null, at };
-    case "failed": return { state: "failed", target, message: msg.message ?? null, at };
+    case "checking": return { state: "checking", target: prev?.target ?? null, from, message: null, at };
+    case "installing": return { state: "installing", target, from, message: null, at };
+    case "updating": return { state: "restarting", target, from, message: null, at };
+    case "up_to_date": return { state: "upToDate", target, from, message: null, at };
+    case "failed": return { state: "failed", target, from, message: msg.message ?? null, at };
   }
   return null;
 }
@@ -25,7 +28,7 @@ export function fromNotice(prev: MachineUpdate | undefined, msg: { state?: strin
 /** The update once the machine reports in again: updated when it's back on the version it went for. */
 export function onReport(prev: MachineUpdate | undefined, machine: Machine, at = Date.now()): MachineUpdate | null {
   if (!prev || !RUNNING.has(prev.state) || !machine.online || !machine.version) return null;
-  if (prev.state === "restarting" && prev.target && machine.version === prev.target) return { state: "updated", target: prev.target, message: null, at };
+  if (prev.state === "restarting" && prev.target && machine.version === prev.target) return { ...prev, state: "updated", message: null, at };
   return null;
 }
 

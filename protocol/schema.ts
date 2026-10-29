@@ -263,8 +263,8 @@ export const structs: Record<string, Struct> = {
   },
   MachineUpdate: {
     doc: "A runner update in progress on a machine, or how it just ended.",
-    fields: { state: "RunnerUpdateState", target: "string?", message: "string?", at: "u64" },
-    fieldDocs: { target: "The version it's updating to, once known.", message: "Why it failed.", at: "When it reached this state." },
+    fields: { state: "RunnerUpdateState", target: "string?", from: "string?", message: "string?", at: "u64" },
+    fieldDocs: { target: "The version it's updating to, once known.", from: "The version it ran when the update was asked for.", message: "Why it failed.", at: "When it reached this state." },
   },
   RunnerRelease: {
     doc: "One runner release in the feed's changelog (maple-runner/changes.json).",
