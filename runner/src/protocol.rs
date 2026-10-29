@@ -214,7 +214,7 @@ pub enum Outbound {
     },
     /// What a Draft with AI run is doing (see `draft`).
     #[serde(rename = "draft.progress")]
-    DraftProgress { id: String, text: String },
+    DraftProgress { id: String, text: String, kind: crate::wire::DraftLineKind },
     /// A Draft with AI run finished: the agent's last message, or why it couldn't.
     #[serde(rename = "draft.done")]
     DraftDone { id: String, output: Option<String>, error: Option<String> },

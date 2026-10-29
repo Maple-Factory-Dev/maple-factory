@@ -4,7 +4,8 @@
 //! GitHub's copy of the base branch, see `tasks::start`), which is removed afterwards; without one
 //! (picking a goal) it runs in an empty folder with no tools at all. Claude Code gets only its read
 //! tools (`--tools Read,Grep,Glob`); Codex runs with `--sandbox read-only`. What it's doing goes to
-//! the hub as `draft.progress` ("Reading lib/session.ts"), and its last message as `draft.done`.
+//! the hub as `draft.progress` ("Reading lib/session.ts"), as does what it says along the way (a
+//! `text` line), and its last message as `draft.done`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,9 +22,13 @@ use tokio::sync::Notify;
 
 use crate::protocol::Outbound;
 use crate::sessions::{Sessions, expand_home};
+use crate::wire::DraftLineKind;
 
 /// A draft that runs longer than this is stopped.
 const TIMEOUT: Duration = Duration::from_secs(8 * 60);
+
+/// The most of one thing the agent says that goes to the hub, in characters.
+const MAX_TEXT: usize = 600;
 
 /// `draft.run` from the hub.
 #[derive(Debug, Clone, Deserialize)]
@@ -53,11 +58,11 @@ pub async fn run(sessions: Sessions, r: Run) {
     let stop = Arc::new(Notify::new());
     RUNNING.lock().unwrap().insert(r.id.clone(), stop.clone());
     let emit = |m: Outbound| sessions.emit(m);
-    let say = |text: &str| sessions.emit(Outbound::DraftProgress { id: r.id.clone(), text: text.to_string() });
+    let say = |kind: DraftLineKind, text: &str| sessions.emit(Outbound::DraftProgress { id: r.id.clone(), text: text.to_string(), kind });
     let mut worktree: Option<PathBuf> = None;
     let work = async {
         let cwd = if r.repo.is_some() || r.folder.is_some() {
-            say(&format!("Fetching {}…", r.repo.as_deref().or(r.folder.as_deref()).unwrap_or("the code")));
+            say(DraftLineKind::Tool, &format!("Fetching {}…", r.repo.as_deref().or(r.folder.as_deref()).unwrap_or("the code")));
             let req = crate::worktrees::Request { name: worktree_name(&r.id)?, base: r.base.clone(), existing: false };
             let started = crate::tasks::start(&emit, &r.id, r.folder.as_deref().unwrap_or(""), r.repo.as_deref(), &req, &crate::tasks::Places::here()).await?;
             let dir = expand_home(&started.worktree);
@@ -68,7 +73,7 @@ pub async fn run(sessions: Sessions, r: Run) {
             std::fs::create_dir_all(&dir)?;
             dir
         };
-        say("Thinking…");
+        say(DraftLineKind::Tool, "Thinking…");
         tokio::time::timeout(TIMEOUT, ask(&r, &cwd, worktree.is_some(), &say)).await.map_err(|_| anyhow!("It took longer than 8 minutes, so it was stopped."))?
     };
     let result = tokio::select! {
@@ -106,7 +111,7 @@ async fn remove(dir: &Path, name: &str) {
 }
 
 /// Runs the agent once in `cwd` and returns its last message.
-async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(&str) + Sync)) -> Result<String> {
+async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(DraftLineKind, &str) + Sync)) -> Result<String> {
     let agent = crate::agent_config::find(&r.agent).ok_or_else(|| anyhow!("This machine doesn't know the agent {}.", r.agent))?;
     let args: Vec<String> = match r.agent.as_str() {
         "claude" => {
@@ -147,12 +152,14 @@ async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(&str) + Sync)) -> Re
     let mut lines = BufReader::new(child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?).lines();
     let mut answer: Option<String> = None;
     let mut failed: Option<String> = None;
-    let mut said = String::new();
+    let mut said: Option<(DraftLineKind, String)> = None;
     while let Some(line) = lines.next_line().await? {
         let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
-        if let Some(text) = progress(&event, cwd).filter(|t| *t != said) {
-            say(&text);
-            said = text;
+        for next in progress(&event, cwd) {
+            if said.as_ref() != Some(&next) {
+                say(next.0, &next.1);
+                said = Some(next);
+            }
         }
         // Claude Code's last event says how it went.
         if event["type"] == "result" {
@@ -184,24 +191,52 @@ fn answer_file(id: &str) -> PathBuf {
     std::env::temp_dir().join(format!("maple-{id}-answer.txt"))
 }
 
-/// A line about what the agent is doing, from one of its JSON events: Claude Code's tool uses, or
-/// the commands Codex runs.
-fn progress(event: &Value, cwd: &Path) -> Option<String> {
+/// What the agent did and said in one of its JSON events, in order: Claude Code's tool uses, text
+/// and thinking, or the commands Codex runs and its messages and reasoning.
+fn progress(event: &Value, cwd: &Path) -> Vec<(DraftLineKind, String)> {
     let rel = |p: &str| p.strip_prefix(&*cwd.to_string_lossy()).map(|r| r.trim_start_matches('/').to_string()).unwrap_or_else(|| p.to_string());
-    if event["type"] == "assistant" {
-        let uses = event["message"]["content"].as_array()?;
-        let last = uses.iter().rev().find(|c| c["type"] == "tool_use")?;
-        let input = &last["input"];
-        return Some(match last["name"].as_str()? {
+    let tool = |name: &str, input: &Value| -> Option<String> {
+        Some(match name {
             "Read" => format!("Reading {}", rel(input["file_path"].as_str()?)),
             "Grep" => format!("Searching for “{}”", input["pattern"].as_str()?),
             "Glob" => format!("Looking for {}", input["pattern"].as_str()?),
             other => format!("Using {other}"),
-        });
+        })
+    };
+    let text = |t: Option<&str>| t.map(trim).filter(|t| !t.is_empty()).map(|t| (DraftLineKind::Text, t));
+    if event["type"] == "assistant" {
+        let Some(content) = event["message"]["content"].as_array() else { return vec![] };
+        return content
+            .iter()
+            .filter_map(|c| match c["type"].as_str()? {
+                "text" => text(c["text"].as_str()),
+                "thinking" => text(c["thinking"].as_str()),
+                "tool_use" => tool(c["name"].as_str()?, &c["input"]).map(|t| (DraftLineKind::Tool, t)),
+                _ => None,
+            })
+            .collect();
     }
-    let command = event["item"]["command"].as_str().or_else(|| event["msg"]["command"].as_str())?;
+    // Codex: `item.*` events from `exec --json`, or the older `msg` ones.
+    let item = if event["item"].is_object() { &event["item"] } else { &event["msg"] };
+    match item["type"].as_str() {
+        Some("agent_message") | Some("reasoning") | Some("agent_reasoning") if event["type"] != "item.started" => {
+            return text(item["text"].as_str().or_else(|| item["message"].as_str())).into_iter().collect();
+        }
+        _ => {}
+    }
+    let Some(command) = item["command"].as_str() else { return vec![] };
     let short: String = command.chars().take(80).collect();
-    Some(format!("Running `{short}`"))
+    vec![(DraftLineKind::Tool, format!("Running `{short}`"))]
+}
+
+/// `text` trimmed, and cut to about `MAX_TEXT` characters.
+fn trim(text: &str) -> String {
+    let text = text.trim();
+    if text.chars().count() <= MAX_TEXT {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(MAX_TEXT).collect();
+    format!("{}…", cut.trim_end())
 }
 
 #[cfg(test)]
@@ -213,15 +248,60 @@ mod tests {
         assert_eq!(worktree_name("draft-0b7c1e2a-9f00-4a1b-8c3d-1234567890ab").unwrap(), "draft-0b7c1e2a");
     }
 
+    fn tool(t: &str) -> (DraftLineKind, String) {
+        (DraftLineKind::Tool, t.to_string())
+    }
+
+    fn text(t: &str) -> (DraftLineKind, String) {
+        (DraftLineKind::Text, t.to_string())
+    }
+
     #[test]
     fn says_what_its_reading() {
         let cwd = Path::new("/w/app");
-        let read = serde_json::json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Let me look"}, {"type": "tool_use", "name": "Read", "input": {"file_path": "/w/app/lib/session.ts"}}]}});
-        assert_eq!(progress(&read, cwd).unwrap(), "Reading lib/session.ts");
+        let read = serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/w/app/lib/session.ts"}}]}});
+        assert_eq!(progress(&read, cwd), vec![tool("Reading lib/session.ts")]);
         let grep = serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Grep", "input": {"pattern": "refreshToken"}}]}});
-        assert_eq!(progress(&grep, cwd).unwrap(), "Searching for “refreshToken”");
+        assert_eq!(progress(&grep, cwd), vec![tool("Searching for “refreshToken”")]);
         let codex = serde_json::json!({"type": "item.started", "item": {"type": "command_execution", "command": "rg -n session lib"}});
-        assert_eq!(progress(&codex, cwd).unwrap(), "Running `rg -n session lib`");
-        assert!(progress(&serde_json::json!({"type": "result", "result": "{}"}), cwd).is_none());
+        assert_eq!(progress(&codex, cwd), vec![tool("Running `rg -n session lib`")]);
+        assert!(progress(&serde_json::json!({"type": "result", "result": "{}"}), cwd).is_empty());
+    }
+
+    #[test]
+    fn says_what_claude_says_and_thinks() {
+        let cwd = Path::new("/w/app");
+        let event = serde_json::json!({"type": "assistant", "message": {"content": [
+            {"type": "thinking", "thinking": "The session code is probably in lib."},
+            {"type": "text", "text": "  Let me look at the session code.\n"},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/w/app/lib/session.ts"}},
+            {"type": "text", "text": "   "},
+        ]}});
+        assert_eq!(
+            progress(&event, cwd),
+            vec![text("The session code is probably in lib."), text("Let me look at the session code."), tool("Reading lib/session.ts")]
+        );
+    }
+
+    #[test]
+    fn says_what_codex_says_and_reasons() {
+        let cwd = Path::new("/w/app");
+        let said = serde_json::json!({"type": "item.completed", "item": {"id": "item_3", "type": "agent_message", "text": "Sessions refresh in lib/session.ts."}});
+        assert_eq!(progress(&said, cwd), vec![text("Sessions refresh in lib/session.ts.")]);
+        let reasoned = serde_json::json!({"type": "item.completed", "item": {"id": "item_0", "type": "reasoning", "text": "**Looking for the refresh logic**"}});
+        assert_eq!(progress(&reasoned, cwd), vec![text("**Looking for the refresh logic**")]);
+        let older = serde_json::json!({"id": "0", "msg": {"type": "agent_message", "message": "Done."}});
+        assert_eq!(progress(&older, cwd), vec![text("Done.")]);
+        // A message that's still being written isn't said until it's done.
+        assert!(progress(&serde_json::json!({"type": "item.started", "item": {"type": "agent_message", "text": ""}}), cwd).is_empty());
+    }
+
+    #[test]
+    fn cuts_long_text() {
+        let long = "word ".repeat(400);
+        let cut = trim(&long);
+        assert!(cut.ends_with('…'));
+        assert!(cut.chars().count() <= MAX_TEXT + 1);
+        assert_eq!(trim("  short  "), "short");
     }
 }
