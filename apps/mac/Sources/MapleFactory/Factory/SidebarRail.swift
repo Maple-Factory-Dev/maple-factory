@@ -109,6 +109,8 @@ struct SidebarRail: View {
             .scrollIndicators(.never)
             .frame(maxHeight: .infinity, alignment: .top)
 
+            updateItem
+
             item("Expand sidebar", detail: "⌃⌘S") {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13))
@@ -118,6 +120,31 @@ struct SidebarRail: View {
             .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The sidebar footer's update, folded down to an icon: a ring fills while it downloads, and a
+    /// click does what the footer's button would.
+    @ViewBuilder private var updateItem: some View {
+        let updater = Updater.shared
+        let phase = updater.phase
+        if phase.isVisible {
+            item(phase.title, detail: phase.buttonLabel ?? phase.detail) {
+                ZStack {
+                    if phase.isBusy {
+                        ProgressRing(progress: phase.progress ?? 0, color: Theme.accent, size: 20)
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Theme.text.opacity(0.75))
+                    } else {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 15))
+                            .foregroundStyle(phase.action == .install || phase.action == .relaunch ? Theme.accent : Theme.textMuted)
+                    }
+                }
+            }
+            .onTapGesture { if let action = phase.action { updater.perform(action) } }
+            .padding(.bottom, 2)
+        }
     }
 
     private var divider: some View {
