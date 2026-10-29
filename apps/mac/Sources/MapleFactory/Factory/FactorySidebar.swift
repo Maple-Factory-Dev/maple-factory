@@ -298,9 +298,8 @@ struct UpdateFooter: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
-                            .truncationMode(.middle)
                             .onTapGesture { if case .available = phase, let url = updater.releaseNotesURL { NSWorkspace.shared.open(url) } }
-                            .help(phase.title)
+                            .help(updater.releaseNotesURL == nil ? phase.title : "See what's new")
                         if phase.isBusy {
                             HStack(spacing: 6) {
                                 if let progress = phase.progress {
@@ -325,20 +324,22 @@ struct UpdateFooter: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    if let action = phase.action, let label = phase.buttonLabel {
-                        button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
-                    }
-                    if phase.isDismissible {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Theme.textMuted)
-                            .frame(width: 16, height: 16)
-                            .contentShape(Rectangle())
-                            .onTapGesture { updater.dismiss() }
-                            .help("Not now")
+                    HStack(spacing: 4) {
+                        if let action = phase.action, let label = phase.buttonLabel {
+                            button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
+                        }
+                        if phase.isDismissible {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Theme.textMuted)
+                                .frame(width: 16, height: 16)
+                                .contentShape(Rectangle())
+                                .onTapGesture { updater.dismiss() }
+                                .help("Not now")
+                        }
                     }
                 }
-                .padding(.horizontal, 21)
+                .padding(.horizontal, 14)
                 .padding(.vertical, 10)
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -358,7 +359,7 @@ struct UpdateFooter: View {
         Text(title)
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(prominent ? Theme.onAccent : Theme.text)
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 8)
             .frame(height: 22)
             .background(
                 RoundedRectangle(cornerRadius: 6)

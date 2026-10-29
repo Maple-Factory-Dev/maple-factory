@@ -56,21 +56,21 @@ enum UpdatePhase: Equatable {
     var title: String {
         switch self {
         case .idle: ""
-        case .checking: "Checking for updates…"
-        case let .available(version): "Maple Factory \(version) is available"
-        case .downloading: "Downloading update…"
-        case .extracting: "Preparing update…"
-        case let .readyToRelaunch(version): "Maple Factory \(version) is ready"
-        case .installing: "Installing update…"
-        case .upToDate: "Maple Factory is up to date"
+        case .checking: "Checking…"
+        case .available: "Update available"
+        case .downloading: "Downloading"
+        case .extracting: "Preparing"
+        case .readyToRelaunch: "Update ready"
+        case .installing: "Installing"
+        case .upToDate: "You're up to date"
         case .failed: "Couldn't update"
         }
     }
 
     var detail: String? {
         switch self {
-        case .available: "Download and install it now"
-        case .readyToRelaunch: "Relaunch to finish installing"
+        case let .available(version): "Version \(version)"
+        case let .readyToRelaunch(version): "Relaunch for \(version)"
         case .upToDate: "You have the latest version"
         case let .failed(message): message
         default: progress.map { "\(Int(($0 * 100).rounded(.down)))%" }

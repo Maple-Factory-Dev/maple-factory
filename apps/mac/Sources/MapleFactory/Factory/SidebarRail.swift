@@ -128,7 +128,7 @@ struct SidebarRail: View {
         let updater = Updater.shared
         let phase = updater.phase
         if phase.isVisible {
-            item(phase.title, detail: phase.buttonLabel ?? phase.detail) {
+            item(phase.title, detail: phase.detail) {
                 ZStack {
                     if phase.isBusy {
                         ProgressRing(progress: phase.progress ?? 0, color: Theme.accent, size: 20)
