@@ -230,7 +230,7 @@ export class Engine {
         const after = msg.after ?? [];
         for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
-        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after });
+        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort) });
         if (request) {
           for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
           for (const m of request.thread.filter((m) => !m.bot)) task.comments.push({ id: crypto.randomUUID(), author: m.author, text: m.text, at: m.at, anchor: null, via: sourceTitle(request) });
@@ -255,7 +255,15 @@ export class Engine {
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
         }
-        this.event(task, who, "edited it");
+        const effort = msg.effort != null ? effortName(msg.effort) : undefined;
+        const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
+        if (effort !== undefined && effort !== (task.effort ?? null)) {
+          // Any state: an effort only groups tasks, it doesn't change the work.
+          const was = task.effort;
+          task.effort = effort;
+          this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
+        }
+        if (!onlyEffort) this.event(task, who, "edited it");
         this.save(task);
         await this.pump();
         return;
@@ -638,7 +646,7 @@ export class Engine {
   }
 
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after" | "effort">): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -674,7 +682,7 @@ export class Engine {
     const goal = this.store.goal(task.goal);
     if (!goal) return;
     for (const f of task.followUps.filter((f) => !f.task)) {
-      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id] });
+      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
       f.task = part.id;
       this.event(task, "factory", `made ${part.id} for its ${f.repo} part`);
       await this.startPlanning(part, "factory");
@@ -1782,6 +1790,11 @@ export class Engine {
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
+}
+
+/** An effort's name as stored: trimmed and spaces collapsed; blank is none. */
+function effortName(name: string | null | undefined): string | null {
+  return name?.trim().replace(/\s+/g, " ") || null;
 }
 
 function sourceTitle(r: { source: string; channel?: string | null }) {
