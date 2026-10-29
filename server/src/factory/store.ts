@@ -4,6 +4,7 @@
 
 import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
+import { inferEvents, type StatEvent } from "./stats.ts";
 
 /// What the server knows about a task that the apps don't need.
 export interface TaskPrivate {
@@ -73,7 +74,35 @@ export class Store {
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
       CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
+      CREATE TABLE IF NOT EXISTS stats_events (
+        id TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, task TEXT NOT NULL, goal TEXT NOT NULL,
+        role TEXT, actor TEXT, detail TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS stats_events_at ON stats_events (at);
     `);
+    this.backfillStats();
+  }
+
+  // Statistics: an append-only log of touchpoints (stats.ts adds them up).
+
+  recordStat(e: Omit<StatEvent, "id">) {
+    this.sql.exec(
+      "INSERT INTO stats_events (id, at, kind, task, goal, role, actor, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      crypto.randomUUID(), e.at, e.kind, e.task, e.goal, e.role, e.actor, JSON.stringify(e.detail),
+    );
+  }
+
+  statEvents(since = 0): StatEvent[] {
+    return this.sql.exec<{ id: string; at: number; kind: string; task: string; goal: string; role: string | null; actor: string | null; detail: string }>(
+      "SELECT * FROM stats_events WHERE at >= ? ORDER BY at", since,
+    ).toArray().map((r) => ({ ...r, kind: r.kind as StatEvent["kind"], detail: JSON.parse(r.detail) }));
+  }
+
+  /** Once: the history tasks from before `stats_events` show, worked out from their documents. */
+  private backfillStats() {
+    if (this.get("stats:backfilled")) return;
+    for (const task of this.tasks()) for (const e of inferEvents(task)) this.recordStat(e);
+    this.set("stats:backfilled", String(Date.now()));
   }
 
   // Goals

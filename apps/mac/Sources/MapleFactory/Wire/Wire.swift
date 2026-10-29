@@ -2529,6 +2529,215 @@ public enum Wire {
         }
     }
 
+    /// A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet.
+    public struct StatsTotals: Codable, Hashable, Sendable {
+        public var merged: UInt32
+        public var autoMerged: UInt32
+        public var cancelled: UInt32
+        public var created: UInt32
+        public var tasksTouched: UInt32
+        public var handsRaised: UInt32
+        /// Up right now, whenever they were raised.
+        public var handsOpen: UInt32
+        public var questions: UInt32
+        public var steers: UInt32
+        public var prompts: UInt32
+        public var restarts: UInt32
+        public var reviewRounds: UInt32
+        public var findings: UInt32
+        public var planVersions: UInt32
+        public var approvals: UInt32
+        /// From created to merged.
+        public var cycleMedianMs: UInt64?
+        /// How long a hand stays up before someone answers it.
+        public var handOpenMedianMs: UInt64?
+        /// How long an agent's question waits for its answer.
+        public var answerMedianMs: UInt64?
+        /// Plans approved at version 1.
+        public var firstTryApproval: Double?
+        public var avgPlanVersions: Double?
+        public var reviewRoundsPerMerge: Double?
+        public var steersPerTask: Double?
+
+        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
+            self.merged = merged
+            self.autoMerged = autoMerged
+            self.cancelled = cancelled
+            self.created = created
+            self.tasksTouched = tasksTouched
+            self.handsRaised = handsRaised
+            self.handsOpen = handsOpen
+            self.questions = questions
+            self.steers = steers
+            self.prompts = prompts
+            self.restarts = restarts
+            self.reviewRounds = reviewRounds
+            self.findings = findings
+            self.planVersions = planVersions
+            self.approvals = approvals
+            self.cycleMedianMs = cycleMedianMs
+            self.handOpenMedianMs = handOpenMedianMs
+            self.answerMedianMs = answerMedianMs
+            self.firstTryApproval = firstTryApproval
+            self.avgPlanVersions = avgPlanVersions
+            self.reviewRoundsPerMerge = reviewRoundsPerMerge
+            self.steersPerTask = steersPerTask
+        }
+    }
+
+    public struct StatsCount: Codable, Hashable, Sendable {
+        public var key: String
+        public var count: UInt32
+        public var medianMs: UInt64?
+
+        public init(key: String, count: UInt32, medianMs: UInt64? = nil) {
+            self.key = key
+            self.count = count
+            self.medianMs = medianMs
+        }
+    }
+
+    public struct StatsDay: Codable, Hashable, Sendable {
+        /// YYYY-MM-DD (UTC).
+        public var day: String
+        public var merges: UInt32
+        public var hands: UInt32
+
+        public init(day: String, merges: UInt32, hands: UInt32) {
+            self.day = day
+            self.merges = merges
+            self.hands = hands
+        }
+    }
+
+    public struct StatsGoalRow: Codable, Hashable, Sendable {
+        public var goal: String
+        public var name: String
+        public var tasks: UInt32
+        public var merged: UInt32
+        public var hands: UInt32
+        public var steers: UInt32
+        public var reviewRounds: UInt32
+        public var cycleMedianMs: UInt64?
+
+        public init(goal: String, name: String, tasks: UInt32, merged: UInt32, hands: UInt32, steers: UInt32, reviewRounds: UInt32, cycleMedianMs: UInt64? = nil) {
+            self.goal = goal
+            self.name = name
+            self.tasks = tasks
+            self.merged = merged
+            self.hands = hands
+            self.steers = steers
+            self.reviewRounds = reviewRounds
+            self.cycleMedianMs = cycleMedianMs
+        }
+    }
+
+    public struct StatsAgentRow: Codable, Hashable, Sendable {
+        public var agent: String
+        public var tasks: UInt32
+        public var merged: UInt32
+        public var hands: UInt32
+        public var steers: UInt32
+        public var reviewRounds: UInt32
+        public var firstTryApproval: Double?
+
+        public init(agent: String, tasks: UInt32, merged: UInt32, hands: UInt32, steers: UInt32, reviewRounds: UInt32, firstTryApproval: Double? = nil) {
+            self.agent = agent
+            self.tasks = tasks
+            self.merged = merged
+            self.hands = hands
+            self.steers = steers
+            self.reviewRounds = reviewRounds
+            self.firstTryApproval = firstTryApproval
+        }
+    }
+
+    public struct StatsTaskRow: Codable, Hashable, Sendable {
+        public var task: String
+        public var title: String
+        public var goal: String
+        public var state: TaskState
+        public var touchpoints: UInt32
+        public var hands: UInt32
+        public var steers: UInt32
+        public var questions: UInt32
+        public var reviewRounds: UInt32
+
+        public init(task: String, title: String, goal: String, state: TaskState, touchpoints: UInt32, hands: UInt32, steers: UInt32, questions: UInt32, reviewRounds: UInt32) {
+            self.task = task
+            self.title = title
+            self.goal = goal
+            self.state = state
+            self.touchpoints = touchpoints
+            self.hands = hands
+            self.steers = steers
+            self.questions = questions
+            self.reviewRounds = reviewRounds
+        }
+    }
+
+    /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
+    public struct StatsSummary: Codable, Hashable, Sendable {
+        public var days: UInt32
+        public var goal: String?
+        public var since: UInt64
+        public var generatedAt: UInt64
+        /// Rows in the window worked out from older tasks' history rather than recorded as they happened.
+        public var inferred: UInt32
+        public var totals: StatsTotals
+        /// medianMs: how long they stayed up.
+        public var handsByReason: [StatsCount]
+        public var findingsByKind: [StatsCount]
+        public var findingsBySeverity: [StatsCount]
+        public var restartsByCause: [StatsCount]
+        public var prompts: [StatsCount]
+        public var reviewVerdicts: [StatsCount]
+        public var daily: [StatsDay]
+        public var goals: [StatsGoalRow]
+        public var agents: [StatsAgentRow]
+        /// The tasks with the most touchpoints, most first.
+        public var topTasks: [StatsTaskRow]
+
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = []) {
+            self.days = days
+            self.goal = goal
+            self.since = since
+            self.generatedAt = generatedAt
+            self.inferred = inferred
+            self.totals = totals
+            self.handsByReason = handsByReason
+            self.findingsByKind = findingsByKind
+            self.findingsBySeverity = findingsBySeverity
+            self.restartsByCause = restartsByCause
+            self.prompts = prompts
+            self.reviewVerdicts = reviewVerdicts
+            self.daily = daily
+            self.goals = goals
+            self.agents = agents
+            self.topTasks = topTasks
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            days = try c.decode(UInt32.self, forKey: .days)
+            goal = try c.decodeIfPresent(String.self, forKey: .goal)
+            since = try c.decode(UInt64.self, forKey: .since)
+            generatedAt = try c.decode(UInt64.self, forKey: .generatedAt)
+            inferred = try c.decode(UInt32.self, forKey: .inferred)
+            totals = try c.decode(StatsTotals.self, forKey: .totals)
+            handsByReason = try c.decodeIfPresent([StatsCount].self, forKey: .handsByReason) ?? []
+            findingsByKind = try c.decodeIfPresent([StatsCount].self, forKey: .findingsByKind) ?? []
+            findingsBySeverity = try c.decodeIfPresent([StatsCount].self, forKey: .findingsBySeverity) ?? []
+            restartsByCause = try c.decodeIfPresent([StatsCount].self, forKey: .restartsByCause) ?? []
+            prompts = try c.decodeIfPresent([StatsCount].self, forKey: .prompts) ?? []
+            reviewVerdicts = try c.decodeIfPresent([StatsCount].self, forKey: .reviewVerdicts) ?? []
+            daily = try c.decodeIfPresent([StatsDay].self, forKey: .daily) ?? []
+            goals = try c.decodeIfPresent([StatsGoalRow].self, forKey: .goals) ?? []
+            agents = try c.decodeIfPresent([StatsAgentRow].self, forKey: .agents) ?? []
+            topTasks = try c.decodeIfPresent([StatsTaskRow].self, forKey: .topTasks) ?? []
+        }
+    }
+
     /// First message on every connection, so a server that missed messages catches up.
     public struct RunnerMessageHello: Codable, Hashable, Sendable {
         public var runnerId: String
@@ -3759,6 +3968,17 @@ public enum Wire {
         }
     }
 
+    /// Admins only: the factory's statistics, answered with `stats`.
+    public struct ClientMessageStatsGet: Codable, Hashable, Sendable {
+        public var days: UInt32
+        public var goal: String?
+
+        public init(days: UInt32, goal: String? = nil) {
+            self.days = days
+            self.goal = goal
+        }
+    }
+
     /// App (macOS, web) → server.
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
@@ -3806,6 +4026,7 @@ public enum Wire {
         case taskMove(ClientMessageTaskMove)
         case taskCheckedIt(ClientMessageTaskCheckedIt)
         case taskMockupChange(ClientMessageTaskMockupChange)
+        case statsGet(ClientMessageStatsGet)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -3859,6 +4080,7 @@ public enum Wire {
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
             case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
+            case "stats.get": self = .statsGet(try ClientMessageStatsGet(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -3998,6 +4220,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskMockupChange(let body):
                 try c.encode("task.mockupChange", forKey: .type)
+                try body.encode(to: encoder)
+            case .statsGet(let body):
+                try c.encode("stats.get", forKey: .type)
                 try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
@@ -4224,6 +4449,15 @@ public enum Wire {
         }
     }
 
+    /// The statistics `stats.get` asked for, to that connection only.
+    public struct ServerToClientStats: Codable, Hashable, Sendable {
+        public var summary: StatsSummary
+
+        public init(summary: StatsSummary) {
+            self.summary = summary
+        }
+    }
+
     public struct ServerToClientError: Codable, Hashable, Sendable {
         public var message: String
         public var requestId: String?
@@ -4252,6 +4486,7 @@ public enum Wire {
         case reposUpdated(ServerToClientReposUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
+        case stats(ServerToClientStats)
         case error(ServerToClientError)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
@@ -4277,6 +4512,7 @@ public enum Wire {
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
+            case "stats": self = .stats(try ServerToClientStats(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
             default: self = .unknown(type)
             }
@@ -4332,6 +4568,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .sessionEnded(let body):
                 try c.encode("session.ended", forKey: .type)
+                try body.encode(to: encoder)
+            case .stats(let body):
+                try c.encode("stats", forKey: .type)
                 try body.encode(to: encoder)
             case .error(let body):
                 try c.encode("error", forKey: .type)
