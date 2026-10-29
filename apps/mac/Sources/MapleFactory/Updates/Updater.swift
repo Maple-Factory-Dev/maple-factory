@@ -113,16 +113,22 @@ final class Updater: NSObject {
 
     func checkForUpdates() { updater?.checkForUpdates() }
 
-    /// The release notes for the update on offer, in the browser. The demo borrows this build's own (the
-    /// latest published release's under `swift run`, which has no bundle version).
+    /// The release notes for the update on offer, in the browser: every release since the installed one.
+    /// The demo's spans a few published releases, up to this build's (the latest published release under
+    /// `swift run`, which has no bundle version). MAPLE_UPDATES_URL points it at another copy of the site,
+    /// like a local build/updates-site before it's published.
     var releaseNotesURL: URL? {
         guard demo != nil else { return driver?.releaseNotesURL }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? Self.demoNotesVersion
-        return URL(string: "https://updates.maplefactory.dev/releases/\(version)/notes.html")
+        let site = ProcessInfo.processInfo.environment["MAPLE_UPDATES_URL"] ?? "https://updates.maplefactory.dev"
+        return SidebarUserDriver.changelogURL(
+            notes: URL(string: "\(site)/releases/\(version)/notes.html"), installed: Self.demoInstalledVersion, offered: version
+        )
     }
 
-    /// A release whose notes are on the update site, for the demo's link.
-    private static let demoNotesVersion = "0.1.16"
+    /// Published releases on the update site, for the demo's link: the one it's offering, and an older one to skip from.
+    private static let demoNotesVersion = "0.1.26"
+    private static let demoInstalledVersion = "0.1.22"
 
     // MARK: The footer's buttons
 
