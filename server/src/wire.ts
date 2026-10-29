@@ -74,6 +74,10 @@ export const PromptChoiceValues: readonly PromptChoice[] = ["yes","no"];
 export type RepoSource = "github" | "manual";
 export const RepoSourceValues: readonly RepoSource[] = ["github","manual"];
 
+/** Where a runner update someone asked for is. */
+export type RunnerUpdateState = "checking" | "installing" | "restarting" | "updated" | "upToDate" | "failed";
+export const RunnerUpdateStateValues: readonly RunnerUpdateState[] = ["checking","installing","restarting","updated","upToDate","failed"];
+
 /** What a session's agent is doing, from its hooks. */
 export type AgentState = "working" | "waiting" | "done" | "idle";
 export const AgentStateValues: readonly AgentState[] = ["working","waiting","done","idle"];
@@ -234,6 +238,28 @@ export interface Machine {
   /** Factory sessions it takes now, settings and cores considered. */
   capacity?: number | null;
   usage: AgentUsage[];
+  /** The runner update someone asked for, while it runs and for a few minutes after. */
+  update?: MachineUpdate | null;
+}
+
+/** A runner update in progress on a machine, or how it just ended. */
+export interface MachineUpdate {
+  state: RunnerUpdateState;
+  /** The version it's updating to, once known. */
+  target?: string | null;
+  /** Why it failed. */
+  message?: string | null;
+  /** When it reached this state. */
+  at: number;
+}
+
+/** One runner release in the feed's changelog (maple-runner/changes.json). */
+export interface RunnerRelease {
+  version: string;
+  /** ISO 8601. */
+  publishedAt?: string | null;
+  /** What changed, from runner/CHANGELOG.md. */
+  notes?: string | null;
 }
 
 /** A session end with the machine it was on, for lists. */
@@ -1498,6 +1524,8 @@ export interface ServerToClient_Snapshot {
   repos: OrgRepo[];
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
+  /** Runner releases, newest first, with their notes (What's new). None: an older server. */
+  runnerReleases?: RunnerRelease[] | null;
   /** This factory's maple-server version. */
   serverVersion?: string | null;
   /** A newer maple-server, when there is one (told to admins only). */

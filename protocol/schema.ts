@@ -96,6 +96,17 @@ export const enums: Record<string, Enum> = {
   RiskLevel: { values: { low: "Low.", medium: "Medium.", high: "High." } },
   PromptChoice: { values: { yes: "Allow it once (the menu's 1).", no: "Deny it (Esc: the menu's No isn't always 2)." } },
   RepoSource: { values: { github: "Granted to the GitHub App.", manual: "Added by an admin." } },
+  RunnerUpdateState: {
+    doc: "Where a runner update someone asked for is.",
+    values: {
+      checking: "Asked the machine; it's reading the release feed.",
+      installing: "Downloading and checking the new runner.",
+      restarting: "Restarting into it (sessions keep running in tmux).",
+      updated: "Back online on the new version.",
+      upToDate: "It already runs the latest release.",
+      failed: "It couldn't; `message` says why.",
+    },
+  },
   AgentState: {
     doc: "What a session's agent is doing, from its hooks.",
     values: {
@@ -242,8 +253,23 @@ export const structs: Record<string, Struct> = {
       settings: "MachineSettings?",
       capacity: "u32?",
       usage: "AgentUsage[]",
+      update: "MachineUpdate?",
     },
-    fieldDocs: { owner: "The GitHub login of the person who enrolled it.", capacity: "Factory sessions it takes now, settings and cores considered." },
+    fieldDocs: {
+      owner: "The GitHub login of the person who enrolled it.",
+      capacity: "Factory sessions it takes now, settings and cores considered.",
+      update: "The runner update someone asked for, while it runs and for a few minutes after.",
+    },
+  },
+  MachineUpdate: {
+    doc: "A runner update in progress on a machine, or how it just ended.",
+    fields: { state: "RunnerUpdateState", target: "string?", message: "string?", at: "u64" },
+    fieldDocs: { target: "The version it's updating to, once known.", message: "Why it failed.", at: "When it reached this state." },
+  },
+  RunnerRelease: {
+    doc: "One runner release in the feed's changelog (maple-runner/changes.json).",
+    fields: { version: "string", publishedAt: "string?", notes: "string?" },
+    fieldDocs: { publishedAt: "ISO 8601.", notes: "What changed, from runner/CHANGELOG.md." },
   },
   EndedSession: {
     doc: "A session end with the machine it was on, for lists.",
@@ -936,6 +962,7 @@ export const unions: Record<string, Union> = {
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
           runnerLatest: "string?",
+          runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
           serverUpdate: "ServerUpdate?",
           protocolVersion: "u32",
@@ -944,6 +971,7 @@ export const unions: Record<string, Union> = {
           ended: "The most recent session ends (last 7 days, newest first).",
           prompts: "The org's prompt additions. None: an older server.",
           runnerLatest: "The newest released runner version, when there's a release.",
+          runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
           serverUpdate: "A newer maple-server, when there is one (told to admins only).",
         },

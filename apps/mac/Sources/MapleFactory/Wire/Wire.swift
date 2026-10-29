@@ -1082,6 +1082,63 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where a runner update someone asked for is.
+    public enum RunnerUpdateState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Asked the machine; it's reading the release feed.
+        case checking
+        /// Downloading and checking the new runner.
+        case installing
+        /// Restarting into it (sessions keep running in tmux).
+        case restarting
+        /// Back online on the new version.
+        case updated
+        /// It already runs the latest release.
+        case upToDate
+        /// It couldn't; `message` says why.
+        case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RunnerUpdateState] = [.checking, .installing, .restarting, .updated, .upToDate, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "checking": self = .checking
+            case "installing": self = .installing
+            case "restarting": self = .restarting
+            case "updated": self = .updated
+            case "upToDate": self = .upToDate
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .checking: "checking"
+            case .installing: "installing"
+            case .restarting: "restarting"
+            case .updated: "updated"
+            case .upToDate: "upToDate"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RunnerUpdateState, b: RunnerUpdateState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// What a session's agent is doing, from its hooks.
     public enum AgentState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Running a turn.
@@ -1437,8 +1494,10 @@ public enum Wire {
         /// Factory sessions it takes now, settings and cores considered.
         public var capacity: UInt32?
         public var usage: [AgentUsage]
+        /// The runner update someone asked for, while it runs and for a few minutes after.
+        public var update: MachineUpdate?
 
-        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = []) {
+        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = [], update: MachineUpdate? = nil) {
             self.id = id
             self.name = name
             self.owner = owner
@@ -1451,6 +1510,7 @@ public enum Wire {
             self.settings = settings
             self.capacity = capacity
             self.usage = usage
+            self.update = update
         }
 
         public init(from decoder: Decoder) throws {
@@ -1467,6 +1527,40 @@ public enum Wire {
             settings = try c.decodeIfPresent(MachineSettings.self, forKey: .settings)
             capacity = try c.decodeIfPresent(UInt32.self, forKey: .capacity)
             usage = try c.decodeIfPresent([AgentUsage].self, forKey: .usage) ?? []
+            update = try c.decodeIfPresent(MachineUpdate.self, forKey: .update)
+        }
+    }
+
+    /// A runner update in progress on a machine, or how it just ended.
+    public struct MachineUpdate: Codable, Hashable, Sendable {
+        public var state: RunnerUpdateState
+        /// The version it's updating to, once known.
+        public var target: String?
+        /// Why it failed.
+        public var message: String?
+        /// When it reached this state.
+        public var at: UInt64
+
+        public init(state: RunnerUpdateState, target: String? = nil, message: String? = nil, at: UInt64) {
+            self.state = state
+            self.target = target
+            self.message = message
+            self.at = at
+        }
+    }
+
+    /// One runner release in the feed's changelog (maple-runner/changes.json).
+    public struct RunnerRelease: Codable, Hashable, Sendable {
+        public var version: String
+        /// ISO 8601.
+        public var publishedAt: String?
+        /// What changed, from runner/CHANGELOG.md.
+        public var notes: String?
+
+        public init(version: String, publishedAt: String? = nil, notes: String? = nil) {
+            self.version = version
+            self.publishedAt = publishedAt
+            self.notes = notes
         }
     }
 
@@ -4374,13 +4468,15 @@ public enum Wire {
         public var repos: [OrgRepo]
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
+        /// Runner releases, newest first, with their notes (What's new). None: an older server.
+        public var runnerReleases: [RunnerRelease]?
         /// This factory's maple-server version.
         public var serverVersion: String?
         /// A newer maple-server, when there is one (told to admins only).
         public var serverUpdate: ServerUpdate?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -4397,6 +4493,7 @@ public enum Wire {
             self.intake = intake
             self.repos = repos
             self.runnerLatest = runnerLatest
+            self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
             self.serverUpdate = serverUpdate
             self.protocolVersion = protocolVersion
@@ -4420,6 +4517,7 @@ public enum Wire {
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
+            runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
             serverUpdate = try c.decodeIfPresent(ServerUpdate.self, forKey: .serverUpdate)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)

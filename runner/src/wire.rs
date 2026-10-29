@@ -359,6 +359,27 @@ pub enum RepoSource {
     Other,
 }
 
+/// Where a runner update someone asked for is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunnerUpdateState {
+    /// Asked the machine; it's reading the release feed.
+    Checking,
+    /// Downloading and checking the new runner.
+    Installing,
+    /// Restarting into it (sessions keep running in tmux).
+    Restarting,
+    /// Back online on the new version.
+    Updated,
+    /// It already runs the latest release.
+    UpToDate,
+    /// It couldn't; `message` says why.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// What a session's agent is doing, from its hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -603,6 +624,37 @@ pub struct Machine {
     pub capacity: Option<u32>,
     #[serde(default)]
     pub usage: Vec<AgentUsage>,
+    /// The runner update someone asked for, while it runs and for a few minutes after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<MachineUpdate>,
+}
+
+/// A runner update in progress on a machine, or how it just ended.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineUpdate {
+    pub state: RunnerUpdateState,
+    /// The version it's updating to, once known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// When it reached this state.
+    pub at: u64,
+}
+
+/// One runner release in the feed's changelog (maple-runner/changes.json).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerRelease {
+    pub version: String,
+    /// ISO 8601.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+    /// What changed, from runner/CHANGELOG.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
 /// A session end with the machine it was on, for lists.
@@ -2123,6 +2175,9 @@ pub enum ServerToClient {
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
+        /// Runner releases, newest first, with their notes (What's new). None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runner_releases: Option<Vec<RunnerRelease>>,
         /// This factory's maple-server version.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server_version: Option<String>,
