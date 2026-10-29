@@ -246,6 +246,14 @@ export async function closePullRequest(app: GitHubApp, owner: string, repo: stri
   if (!res.ok) throw await failure(res, `close pull request #${number}`);
 }
 
+/** Reopens a closed pull request, after saying why in a comment on it. */
+export async function reopenPullRequest(app: GitHubApp, owner: string, repo: string, number: number, comment: string): Promise<void> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "PATCH", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth, { state: "open" });
+  if (!res.ok) throw await failure(res, `reopen pull request #${number}`);
+  await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/issues/${number}/comments`, auth, { body: comment });
+}
+
 // ---- CI ----
 
 /** A check on a commit, as the apps show it. */

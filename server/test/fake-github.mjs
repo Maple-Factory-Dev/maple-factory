@@ -13,7 +13,7 @@
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
 //   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
 //   GET  /app/installations, GET /installation/repositories   the app's installations, and an installation's repos
-//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n, POST …/issues/:n/comments
+//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
@@ -212,7 +212,8 @@ createServer((req, res) => {
       if (g) return deny(g);
       if (!p) return send(res, 404, { message: "Not Found" });
       if (req.method === "PATCH") {
-        Object.assign(p, body.state === "closed" ? { state: "closed" } : {});
+        if (body.state === "open" && p.state === "merged") return send(res, 422, { message: "Validation Failed: state cannot be changed. The pull request is merged." });
+        Object.assign(p, body.state === "closed" || body.state === "open" ? { state: body.state } : {});
         return send(res, 200, pullJson(p));
       }
       if (req.method === "PUT" && m[4]) {
