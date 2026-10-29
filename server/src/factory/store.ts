@@ -50,7 +50,11 @@ export interface TaskSession {
 export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null };
 
 export class Store {
-  constructor(private sql: SqlStorage) {
+  private sql: SqlStorage;
+
+  // Not a parameter property, so node's type stripping can load it for test/queue.test.ts.
+  constructor(sql: SqlStorage) {
+    this.sql = sql;
     sql.exec(`
       CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tasks (
