@@ -125,7 +125,8 @@ import UserNotifications
         try? await center.add(UNNotificationRequest(identifier: task.id, content: content, trigger: nil))
     }
 
-    private func refreshPermission() async {
+    func refreshPermission() async {
+        guard available else { return }
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         denied = status == .denied
     }

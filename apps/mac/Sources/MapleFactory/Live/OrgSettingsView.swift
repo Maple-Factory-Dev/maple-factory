@@ -6,7 +6,7 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case account, repos, people, runner, updates
+        case account, repos, people, runner, notifications, updates
 
         var title: String {
             switch self {
@@ -14,6 +14,7 @@ struct OrgSettingsView: View {
             case .repos: "Repositories"
             case .people: "People"
             case .runner: "Runner"
+            case .notifications: "Notifications"
             case .updates: "Updates"
             }
         }
@@ -24,6 +25,7 @@ struct OrgSettingsView: View {
             case .repos: "shippingbox"
             case .people: "person.2"
             case .runner: "laptopcomputer"
+            case .notifications: "bell"
             case .updates: "arrow.down.circle"
             }
         }
@@ -39,7 +41,7 @@ struct OrgSettingsView: View {
                 Section("Factory") {
                     ForEach([Pane.account, .repos, .people], id: \.self) { row($0) }
                 }
-                Section("This Mac") { row(.runner); row(.updates) }
+                Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
             }
             .listStyle(.sidebar)
             .frame(width: 190)
@@ -51,6 +53,7 @@ struct OrgSettingsView: View {
                 case .repos: RepositoriesSettings()
                 case .people: PeopleSettings()
                 case .runner: ScrollView { RunnerSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                case .notifications: ScrollView { NotificationSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .updates: ScrollView { UpdateSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 }
             }
@@ -108,6 +111,33 @@ struct AccountSettings: View {
         }
         .font(.system(size: 13))
         .padding(20)
+    }
+}
+
+/// This Mac's banners for tasks that need you.
+struct NotificationSettings: View {
+    @Bindable private var notifier = Notifier.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Notifications", detail: "A banner when a task newly needs you (a raised hand, a question, a plan to approve or a PR to review) while Maple Factory is in the background. Snooze them from the bell in the sidebar.")
+            SettingsCard {
+                Toggle("Notifications", isOn: $notifier.enabled)
+                LabeledContent("Status", value: notifier.statusText)
+                if notifier.isSnoozed {
+                    Button("Resume Notifications") { notifier.resume() }
+                }
+                if notifier.denied {
+                    Divider()
+                    Text("macOS isn't letting Maple Factory show notifications.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.State.awaitingApproval)
+                    Button("Open System Settings") { notifier.openSystemSettings() }
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+        .task { await notifier.refreshPermission() }
     }
 }
 
