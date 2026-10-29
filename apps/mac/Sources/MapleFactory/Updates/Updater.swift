@@ -7,7 +7,8 @@ import Sparkle
 /// `swift run`, so Settings can say so instead of offering a button that does nothing.
 /// `MAPLE_APPCAST_URL` points it at another appcast, to try a release before publishing it.
 /// Sparkle's own windows are replaced by SidebarUserDriver, which shows where an update is as `phase`
-/// for the sidebar footer. `MAPLE_UPDATE_DEMO=1` plays a fake update through it, feed or not.
+/// for the sidebar footer. `MAPLE_UPDATE_DEMO=1` plays a fake update through it, feed or not,
+/// and `MAPLE_UPDATE_DEMO=uptodate` a check that finds nothing new.
 @MainActor
 @Observable
 final class Updater: NSObject {
@@ -55,7 +56,11 @@ final class Updater: NSObject {
     @ObservationIgnored private var demoInstall = false
 
     func start() {
-        if ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"] == "1" { return playDemo() }
+        switch ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"] {
+        case "1": return playDemo()
+        case "uptodate": return playUpToDateDemo()
+        default: break
+        }
         guard updater == nil, Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
         let driver = SidebarUserDriver { [weak self] in self?.show($0) }
         let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
@@ -146,6 +151,18 @@ final class Updater: NSObject {
             for tenth in 0...10 { await step(.extracting(fraction: Double(tenth) / 10), for: 0.08) }
             await step(.installing, for: 2)
             await step(.readyToRelaunch(version: "0.2.0"))
+        }
+    }
+
+    /// A check that finds nothing new, so the up-to-date toast can be seen from `swift run`.
+    private func playUpToDateDemo() {
+        guard demo == nil else { return }
+        demo = Task { [weak self] in
+            self?.show(.checking)
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self, !Task.isCancelled else { return }
+            self.show(.upToDate)
+            self.demo = nil
         }
     }
 
