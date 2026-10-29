@@ -85,7 +85,7 @@ struct TaskActionsMenu<Label: View>: View {
     }
 }
 
-/// The queue's (Move to top, Schedule…, Start now; Queue on a draft), Retry and Cancel task…, for a menu or a row's context menu. Cancel only asks; the caller shows
+/// The queue's (Move to top, Schedule…, Start now, Run now; Queue on a draft), Retry and Cancel task…, for a menu or a row's context menu. Cancel only asks; the caller shows
 /// the confirmation (`cancelTaskConfirmation`).
 struct TaskActionButtons: View {
     @Environment(AppState.self) private var appState
@@ -102,6 +102,9 @@ struct TaskActionButtons: View {
                 Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
             }
             Button { appState.startNow(task.id) } label: { Label("Start now", systemImage: "play") }
+            if task.state == .planning || task.state == .building {
+                Button { appState.forceStart(task.id) } label: { Label("Run now, skip the slot wait", systemImage: "bolt") }
+            }
             Divider()
         } else if task.state == .drafting {
             Button { appState.queue(task.id, before: nil) } label: { Label("Queue", systemImage: "list.number") }

@@ -61,6 +61,11 @@ struct LiveMachinesView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.State.awaitingApproval)
                             .lineLimit(1)
+                        if task.waiting?.contains("free slot") == true, task.state == .planning || task.state == .building {
+                            Button { state.forceStart(task.id) } label: { Label("Run now", systemImage: "bolt") }
+                                .controlSize(.small)
+                                .help("Start it now, over the machine's slot count")
+                        }
                     }
                     .padding(.horizontal, 12)
                     .frame(height: 36)
