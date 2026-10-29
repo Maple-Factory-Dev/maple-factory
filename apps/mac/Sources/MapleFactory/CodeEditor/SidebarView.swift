@@ -129,28 +129,84 @@ struct SidebarView: View {
     }
 }
 
+/// The factory card at the top of the sidebar; opens the factory menu.
 struct WorkspaceSwitcher: View {
     @Environment(FactoryClient.self) private var client
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Theme.accent)
-            Text(client.workspaceName)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.text)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.textMuted)
+        Menu {
+            FactoryMenu()
+        } label: {
+            HStack(spacing: 10) {
+                FactoryInitial(name: client.workspaceName, size: 22)
+                Text(client.workspaceName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.textMuted)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Theme.card)
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+            )
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Theme.card)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
-        )
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+    }
+}
+
+/// The factory's first letter on an accent tile, standing in for its logo.
+struct FactoryInitial: View {
+    let name: String
+    var size: CGFloat = 22
+
+    var body: some View {
+        Text(name.first.map { String($0).uppercased() } ?? "F")
+            .font(.system(size: size * 0.55, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.27).fill(Theme.accent))
+    }
+}
+
+/// The factories signed into on this Mac, the current one checked, then adding one and signing out.
+struct FactoryMenu: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+
+    var body: some View {
+        ForEach(client.savedFactories) { factory in
+            let current = client.isSignedIn && client.server.map(SavedFactory.key) == factory.id
+            Button {
+                guard !current else { return }
+                if client.switchTo(factory) {
+                    state.didSwitchFactory()
+                } else {
+                    state.startOnboarding()
+                }
+            } label: {
+                if current {
+                    Label("\(factory.name) — \(factory.host)", systemImage: "checkmark")
+                } else {
+                    Text("\(factory.name) — \(factory.host)")
+                }
+            }
+        }
+        if !client.savedFactories.isEmpty { Divider() }
+        Button("Add new factory…", systemImage: "plus") { state.startOnboarding() }
+        if client.isSignedIn {
+            Button("Sign out of \(client.workspaceName)") {
+                client.signOut()
+                if client.isSignedIn { state.didSwitchFactory() }
+            }
+        }
     }
 }

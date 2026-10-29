@@ -25,6 +25,11 @@ import Security
 
     private(set) var server: URL?
     private(set) var org = ""
+    /// Every factory signed into on this Mac, the current one among them. Each token stays in the
+    /// Keychain under its factory's URL, so switching back doesn't ask to sign in again.
+    private(set) var savedFactories: [SavedFactory] = [] {
+        didSet { SavedFactories.store(savedFactories) }
+    }
     private(set) var me: Wire.Member?
     private(set) var machines: [Wire.Machine] = []
     private(set) var ends: [EndRecord] = []
@@ -126,11 +131,14 @@ import Security
     }
 
     init() {
-        if let saved = AppDefaults.string(forKey: "factoryURL"), let url = URL(string: saved),
+        let defaults = AppDefaults
+        savedFactories = SavedFactories.migrate(SavedFactories.load(), currentURL: defaults.string(forKey: "factoryURL"),
+                                                currentOrg: defaults.string(forKey: "factoryOrg"))
+        if let saved = defaults.string(forKey: "factoryURL"), let url = URL(string: saved),
            let token = Keychain.read(account: saved) {
             server = url
             self.token = token
-            org = AppDefaults.string(forKey: "factoryOrg") ?? ""
+            org = defaults.string(forKey: "factoryOrg") ?? ""
         }
         // A socket can die quietly while the Mac sleeps or the app sits in the background; catch up
         // with a fresh snapshot rather than leave every list as it was.
@@ -159,7 +167,7 @@ import Security
     // MARK: Session
 
     func signIn(_ result: SignInResult) {
-        if result.server != server { hasSnapshot = false }
+        if result.server != server { resetFactoryState() }
         server = result.server
         token = result.token
         me = result.member
@@ -167,23 +175,79 @@ import Security
         AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
         AppDefaults.set(result.org, forKey: "factoryOrg")
         Keychain.write(result.token, account: result.server.absoluteString)
+        remember()
         connect()
     }
 
-    func signOut() {
-        if let server { Keychain.delete(account: server.absoluteString) }
-        AppDefaults.removeObject(forKey: "factoryURL")
+    /// Opens another saved factory with its kept token. False when there's no token for it, so the
+    /// caller can send the person to sign in again.
+    @discardableResult
+    func switchTo(_ factory: SavedFactory) -> Bool {
+        guard SavedFactory.key(factory.server) != serverKey || !isSignedIn else { return true }
+        guard let token = Keychain.read(account: factory.server.absoluteString) else { return false }
         disconnect()
+        resetFactoryState()
+        server = factory.server
+        self.token = token
+        org = factory.org
+        AppDefaults.set(factory.server.absoluteString, forKey: "factoryURL")
+        AppDefaults.set(factory.org, forKey: "factoryOrg")
+        remember()
+        connect()
+        return true
+    }
+
+    /// Signs out of this factory only; the most recent other one opens in its place, when there is one.
+    func signOut() {
+        if let server {
+            Keychain.delete(account: server.absoluteString)
+            savedFactories = SavedFactories.remove(server, from: savedFactories)
+        }
+        if let next = SavedFactories.fallback(savedFactories), switchTo(next) { return }
+        AppDefaults.removeObject(forKey: "factoryURL")
+        AppDefaults.removeObject(forKey: "factoryOrg")
+        disconnect()
+        generation += 1
         server = nil
         token = nil
+        resetFactoryState()
+        status = .signedOut
+    }
+
+    /// Puts the current factory at the front of the saved list, as the last one used.
+    private func remember() {
+        guard let server else { return }
+        savedFactories = SavedFactories.upsert(SavedFactory(server: server, org: org, name: workspaceName, lastUsed: Date()), into: savedFactories)
+    }
+
+    /// Forgets everything the last factory sent, so none of it shows under the next one.
+    private func resetFactoryState() {
+        for task in unsaved.values { task.cancel() }
+        unsaved = [:]
         me = nil
         machines = []
         ends = []
+        members = []
         goals = []
         tasks = []
+        online = []
+        intakeRequests = []
+        notes = []
+        drafts = [:]
+        follows = [:]
+        policy = nil
+        acceptances = []
+        repos = []
+        runnerLatest = nil
+        serverVersion = nil
+        serverUpdate = nil
+        toast = nil
+        notice = nil
+        viewing = nil
+        attempt = 0
         rebuild()
         hasSnapshot = false
-        status = .signedOut
+        status = .connecting
     }
 
     // MARK: Feed
@@ -292,6 +356,7 @@ import Security
             serverUpdate = snapshot.serverUpdate
             rebuild()
             hasSnapshot = true
+            remember()
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
@@ -776,6 +841,63 @@ import Security
         case NSURLErrorNetworkConnectionLost: return "The connection dropped."
         default: return (error as? LocalizedError)?.errorDescription ?? ns.localizedDescription
         }
+    }
+}
+
+/// A factory signed into on this Mac. Its token is in the Keychain under `server`.
+struct SavedFactory: Codable, Equatable, Identifiable, Sendable {
+    var server: URL
+    var org: String
+    /// The org's name, or the host when it has none.
+    var name: String
+    var lastUsed: Date
+
+    var id: String { Self.key(server) }
+    var host: String { id }
+
+    /// One entry per host and port: http and https to the same place are the same factory.
+    static func key(_ url: URL) -> String { "\(url.host() ?? "")\(url.port.map { ":\($0)" } ?? "")" }
+}
+
+/// The saved-factory list's rules, kept pure so they can be tested; stored in defaults under `factories`.
+enum SavedFactories {
+    static let defaultsKey = "factories"
+
+    static func load(_ defaults: UserDefaults = AppDefaults) -> [SavedFactory]? {
+        defaults.data(forKey: defaultsKey).flatMap { try? JSONDecoder().decode([SavedFactory].self, from: $0) }
+    }
+
+    static func store(_ list: [SavedFactory], _ defaults: UserDefaults = AppDefaults) {
+        defaults.set(try? JSONEncoder().encode(list), forKey: defaultsKey)
+    }
+
+    /// The list as saved, or, before there was one, the single factory this Mac was signed into.
+    static func migrate(_ saved: [SavedFactory]?, currentURL: String?, currentOrg: String?, now: Date = Date()) -> [SavedFactory] {
+        if let saved { return saved }
+        guard let currentURL, let url = URL(string: currentURL), url.host() != nil else { return [] }
+        let org = currentOrg ?? ""
+        let name = org.isEmpty || org == "local" ? url.host() ?? "Factory" : org
+        return [SavedFactory(server: url, org: org, name: name, lastUsed: now)]
+    }
+
+    /// Adds the factory, or replaces the entry for the same host and port where it stands.
+    static func upsert(_ factory: SavedFactory, into list: [SavedFactory]) -> [SavedFactory] {
+        var list = list
+        if let index = list.firstIndex(where: { $0.id == factory.id }) {
+            list[index] = factory
+        } else {
+            list.append(factory)
+        }
+        return list
+    }
+
+    static func remove(_ server: URL, from list: [SavedFactory]) -> [SavedFactory] {
+        list.filter { $0.id != SavedFactory.key(server) }
+    }
+
+    /// The factory to open after signing out of one: the most recently used of those left.
+    static func fallback(_ list: [SavedFactory]) -> SavedFactory? {
+        list.max { $0.lastUsed < $1.lastUsed }
     }
 }
 

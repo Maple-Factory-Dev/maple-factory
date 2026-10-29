@@ -7,18 +7,23 @@ struct SidebarRail: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            item(client.workspaceName, detail: "Connect to another factory (Esc to go back)") {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(Theme.card)
-                            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.stroke))
-                    )
+            item(client.workspaceName, detail: "Switch or add factories") {
+                Menu {
+                    FactoryMenu()
+                } label: {
+                    FactoryInitial(name: client.workspaceName, size: 22)
+                        .frame(width: 34, height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9)
+                                .fill(Theme.card)
+                                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.stroke))
+                        )
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
             }
-            .onTapGesture { state.startOnboarding() }
             .padding(.top, 44)
             .padding(.bottom, 10)
 
