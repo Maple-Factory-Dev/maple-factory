@@ -355,6 +355,21 @@ export class Engine {
       }
       case "task.queue": {
         if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (msg.force) {
+          if (task.worker || task.hand || task.question) fail("It's already running.");
+          if (task.state !== "drafting" && !this.roleFor(task)) fail("It isn't waiting for a session.");
+          const queue = this.store.queued();
+          const top = queue.find((t) => t.id !== task.id);
+          if (top) task.queueRank = this.store.rankBefore(task.id, top, queue);
+          task.startAt = null;
+          task.force = true;
+          this.event(task, who, "ran it now, over its machine's slot limit");
+          if (task.state === "drafting") return this.startPlanning(task, who);
+          task.waiting = null;
+          this.save(task);
+          await this.pump();
+          return;
+        }
         const scheduling = msg.startAt != null || msg.clearSchedule;
         if (msg.before === task.id) fail("It can't go ahead of itself.");
         const queue = this.store.queued();
@@ -521,9 +536,11 @@ export class Engine {
       }
       case "task.checkedIt": {
         const item = task.doneWhen[msg.item] ?? fail("There's no such Done when item.");
+        if (task.state !== "building" && task.state !== "reviewing") fail("You can attest to it while it's building or in review.");
+        const reason = msg.note?.trim() || null;
         item.status = "proven";
-        item.evidence = { kind: item.proof, summary: msg.note?.trim() || `${who} checked it by hand.`, output: [], by: who, at: now() };
-        this.event(task, who, `checked "${item.text}"`);
+        item.evidence = { kind: item.proof, summary: `Attested by ${who}${reason ? `: ${reason}` : ""}`, output: [], by: who, at: now(), attested: true, reason };
+        this.event(task, who, `attested "${item.text}"${reason ? `: ${reason}` : ""}`);
         this.save(task);
         return;
       }
@@ -679,7 +696,8 @@ export class Engine {
       kind = machine.owner === task.owner ? "personal" : "team";
     } else {
       const usable = machines.filter((m) => m.online && !this.store.settings(m.id).paused && this.hasAgent(m, task.agent) && !this.overCap(m, task.agent, task.owner));
-      const own = usable.filter((m) => m.owner === task.owner && busy(m.id) < this.capacity(m));
+      // Forced: any of its owner's own machines, full or not; never a teammate's past what they lend.
+      const own = usable.filter((m) => m.owner === task.owner && (task.force || busy(m.id) < this.capacity(m)));
       machine = own.sort((a, b) => busy(a.id) - busy(b.id))[0];
       if (!machine && task.shareable) {
         const lent = usable.filter((m) => {
@@ -742,6 +760,7 @@ export class Engine {
     if (priv.movedFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
     task.startAt = null;
+    task.force = null;
     task.machine = machine.id;
     task.branch = `agent/${branchName(task)}`;
     task.liveLog = role === "planner" ? "Reading the code…" : role === "builder" ? "Starting…" : "Reading the change…";
@@ -1337,6 +1356,11 @@ export class Engine {
           by: "builder",
           at: now(),
         };
+        // A person's attestation stands unless the agent's own proof shows it failing.
+        if (item.evidence?.attested && item.status === "proven" && !evidence.failed) {
+          const left = task.doneWhen.filter((d) => d.status !== "proven").length;
+          return { summary: `${item.evidence.by} already attested to it; kept their sign-off. ${left ? `${left} item${left === 1 ? "" : "s"} left to prove.` : "Every item is proven."}` };
+        }
         item.evidence = evidence;
         item.status = evidence.failed ? "failed" : "proven";
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
@@ -1752,7 +1776,7 @@ const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "te
 /** The pull request's description: the brief, the plan, and what proves it's done. */
 function pullBody(task: Task): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text}${s.file ? ` (\`${s.file}\`)` : ""}`).join("\n");
-  const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
+  const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence?.attested ? ` (attested by @${d.evidence.by}${d.evidence.reason ? `: ${d.evidence.reason}` : ""})` : d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
   return [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, task.brief.trim(), steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
     .join("\n\n")

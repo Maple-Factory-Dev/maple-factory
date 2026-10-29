@@ -268,9 +268,13 @@ export interface Evidence {
   failed?: number | null;
   /** An uploaded image or video's path under /api/files/. */
   file?: string | null;
-  /** The agent's role, or a login for "I checked it". */
+  /** The agent's role, or the login of the person who attested. */
   by: string;
   at: number;
+  /** A person signed it off themselves instead of the agent proving it. */
+  attested?: boolean | null;
+  /** Why they attested, if they said. */
+  reason?: string | null;
 }
 
 export interface DoneItem {
@@ -521,6 +525,8 @@ export interface Task {
   queueRank?: number | null;
   /** Don't start its next session before this (ms); cleared once that session starts. */
   startAt?: number | null;
+  /** Its next session skips the wait for a free slot; cleared once it starts. */
+  force?: boolean | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -1248,6 +1254,8 @@ export interface ClientMessage_TaskQueue {
   startAt?: number | null;
   /** Start it as soon as there's room. */
   clearSchedule?: boolean | null;
+  /** Start its next session now, over the machine's slot count. */
+  force?: boolean | null;
 }
 
 /** Run the pull request's failed CI checks again. */
@@ -1269,7 +1277,7 @@ export interface ClientMessage_TaskMove {
   id: string;
 }
 
-/** "I checked it" for a Done when item. */
+/** Attest to a Done when item yourself, with an optional reason. */
 export interface ClientMessage_TaskCheckedIt {
   type: "task.checkedIt";
   id: string;

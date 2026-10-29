@@ -372,7 +372,7 @@ pub fn run_hook() {
 
 fn forward() -> Result<()> {
     let (Ok(socket), Ok(session)) = (std::env::var(SOCKET_ENV), std::env::var(SESSION_ENV)) else {
-        return Ok(()); // not inside an orchestrator session
+        return Ok(()); // not inside a Maple Factory session
     };
     let mut args = std::env::args().skip(2);
     let agent = args.next().unwrap_or_default();

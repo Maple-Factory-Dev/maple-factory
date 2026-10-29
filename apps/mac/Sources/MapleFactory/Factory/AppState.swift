@@ -45,6 +45,9 @@ final class AppState {
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
+    /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.
+    var attestingItem: String? = nil
+    var attestReason = ""
     /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
     var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
@@ -53,8 +56,8 @@ final class AppState {
     /// written on every toggle while the panel opened by default, so it's true for most people.
     private static let panelKey = "taskPanelOpen"
     private static var panelLeftOpen: Bool {
-        UserDefaults.standard.removeObject(forKey: "taskPanel")
-        return UserDefaults.standard.bool(forKey: panelKey)
+        AppDefaults.removeObject(forKey: "taskPanel")
+        return AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
@@ -69,26 +72,39 @@ final class AppState {
         }
     }
 
-    /// Clicking the task already open in the panel closes the panel; any other task opens.
+    /// What a click on a card or row does: the full task view by default, or a peek in the panel.
+    var taskOpening = TaskOpening.stored() {
+        didSet { AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key) }
+    }
+
+    nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
+
+    /// In the panel mode, clicking the task already open in the panel closes it; any other task opens.
+    nonisolated static func clickAction(opening: TaskOpening, panelOpen: Bool, selected: String, id: String) -> ClickAction {
+        if opening == .fullView { return .focus }
+        return panelOpen && selected == id ? .closePanel : .openPanel
+    }
+
+    /// A single click on a board card, list or inbox row, or timeline bar.
     func toggleTask(_ id: String) {
-        if showInspector, selectedTask == id {
-            closeTaskPanel()
-        } else {
-            openTask(id)
+        switch AppState.clickAction(opening: taskOpening, panelOpen: showInspector, selected: selectedTask, id: id) {
+        case .focus: openFocus(id)
+        case .openPanel: openTask(id)
+        case .closePanel: closeTaskPanel()
         }
     }
 
     /// ×, Esc or clicking the open card again; in a full-width window the close sticks across launches.
     func closeTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector = false }
-        if !isCompact { UserDefaults.standard.set(false, forKey: AppState.panelKey) }
+        if !isCompact { AppDefaults.set(false, forKey: AppState.panelKey) }
     }
 
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
     /// (in a full-width window; a narrow one hides and floats the panel on its own).
     func toggleTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
-        if !isCompact { UserDefaults.standard.set(showInspector, forKey: AppState.panelKey) }
+        if !isCompact { AppDefaults.set(showInspector, forKey: AppState.panelKey) }
     }
 
     // MARK: Machines
@@ -134,10 +150,10 @@ final class AppState {
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
     /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
-    var showOnboarding = UserDefaults.standard.bool(forKey: "onboarding") || UserDefaults.standard.bool(forKey: "onboardingAuto")
-        || UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    var showOnboarding = AppDefaults.bool(forKey: "onboarding") || AppDefaults.bool(forKey: "onboardingAuto")
+        || AppDefaults.bool(forKey: "onboardingFromWorkspace")
     /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
-    var onboardingCanCancel = UserDefaults.standard.bool(forKey: "onboardingFromWorkspace")
+    var onboardingCanCancel = AppDefaults.bool(forKey: "onboardingFromWorkspace")
 
     func startOnboarding() {
         onboardingCanCancel = true
@@ -166,9 +182,9 @@ final class AppState {
 
     var windowWidth: CGFloat = 1600
     /// Icon rail instead of the full sidebar. Narrow windows force it on; the full sidebar then floats over the content.
-    var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    var sidebarCollapsed = AppDefaults.bool(forKey: "sidebarCollapsed")
     /// What the user picked at full width, restored when the window widens again.
-    private var sidebarPreference = UserDefaults.standard.bool(forKey: "sidebarCollapsed")
+    private var sidebarPreference = AppDefaults.bool(forKey: "sidebarCollapsed")
 
     /// Around half a laptop screen: the inspector floats and the sidebar becomes a rail.
     var isCompact: Bool { windowWidth < 1180 }
@@ -191,7 +207,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = UserDefaults.standard.bool(forKey: AppState.panelKey)
+                showInspector = AppDefaults.bool(forKey: AppState.panelKey)
             }
         }
     }
@@ -200,7 +216,7 @@ final class AppState {
         withAnimation(.snappy(duration: 0.25)) { sidebarCollapsed.toggle() }
         if !isCompact {
             sidebarPreference = sidebarCollapsed
-            UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed")
+            AppDefaults.set(sidebarCollapsed, forKey: "sidebarCollapsed")
         }
     }
 
@@ -415,13 +431,34 @@ final class AppState {
     }
 
     /// Derived from live task state, so acting on a task clears its inbox item on its own.
+    // MARK: Task opening
+
+    /// Whether clicking a task opens its full view or peeks at it in the side panel.
+    nonisolated enum TaskOpening: String, CaseIterable {
+        case fullView, panel
+
+        static let key = "taskOpening"
+
+        var title: String {
+            switch self {
+            case .fullView: "Open the full view"
+            case .panel: "Peek in the side panel"
+            }
+        }
+
+        /// The saved choice; the full view until someone picks otherwise.
+        static func stored(_ defaults: UserDefaults = AppDefaults) -> TaskOpening {
+            TaskOpening(rawValue: defaults.string(forKey: key) ?? "") ?? .fullView
+        }
+    }
+
     // MARK: Goal scope
 
     /// Inbox, Needs a hand and Activity show the goals you follow unless you ask for all of them.
     enum GoalScope: String { case following, all }
 
-    var goalScope: GoalScope = GoalScope(rawValue: UserDefaults.standard.string(forKey: "goalScope") ?? "") ?? .following {
-        didSet { UserDefaults.standard.set(goalScope.rawValue, forKey: "goalScope") }
+    var goalScope: GoalScope = GoalScope(rawValue: AppDefaults.string(forKey: "goalScope") ?? "") ?? .following {
+        didSet { AppDefaults.set(goalScope.rawValue, forKey: "goalScope") }
     }
 
     private var followedGoalNames: Set<String> { Set(FactoryData.goals.filter(isFollowing).map(\.name)) }
@@ -986,6 +1023,22 @@ final class AppState {
         }
     }
 
+    /// Starts its next session now, over its machine's slot count: the front, no schedule, forced.
+    func forceStart(_ id: String) {
+        if let client, isLive {
+            let rank = rank(for: id, before: "top")
+            withAnimation(.snappy(duration: 0.2)) {
+                client.expect(id) { task in
+                    task.queueRank = rank
+                    task.startAt = nil
+                }
+            }
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true, force: true)))
+            return
+        }
+        startNow(id)
+    }
+
     /// Takes its schedule off, keeping its place.
     func unschedule(_ id: String) {
         if let client, isLive {
@@ -1036,6 +1089,9 @@ final class AppState {
         return !landed(kind, on: task(id))
     }
 
+    /// Some button is still waiting on what it sent; headless `shot:` waits this out.
+    var isBusy: Bool { inFlight.contains { isInFlight($0.key, $0.value.kind) } }
+
     /// Whether the task already shows what `kind` asked for.
     private func landed(_ kind: InFlight.Kind, on task: FactoryTask) -> Bool {
         let me = FactoryData.me.id
@@ -1075,7 +1131,7 @@ final class AppState {
 
     /// Demo scripts only: holds a mock action in flight for a moment, so its busy state can be seen.
     private func afterDemoDelay(_ id: String, _ kind: InFlight.Kind, _ apply: @escaping () -> Void) -> Bool {
-        guard UserDefaults.standard.string(forKey: "actions") != nil else { return false }
+        guard AppDefaults.string(forKey: "actions") != nil else { return false }
         guard beginInFlight(id, kind) else { return true }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.2))
@@ -1417,7 +1473,7 @@ final class AppState {
 
     /// Launch arguments like `-destination inbox -layout timeline -inspector NO` jump straight to a view.
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
@@ -1450,7 +1506,8 @@ final class AppState {
             isComposing = true
         }
         if let script = defaults.string(forKey: "actions") {
-            Task { @MainActor in await self.play(script) }
+            scriptFinished = false
+            Task { @MainActor in await self.play(script); self.scriptFinished = true }
         }
     }
 
@@ -1466,14 +1523,25 @@ final class AppState {
         }
     }
 
+    /// False while an `-actions` script is still playing, so a headless run waits for it.
+    @ObservationIgnored private(set) var scriptFinished = true
+
+    /// One step of a demo script, `name:argument…`; nil when it has no argument.
+    nonisolated static func demoAction(_ command: String) -> [String]? {
+        let parts = command.trimmingCharacters(in: .whitespaces).split(separator: ":").map(String.init)
+        return parts.count >= 2 ? parts : nil
+    }
+
+    static let demoSettings = Notification.Name("AppState.demoSettings")
+
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
     /// clicking. `ui:compose; idea:Dark mode; ui:draft; ui:watch` starts Draft with AI and watches it.
+    /// Headless (`-snapshot`), `shot:approved` renders the window to approved.png between actions.
     private func play(_ script: String) async {
-        for command in script.split(separator: ";").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+        for command in script.split(separator: ";") {
             try? await Task.sleep(for: .seconds(1))
-            let parts = command.split(separator: ":").map(String.init)
-            guard parts.count >= 2 else { continue }
+            guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
             case "review": approveChanges(parts[1])
@@ -1493,6 +1561,17 @@ final class AppState {
                 schedulingTask = nil
                 let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
                 schedule(parts[1], at: pick.date())
+            // A Done when item's Attest…, its reason typed in (`attesttype:<text>`), then Attest.
+            case "attestask": attestReason = ""; attestingItem = "\(parts[1])#\(parts.count > 2 ? parts[2] : "0")"
+            case "attesttype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    attestReason.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+            case "attest":
+                attestingItem = nil
+                attest(parts[1], item: parts.count > 2 ? Int(parts[2]) ?? 0 : 0, reason: attestReason)
+                attestReason = ""
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
@@ -1500,6 +1579,7 @@ final class AppState {
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
+            case "shot": await Headless.shot(parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
@@ -1508,6 +1588,7 @@ final class AppState {
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
                 case "note": newNote()
+                case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -1528,6 +1609,12 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
+            case "click": toggleTask(parts[1])
+            case "dblclick": openFocus(parts[1])
+            case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+            case "panel": toggleTaskPanel()
+            case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

@@ -118,13 +118,16 @@ struct FlowBar: View {
             .frame(height: 6)
             .frame(maxWidth: 620)
 
-            HStack(spacing: 14) {
+            // Whole items wrap to a second row when the states don't fit, so no title is squeezed
+            // and broken mid-word (MF-40).
+            FlowLayout(spacing: 14, lineSpacing: 6) {
                 ForEach(populated, id: \.state) { entry in
                     HStack(spacing: 5) {
                         Circle().fill(entry.state.color).frame(width: 6, height: 6)
                         Text("\(entry.count)").foregroundStyle(Theme.text).monospacedDigit()
-                        Text(entry.state.title)
+                        Text(entry.state.title).lineLimit(1)
                     }
+                    .fixedSize()
                 }
             }
             .font(.system(size: 11.5))
@@ -154,6 +157,7 @@ struct BoardColumns: View {
                     column(taskState)
                 }
             }
+            .animation(.snappy, value: populatedStates)
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -174,14 +178,29 @@ struct BoardColumns: View {
         }
     }
 
+    /// An empty column shrinks to a slim rail, so the columns with cards get the room.
+    static func isRail(count: Int) -> Bool { count == 0 }
+
+    /// The states with cards in their own column; the board animates when this changes.
+    private var populatedStates: Set<TaskState> { Set(tasks.filter { !$0.queued }.map(\.state)) }
+
     /// Queued tasks wait in Queued until a session picks them up, not in their state's column.
+    @ViewBuilder
     private func column(_ taskState: TaskState) -> some View {
         let columnTasks = tasks.filter { $0.state == taskState && !$0.queued }
-        return shell(icon: taskState.icon, title: taskState.title, color: taskState.color, tasks: columnTasks) {
-            ForEach(columnTasks) { task in
-                BoardCard(task: task, draggable: task.state == .drafting)
+
+        Group {
+            if Self.isRail(count: columnTasks.count) {
+                EmptyColumnRail(taskState: taskState)
+            } else {
+                shell(icon: taskState.icon, title: taskState.title, color: taskState.color, tasks: columnTasks) {
+                    ForEach(columnTasks) { task in
+                        BoardCard(task: task, draggable: task.state == .drafting)
+                    }
+                }
             }
         }
+        .transition(.opacity)
         .opacity(taskState == .cancelled ? 0.7 : 1)
     }
 
@@ -195,6 +214,18 @@ struct BoardColumns: View {
                     guard dropped != task.id else { return }
                     state.queue(dropped, before: task.id)
                 }
+            }
+            // An empty queue keeps a roomy box to drop a draft into.
+            if queued.isEmpty {
+                Text("Drag a draft here to queue it")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 60)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    )
             }
         }
         .overlay {
@@ -231,18 +262,6 @@ struct BoardColumns: View {
                 VStack(spacing: 8) { content }
                 ScrollView { VStack(spacing: 8) { content }.padding(.trailing, 6) }.scrollIndicators(.automatic)
             }
-
-            if columnTasks.isEmpty {
-                Text("Nothing here")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textFaint)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 60)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9)
-                            .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    )
-            }
         }
         .padding(8)
         .frame(width: 240, alignment: .top)
@@ -264,8 +283,7 @@ private struct BoardCard: View {
 
     var body: some View {
         let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position)
-            .onTapGesture(count: 2) { state.openFocus(task.id) }
-            .onTapGesture { state.toggleTask(task.id) }
+            .taskClicks(task.id)
             .contextMenu {
                 TaskActionButtons(task: task, confirmCancel: $confirmCancel, schedule: { scheduling = true })
             }
@@ -380,6 +398,59 @@ struct ScheduleBadge: View {
         .frame(height: 18)
         .background(Capsule().fill(Theme.State.awaitingApproval.opacity(0.14)))
         .help(at.formatted(date: .complete, time: .shortened))
+    }
+}
+
+/// An empty column, kept as a quiet slot so the pipeline still reads left to right.
+private struct EmptyColumnRail: View {
+    let taskState: TaskState
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: taskState.icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(taskState.color)
+            Text("0")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(Theme.textFaint)
+            // The title runs down the rail; it's laid out flat and turned, so it isn't clipped.
+            Text(taskState.title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+                .lineLimit(1)
+                .fixedSize()
+                .modifier(Upright())
+        }
+        .padding(.vertical, 12)
+        // At least as tall as a short column; a long title makes the rail taller instead of spilling.
+        .frame(width: 44, alignment: .top)
+        .frame(minHeight: 168, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Theme.columnBG.opacity(0.5))
+                .strokeBorder(Theme.stroke, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .help(taskState.emptyHint)
+    }
+}
+
+/// Turns its content a quarter turn and lays it out at the turned size, so a vertical title
+/// takes up exactly as much height as it's long.
+private struct Upright: ViewModifier {
+    func body(content: Content) -> some View {
+        Turned { content.rotationEffect(.degrees(90)) }
+    }
+
+    private struct Turned: Layout {
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            let size = subviews.first?.sizeThatFits(.unspecified) ?? .zero
+            return CGSize(width: size.height, height: size.width)
+        }
+
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: .unspecified)
+        }
     }
 }
 
@@ -575,5 +646,28 @@ struct TaskProgressFooter: View {
                     Capsule().fill(task.state.color).frame(width: proxy.size.width * progress)
                 }
             }
+    }
+}
+
+/// A click opens the task per the "When you click a task" setting. Double-click opens the full view
+/// only in the panel mode; in the full-view mode it would hold back every single click.
+private struct TaskClicks: ViewModifier {
+    let id: String
+    @Environment(AppState.self) private var state
+
+    func body(content: Content) -> some View {
+        if state.taskOpening == .panel {
+            content
+                .onTapGesture(count: 2) { state.openFocus(id) }
+                .onTapGesture { state.toggleTask(id) }
+        } else {
+            content.onTapGesture { state.toggleTask(id) }
+        }
+    }
+}
+
+extension View {
+    func taskClicks(_ id: String) -> some View {
+        modifier(TaskClicks(id: id))
     }
 }

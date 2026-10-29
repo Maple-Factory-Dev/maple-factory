@@ -103,8 +103,15 @@ struct FactorySidebar: View {
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
+
+            // Pinned under the scroll area, so it's always at the very bottom while an update is in play.
+            UpdateFooter()
+                .animation(.easeOut(duration: 0.2), value: Updater.shared.phase.showsInFooter)
+                .padding(.horizontal, -12)
         }
         .padding(.horizontal, 12)
+        // A demo script's `ui:settings`: Settings opens without the menu.
+        .onReceive(NotificationCenter.default.publisher(for: AppState.demoSettings)) { _ in openSettings() }
         .overlay(alignment: .topTrailing) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13))
@@ -268,6 +275,117 @@ struct FactorySidebar: View {
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.fillSelected : .clear))
             .contentShape(Rectangle())
+    }
+}
+
+/// Where an app update is, at the foot of the sidebar: checking, on offer, downloading, ready to relaunch.
+/// Nothing at all while there's no update in play (up to date is a toast instead).
+struct UpdateFooter: View {
+    private var updater = Updater.shared
+
+    var body: some View {
+        let phase = updater.phase
+        if phase.showsInFooter {
+            VStack(spacing: 0) {
+                Rectangle().fill(Theme.stroke).frame(height: 1)
+                // The buttons sit on the title's line, so the line under it has the footer's whole width
+                // (the version and its What's new link don't fit beside them).
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center, spacing: 9) {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 13))
+                            .foregroundStyle(iconColor(phase))
+                            .frame(width: 16)
+                        Text(phase.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            if let action = phase.action, let label = phase.buttonLabel {
+                                button(label, prominent: action == .install || action == .relaunch) { updater.perform(action) }
+                            }
+                            if phase.isDismissible {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .frame(width: 16, height: 16)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { updater.dismiss() }
+                                    .help("Not now")
+                            }
+                        }
+                    }
+                    Group {
+                        if phase.isBusy {
+                            HStack(spacing: 6) {
+                                if let progress = phase.progress {
+                                    ProgressView(value: progress)
+                                    Text(phase.detail ?? "")
+                                        .font(.system(size: 10.5).monospacedDigit())
+                                        .foregroundStyle(Theme.textMuted)
+                                        .frame(width: 30, alignment: .trailing)
+                                } else {
+                                    ProgressView()
+                                }
+                            }
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                            .tint(Theme.accent)
+                        } else if let detail = phase.detail {
+                            HStack(spacing: 0) {
+                                Text(detail)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .lineLimit(1)
+                                    .help(detail)
+                                if phase.showsReleaseNotesLink, let url = updater.releaseNotesURL {
+                                    Text(" · ")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Theme.textMuted)
+                                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Theme.accent)
+                                        .lineLimit(1)
+                                        .fixedSize()
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { NSWorkspace.shared.open(url) }
+                                        .pointerStyle(.link)
+                                        .help("See the release notes")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.leading, 25)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private func iconColor(_ phase: UpdatePhase) -> Color {
+        switch phase {
+        case .failed: Theme.warning
+        case .available, .readyToRelaunch: Theme.accent
+        default: Theme.textMuted
+        }
+    }
+
+    private func button(_ title: String, prominent: Bool, action: @escaping () -> Void) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(prominent ? Theme.onAccent : Theme.text)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(prominent ? Theme.accent : Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(prominent ? .clear : Theme.stroke))
+            )
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
     }
 }
 

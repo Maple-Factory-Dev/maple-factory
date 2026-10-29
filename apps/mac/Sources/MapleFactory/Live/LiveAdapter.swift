@@ -316,7 +316,8 @@ import SwiftUI
     }
 
     private static func evidence(_ e: Wire.Evidence) -> DoneCriterion.Evidence {
-        switch e.kind {
+        if e.attested == true { return .attested(by: e.by, reason: e.reason, when: ago(e.at)) }
+        return switch e.kind {
         case .tests: .tests(suite: e.summary, passed: Int(e.passed ?? 0), failed: Int(e.failed ?? 0))
         case .terminal, .other: .terminal(command: e.command ?? e.summary, output: e.output.isEmpty ? [e.summary] : e.output)
         case .screenshot: .screenshot(caption: e.summary)
@@ -451,14 +452,16 @@ extension TicketLink {
 /// grows past the width it's offered.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
+    /// The gap between rows; the same as `spacing` unless given.
+    var lineSpacing: CGFloat?
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
-        return Self.arrange(sizes(width: width, subviews: subviews), width: width, spacing: spacing).size
+        return Self.arrange(sizes(width: width, subviews: subviews), width: width, spacing: spacing, lineSpacing: lineSpacing ?? spacing).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let arranged = Self.arrange(sizes(width: bounds.width, subviews: subviews), width: bounds.width, spacing: spacing)
+        let arranged = Self.arrange(sizes(width: bounds.width, subviews: subviews), width: bounds.width, spacing: spacing, lineSpacing: lineSpacing ?? spacing)
         for (view, frame) in zip(subviews, arranged.frames) {
             view.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
         }
@@ -475,14 +478,15 @@ struct FlowLayout: Layout {
     }
 
     /// Where each size goes, left to right in rows no wider than `width`, and the size of the whole.
-    /// A size wider than `width` is clamped to it and gets a row of its own.
-    static func arrange(_ sizes: [CGSize], width: CGFloat, spacing: CGFloat) -> (frames: [CGRect], size: CGSize) {
+    /// A size wider than `width` is clamped to it and gets a row of its own. Rows are `lineSpacing`
+    /// apart, or `spacing` when it's not given.
+    static func arrange(_ sizes: [CGSize], width: CGFloat, spacing: CGFloat, lineSpacing: CGFloat? = nil) -> (frames: [CGRect], size: CGSize) {
         var frames: [CGRect] = []
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
         for size in sizes {
             let size = CGSize(width: min(size.width, width), height: size.height)
             if x > 0, x + size.width > width {
-                y += rowHeight + spacing
+                y += rowHeight + (lineSpacing ?? spacing)
                 x = 0
                 rowHeight = 0
             }

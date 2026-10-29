@@ -645,9 +645,15 @@ pub struct Evidence {
     /// An uploaded image or video's path under /api/files/.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
-    /// The agent's role, or a login for "I checked it".
+    /// The agent's role, or the login of the person who attested.
     pub by: String,
     pub at: u64,
+    /// A person signed it off themselves instead of the agent proving it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested: Option<bool>,
+    /// Why they attested, if they said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1007,6 +1013,9 @@ pub struct Task {
     /// Don't start its next session before this (ms); cleared once that session starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_at: Option<u64>,
+    /// Its next session skips the wait for a free slot; cleared once it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1799,6 +1808,9 @@ pub enum ClientMessage {
         /// Start it as soon as there's room.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clear_schedule: Option<bool>,
+        /// Start its next session now, over the machine's slot count.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        force: Option<bool>,
     },
     /// Run the pull request's failed CI checks again.
     #[serde(rename = "task.rerunChecks")]
@@ -1816,7 +1828,7 @@ pub enum ClientMessage {
     TaskMove {
         id: String,
     },
-    /// "I checked it" for a Done when item.
+    /// Attest to a Done when item yourself, with an optional reason.
     #[serde(rename = "task.checkedIt")]
     TaskCheckedIt {
         id: String,

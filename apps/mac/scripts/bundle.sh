@@ -66,7 +66,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>SUFeedURL</key><string>${updates}/appcast.xml</string>
   <key>SUPublicEDKey</key><string>g9Kk8H1vNiqHXzA8sI6+55GCkZ2vc321tJOsbbNDdCY=</string>
   <key>SUEnableAutomaticChecks</key><true/>
-  <key>SUScheduledCheckInterval</key><integer>21600</integer>
+  <key>SUScheduledCheckInterval</key><integer>3600</integer>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

@@ -168,7 +168,7 @@ struct MockupsSection: View {
         self.task = task
         _selected = State(initialValue: task.mockups.first?.id ?? "")
         // `-mockview side` opens built tasks on the side-by-side comparison.
-        if UserDefaults.standard.string(forKey: "mockview") == "side" { _view = State(initialValue: .side) }
+        if AppDefaults.string(forKey: "mockview") == "side" { _view = State(initialValue: .side) }
     }
 
     private var mockup: Mockup? { task.mockups.first { $0.id == selected } ?? task.mockups.first }

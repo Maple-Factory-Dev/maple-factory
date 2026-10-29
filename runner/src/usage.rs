@@ -430,7 +430,7 @@ async fn ask_codex() -> Option<AgentUsage> {
     let talk = async {
         let mut usage: Option<AgentUsage> = None;
         let send = |v: Value| format!("{v}\n");
-        let init = serde_json::json!({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "maple-runner", "title": "Agent Orchestrator", "version": env!("CARGO_PKG_VERSION")}}});
+        let init = serde_json::json!({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "maple-runner", "title": "Maple Factory", "version": env!("CARGO_PKG_VERSION")}}});
         stdin.write_all(send(init).as_bytes()).await.ok()?;
         loop {
             let line = lines.next_line().await.ok()??;

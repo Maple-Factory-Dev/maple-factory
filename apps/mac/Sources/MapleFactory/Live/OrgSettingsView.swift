@@ -6,10 +6,11 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case account, repos, people, runner, notifications, updates
+        case general, account, repos, people, runner, notifications, updates
 
         var title: String {
             switch self {
+            case .general: "General"
             case .account: "Account"
             case .repos: "Repositories"
             case .people: "People"
@@ -21,6 +22,7 @@ struct OrgSettingsView: View {
 
         var icon: String {
             switch self {
+            case .general: "gearshape"
             case .account: "person.crop.circle"
             case .repos: "shippingbox"
             case .people: "person.2"
@@ -38,6 +40,7 @@ struct OrgSettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             List(selection: pane) {
+                row(.general)
                 Section("Factory") {
                     ForEach([Pane.account, .repos, .people], id: \.self) { row($0) }
                 }
@@ -49,6 +52,7 @@ struct OrgSettingsView: View {
             Group {
                 // Repositories and People are lists, which scroll themselves.
                 switch Pane(rawValue: tab) ?? .repos {
+                case .general: ScrollView { GeneralSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .account: ScrollView { AccountSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .repos: RepositoriesSettings()
                 case .people: PeopleSettings()
@@ -72,6 +76,28 @@ struct OrgSettingsView: View {
             }
         }
         .tag(pane)
+    }
+}
+
+/// How the app behaves on this Mac: what clicking a task opens.
+struct GeneralSettings: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        @Bindable var state = state
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "General", detail: "How Maple Factory behaves on this Mac.")
+            SettingsCard {
+                Picker("When you click a task", selection: $state.taskOpening) {
+                    ForEach(AppState.TaskOpening.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.radioGroup)
+                Text("⌥⌘I or the panel button in the toolbar still shows the side panel.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
     }
 }
 

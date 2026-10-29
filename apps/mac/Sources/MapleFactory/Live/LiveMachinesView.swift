@@ -61,6 +61,11 @@ struct LiveMachinesView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.State.awaitingApproval)
                             .lineLimit(1)
+                        if task.waiting?.contains("free slot") == true, task.state == .planning || task.state == .building {
+                            Button { state.forceStart(task.id) } label: { Label("Run now", systemImage: "bolt") }
+                                .controlSize(.small)
+                                .help("Start it now, over the machine's slot count")
+                        }
                     }
                     .padding(.horizontal, 12)
                     .frame(height: 36)
@@ -183,7 +188,7 @@ struct LiveMachinesView: View {
 
     /// `-liveSession first` opens the first live session, for screenshots.
     private func openFromLaunchArgs() {
-        guard UserDefaults.standard.string(forKey: "liveSession") == "first" else { return }
+        guard AppDefaults.string(forKey: "liveSession") == "first" else { return }
         Task { @MainActor in
             for _ in 0..<40 {
                 if let machine = client.machines.first(where: { !$0.sessions.isEmpty }), let first = machine.sessions.first {

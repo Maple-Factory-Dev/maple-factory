@@ -62,16 +62,16 @@ import Security
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
-        get { _ = picksChanged; return UserDefaults.standard.stringArray(forKey: picksKey) }
-        set { UserDefaults.standard.set(newValue, forKey: picksKey); picksChanged += 1 }
+        get { _ = picksChanged; return AppDefaults.stringArray(forKey: picksKey) }
+        set { AppDefaults.set(newValue, forKey: picksKey); picksChanged += 1 }
     }
     private var picksChanged = 0
     private var picksKey: String { "sidebarPeople.\(serverKey)" }
 
     /// The order this person put their sidebar goals in, by goal id, per factory; nil until they move one.
     var goalOrder: [String]? {
-        get { _ = goalOrderChanged; return UserDefaults.standard.stringArray(forKey: goalOrderKey) }
-        set { UserDefaults.standard.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
+        get { _ = goalOrderChanged; return AppDefaults.stringArray(forKey: goalOrderKey) }
+        set { AppDefaults.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
     }
     private var goalOrderChanged = 0
     private var goalOrderKey: String { "sidebarGoalOrder.\(serverKey)" }
@@ -131,7 +131,7 @@ import Security
     }
 
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults
         savedFactories = SavedFactories.migrate(SavedFactories.load(), currentURL: defaults.string(forKey: "factoryURL"),
                                                 currentOrg: defaults.string(forKey: "factoryOrg"))
         if let saved = defaults.string(forKey: "factoryURL"), let url = URL(string: saved),
@@ -172,8 +172,8 @@ import Security
         token = result.token
         me = result.member
         org = result.org
-        UserDefaults.standard.set(result.server.absoluteString, forKey: "factoryURL")
-        UserDefaults.standard.set(result.org, forKey: "factoryOrg")
+        AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
+        AppDefaults.set(result.org, forKey: "factoryOrg")
         Keychain.write(result.token, account: result.server.absoluteString)
         remember()
         connect()
@@ -190,8 +190,8 @@ import Security
         server = factory.server
         self.token = token
         org = factory.org
-        UserDefaults.standard.set(factory.server.absoluteString, forKey: "factoryURL")
-        UserDefaults.standard.set(factory.org, forKey: "factoryOrg")
+        AppDefaults.set(factory.server.absoluteString, forKey: "factoryURL")
+        AppDefaults.set(factory.org, forKey: "factoryOrg")
         remember()
         connect()
         return true
@@ -204,8 +204,8 @@ import Security
             savedFactories = SavedFactories.remove(server, from: savedFactories)
         }
         if let next = SavedFactories.fallback(savedFactories), switchTo(next) { return }
-        UserDefaults.standard.removeObject(forKey: "factoryURL")
-        UserDefaults.standard.removeObject(forKey: "factoryOrg")
+        AppDefaults.removeObject(forKey: "factoryURL")
+        AppDefaults.removeObject(forKey: "factoryOrg")
         disconnect()
         generation += 1
         server = nil
@@ -863,11 +863,11 @@ struct SavedFactory: Codable, Equatable, Identifiable, Sendable {
 enum SavedFactories {
     static let defaultsKey = "factories"
 
-    static func load(_ defaults: UserDefaults = .standard) -> [SavedFactory]? {
+    static func load(_ defaults: UserDefaults = AppDefaults) -> [SavedFactory]? {
         defaults.data(forKey: defaultsKey).flatMap { try? JSONDecoder().decode([SavedFactory].self, from: $0) }
     }
 
-    static func store(_ list: [SavedFactory], _ defaults: UserDefaults = .standard) {
+    static func store(_ list: [SavedFactory], _ defaults: UserDefaults = AppDefaults) {
         defaults.set(try? JSONEncoder().encode(list), forKey: defaultsKey)
     }
 
@@ -903,15 +903,16 @@ enum SavedFactories {
 
 /// The factory token, in the login keychain under the factory's URL. A plain-http (local dev)
 /// factory's token goes in defaults instead: every rebuild of an unsigned dev app would otherwise
-/// ask for keychain access, and a localhost dev token guards nothing.
+/// ask for keychain access, and a localhost dev token guards nothing. A headless run keeps every
+/// token in its own wiped defaults, so it never replaces the real app's keychain item for a URL.
 enum Keychain {
     private static let service = "dev.maplefactory.app"
     private static let devKey = "devFactoryTokens"
 
-    private static func isDev(_ account: String) -> Bool { account.hasPrefix("http://") }
+    static func isDev(_ account: String, headless: Bool = Headless.isOn) -> Bool { headless || account.hasPrefix("http://") }
 
     static func read(account: String) -> String? {
-        if isDev(account) { return (UserDefaults.standard.dictionary(forKey: devKey) as? [String: String])?[account] }
+        if isDev(account) { return (AppDefaults.dictionary(forKey: devKey) as? [String: String])?[account] }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
             kSecAttrAccount as String: account, kSecReturnData as String: true,
@@ -924,9 +925,9 @@ enum Keychain {
     static func write(_ value: String, account: String) {
         delete(account: account)
         if isDev(account) {
-            var tokens = UserDefaults.standard.dictionary(forKey: devKey) as? [String: String] ?? [:]
+            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
             tokens[account] = value
-            UserDefaults.standard.set(tokens, forKey: devKey)
+            AppDefaults.set(tokens, forKey: devKey)
             return
         }
         let item: [String: Any] = [
@@ -938,9 +939,9 @@ enum Keychain {
 
     static func delete(account: String) {
         if isDev(account) {
-            var tokens = UserDefaults.standard.dictionary(forKey: devKey) as? [String: String] ?? [:]
+            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
             tokens[account] = nil
-            UserDefaults.standard.set(tokens, forKey: devKey)
+            AppDefaults.set(tokens, forKey: devKey)
             return
         }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]

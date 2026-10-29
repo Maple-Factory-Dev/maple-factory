@@ -1498,11 +1498,15 @@ public enum Wire {
         public var failed: UInt32?
         /// An uploaded image or video's path under /api/files/.
         public var file: String?
-        /// The agent's role, or a login for "I checked it".
+        /// The agent's role, or the login of the person who attested.
         public var by: String
         public var at: UInt64
+        /// A person signed it off themselves instead of the agent proving it.
+        public var attested: Bool?
+        /// Why they attested, if they said.
+        public var reason: String?
 
-        public init(kind: ProofKind, summary: String, command: String? = nil, output: [String] = [], passed: UInt32? = nil, failed: UInt32? = nil, file: String? = nil, by: String, at: UInt64) {
+        public init(kind: ProofKind, summary: String, command: String? = nil, output: [String] = [], passed: UInt32? = nil, failed: UInt32? = nil, file: String? = nil, by: String, at: UInt64, attested: Bool? = nil, reason: String? = nil) {
             self.kind = kind
             self.summary = summary
             self.command = command
@@ -1512,6 +1516,8 @@ public enum Wire {
             self.file = file
             self.by = by
             self.at = at
+            self.attested = attested
+            self.reason = reason
         }
 
         public init(from decoder: Decoder) throws {
@@ -1525,6 +1531,8 @@ public enum Wire {
             file = try c.decodeIfPresent(String.self, forKey: .file)
             by = try c.decode(String.self, forKey: .by)
             at = try c.decode(UInt64.self, forKey: .at)
+            attested = try c.decodeIfPresent(Bool.self, forKey: .attested)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
         }
     }
 
@@ -2021,8 +2029,10 @@ public enum Wire {
         public var queueRank: Double?
         /// Don't start its next session before this (ms); cleared once that session starts.
         public var startAt: UInt64?
+        /// Its next session skips the wait for a free slot; cleared once it starts.
+        public var force: Bool?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2065,6 +2075,7 @@ public enum Wire {
             self.followUps = followUps
             self.queueRank = queueRank
             self.startAt = startAt
+            self.force = force
         }
 
         public init(from decoder: Decoder) throws {
@@ -2111,6 +2122,7 @@ public enum Wire {
             followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
             queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
+            force = try c.decodeIfPresent(Bool.self, forKey: .force)
         }
     }
 
@@ -3630,12 +3642,15 @@ public enum Wire {
         public var startAt: UInt64?
         /// Start it as soon as there's room.
         public var clearSchedule: Bool?
+        /// Start its next session now, over the machine's slot count.
+        public var force: Bool?
 
-        public init(id: String, before: String? = nil, startAt: UInt64? = nil, clearSchedule: Bool? = nil) {
+        public init(id: String, before: String? = nil, startAt: UInt64? = nil, clearSchedule: Bool? = nil, force: Bool? = nil) {
             self.id = id
             self.before = before
             self.startAt = startAt
             self.clearSchedule = clearSchedule
+            self.force = force
         }
     }
 
@@ -3668,7 +3683,7 @@ public enum Wire {
         }
     }
 
-    /// "I checked it" for a Done when item.
+    /// Attest to a Done when item yourself, with an optional reason.
     public struct ClientMessageTaskCheckedIt: Codable, Hashable, Sendable {
         public var id: String
         public var item: UInt32
