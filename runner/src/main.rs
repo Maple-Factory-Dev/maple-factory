@@ -2,6 +2,7 @@ mod agent_config;
 mod agents;
 mod autoupdate;
 mod config;
+mod costs;
 mod factory;
 mod folder;
 mod fs_browse;
@@ -471,6 +472,7 @@ async fn run(args: Args) -> Result<()> {
     tokio::spawn(images::sweep_daily());
     tokio::spawn(agent_config::watch(sessions.clone()));
     tokio::spawn(usage::report(sessions.clone()));
+    tokio::spawn(costs::report(sessions.clone()));
     tokio::spawn(thumbs::report(sessions.clone()));
     tokio::spawn({
         let sessions = sessions.clone();
@@ -564,6 +566,7 @@ async fn connect(
     thumbs::clear();
     ports::resend();
     usage::resend();
+    costs::resend();
     git::resend();
     // A hub that just woke has no worktree report yet.
     worktrees::poke(true);

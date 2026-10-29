@@ -511,9 +511,11 @@ impl Sessions {
 
     /// Records why a session ended, tells the server, and cleans up its tmux session.
     async fn end(&self, id: Uuid, name: &str, seen: &ends::Seen<'_>, last_output: Vec<String>) {
-        if self.inner.lock().unwrap().remove(&id).is_none() {
+        let Some(gone) = self.inner.lock().unwrap().remove(&id) else {
             return;
-        }
+        };
+        // Its last spend reading goes out before the end, so the hub can file it under the session.
+        crate::costs::flush(self, &gone.info).await;
         let _ = self.tmux.run(&["kill-session", "-t", name]).await;
         self.ports.lock().unwrap().remove(&id);
         self.requested.lock().unwrap().remove(&id);

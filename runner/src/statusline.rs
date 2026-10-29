@@ -154,15 +154,21 @@ pub fn utc_clock(ms: u64) -> Clock {
     Clock { day, weekday: ((day + 4).rem_euclid(7)) as u32, hour: (mins.rem_euclid(1440) / 60) as u32, minute: (mins % 60) as u32 }
 }
 
-/// Sends the rate limits to the runner, if this is one of its sessions. Never waits long.
+/// Sends the rate limits and the session's spend so far to the runner, if this is one of its
+/// sessions. API-key accounts have no rate limits but still have a cost. Never waits long.
 fn forward(input: &Value) {
-    let (Some(socket), Some(limits)) = (std::env::var_os(SOCKET_ENV), input.get("rate_limits").filter(|v| v.is_object())) else {
+    let Some(socket) = std::env::var_os(SOCKET_ENV) else { return };
+    let limits = input.get("rate_limits").filter(|v| v.is_object());
+    let (cost, context) = (input.get("cost").filter(|v| v.is_object()), input.get("context_window").filter(|v| v.is_object()));
+    if limits.is_none() && cost.is_none() && context.is_none() {
         return;
-    };
+    }
     let msg = json!({ "usage": {
         "agent": "claude",
         "rateLimits": limits,
-        "model": input.pointer("/model/display_name"),
+        "model": input.get("model"),
+        "cost": cost,
+        "context_window": context,
         "session": std::env::var(SESSION_ENV).ok(),
     } });
     let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) else { return };

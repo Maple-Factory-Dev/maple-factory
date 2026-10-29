@@ -377,6 +377,7 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             let Ok(event) = serde_json::from_slice::<Value>(&buf) else { return };
             if let Some(usage) = event.get("usage") {
                 crate::usage::observe_claude(usage);
+                crate::costs::observe_claude(usage);
                 return;
             }
             if let Some(request) = event.get("mcp") {
@@ -393,6 +394,7 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             // Codex has just written its latest rate limits to its session file.
             if agent == "codex" {
                 crate::usage::poke_codex();
+                crate::costs::poke();
             }
             if let Some(activity) = classify(agent, &event["payload"]) {
                 let summary = matches!(activity, Activity::Done(_)).then(|| summary(agent, &event["payload"])).flatten();
