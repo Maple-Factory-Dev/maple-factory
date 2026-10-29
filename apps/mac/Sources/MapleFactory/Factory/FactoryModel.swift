@@ -86,6 +86,17 @@ struct Comment {
     var anchor: String? = nil
     /// Set when the comment came in from outside, e.g. "Slack #maple-requests".
     var via: String? = nil
+    /// The factory's id for it, when it's live.
+    var id: String? = nil
+    /// The logins it @mentions, as the server worked them out; nil from a server older than mentions.
+    var mentions: [String]? = nil
+
+    /// Whether it @mentions this login, by the server's list or, from an older server, its text.
+    func mentions(_ login: String) -> Bool {
+        if let mentions { return mentions.contains { $0.caseInsensitiveCompare(login) == .orderedSame } }
+        let pattern = "(?<![\\w.@])@\(NSRegularExpression.escapedPattern(for: login))(?![A-Za-z0-9-])"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
 }
 
 struct PlanStep {
@@ -392,7 +403,9 @@ struct InboxItem: Identifiable {
     var assignee: Person = FactoryData.me
     let message: String
     let when: String
-    var id: String { "\(kind)-\(taskID)" }
+    /// For a mention, the comment it's about, so each one in a task is its own row.
+    var commentID: String? = nil
+    var id: String { commentID.map { "\(kind)-\($0)" } ?? "\(kind)-\(taskID)" }
 }
 
 enum Destination: Hashable {

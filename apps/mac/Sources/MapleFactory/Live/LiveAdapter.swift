@@ -101,7 +101,7 @@ import SwiftUI
         task.approvals = t.approvals.map(who)
         task.approvalsNeeded = t.approvalsNeeded.int
         task.reviews = t.reviews.map(who)
-        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via) }
+        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions) }
         task.changeRequests = t.changes.map { change in
             var request = ChangeRequest(author: who(change.author), text: change.text, anchor: change.anchor,
                                         status: changeStatus(change.status), when: ago(change.at))

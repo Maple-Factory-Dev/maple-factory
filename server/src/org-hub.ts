@@ -42,6 +42,7 @@ export class OrgHub extends DurableObject<Env> {
       broadcast: (message) => this.broadcast(message),
       sendTo: (login, message) => this.sendTo(login, message),
       machines: () => this.machines(),
+      members: () => this.members(),
       machineChanged: async (id) => {
         const machine = (await this.machines()).find((m) => m.id === id);
         if (machine) this.broadcast({ type: "machine.updated", machine });

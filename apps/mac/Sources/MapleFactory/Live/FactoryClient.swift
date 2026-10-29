@@ -443,6 +443,9 @@ import Security
 
     /// A banner when a task newly needs you; the snapshot never calls this, so reconnecting stays quiet.
     private func notify(was old: Wire.Task?, now task: Wire.Task) {
+        for reason in Self.mentionReasons(was: old, now: task, me: me?.login, members: members) {
+            Notifier.shared.notify(task: task, reason: reason)
+        }
         let me = me?.login
         let needed = old.map { LiveAdapter.needsYou($0, me: me) } ?? false
         let needs = LiveAdapter.needsYou(task, me: me)
@@ -463,6 +466,16 @@ import Security
             reason = .review
         }
         Notifier.shared.notify(task: task, reason: reason)
+    }
+
+    /// A `.mention` for each comment new in this update that a teammate wrote mentioning you.
+    static func mentionReasons(was old: Wire.Task?, now task: Wire.Task, me: String?, members: [Wire.Member]) -> [Notifier.Reason] {
+        guard let me else { return [] }
+        let seen = Set(old?.comments.map(\.id) ?? [])
+        return task.comments.filter { comment in
+            guard !seen.contains(comment.id), comment.author.caseInsensitiveCompare(me) != .orderedSame else { return false }
+            return Comment(author: LiveAdapter.person(comment.author, members: members), text: comment.text, when: "", mentions: comment.mentions).mentions(me)
+        }.map { .mention(author: LiveAdapter.person($0.author, members: members).firstName, text: $0.text) }
     }
 
     private func adapt(_ task: Wire.Task) -> FactoryTask {

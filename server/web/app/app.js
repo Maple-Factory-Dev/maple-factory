@@ -92,6 +92,7 @@ function receive(m) {
       break;
     case "task.updated":
       if (!state.tasks.has(m.task.id)) created(m.task);
+      notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
@@ -146,6 +147,47 @@ function needsYou(t) {
   if (t.pr?.checks?.some((c) => c.status === "failed") && t.owner === me && t.state === "reviewing") return { kind: "ci", text: "CI is failing" };
   return null;
 }
+
+// ---- mentions ----
+
+// Comments mentioning me that I've dismissed from the inbox, kept in this browser.
+const DISMISSED_KEY = "maple.dismissedMentions";
+const dismissed = new Set((() => { try { return JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]"); } catch { return []; } })());
+function dismissMention(id) {
+  dismissed.add(id);
+  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed].slice(-500))); } catch {}
+  render();
+}
+
+const mentionsMe = (c) => c.author !== state.me?.login && (c.mentions ?? []).includes(state.me?.login);
+
+/** Each comment that mentions me and isn't dismissed, newest first, with its task. */
+function mentions() {
+  return [...state.tasks.values()].flatMap((t) => t.comments.filter((c) => mentionsMe(c) && !dismissed.has(c.id)).map((c) => [t, c]))
+    .sort((a, b) => b[1].at - a[1].at);
+}
+
+/** A browser notification for each comment newly mentioning me, while this tab is in the background. */
+function notifyMentions(before, task) {
+  if (!before || !document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const seen = new Set(before.comments.map((c) => c.id));
+  for (const c of task.comments.filter((c) => !seen.has(c.id) && mentionsMe(c))) {
+    const n = new Notification(`${name(c.author)} mentioned you`, { body: `${task.id} · ${task.title}\n${c.text.slice(0, 180)}`, tag: c.id });
+    n.onclick = () => {
+      window.focus();
+      location.hash = `#/t/${task.id}`;
+      n.close();
+    };
+  }
+}
+
+/** Ask once, from the inbox (a click away from the page loading), whether to show notifications. */
+function askToNotify() {
+  if (typeof Notification === "undefined" || Notification.permission !== "default" || askToNotify.asked) return;
+  askToNotify.asked = true;
+  Notification.requestPermission().catch(() => {});
+}
+
 const KINDS = { hand: ["Needs a hand", "cancelled"], question: ["Questions", "awaitingApproval"], plan: ["Plans awaiting approval", "awaitingApproval"], review: ["Ready for review", "reviewing"], ci: ["Failing CI", "cancelled"] };
 
 // ---- views ----
@@ -165,7 +207,7 @@ function render() {
   if (!state.me) return;
   const r = route();
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === r.nav);
-  const waiting = [...state.tasks.values()].filter(needsYou).length;
+  const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
   const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, note: () => noteView(r.id) }[r.name]?.() ?? inboxView();
@@ -189,7 +231,9 @@ function inboxView() {
     const n = needsYou(t);
     if (n) groups.set(n.kind, [...(groups.get(n.kind) ?? []), [t, n]]);
   }
-  const total = [...groups.values()].reduce((a, g) => a + g.length, 0);
+  const mentioned = mentions();
+  const total = [...groups.values()].reduce((a, g) => a + g.length, 0) + mentioned.length;
+  askToNotify();
   return h("div", {},
     h("h1", {}, "Inbox"),
     h("p", { class: "muted" }, total ? `${total} thing${total === 1 ? "" : "s"} waiting on you.` : "Nothing's waiting on you."),
@@ -197,7 +241,13 @@ function inboxView() {
       h("h2", {}, `${KINDS[k][0]} · ${groups.get(k).length}`),
       h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))),
     ]),
-    !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, or a change is ready for your review, it shows up here."));
+    mentioned.length > 0 && [
+      h("h2", {}, `Mentions · ${mentioned.length}`),
+      h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
+        row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
+        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss")))),
+    ],
+    !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
 /** Waiting for a session with nobody on it, as the server's queue reads it (the Mac app's Queued column). */
@@ -250,7 +300,7 @@ function newTaskView(r) {
 
   // Only the text boxes are kept across re-renders; the selects, checkbox and buttons rebuild from `composer`.
   const title = h("input", { type: "text", "data-keep": "new:title", placeholder: "What should change?", value: composer.title, oninput: (e) => (composer.title = e.target.value) });
-  const brief = markdownEditor({ value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
+  const brief = markdownEditor({ members: () => state.members, value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
   const goalSelect = h("select", { onchange: (e) => { composer.goal = e.target.value; composer.repo = null; render(); } },
     goals.map((g) => h("option", { value: g.id, selected: g.id === composer.goal }, g.name)));
   const repoSelect = repos.length > 1 && h("select", { onchange: (e) => (composer.repo = e.target.value) },
@@ -377,7 +427,7 @@ function noteView(id) {
     $("note-status").textContent = "Saving…";
   };
   const title = h("input", { type: "text", class: "note-title", placeholder: "Untitled note", value: text.title, oninput: edit("title") });
-  const body = markdownEditor({ value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
+  const body = markdownEditor({ members: () => state.members, value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
   const turn = () => {
     if (!text.title.trim() && !text.body.trim()) return toast("Write something first.");
     if (noteSaves.has(id)) saveNote(id, true);
@@ -650,7 +700,7 @@ function compose(t, key, placeholder, label, submit) {
     submit(text);
     editor.clear();
   };
-  const editor = markdownEditor({ placeholder, rows: 2, onsubmit: go }, h);
+  const editor = markdownEditor({ members: () => state.members, placeholder, rows: 2, onsubmit: go }, h);
   return h("div", { class: "compose", "data-keep": `${t.id}:${key}` }, editor, h("div", {}, h("button", { class: "btn small", onclick: go }, label)));
 }
 
@@ -662,7 +712,7 @@ function draftEditor(t) {
   draftEdits.set(t.id, edits);
   const dirty = () => edits.title.trim() !== t.title || edits.brief !== t.brief;
   const title = h("input", { type: "text", placeholder: "Title", value: edits.title, oninput: (e) => { edits.title = e.target.value; mark(); } });
-  const brief = markdownEditor({ value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
+  const brief = markdownEditor({ members: () => state.members, value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
   const status = h("span", { class: "muted", style: "font-size:13px" });
   const mark = () => (status.textContent = dirty() ? "Unsaved changes" : "");
   mark();
