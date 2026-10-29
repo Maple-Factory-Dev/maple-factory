@@ -8,21 +8,36 @@ struct FactorySidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WorkspaceSwitcher()
-                .contentShape(Rectangle())
-                .onTapGesture { state.startOnboarding() }
-                .help("Connect to another factory")
-                .padding(.top, 48)
-                .padding(.bottom, 14)
+            HStack(spacing: 4) {
+                WorkspaceSwitcher()
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.startOnboarding() }
+                    .help("Connect to another factory")
+                NotificationBell()
+            }
+            .padding(.top, 48)
+            .padding(.bottom, 14)
 
             VStack(spacing: 2) {
                 navRow("Inbox", icon: "tray", destination: .inbox, badge: "\(state.myInbox.count)")
+                    .contextMenu { NotificationMenu() }
                 navRow("Requests", icon: "tray.and.arrow.down", destination: .intake, count: state.newIntake == 0 ? nil : "\(state.newIntake)")
                 navRow("My tasks", icon: "checkmark.circle", destination: .myTasks)
                 navRow("Needs a hand", icon: "hand.raised", destination: .needsHand, badge: state.handRaises.isEmpty ? nil : "\(state.handRaises.count)")
+                    .contextMenu { NotificationMenu() }
                 navRow("Activity", icon: "waveform.path.ecg", destination: .activity)
                 navRow("Scratchpad", icon: "note.text", destination: .scratchpad, count: "\(state.notes.count)")
                 navRow("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage)
+                if let until = Notifier.shared.snoozedUntil, Notifier.shared.isSnoozed {
+                    row(selected: false) {
+                        Image(systemName: "bell.slash").font(.system(size: 11)).frame(width: 16)
+                        Text("Snoozed until \(Notifier.untilText(until))")
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.textMuted)
+                    .onTapGesture { Notifier.shared.resume() }
+                    .help("Resume notifications")
+                }
             }
 
             // Goals, people and machines grow with the org; they scroll so the window never has to.
