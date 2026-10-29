@@ -89,3 +89,31 @@ test("members match by login first, then by name, then anywhere", () => {
   assert.deepEqual(matchMembers(members, "").map((m) => m.login), ["abby", "bob", "carol", "zed"]);
   assert.deepEqual(matchMembers(members, "q"), []);
 });
+
+// The # picker: what's being typed after a `#`, and which tasks it matches.
+import { matchTasks, taskRefAt } from "../web/app/editor.js";
+
+test("a # starts a task reference at the start or after a space, not inside a word or URL", () => {
+  assert.deepEqual(taskRefAt("#", 1), { start: 0, query: "" });
+  assert.deepEqual(taskRefAt("see #MF-1", 9), { start: 4, query: "MF-1" });
+  assert.deepEqual(taskRefAt("(#lo", 4), { start: 1, query: "lo" });
+  assert.equal(taskRefAt("a#b", 3), null);
+  assert.equal(taskRefAt("foo#bar", 7), null);
+  assert.equal(taskRefAt("https://x.dev/page#top", 22), null);
+  assert.equal(taskRefAt("#MF-1 done", 10), null);
+  assert.deepEqual(taskRefAt("#MF-1 done", 5), { start: 0, query: "MF-1" });
+});
+
+test("tasks match by ID, then a title word, then anywhere; at most six", () => {
+  const tasks = [
+    { id: "MF-1", title: "Login page" }, { id: "MF-12", title: "Reference other tickets" },
+    { id: "MF-13", title: "Mention people" }, { id: "MF-20", title: "Fix the MF-1 logo" }, { id: "MF-21", title: "Logging" },
+  ];
+  assert.deepEqual(matchTasks(tasks, "MF-1").map((t) => t.id), ["MF-1", "MF-13", "MF-12", "MF-20"]);
+  assert.deepEqual(matchTasks(tasks, "mf-12").map((t) => t.id), ["MF-12"]);
+  assert.deepEqual(matchTasks(tasks, "log").map((t) => t.id), ["MF-21", "MF-20", "MF-1"]);
+  assert.deepEqual(matchTasks(tasks, "ence").map((t) => t.id), ["MF-12"]);
+  assert.deepEqual(matchTasks(tasks, "zzz"), []);
+  const many = Array.from({ length: 10 }, (_, i) => ({ id: `MF-${i + 1}`, title: "" }));
+  assert.equal(matchTasks(many, "").length, 6);
+});

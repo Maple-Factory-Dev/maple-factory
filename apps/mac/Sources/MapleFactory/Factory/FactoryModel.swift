@@ -340,7 +340,8 @@ struct CICheck: Identifiable {
 struct Goal: Identifiable {
     let name: String
     let color: Color
-    let dueOffset: Int
+    /// None: nobody set a due date.
+    let dueOffset: Int?
     let lead: Person
     let summary: String
     /// Done with: out of the sidebar and the composer, its tasks kept.

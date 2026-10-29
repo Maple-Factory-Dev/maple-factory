@@ -4,7 +4,7 @@
 //
 // applyFormat() is pure, so it's tested without a DOM; markdownEditor() builds through the app's h().
 
-import { markdown } from "./markdown.js";
+import { markdown, taskResolver } from "./markdown.js";
 
 /** Wraps text[start, end) (or inserts at the cursor) the way GitHub's issue editor does, like
  *  MarkdownEditor.apply. Returns the new text, what replaced the selection, and where the cursor goes. */
@@ -49,6 +49,30 @@ export function matchMembers(members, query, limit = 6) {
     .sort((a, b) => a[0] - b[0] || a[1].login.localeCompare(b[1].login)).slice(0, limit).map(([, m]) => m);
 }
 
+/** The `#ref` being typed just before the cursor: where its `#` is and what follows it, or null.
+ *  Not after a word character or `/`, so `a#b` and `example.com/foo#bar` don't start one. */
+export function taskRefAt(text, cursor) {
+  const m = /(^|[^\w.#/&-])#([A-Za-z0-9-]{0,39})$/.exec(text.slice(0, cursor));
+  return m ? { start: cursor - m[2].length - 1, query: m[2] } : null;
+}
+
+/** The task whose ID is the query, then tasks whose ID starts with it, then ones with a title word that does, then ones that contain
+ *  it anywhere; newest first within each, at most `limit`. */
+export function matchTasks(tasks, query, limit = 6) {
+  const q = query.toLowerCase();
+  const score = (t) => {
+    const id = t.id.toLowerCase();
+    const title = (t.title ?? "").toLowerCase();
+    if (id === q) return 0;
+    if (id.startsWith(q)) return 1;
+    if (title.split(/\W+/).some((w) => w.startsWith(q))) return 2;
+    return id.includes(q) || title.includes(q) ? 3 : -1;
+  };
+  const number = (t) => Number(/(\d+)$/.exec(t.id)?.[1] ?? 0);
+  return tasks.map((t) => [score(t), t]).filter(([s]) => s >= 0)
+    .sort((a, b) => a[0] - b[0] || number(b[1]) - number(a[1]) || a[1].id.localeCompare(b[1].id)).slice(0, limit).map(([, t]) => t);
+}
+
 // Icons drawn in a 16-point box, stroked like SF Symbols at a small size.
 const ICONS = {
   heading: "M3 3v10M10 3v10M3 8h7M12.5 8.5l1.5-1v5.5",
@@ -83,8 +107,9 @@ function icon(d) {
 /** The editor: a card with Write/Preview tabs and the toolbar, the text box, and a footer. The box is
  *  `.textarea`; `.clear()` empties it and goes back to Write. Every change fires the box's input
  *  event, so callers' oninput (and their dirty tracking) see toolbar edits too. With `members` (a
- *  function returning the org's members), typing `@` lists them to pick from. */
-export function markdownEditor({ value = "", placeholder = "Write in Markdown…", rows = 8, minHeight, oninput, onblur, onsubmit, keep, members } = {}, h) {
+ *  function returning the org's members), typing `@` lists them to pick from; with `tasks` (one returning
+ *  the factory's tasks), typing `#` lists those, picking one inserts its ID, and Preview links known IDs. */
+export function markdownEditor({ value = "", placeholder = "Write in Markdown…", rows = 8, minHeight, oninput, onblur, onsubmit, keep, members, tasks } = {}, h) {
   const box = h("textarea", { class: "md-input", placeholder, rows, oninput, onblur, style: minHeight ? `min-height:${minHeight}` : null });
   box.value = value;
   const preview = h("div", { class: "md-preview", hidden: true });
@@ -104,9 +129,23 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
     box.setSelectionRange(out.cursor, out.cursor);
   };
 
-  // The @ picker: who matches what's typed after the `@` before the cursor.
+  // The pickers: `@` lists members, `#` lists tasks, matching what's typed after it before the cursor.
+  const sources = [
+    members && {
+      at: mentionAt, match: (q) => matchMembers(members() ?? [], q), insert: (m) => `@${m.login} `,
+      row: (m) => [
+        m.avatarUrl ? h("img", { class: "md-avatar", src: m.avatarUrl, alt: "" }) : h("span", { class: "md-avatar" }, m.login[0].toUpperCase()),
+        h("span", { class: "md-mention-name" }, m.name || m.login), h("span", { class: "md-mention-login" }, `@${m.login}`)],
+    },
+    tasks && {
+      at: taskRefAt, match: (q) => matchTasks(tasks() ?? [], q), insert: (t) => `${t.id} `,
+      row: (t) => [
+        h("span", { class: `dot bg-${t.state} md-taskref-dot` }),
+        h("span", { class: "md-taskref-id" }, t.id), h("span", { class: "md-mention-name md-taskref-title" }, t.title || "Untitled")],
+    },
+  ].filter(Boolean);
   const picker = h("div", { class: "md-mentions", role: "listbox", hidden: true });
-  let picking = null; // { start, query, matches, index }
+  let picking = null; // { source, start, query, matches, index }
   const closePicker = () => {
     picking = null;
     picker.hidden = true;
@@ -116,27 +155,30 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
       class: `md-mention${i === picking.index ? " on" : ""}`, role: "option", "aria-selected": i === picking.index,
       // mousedown, so the box keeps its focus and the cursor.
       onmousedown: (e) => { e.preventDefault(); pick(m); },
-    },
-    m.avatarUrl ? h("img", { class: "md-avatar", src: m.avatarUrl, alt: "" }) : h("span", { class: "md-avatar" }, m.login[0].toUpperCase()),
-    h("span", { class: "md-mention-name" }, m.name || m.login), h("span", { class: "md-mention-login" }, `@${m.login}`))));
+    }, picking.source.row(m))));
     picker.hidden = false;
     picker.children[picking.index]?.scrollIntoView?.({ block: "nearest" });
   };
   const updatePicker = () => {
-    const at = members && !previewing && box.selectionStart === box.selectionEnd ? mentionAt(box.value, box.selectionStart) : null;
-    const matches = at ? matchMembers(members() ?? [], at.query) : [];
+    const typing = !previewing && box.selectionStart === box.selectionEnd;
+    let found = null;
+    for (const source of typing ? sources : []) {
+      const at = source.at(box.value, box.selectionStart);
+      if (at) { found = { source, ...at }; break; }
+    }
+    const matches = found ? found.source.match(found.query) : [];
     if (!matches.length) return closePicker();
-    const same = picking && picking.start === at.start;
-    picking = { ...at, matches, index: same ? Math.min(picking.index, matches.length - 1) : 0 };
+    const same = picking && picking.source === found.source && picking.start === found.start;
+    picking = { ...found, matches, index: same ? Math.min(picking.index, matches.length - 1) : 0 };
     drawPicker();
   };
-  function pick(member) {
-    const { start } = picking;
+  function pick(item) {
+    const { start, source } = picking;
     const end = box.selectionStart;
     closePicker();
     box.focus();
     box.setSelectionRange(start, end);
-    const insert = `@${member.login} `;
+    const insert = source.insert(item);
     if (!document.execCommand?.("insertText", false, insert) || box.value.slice(start, start + insert.length) !== insert) {
       box.value = box.value.slice(0, start) + insert + box.value.slice(end);
       box.dispatchEvent(new Event("input", { bubbles: true }));
@@ -144,7 +186,7 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
     box.setSelectionRange(start + insert.length, start + insert.length);
     closePicker();
   }
-  if (members) {
+  if (sources.length) {
     box.addEventListener("input", updatePicker);
     box.addEventListener("click", updatePicker);
     box.addEventListener("keyup", (e) => (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") && updatePicker());
@@ -172,7 +214,7 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
     if (on) {
       saved = [box.selectionStart, box.selectionEnd];
       preview.style.minHeight = `${box.offsetHeight}px`;
-      preview.replaceChildren(box.value.trim() ? markdown(box.value, h) : h("p", { class: "md-nothing" }, "Nothing to preview"));
+      preview.replaceChildren(box.value.trim() ? markdown(box.value, h, tasks && taskResolver(tasks())) : h("p", { class: "md-nothing" }, "Nothing to preview"));
     }
     previewing = on;
     closePicker();

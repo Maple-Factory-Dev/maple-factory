@@ -901,6 +901,12 @@ final class AppState {
 
     // MARK: Navigation actions
 
+    /// A `MF-12` reference in rendered Markdown was clicked: the task panel shows it, or, in a task's
+    /// full view (which has no panel), the full view moves to it.
+    func openReference(_ id: String) {
+        if focusedTask != nil { openFocus(id) } else { openTask(id) }
+    }
+
     func openFocus(_ id: String) {
         withAnimation(.snappy(duration: 0.3)) {
             selectedTask = id
@@ -1861,6 +1867,14 @@ final class AppState {
             // `mention:<text>` types into the open task's composer; `banner:<id>` is clicking a task's banner.
             case "mention": NotificationCenter.default.post(name: TaskComposer.demoType, object: nil, userInfo: ["text": parts.dropFirst().joined(separator: ":")])
             case "banner": Notifier.shared.opening = (parts[1], false, true)
+            // `type:<text>` types into a Markdown editor; `pickerkey:down|up|pick|close` presses a key in the
+            // open @/# picker; `post:1` sends the task composer; `openref:<id>` clicks a rendered task reference.
+            case "type": NotificationCenter.default.post(name: MarkdownEditor.demoType, object: nil, userInfo: ["text": parts.dropFirst().joined(separator: ":")])
+            case "pickerkey":
+                let key: MentionKey? = switch parts[1] { case "up": .up; case "down": .down; case "pick": .pick; case "close": .close; default: nil }
+                NotificationCenter.default.post(name: MentionKey.demo, object: key)
+            case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
+            case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.
@@ -1868,6 +1882,13 @@ final class AppState {
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), and its What's New sheet.
+            case "runnerupdate":
+                for _ in 0..<300 {
+                    if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.send(.machineUpdate(.init(machine: machine.id))); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "accept":

@@ -9,13 +9,13 @@
 
 // ---- blocks ----
 
-export function parse(source) {
+export function parse(source, tasks) {
   const blocks = [];
   let paragraph = [];
   let fence = null;
 
   const flush = () => {
-    if (paragraph.length) blocks.push({ type: "paragraph", inline: inline(paragraph.join(" ")) });
+    if (paragraph.length) blocks.push({ type: "paragraph", inline: inline(paragraph.join(" "), tasks) });
     paragraph = [];
   };
   // Runs of list lines of the same kind become one list.
@@ -71,16 +71,16 @@ export function parse(source) {
     let m;
     if ((m = /^(#{1,6}) (.*)$/.exec(line))) {
       flush();
-      blocks.push({ type: "heading", level: m[1].length, inline: inline(m[2].trim()) });
+      blocks.push({ type: "heading", level: m[1].length, inline: inline(m[2].trim(), tasks) });
     } else if ((m = /^[-*] \[([ xX])\] (.*)$/.exec(line))) {
-      listItem(false, 1, { checked: m[1] !== " ", inline: inline(m[2]) });
+      listItem(false, 1, { checked: m[1] !== " ", inline: inline(m[2], tasks) });
     } else if ((m = /^[-*] (.*)$/.exec(line))) {
-      listItem(false, 1, { checked: null, inline: inline(m[1]) });
+      listItem(false, 1, { checked: null, inline: inline(m[1], tasks) });
     } else if ((m = /^(\d+)\. (.*)$/.exec(line))) {
-      listItem(true, Number(m[1]), { checked: null, inline: inline(m[2]) });
+      listItem(true, Number(m[1]), { checked: null, inline: inline(m[2], tasks) });
     } else if ((m = /^> ?(.*)$/.exec(line))) {
       flush();
-      blocks.push({ type: "quote", inline: inline(m[1]) });
+      blocks.push({ type: "quote", inline: inline(m[1], tasks) });
     } else {
       paragraph.push(line);
     }
@@ -97,7 +97,15 @@ const ATTACHMENT = /^\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const safeLink = (href) => /^(https?:|mailto:)/i.test(href) || ATTACHMENT.test(href);
 const safeImage = (src) => /^https:/i.test(src) || ATTACHMENT.test(src);
 
-export function inline(text) {
+/** Looks task IDs up in a list of tasks, for inline()'s `tasks`. */
+export function taskResolver(list) {
+  const byId = new Map([...(list ?? [])].map((t) => [t.id, t]));
+  return (id) => byId.get(id);
+}
+
+/** Inline nodes. With `tasks` (an ID → task lookup), a word-bounded `MF-12` or `#MF-12` that names a
+ *  known task becomes a taskref; anything it doesn't know (`UTF-8`, `ISO-8601`) stays text. */
+export function inline(text, tasks) {
   const out = [];
   let plain = "";
   const push = (node) => {
@@ -106,6 +114,7 @@ export function inline(text) {
     out.push(node);
   };
   const wordBefore = (i) => i > 0 && /[\w]/.test(text[i - 1]);
+  let task;
 
   for (let i = 0; i < text.length; ) {
     const c = text[i];
@@ -119,10 +128,10 @@ export function inline(text) {
       push({ type: "code", text: m[2] });
       i += m[0].length;
     } else if ((m = /^(\*\*|__)(?=\S)([\s\S]+?)(?<=\S)\1/.exec(rest)) && !(c === "_" && wordBefore(i))) {
-      push({ type: "strong", children: inline(m[2]) });
+      push({ type: "strong", children: inline(m[2], tasks) });
       i += m[0].length;
     } else if ((m = /^([*_])(?=\S)([\s\S]+?)(?<=\S)\1/.exec(rest)) && !(c === "_" && wordBefore(i))) {
-      push({ type: "em", children: inline(m[2]) });
+      push({ type: "em", children: inline(m[2], tasks) });
       i += m[0].length;
     } else if (c === "!" && (m = /^!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)/.exec(rest))) {
       if (safeImage(m[2])) push({ type: "image", alt: m[1], src: m[2] });
@@ -138,6 +147,9 @@ export function inline(text) {
       i += m[0].length;
     } else if (c === "@" && !wordBefore(i) && (m = /^@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/.exec(rest))) {
       push({ type: "mention", text: m[0] });
+      i += m[0].length;
+    } else if (tasks && /[#A-Z]/.test(c) && !wordBefore(i) && text[i - 1] !== "#" && (m = /^#?([A-Z][A-Z0-9]*-\d+)(?![\w-])/.exec(rest)) && (task = tasks(m[1]))) {
+      push({ type: "taskref", id: task.id, title: task.title ?? "", state: task.state ?? "" });
       i += m[0].length;
     } else {
       plain += c;
@@ -253,6 +265,9 @@ export function render(blocks, h) {
       case "em": return h("em", {}, spans(n.children));
       case "link": return h("a", { href: n.href, target: "_blank", rel: "noopener noreferrer" }, spans(n.children));
       case "mention": return h("span", { class: "mention" }, n.text);
+      case "taskref":
+        return h("a", { class: "md-taskref", href: `#/t/${n.id}`, title: n.title || n.id },
+          h("span", { class: `dot bg-${n.state}`, "aria-hidden": "true" }), n.id);
       case "image": return image(n.src, n.alt, "md-img-inline");
       default: return n.text;
     }
@@ -291,4 +306,5 @@ export function render(blocks, h) {
   }));
 }
 
-export const markdown = (source, h) => render(parse(source), h);
+/** `tasks` is an ID → task lookup (taskResolver) that links the known task IDs. */
+export const markdown = (source, h, tasks) => render(parse(source, tasks), h);

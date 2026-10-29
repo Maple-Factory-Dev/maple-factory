@@ -214,6 +214,12 @@ struct LiveMachineCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if client.updatePhase(machine) != .current {
+                RunnerUpdateRow(machine: machine, canUpdate: isMine || client.me?.role == "admin") { showingChanges = true }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill))
+            }
             if let health = machine.health, machine.online { meters(health) }
             factory
             sessions
@@ -225,7 +231,8 @@ struct LiveMachineCard: View {
                 .fill(Theme.cardBG)
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
         )
-        .opacity(machine.online ? 1 : 0.8)
+        .opacity(machine.online || client.updatePhase(machine).isBusy ? 1 : 0.8)
+        .runnerChanges(machine, isPresented: $showingChanges)
     }
 
     private var header: some View {
@@ -246,16 +253,6 @@ struct LiveMachineCard: View {
                     Text(isMine ? "Yours" : machine.owner)
                     if let os = machine.os { Text("·"); Text(os == "macos" ? "macOS" : os.capitalized) }
                     if let version = machine.version { Text("·"); Text("runner \(version)") }
-                    if client.runnerOutdated(machine), let latest = client.runnerLatest {
-                        Text("·")
-                        if machine.online && (isMine || client.me?.role == "admin") {
-                            Button("Update to \(latest)") { client.send(.machineUpdate(.init(machine: machine.id))) }
-                                .buttonStyle(.link)
-                                .help("Download, verify and restart into runner \(latest). Sessions in tmux keep running.")
-                        } else {
-                            Text("\(latest) available").foregroundStyle(Theme.State.awaitingApproval)
-                        }
-                    }
                 }
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textMuted)
@@ -282,6 +279,7 @@ struct LiveMachineCard: View {
     @State private var renaming = false
     @State private var nickname = ""
     @State private var editing = false
+    @State private var showingChanges = false
 
     /// The factory's use of it: slots taken, team slots, and whether it's paused.
     private var factory: some View {
@@ -332,7 +330,9 @@ struct LiveMachineCard: View {
             Button(client.runnerOutdated(machine) ? "Update Runner to \(client.runnerLatest ?? "")" : "Check for Runner Update") {
                 client.send(.machineUpdate(.init(machine: machine.id)))
             }
-            .disabled(!machine.online)
+            .disabled(!machine.online || client.updatePhase(machine).isBusy)
+            Button("What's New in the Runner…") { showingChanges = true }
+                .disabled(client.runnerReleases.isEmpty)
             Divider()
             Button("Copy Machine ID") {
                 NSPasteboard.general.clearContents()
@@ -354,7 +354,10 @@ struct LiveMachineCard: View {
     }
 
     private var statusChip: some View {
-        let (text, color): (String, Color) = machine.online
+        let restarting = if case .restarting = client.updatePhase(machine) { true } else { false }
+        let (text, color): (String, Color) = restarting && !machine.online
+            ? ("Restarting", Theme.State.building)
+            : machine.online
             ? (machine.health?.battery.map { $0.charging ? "Online" : "On battery" } ?? "Online",
                machine.health?.battery.map { $0.charging ? Theme.State.merged : Theme.State.awaitingApproval } ?? Theme.State.merged)
             : ("Offline\(machine.lastSeen.map { " · \(relative($0))" } ?? "")", Theme.State.cancelled)

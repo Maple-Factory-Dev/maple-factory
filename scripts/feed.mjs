@@ -84,6 +84,30 @@ function put(to, path, file, type) {
     { stdio: "inherit", cwd: join(root, cwd) });
 }
 
+/** A file already at `path` where this release goes (parsed as JSON), or null when there's none. */
+export async function fetchJson(to, path) {
+  try {
+    if (to.startsWith("dir:")) return JSON.parse(readFileSync(join(to.slice(4), path), "utf8"));
+    if (to === "feed") {
+      const res = await fetch(`${FEED_URL}/${path}`);
+      return res.ok ? await res.json() : null;
+    }
+    const file = join(tmpdir(), `maple-get-${process.pid}.json`);
+    execFileSync("npx", ["wrangler", "r2", "object", "get", `maple-releases/${path}`, "--file", file, to === "local" ? "--local" : "--remote"],
+      { stdio: "ignore", cwd: join(root, "server") });
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Uploads `value` as JSON to `path`. */
+export function putJson(to, path, value) {
+  const file = join(tmpdir(), `maple-put-${process.pid}-${path.replace(/\W+/g, "-")}`);
+  writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
+  put(to, path, file, "application/json");
+}
+
 /** The beta manifest's version in the feed now, or null. */
 async function currentBeta(to, product) {
   try {
