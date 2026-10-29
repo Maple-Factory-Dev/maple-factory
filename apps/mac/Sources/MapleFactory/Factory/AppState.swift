@@ -1730,6 +1730,9 @@ final class AppState {
             case "unfocus": withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
             case "panel": toggleTaskPanel()
             case "opening": taskOpening = TaskOpening(rawValue: parts[1]) ?? taskOpening
+            // The Timeline's "Show merged" pill, and moving to another goal or page.
+            case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
+            case "go": destination = Destination(argument: parts[1])
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
