@@ -416,8 +416,10 @@ export const structs: Record<string, Struct> = {
       followUps: "FollowUp[]",
       queueRank: "f64?",
       startAt: "u64?",
+      force: "bool?",
     },
     fieldDocs: {
+      force: "Its next session skips the wait for a free slot; cleared once it starts.",
       queueRank: "Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.",
       startAt: "Don't start its next session before this (ms); cleared once that session starts.",
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
@@ -756,11 +758,12 @@ export const unions: Record<string, Union> = {
       "task.retry": { fields: { id: "string" } },
       "task.queue": {
         doc: "Reorder or schedule a task's place in the queue for sessions. A draft is sent to planning.",
-        fields: { id: "string", before: "string?", startAt: "u64?", clearSchedule: "bool?" },
+        fields: { id: "string", before: "string?", startAt: "u64?", clearSchedule: "bool?", force: "bool?" },
         fieldDocs: {
           before: "Move it ahead of this task; \"top\": the front of the queue. None moves it to the back, unless startAt or clearSchedule is given (they keep its place).",
           startAt: "Hold it until then (ms).",
           clearSchedule: "Start it as soon as there's room.",
+          force: "Start its next session now, over the machine's slot count.",
         },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },

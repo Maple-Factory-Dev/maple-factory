@@ -2021,8 +2021,10 @@ public enum Wire {
         public var queueRank: Double?
         /// Don't start its next session before this (ms); cleared once that session starts.
         public var startAt: UInt64?
+        /// Its next session skips the wait for a free slot; cleared once it starts.
+        public var force: Bool?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2065,6 +2067,7 @@ public enum Wire {
             self.followUps = followUps
             self.queueRank = queueRank
             self.startAt = startAt
+            self.force = force
         }
 
         public init(from decoder: Decoder) throws {
@@ -2111,6 +2114,7 @@ public enum Wire {
             followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
             queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
+            force = try c.decodeIfPresent(Bool.self, forKey: .force)
         }
     }
 
@@ -3630,12 +3634,15 @@ public enum Wire {
         public var startAt: UInt64?
         /// Start it as soon as there's room.
         public var clearSchedule: Bool?
+        /// Start its next session now, over the machine's slot count.
+        public var force: Bool?
 
-        public init(id: String, before: String? = nil, startAt: UInt64? = nil, clearSchedule: Bool? = nil) {
+        public init(id: String, before: String? = nil, startAt: UInt64? = nil, clearSchedule: Bool? = nil, force: Bool? = nil) {
             self.id = id
             self.before = before
             self.startAt = startAt
             self.clearSchedule = clearSchedule
+            self.force = force
         }
     }
 
