@@ -1255,6 +1255,7 @@ final class AppState {
         }
         if let task = defaults.string(forKey: "task") {
             selectedTask = task
+            showInspector = true
         }
         if let task = defaults.string(forKey: "focus") {
             selectedTask = task
