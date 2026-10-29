@@ -91,6 +91,8 @@ enum Theme {
         static let drafting = Color(light: 0x8A909A, dark: 0x8B919B)
         static let planning = Color(light: 0x7C5CE0, dark: 0xA48BFA)
         static let awaitingApproval = Color(light: 0xC27C0E, dark: 0xE9B04A)
+        /// Parked: a quiet slate, between Drafting's gray and Building's blue.
+        static let backlog = Color(light: 0x5B6B86, dark: 0x93A3BF)
         static let building = Color(light: 0x2F6FEB, dark: 0x6B9BF5)
         static let reviewing = Color(light: 0x0E8FA3, dark: 0x4CC4D6)
         static let merged = Color(light: 0x14A866, dark: 0x3DD68C)

@@ -1087,6 +1087,29 @@ final class AppState {
         update(id) { $0.state = .planning }
     }
 
+    /// Parks a draft or a plan waiting for approval: nothing runs on it until someone picks it up.
+    func sendToBacklog(_ id: String) {
+        let park = { (task: inout FactoryTask) in
+            guard task.state == .drafting || task.state == .awaitingApproval else { return }
+            task.state = .backlog
+            task.approvals = []
+            task.detail = task.plan.isEmpty ? "Backlog · not planned" : "Backlog · plan v\(task.planVersion)"
+        }
+        showToast("Sent \(id) to the backlog", icon: TaskState.backlog.icon, color: Theme.State.backlog)
+        if let client, isLive {
+            // Shown at once; the factory's update confirms it (or a refusal's toast says why not).
+            withAnimation(.snappy(duration: 0.3)) { client.expect(id, park) }
+            client.send(.taskBacklog(.init(id: id)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                park(&task)
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Sent it to the backlog", when: "now"), at: 0)
+            }
+        }
+    }
+
     /// A new title; empty or unchanged ones are ignored.
     func rename(_ id: String, title: String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1291,7 +1314,7 @@ final class AppState {
     private func landed(_ kind: InFlight.Kind, on task: FactoryTask) -> Bool {
         let me = FactoryData.me.id
         switch kind {
-        case .approvePlan: return task.approvals.contains { $0.id == me } || task.state != .awaitingApproval
+        case .approvePlan: return task.approvals.contains { $0.id == me } || (task.state != .awaitingApproval && task.state != .backlog)
         case .approveChanges: return task.reviews.contains { $0.id == me }
         case .merge: return task.state == .merged || task.pr?.state == .merged
         }
@@ -1356,6 +1379,8 @@ final class AppState {
         withAnimation(.snappy(duration: 0.3)) {
             update(id) { task in
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
+                // Picked up from the backlog.
+                if task.state == .backlog { task.state = .awaitingApproval }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
@@ -1732,6 +1757,8 @@ final class AppState {
             guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
+            case "backlog": sendToBacklog(parts[1])
+            case "plan": plan(parts[1])
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])

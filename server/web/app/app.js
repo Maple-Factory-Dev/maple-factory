@@ -32,7 +32,7 @@ const STATES = ["drafting", "planning", "awaitingApproval", "building", "reviewi
 const allTasks = () => [...state.tasks.values()];
 /** Links the factory's task IDs (`MF-12`) in rendered Markdown. */
 const knownTasks = () => taskResolver(state.tasks.values());
-const STATE_TITLE = { drafting: "Drafting", planning: "Planning", awaitingApproval: "Awaiting approval", building: "Building", reviewing: "Reviewing", merged: "Merged", cancelled: "Cancelled" };
+const STATE_TITLE = { drafting: "Drafting", planning: "Planning", awaitingApproval: "Awaiting approval", backlog: "Backlog", building: "Building", reviewing: "Reviewing", merged: "Merged", cancelled: "Cancelled" };
 const name = (login) => {
   if (["planner", "builder", "reviewer", "factory"].includes(login)) return login[0].toUpperCase() + login.slice(1);
   if (login === state.me?.login) return "You";
@@ -267,12 +267,14 @@ const queueLine = (t) => scheduled(t) ? `Starts ${new Date(t.startAt).toLocaleSt
 function tasksView() {
   const drafts = [...state.tasks.values()].filter((t) => t.state === "drafting").sort((a, b) => b.updatedAt - a.updatedAt);
   const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
-  const active = [...state.tasks.values()].filter((t) => !["drafting", "merged", "cancelled"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
+  const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
+  const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
     drafts.length > 0 && [h("h2", {}, `Drafts · ${drafts.length}`), h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))],
     queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
+    backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
     h("h2", {}, `In flight · ${active.length}`),
     active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || STATE_TITLE[t.state]))) : h("div", { class: "card empty" }, "Nothing in flight."),
     done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
@@ -499,7 +501,8 @@ function taskView(id) {
   if (!t) return h("div", { class: "card empty" }, state.live ? `There's no task ${id}.` : "Loading…");
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
-  const reached = t.state === "cancelled" ? -1 : STATES.indexOf(t.state);
+  // Parked in the backlog: as far as its plan got.
+  const reached = t.state === "cancelled" ? -1 : t.state === "backlog" ? (t.plan.length ? 2 : 0) : STATES.indexOf(t.state);
   return h("div", {},
     h("div", { class: "row muted" }, h("a", { href: "#/" }, "← Inbox"), h("span", { class: "spacer" }), h("span", { class: "mono" }, t.id)),
     h("h1", {}, t.title),
@@ -516,7 +519,8 @@ function taskView(id) {
     promptCard(t),
     t.hand && handCard(t),
     t.question && !t.hand && questionCard(t),
-    t.state === "drafting" && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
+    // A backlog task that was never planned is still a draft to refine.
+    (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
     t.effort && effortCard(t),
     h("div", { class: "tabs", style: "margin-top:22px" },
       h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, "Overview"),
@@ -654,6 +658,15 @@ function decisions(t) {
       t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
+  if (t.state === "awaitingApproval" || t.state === "drafting") {
+    buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.backlog", id: t.id }) }, "Send to backlog"));
+  }
+  if (t.state === "backlog") {
+    // Nothing runs on it until it's picked up: its plan approved, or planned (again).
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => send({ type: "task.approvePlan", id: t.id }) }, "Approve & build"));
+    buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
+    buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
+  }
   if (t.state === "reviewing") {
     const passed = t.autoReview?.rounds.at(-1)?.verdict === "passed";
     const failing = t.pr?.checks?.some((c) => c.status === "failed");
@@ -676,13 +689,14 @@ function decisions(t) {
     if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, "Start now"));
   }
   if (t.state !== "merged") {
-    // Waiting on its plan's approval, nothing is running to retry; requesting a change plans again.
-    if (t.state !== "drafting" && t.state !== "awaitingApproval") buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
+    // Waiting on its plan's approval or in the backlog, nothing is running to retry; requesting a change plans again.
+    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
     if (t.state !== "cancelled") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
   }
-  const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
+  const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state) || (t.state === "backlog" && t.plan.length > 0);
   const [placeholder, label] = {
     awaitingApproval: ["Ask for a change to the plan…", "Request change"],
+    backlog: ["Ask for a change to the plan; it's planned again…", "Request change"],
     reviewing: ["What should change before it merges? The builder picks it up.", "Request changes"],
   }[t.state] ?? ["Steer it: what should change?", "Request change"];
   return h("div", {},
@@ -766,11 +780,12 @@ function draftEditor(t) {
       status,
       h("span", { class: "spacer" }),
       h("button", { class: "btn", onclick: save }, "Save"),
+      t.state === "drafting" && h("button", { class: "btn", onclick: () => save() && send({ type: "task.backlog", id: t.id }) }, "Send to backlog"),
       h("button", { class: "btn plan", onclick: plan }, "Send to planning")));
 }
 
 function overview(t) {
-  const editing = t.state === "drafting" && t.owner === state.me?.login;
+  const editing = (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login;
   return h("div", {},
     t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),

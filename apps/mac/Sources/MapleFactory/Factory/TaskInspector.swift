@@ -67,6 +67,7 @@ struct TaskInspector: View {
                     if let question = task.question, task.hand == nil { QuestionBlock(task: task, question: question) }
                     if let hand = task.hand { InspectorHandCallout(task: task, hand: hand) }
                     if task.state == .awaitingApproval { ApprovalBlock(task: task, onRequestChanges: requestChanges) }
+                    if task.state == .backlog { BacklogBlock(task: task, onRequestChanges: requestChanges) }
                     if task.state == .reviewing { ReviewActions(task: task, onRequestChanges: requestChanges) }
                     // Only what's still waiting; applied requests are history, kept in the full view.
                     if !openRequests.isEmpty {
@@ -190,11 +191,12 @@ struct PipelineStepper: View {
     let state: TaskState
 
     var body: some View {
-        let current = TaskState.pipeline.firstIndex(of: state)
+        let stages = TaskState.stages(for: state)
+        let current = stages.firstIndex(of: state)
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 0) {
-                ForEach(Array(TaskState.pipeline.enumerated()), id: \.offset) { index, stage in
+                ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
                     let reached = current.map { index <= $0 } ?? false
                     let isCurrent = index == current
 
@@ -213,7 +215,7 @@ struct PipelineStepper: View {
                     }
                     .help(stage.title)
 
-                    if index < TaskState.pipeline.count - 1 {
+                    if index < stages.count - 1 {
                         Rectangle()
                             .fill(current.map { index < $0 } ?? false ? stage.color.opacity(0.6) : Theme.fillSelected)
                             .frame(height: 2)
@@ -227,7 +229,7 @@ struct PipelineStepper: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.State.cancelled)
             } else if let current {
-                Text("Stage \(current + 1) of \(TaskState.pipeline.count) · \(state.title)")
+                Text("Stage \(current + 1) of \(stages.count) · \(state.title)")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
             }

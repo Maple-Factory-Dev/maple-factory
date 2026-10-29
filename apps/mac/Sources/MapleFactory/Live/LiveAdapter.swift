@@ -31,10 +31,12 @@ import SwiftUI
         }
     }
 
-    /// Who a steer reaches when no session is running: a reviewing steer goes back to the builder.
-    static func stageAgent(_ state: Wire.TaskState) -> Agent? {
+    /// Who a steer reaches when no session is running: a reviewing steer goes back to the builder, and a
+    /// planned backlog task's goes to the planner (an unplanned one has its brief edited instead).
+    static func stageAgent(_ state: Wire.TaskState, planned: Bool = true) -> Agent? {
         switch state {
         case .planning, .awaitingApproval: role("planner")
+        case .backlog: planned ? role("planner") : nil
         case .building, .reviewing: role("builder")
         default: nil
         }
@@ -71,7 +73,7 @@ import SwiftUI
         var task = FactoryTask(id: t.id, goal: goalName, title: t.title, state: state(t.state),
                                detail: detail(t), span: start...max(start + 1, day(t.updatedAt) + 1), updated: ago(t.updatedAt))
         // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
-        task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state)
+        task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state, planned: !t.plan.isEmpty)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
         task.owner = who(t.owner)
         task.machine = t.machine
@@ -171,6 +173,7 @@ import SwiftUI
         switch t.state {
         case .drafting: return "Draft"
         case .planning: return t.worker == nil ? "Waiting for a planner" : "Drafting the plan"
+        case .backlog: return t.plan.isEmpty ? "Backlog · not planned" : "Backlog · plan v\(t.planVersion)"
         case .awaitingApproval: return t.approvalsNeeded == 0 ? "Plan v\(t.planVersion) ready" : "Plan v\(t.planVersion) · \(t.approvals.count) of \(t.approvalsNeeded) approvals"
         case .building:
             let done = t.plan.filter { $0.progress == .done }.count
@@ -195,6 +198,7 @@ import SwiftUI
         case .drafting: .drafting
         case .planning: .planning
         case .awaitingApproval: .awaitingApproval
+        case .backlog: .backlog
         case .building: .building
         case .reviewing: .reviewing
         case .merged: .merged
