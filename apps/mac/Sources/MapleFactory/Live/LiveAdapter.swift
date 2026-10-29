@@ -364,6 +364,7 @@ enum LiveAdapter {
         case .needsInput: .needsInput
         case .overBudget: .overBudget
         case .sessionEnded: .sessionEnded
+        case .mergeFailed: .mergeFailed
         }
         return HandRaise(reason: reason, since: ago(h.at), assignee: assignee, headline: reason.title, explanation: h.summary, tried: [],
                          options: h.options.map { HandRaise.Option(title: $0.title, detail: $0.detail, recommended: $0.recommended) })
