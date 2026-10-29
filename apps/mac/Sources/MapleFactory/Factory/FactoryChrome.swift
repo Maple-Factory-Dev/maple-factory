@@ -214,41 +214,15 @@ struct FactoryStatusBar: View {
     var body: some View {
         HStack(spacing: 16) {
             if client.isSignedIn {
-                let online = client.machines.filter(\.online)
-                let sessions = online.reduce(0) { $0 + $1.sessions.count }
                 HStack(spacing: 5) {
                     Circle().fill(client.status == .live ? Theme.State.merged : Theme.State.awaitingApproval).frame(width: 6, height: 6)
-                    Text(state.isCompact
-                         ? "\(sessions) sessions"
-                         : "\(client.server?.host() ?? "") · \(online.count) of \(client.machines.count) machines · \(sessions) sessions")
+                    Text(client.server?.host() ?? "")
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { state.closeFocus(); state.destination = .machines }
+                .help("Machines")
             } else {
-                HStack(spacing: 5) {
-                    Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
-                    Text(state.isCompact
-                         ? "\(state.fleet.running) running"
-                         : "\(FactoryData.presence.count) online · \(state.fleet.running) running · \(state.queue.count) queued")
-                }
-            }
-            HStack(spacing: 5) {
-                Image(systemName: "hand.raised").foregroundStyle(Theme.State.awaitingApproval)
-                Text("\(state.inbox(.approval, mine: true).count)\(state.isCompact ? "" : " awaiting you")")
-            }
-            HStack(spacing: 5) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(Theme.State.cancelled)
-                Text("\(state.handRaises.count)\(state.isCompact ? "" : " need a hand")")
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { state.destination = .needsHand; state.focusedTask = nil }
-            HStack(spacing: 5) {
-                Image(systemName: "xmark.octagon").foregroundStyle(Theme.State.cancelled)
-                Text("\(state.inbox(.failing, mine: true).count)\(state.isCompact ? "" : " failing")")
-            }
-            HStack(spacing: 5) {
-                Image(systemName: "eye").foregroundStyle(Theme.State.reviewing)
-                Text("\(state.inbox(.review, mine: true).count)\(state.isCompact ? "" : " ready for review")")
+                Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
             }
             Spacer()
             if state.isLive {
@@ -266,20 +240,13 @@ struct FactoryStatusBar: View {
                 }
                 Text(client.status == .live ? "Live" : client.status == .connecting ? "Connecting…" : client.status == .tooNew ? "Update needed" : "Reconnecting…")
             } else {
-            HStack(spacing: 5) {
-                ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
-                Text(state.isCompact ? "34% · 41%" : "34% session · 41% week")
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { state.destination = .usage; state.focusedTask = nil }
-            .help("Usage across all accounts")
-            }
-            if !state.isCompact && !state.isLive {
                 HStack(spacing: 5) {
-                    Image(systemName: "arrow.triangle.branch")
-                    Text("atlas-platform · main")
+                    ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
+                    Text(state.isCompact ? "34% · 41%" : "34% session · 41% week")
                 }
-                Text("Synced 2m ago")
+                .contentShape(Rectangle())
+                .onTapGesture { state.destination = .usage; state.focusedTask = nil }
+                .help("Usage across all accounts")
             }
         }
         .font(.system(size: 12))
