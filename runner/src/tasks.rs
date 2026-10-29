@@ -990,6 +990,76 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// A task worktree for `fix-1a2b` with one commit of the builder's work, its identity set for the merges.
+    async fn worktree(root: &Path, bare: &Path) -> (String, std::path::PathBuf) {
+        remote(bare, "a.txt");
+        let checkout = root.join("Projects/widgets");
+        sh(root, &["clone", "--quiet", bare.to_str().unwrap(), checkout.to_str().unwrap()]);
+        let emit = |m: Outbound| panic!("unexpected message {m:?}");
+        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(root, None)).await.unwrap();
+        let wt = expand_home(&s.worktree);
+        for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
+            sh(&wt, &["config", k, v]);
+        }
+        commit(&wt, "b.txt", "fixed\n", "the builder's work");
+        (s.worktree, wt)
+    }
+
+    /// Retry after a merge that left the worktree detached: it goes back on the task's branch when
+    /// nothing would be lost, and is refused (and left alone) when HEAD holds work of its own.
+    #[tokio::test]
+    async fn a_detached_worktree_is_put_back_on_its_branch() {
+        let root = tmp("detached");
+        let (cwd, wt) = worktree(&root, &root.join("remotes/widgets.git")).await;
+        let again = Request { existing: true, ..req("fix-1a2b") };
+        let tip = sh(&wt, &["rev-parse", "HEAD"]);
+
+        // Detached at the branch's tip.
+        sh(&wt, &["checkout", "--quiet", "--detach"]);
+        assert_eq!(existing(&cwd, &again).await.unwrap(), cwd);
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
+
+        // Left on the factory's merge commit, whose push failed.
+        sh(&wt, &["checkout", "--quiet", "--detach", "origin/main"]);
+        sh(&wt, &["merge", "--no-ff", "--quiet", "-m", "Fix it", "agent/fix-1a2b"]);
+        existing(&cwd, &again).await.unwrap();
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
+        assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), tip);
+
+        // Detached with a commit only HEAD holds: refused, and still detached there.
+        sh(&wt, &["checkout", "--quiet", "--detach"]);
+        commit(&wt, "c.txt", "mine\n", "work only HEAD has");
+        let mine = sh(&wt, &["rev-parse", "HEAD"]);
+        let err = format!("{:#}", existing(&cwd, &again).await.unwrap_err());
+        assert!(err.contains("is detached at") && err.contains("not on the task's branch agent/fix-1a2b") && err.contains("1 commit not on the branch"), "{err}");
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "");
+        assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), mine);
+
+        // On another branch: refused as before.
+        sh(&wt, &["checkout", "--quiet", "-b", "side"]);
+        let err = format!("{:#}", existing(&cwd, &again).await.unwrap_err());
+        assert!(err.contains("is on side, not the task's branch agent/fix-1a2b"), "{err}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A merge whose push is rejected still leaves the worktree on the task's branch.
+    #[tokio::test]
+    async fn a_merge_whose_push_fails_switches_back_to_the_branch() {
+        let root = tmp("merge-rejected");
+        let bare = root.join("remotes/widgets.git");
+        let (cwd, wt) = worktree(&root, &bare).await;
+        let hook = bare.join("hooks/pre-receive");
+        std::fs::write(&hook, "#!/bin/sh\necho rejected >&2\nexit 1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let m = Merge { task_id: "t1".into(), cwd: cwd.clone(), branch: "agent/fix-1a2b".into(), base: "main".into(), title: "Fix it".into() };
+        let err = format!("{:#}", merge_and_switch_back(&wt, &m).await.unwrap_err());
+        assert!(err.contains("rejected"), "{err}");
+        assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "agent/fix-1a2b");
+        assert_eq!(sh(&wt, &["status", "--porcelain"]), "");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// Retry on another machine: studio-mac's runner commits what the builder left as WIP and pushes
     /// the branch (`task.handoff`), and laptop's worktree for the task carries on from it.
     #[tokio::test]
