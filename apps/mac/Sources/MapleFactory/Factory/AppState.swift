@@ -150,13 +150,33 @@ final class AppState {
 
     /// `-onboarding YES` starts at the connect-to-a-factory flow instead of the workspace.
     /// `-onboardingFromWorkspace YES` opens it as if the factory name had been clicked, with a way back.
+    /// Signed out, the app opens at onboarding too; `-mock YES` (or any flag that drives the demo,
+    /// see `showsMock`) opens the design mockup's workspace instead, and `-mock NO` never does.
     var showOnboarding = AppDefaults.bool(forKey: "onboarding") || AppDefaults.bool(forKey: "onboardingAuto")
         || AppDefaults.bool(forKey: "onboardingFromWorkspace")
     /// Opened from the workspace, so there's a factory to go back to. Launch-time onboarding has none.
     var onboardingCanCancel = AppDefaults.bool(forKey: "onboardingFromWorkspace")
+    /// A demo or screenshot launch: signed out, it shows the mockup rather than onboarding.
+    let demoLaunch = AppState.showsMock(arguments: ProcessInfo.processInfo.arguments)
+
+    /// Launch flags that drive the mockup, so a launch with any of them is a demo.
+    nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
+                                        "mockview", "onboarding", "onboardingAuto", "onboardingFromWorkspace"]
+
+    /// `-mock YES`/`NO` decides; otherwise any demo flag makes it a demo. A fresh install has none.
+    nonisolated static func showsMock(arguments: [String]) -> Bool {
+        if let mock = Headless.value("mock", in: arguments) { return ["yes", "true", "1"].contains(mock.lowercased()) }
+        return demoFlags.contains { Headless.value($0, in: arguments) != nil }
+    }
+
+    /// Signed out and not a demo: there's no factory to show, so connect to one.
+    nonisolated static func launchesToOnboarding(signedIn: Bool, demo: Bool) -> Bool { !signedIn && !demo }
+
+    /// Esc / "Back to…" only when there's a workspace to go back to: a factory, or the demo's mockup.
+    nonisolated static func onboardingCancellable(signedIn: Bool, demo: Bool) -> Bool { signedIn || demo }
 
     func startOnboarding() {
-        onboardingCanCancel = true
+        onboardingCanCancel = Self.onboardingCancellable(signedIn: client?.isSignedIn == true, demo: demoLaunch)
         withAnimation(.easeInOut(duration: 0.35)) { showOnboarding = true }
     }
 
@@ -172,7 +192,7 @@ final class AppState {
         destination = .inbox
     }
 
-    /// `workspace`: the factory just joined, or the demo's when there's none.
+    /// `workspace`: the factory just joined, or the demo's when there's none (only demo launches get there).
     func finishOnboarding(workspace: String = "Studio Workspace") {
         withAnimation(.easeInOut(duration: 0.45)) { showOnboarding = false }
         showToast("Welcome to \(workspace)", icon: "hand.wave.fill")
