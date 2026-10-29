@@ -17,6 +17,8 @@ export interface TaskPrivate {
   finishing: boolean;
   /// A merge was sent and hasn't been answered.
   merging?: boolean;
+  /// Who started the last merge ("factory" for an auto-merge), for its stats.
+  mergeBy?: string | null;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.
   restarts: number;
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
