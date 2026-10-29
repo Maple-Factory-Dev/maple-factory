@@ -459,6 +459,17 @@ final class AppState {
         tasks.filter { $0.goal == goal.name }
     }
 
+    /// The efforts tasks in `goal` (a goal's name) are part of, by name.
+    func efforts(in goal: String) -> [String] {
+        Set(tasks.filter { $0.goal == goal }.compactMap(\.effort)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Every task in `goal` that's part of `effort`, in id order (ATL-9 before ATL-10).
+    func tasks(inEffort effort: String, goal: String) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal && $0.effort == effort }
+            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+    }
+
     func stats(for goal: Goal) -> (merged: Int, total: Int) {
         let live = tasks(for: goal).filter { $0.state != .cancelled }
         return (live.filter { $0.state == .merged }.count, live.count)
@@ -1066,6 +1077,25 @@ final class AppState {
             task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Renamed it to \(title)", when: "now"), at: 0)
         }
         showToast("Renamed \(id)", icon: "pencil")
+    }
+
+    /// Puts a task in an effort, or takes it out of its effort (nil or blank).
+    func setEffort(_ id: String, _ name: String?) {
+        let name = name?.split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
+        let was = task(id).effort
+        guard name != (was ?? "") else { return }
+        if let client, isLive {
+            // Shows at once, here and in its siblings' Effort sections; the server's update confirms it.
+            client.expect(id) { $0.effort = name.isEmpty ? nil : name }
+            client.send(.taskEdit(.init(id: id, effort: name)))
+        } else {
+            update(id) { task in
+                task.effort = name.isEmpty ? nil : name
+                task.activity.insert(ActivityItem(who: FactoryData.me.name,
+                                                  text: name.isEmpty ? "Took it out of effort \(was ?? "")" : "Put it in effort \(name)", when: "now"), at: 0)
+            }
+        }
+        showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
     }
 
     // MARK: Queue
