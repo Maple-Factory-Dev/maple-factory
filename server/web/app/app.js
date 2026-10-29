@@ -294,7 +294,7 @@ const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
 /** Asks before cancelling, saying what it stops. */
 function cancelCard(t) {
   const stops = [
-    (t.worker || t.state === "planning" || t.state === "building") && `its running ${t.worker ? name(t.worker.role) : "session"}`,
+    (t.worker || t.state === "planning" || t.state === "building") && `its running ${t.worker?.role ?? "session"}`,
     t.pr && (t.pr.state === "open" || t.pr.state === "draft") && `its open PR #${t.pr.number}`,
     t.state === "awaitingApproval" && "the pending plan approval",
     (t.question || t.hand) && "the open question",
