@@ -13,7 +13,7 @@
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
 //   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
 //   GET  /app/installations, GET /installation/repositories   the app's installations, and an installation's repos
-//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n, POST …/issues/:n/comments
+//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
@@ -22,9 +22,10 @@
 //   POST /login/oauth/access_token                       sign-in: code `as-<login>` is <login>'s user token
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
 //
-// and, for the test driver: GET /_log, and POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
+// and, for the test driver: GET /_log, POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
-// like a server webhooks can't reach).
+// like a server webhooks can't reach), and POST /_deleteBranch { owner, repo, branch }, after which
+// GitHub won't reopen that branch's closed pull request.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -133,6 +134,10 @@ createServer((req, res) => {
     let m;
 
     if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson) });
+    if (req.method === "POST" && url.pathname === "/_deleteBranch") {
+      git(bare(body.owner, body.repo), "branch", "-D", body.branch);
+      return send(res, 200, {});
+    }
     if (req.method === "POST" && url.pathname === "/_checks") {
       const list = checkRunsFor(body.owner, body.repo, body.sha);
       for (const r of body.runs) {
@@ -212,7 +217,9 @@ createServer((req, res) => {
       if (g) return deny(g);
       if (!p) return send(res, 404, { message: "Not Found" });
       if (req.method === "PATCH") {
-        Object.assign(p, body.state === "closed" ? { state: "closed" } : {});
+        if (body.state === "open" && p.state === "merged") return send(res, 422, { message: "Validation Failed: state cannot be changed. The pull request is merged." });
+        if (body.state === "open" && p.state === "closed" && !headOf(p)) return send(res, 422, { message: `Validation Failed: state cannot be changed. The ${p.head} branch has been deleted.` });
+        Object.assign(p, body.state === "closed" || body.state === "open" ? { state: body.state } : {});
         return send(res, 200, pullJson(p));
       }
       if (req.method === "PUT" && m[4]) {

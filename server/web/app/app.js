@@ -275,6 +275,11 @@ function decisions(t) {
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
     if (!passed) buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "The review agent is still on it."));
   }
+  if (t.state !== "merged") {
+    // Waiting on its plan's approval, nothing is running to retry; requesting a change plans again.
+    if (t.state !== "drafting" && t.state !== "awaitingApproval") buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
+    if (t.state !== "cancelled") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
+  }
   const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
   const [placeholder, label] = {
     awaitingApproval: ["Ask for a change to the plan…", "Request change"],
@@ -282,7 +287,30 @@ function decisions(t) {
   }[t.state] ?? ["Steer it: what should change?", "Request change"];
   return h("div", {},
     buttons.length > 0 && h("div", { class: "actions" }, buttons),
+    cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && cancelCard(t),
     steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
+}
+
+const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
+
+/** Asks before cancelling, saying what it stops. */
+function cancelCard(t) {
+  const stops = [
+    // The same list as the Mac app's cancel confirmation.
+    t.worker ? `its running ${t.worker.role} session` : (t.state === "planning" || t.state === "building" || t.liveLog) && "its running session",
+    t.pr && (t.pr.state === "open" || t.pr.state === "draft") && `its open PR #${t.pr.number}`,
+    t.state === "awaitingApproval" && "the pending plan approval",
+    t.state === "reviewing" && t.pr?.state !== "merged" && "the pending review",
+    (t.question || t.hand) && "the open question to you",
+  ].filter(Boolean);
+  const list = stops.length > 1 ? `${stops.slice(0, -1).join(", ")} and ${stops.at(-1)}` : stops[0];
+  const done = () => { cancelling.delete(t.id); render(); };
+  return h("div", { class: "callout hand" },
+    h("b", {}, `Cancel ${t.id}?`),
+    h("p", { style: "margin:6px 0 0" }, `${list ? `This stops ${list}. ` : ""}Its branch stays, and you can pick it back up with Retry.`),
+    h("div", { class: "actions" },
+      h("button", { class: "btn danger solid", onclick: () => { send({ type: "task.cancel", id: t.id }); done(); } }, "Cancel task"),
+      h("button", { class: "btn", onclick: done }, "Keep working")));
 }
 
 function compose(t, key, placeholder, label, submit) {

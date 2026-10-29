@@ -6,6 +6,8 @@ struct TaskListView: View {
     let tasks: [FactoryTask]
     var showGoal = false
     @SwiftUI.State private var collapsed: Set<TaskState> = []
+    /// The task whose row's context menu asked to cancel it.
+    @SwiftUI.State private var cancelling: FactoryTask?
 
     var body: some View {
         ScrollView {
@@ -26,6 +28,7 @@ struct TaskListView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.never)
+        .cancelTaskConfirmation(task: cancelling ?? FactoryTask.none, isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }))
     }
 
     private func sectionHeader(_ taskState: TaskState, count: Int) -> some View {
@@ -115,6 +118,9 @@ struct TaskListView: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { state.openFocus(task.id) }
         .onTapGesture { state.toggleTask(task.id) }
+        .contextMenu {
+            TaskActionButtons(task: task, confirmCancel: Binding(get: { cancelling?.id == task.id }, set: { cancelling = $0 ? task : nil }))
+        }
     }
 }
 

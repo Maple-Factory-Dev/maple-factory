@@ -8,6 +8,7 @@
 // task's PR is closed with a comment.
 
 import { execFileSync } from "node:child_process";
+import { dirname } from "node:path";
 
 const [base = "http://localhost:8788", folder = "/tmp/mfgh/greeter", gh = "http://localhost:18803"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -38,7 +39,7 @@ const wait = async (what, test, ms = 30000) => {
 };
 const step = (text) => console.log(`✓ ${text}`);
 const fake = async () => (await fetch(`${gh}/_log`)).json();
-const origin = "/tmp/mfgh/remotes/acme/greeter.git";
+const origin = `${dirname(folder)}/remotes/acme/greeter.git`;
 
 await new Promise((r) => (feed.onopen = r));
 send({ type: "subscribe" });

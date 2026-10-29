@@ -43,6 +43,8 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
+    /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
+    var confirmingCancel: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
@@ -832,12 +834,39 @@ final class AppState {
             client.send(.taskCancel(.init(id: id)))
             return
         }
-        update(id) { $0.state = .cancelled }
+        update(id) { task in
+            task.state = .cancelled
+            if task.pr?.state == .open || task.pr?.state == .draft { task.pr?.state = .closed }
+            if task.autoReview?.current?.verdict == .inProgress { task.autoReview?.rounds.removeLast() }
+        }
     }
 
     func retry(_ id: String) {
         if let client, isLive {
             client.send(.taskRetry(.init(id: id)))
+            return
+        }
+        // Back to the stage it was in, as the factory does.
+        update(id) { task in
+            guard task.state == .cancelled || task.state == .reviewing else { return }
+            if task.state == .cancelled {
+                if task.pr != nil {
+                    task.state = .reviewing
+                    if task.pr?.state == .closed { task.pr?.state = .open }
+                } else {
+                    task.state = task.plan.isEmpty ? .planning
+                        : task.approvals.count >= task.approvalsNeeded ? .building
+                        : .awaitingApproval
+                }
+            }
+            // In review: a new automated-review round on what's pushed.
+            if task.state == .reviewing, var review = task.autoReview {
+                if review.current?.verdict == .inProgress { review.rounds.removeLast() }
+                review.maxRounds = max(review.maxRounds, review.rounds.count + 1)
+                review.rounds.append(ReviewRound(number: review.rounds.count + 1, verdict: .inProgress, found: 0, when: "now"))
+                task.autoReview = review
+                task.reviews = []
+            }
         }
     }
 
@@ -1317,6 +1346,10 @@ final class AppState {
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
+            // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
+            case "cancelask": confirmingCancel = parts[1]
+            case "cancel": confirmingCancel = nil; cancel(parts[1])
+            case "retry": retry(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)

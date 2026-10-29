@@ -197,7 +197,9 @@ async function reviewer() {
 // has work to carry.
 const slowBuild = prompt.includes("[slow-build]") && /You are the builder/.test(prompt) && !/moved here from/.test(prompt);
 if (slowBuild) writeFileSync("wip.txt", "started on the first machine\n");
-if (prompt.includes("[slow]") || slowBuild) {
+// "[slow-review]" only slows the review agent.
+const slowReview = prompt.includes("[slow-review]") && /You are the review agent/.test(prompt);
+if (prompt.includes("[slow]") || slowBuild || slowReview) {
   for (let i = 1; i <= 45; i++) {
     say(`thinking (${i})…`);
     await new Promise((r) => setTimeout(r, 2000));

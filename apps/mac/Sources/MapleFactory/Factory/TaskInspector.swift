@@ -31,6 +31,10 @@ struct TaskInspector: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: openFull)
                     .help("Open full view (⌘↩)")
+                TaskActionsMenu(task: task) {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .padding(.leading, 4)
                 Button(action: appState.closeTaskPanel) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .medium))
