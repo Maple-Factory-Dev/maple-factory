@@ -150,6 +150,7 @@ struct BoardColumns: View {
                     column(taskState)
                 }
             }
+            .animation(.snappy, value: populatedStates)
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -170,10 +171,29 @@ struct BoardColumns: View {
         }
     }
 
+    /// An empty column shrinks to a slim rail, so the columns with cards get the room.
+    static func isRail(count: Int) -> Bool { count == 0 }
+
+    /// The states with cards in them; the board animates when this changes.
+    private var populatedStates: Set<TaskState> { Set(tasks.map(\.state)) }
+
+    @ViewBuilder
     private func column(_ taskState: TaskState) -> some View {
         let columnTasks = tasks.filter { $0.state == taskState }
 
-        return VStack(alignment: .leading, spacing: 8) {
+        Group {
+            if Self.isRail(count: columnTasks.count) {
+                EmptyColumnRail(taskState: taskState)
+            } else {
+                fullColumn(taskState, columnTasks)
+            }
+        }
+        .transition(.opacity)
+        .opacity(taskState == .cancelled ? 0.7 : 1)
+    }
+
+    private func fullColumn(_ taskState: TaskState, _ columnTasks: [FactoryTask]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: taskState.icon)
                     .font(.system(size: 11, weight: .semibold))
@@ -194,23 +214,10 @@ struct BoardColumns: View {
                 cards(columnTasks)
                 ScrollView { cards(columnTasks).padding(.trailing, 6) }.scrollIndicators(.automatic)
             }
-
-            if columnTasks.isEmpty {
-                Text("Nothing here")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textFaint)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 60)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9)
-                            .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    )
-            }
         }
         .padding(8)
         .frame(width: 240, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.columnBG))
-        .opacity(taskState == .cancelled ? 0.7 : 1)
     }
 
     private func cards(_ columnTasks: [FactoryTask]) -> some View {
@@ -221,6 +228,39 @@ struct BoardColumns: View {
                     .onTapGesture { state.toggleTask(task.id) }
             }
         }
+    }
+}
+
+/// An empty column, kept as a quiet slot so the pipeline still reads left to right.
+private struct EmptyColumnRail: View {
+    let taskState: TaskState
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: taskState.icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(taskState.color)
+            Text("0")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(Theme.textFaint)
+            // The title runs down the rail; it's laid out flat and turned, so it isn't clipped.
+            Text(taskState.title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+                .lineLimit(1)
+                .fixedSize()
+                .rotationEffect(.degrees(90))
+                .frame(width: 20, height: 112)
+        }
+        .padding(.vertical, 12)
+        .frame(width: 44, height: 168, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Theme.columnBG.opacity(0.5))
+                .strokeBorder(Theme.stroke, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .help(taskState.emptyHint)
     }
 }
 

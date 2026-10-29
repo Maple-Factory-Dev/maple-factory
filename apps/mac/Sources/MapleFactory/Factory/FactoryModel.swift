@@ -32,6 +32,19 @@ enum TaskState: CaseIterable, Identifiable {
         }
     }
 
+    /// What kind of task lands in this state's column, for the empty column's tooltip.
+    var emptyHint: String {
+        switch self {
+        case .drafting: "Tasks land here while their brief is still being written."
+        case .planning: "Tasks land here while a planner works out how to build them."
+        case .awaitingApproval: "Tasks land here once their plan is ready and waiting on your approval."
+        case .building: "Tasks land here while a builder works through the approved plan."
+        case .reviewing: "Tasks land here once their build is proven and waiting on a review."
+        case .merged: "Tasks land here once their branch is merged."
+        case .cancelled: "Tasks land here when they're cancelled."
+        }
+    }
+
     var color: Color {
         switch self {
         case .drafting: Theme.State.drafting
