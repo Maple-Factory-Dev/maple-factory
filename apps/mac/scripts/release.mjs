@@ -192,8 +192,8 @@ const CHANGELOG_SCRIPT = `(() => {
     count.textContent = shown[0].querySelector(".date").textContent;
     shown[0].querySelector("header").hidden = true;
   } else {
-    title.textContent = "Changes since " + q.get("from");
-    count.textContent = shown.length + " releases, newest first";
+    title.textContent = "Changes since " + q.get("from") + " \u00b7 " + shown.length + " releases";
+    count.textContent = shown.at(-1).id.slice(1) + " to " + shown[0].id.slice(1) + ", newest first";
   }
   document.querySelector("#range .all").hidden = false;
   document.title = title.textContent.replace(/Beta$/, " (Beta)") + " \u00b7 ${NAME}";
