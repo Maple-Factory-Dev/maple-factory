@@ -89,3 +89,33 @@ import Testing
         #expect(Set(inbox(after).map(\.id)).count == 2)
     }
 }
+
+/// The composer's @ picker: what's being typed after an `@`, who it matches, and what picking inserts.
+struct MentionQueryTests {
+    private let people = [
+        Person(name: "Carol", color: .pink, isHuman: true, github: "carol"),
+        Person(name: "Robert Smith", color: .pink, isHuman: true, github: "bob"),
+        Person(name: "Abby B", color: .pink, isHuman: true, github: "abby"),
+        Person(name: "Planner", color: .pink),
+    ]
+
+    @Test func anAtStartsAQueryButNotInsideAnEmail() {
+        #expect(MentionQuery.at("@", cursor: 1) == MentionQuery(range: NSRange(location: 0, length: 1), query: ""))
+        #expect(MentionQuery.at("hey @bo", cursor: 7) == MentionQuery(range: NSRange(location: 4, length: 3), query: "bo"))
+        #expect(MentionQuery.at("mail a@b", cursor: 8) == nil)
+        #expect(MentionQuery.at("@bob done", cursor: 9) == nil)
+    }
+
+    @Test func matchesLoginsFirstThenNamesAndNeverAgents() {
+        #expect(MentionQuery.matches(people, "b").map(\.github) == ["bob", "abby"])
+        #expect(MentionQuery.matches(people, "smi").map(\.github) == ["bob"])
+        #expect(MentionQuery.matches(people, "").map(\.github) == ["abby", "bob", "carol"])
+    }
+
+    @Test func pickingInsertsTheLoginAndASpace() {
+        let query = MentionQuery.at("cc @ro", cursor: 6)!
+        let out = query.inserting(people[1], into: "cc @ro")
+        #expect(out.text == "cc @bob ")
+        #expect(out.cursor == 8)
+    }
+}

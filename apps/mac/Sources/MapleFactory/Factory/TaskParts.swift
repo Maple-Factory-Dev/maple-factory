@@ -847,6 +847,13 @@ struct TaskComposer: View {
 
     @State private var draft = ""
     @State private var interruptNow = false
+    @State private var mention = MentionState()
+
+    // The box is a TextField, so its cursor isn't known: an `@name` at the end is what's being typed.
+    private var mentionQuery: MentionQuery? { mention.query(draft, cursor: (draft as NSString).length) }
+    private var mentionCandidates: [Person] {
+        mentionQuery.map { MentionQuery.matches(FactoryData.people, $0.query) } ?? []
+    }
 
     var body: some View {
         // A merged or cancelled task can't be redirected any more, whatever tab was picked before.
@@ -894,8 +901,20 @@ struct TaskComposer: View {
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
-                .onExitCommand { focused.wrappedValue = false }
-                .onSubmit(send)
+                .onExitCommand { if !mentionKey(.close) { focused.wrappedValue = false } }
+                .onSubmit { if !mentionKey(.pick) { send() } }
+                .onKeyPress(keys: [.upArrow, .downArrow, .tab]) { press in
+                    mentionKey(press.key == .upArrow ? .up : press.key == .downArrow ? .down : .pick) ? .handled : .ignored
+                }
+                // Teammates to @mention, just above the box.
+                .overlay(alignment: .topLeading) {
+                    let candidates = mentionCandidates
+                    if !candidates.isEmpty {
+                        MentionPicker(people: candidates, highlighted: min(mention.highlighted, candidates.count - 1)) { pickMention($0) }
+                            .alignmentGuide(.top) { $0[.bottom] + 8 }
+                    }
+                }
+                .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
 
             HStack {
                 Image(systemName: "paperclip").foregroundStyle(Theme.textMuted)
@@ -966,6 +985,19 @@ struct TaskComposer: View {
         .background(RoundedRectangle(cornerRadius: 6).fill(active ? Theme.fill : .clear))
         .contentShape(Rectangle())
         .onTapGesture { mode = tabMode }
+    }
+
+    private func mentionKey(_ key: MentionKey) -> Bool {
+        let candidates = mentionCandidates
+        guard mention.handle(key, query: mentionQuery, count: candidates.count) else { return false }
+        if key == .pick { pickMention(candidates[min(mention.highlighted, candidates.count - 1)]) }
+        return true
+    }
+
+    private func pickMention(_ person: Person) {
+        guard let query = mentionQuery else { return }
+        draft = query.inserting(person, into: draft).text
+        focused.wrappedValue = true
     }
 
     private func send() {

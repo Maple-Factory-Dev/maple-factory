@@ -68,6 +68,8 @@ struct MarkdownTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
     var upload: ((PastedFile) async throws -> FactoryClient.Attachment)?
+    /// Arrows, Return, Tab and Esc for the @ picker while it's open; true when it took the key.
+    var onKey: ((MentionKey) -> Bool)? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -139,6 +141,18 @@ struct MarkdownTextView: NSViewRepresentable {
             guard let view else { return }
             parent.text = view.string
             parent.selection = view.selectedRange()
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard let onKey = parent.onKey else { return false }
+            let key: MentionKey? = switch selector {
+            case #selector(NSResponder.moveUp(_:)): .up
+            case #selector(NSResponder.moveDown(_:)): .down
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)): .pick
+            case #selector(NSResponder.cancelOperation(_:)): .close
+            default: nil
+            }
+            return key.map(onKey) ?? false
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

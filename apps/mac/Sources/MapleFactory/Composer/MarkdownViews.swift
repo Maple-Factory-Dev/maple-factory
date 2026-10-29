@@ -306,7 +306,15 @@ struct MarkdownEditor: View {
 
     @State private var previewing = false
     @State private var selection = NSRange(location: 0, length: 0)
+    @State private var mention = MentionState()
     @Environment(FactoryClient.self) private var client: FactoryClient?
+
+    private var mentionQuery: MentionQuery? {
+        previewing || selection.length > 0 ? nil : mention.query(text, cursor: selection.location)
+    }
+    private var mentionCandidates: [Person] {
+        mentionQuery.map { MentionQuery.matches(FactoryData.people, $0.query) } ?? []
+    }
 
     private enum Format {
         case heading, bold, italic, code, link, bullet, numbered, task, quote, mention
@@ -345,7 +353,7 @@ struct MarkdownEditor: View {
                         // the text view's own paste.
                         MarkdownTextView(text: $text, selection: $selection, upload: client.flatMap { client in
                             client.isSignedIn ? { file in try await client.upload(data: file.data, filename: file.name, mime: file.mime) } : nil
-                        })
+                        }, onKey: mentionKey)
                     }
                 }
             }
@@ -367,7 +375,32 @@ struct MarkdownEditor: View {
         .background(Theme.cardBG)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+        // The teammates to @mention, just under the text.
+        .overlay(alignment: .bottomLeading) {
+            let candidates = mentionCandidates
+            if !candidates.isEmpty {
+                MentionPicker(people: candidates, highlighted: min(mention.highlighted, candidates.count - 1), pick: pickMention)
+                    .alignmentGuide(.bottom) { $0[.top] + 34 }
+                    .padding(.leading, 12)
+            }
+        }
+        .zIndex(mentionCandidates.isEmpty ? 0 : 1)
+        .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPreview)) { _ in previewing = true }
+    }
+
+    private func mentionKey(_ key: MentionKey) -> Bool {
+        let candidates = mentionCandidates
+        guard mention.handle(key, query: mentionQuery, count: candidates.count) else { return false }
+        if key == .pick { pickMention(candidates[min(mention.highlighted, candidates.count - 1)]) }
+        return true
+    }
+
+    private func pickMention(_ person: Person) {
+        guard let query = mentionQuery else { return }
+        let out = query.inserting(person, into: text)
+        text = out.text
+        selection = NSRange(location: out.cursor, length: 0)
     }
 
     /// `-actions "paste:editor; preview:editor"` (AppState.play): paste the clipboard the way ⌘V does,
@@ -441,5 +474,113 @@ struct MarkdownEditor: View {
         let start = NSRange(range, in: text).location
         text.replaceSubrange(range, with: replacement)
         selection = NSRange(location: start + (replacement as NSString).length, length: 0)
+    }
+}
+
+// MARK: - @mentions
+
+/// The `@name` being typed just before the cursor, for the teammate picker. Not after a word
+/// character, so `a@b.com` doesn't start one.
+struct MentionQuery: Equatable {
+    /// The `@` and what's typed after it, as UTF-16 offsets (what NSTextView's selection uses).
+    let range: NSRange
+    let query: String
+
+    static func at(_ text: String, cursor: Int) -> MentionQuery? {
+        let ns = text as NSString
+        guard cursor <= ns.length else { return nil }
+        let before = ns.substring(to: cursor) as NSString
+        let regex = try! NSRegularExpression(pattern: #"(?:^|[^\w.@/-])@([A-Za-z0-9-]{0,39})$"#)
+        guard let match = regex.firstMatch(in: before as String, range: NSRange(location: 0, length: before.length)) else { return nil }
+        let name = match.range(at: 1)
+        return MentionQuery(range: NSRange(location: name.location - 1, length: name.length + 1), query: before.substring(with: name))
+    }
+
+    /// Teammates whose login or name starts with the query (logins first), then ones that contain it.
+    static func matches(_ people: [Person], _ query: String, limit: Int = 6) -> [Person] {
+        let q = query.lowercased()
+        func score(_ p: Person) -> Int? {
+            let login = (p.github ?? "").lowercased()
+            let name = p.name.lowercased()
+            if login.hasPrefix(q) { return 0 }
+            if name.split(separator: " ").contains(where: { $0.hasPrefix(q) }) { return 1 }
+            return login.contains(q) || name.contains(q) ? 2 : nil
+        }
+        let scored: [(score: Int, login: String, person: Person)] = people.compactMap { p in
+            guard p.isHuman, let login = p.github, let s = score(p) else { return nil }
+            return (s, login, p)
+        }
+        let sorted = scored.sorted { $0.score != $1.score ? $0.score < $1.score : $0.login < $1.login }
+        return sorted.prefix(limit).map(\.person)
+    }
+
+    /// The text with the `@query` swapped for `@login `, and where the cursor goes after it.
+    func inserting(_ person: Person, into text: String) -> (text: String, cursor: Int) {
+        let insert = "@\(person.github ?? person.name) "
+        let replaced = (text as NSString).replacingCharacters(in: range, with: insert)
+        return (replaced, range.location + (insert as NSString).length)
+    }
+}
+
+/// The keys the picker takes while it's open.
+enum MentionKey { case up, down, pick, close }
+
+/// A popover-style list of teammates to mention; the highlighted one is what Return or Tab picks.
+struct MentionPicker: View {
+    let people: [Person]
+    let highlighted: Int
+    let pick: (Person) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(people.enumerated()), id: \.element.id) { index, person in
+                HStack(spacing: 8) {
+                    AgentAvatar(agent: person, size: 20)
+                    Text(person.name)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 12)
+                    Text("@\(person.github ?? "")")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 6).fill(index == highlighted ? Theme.accent.opacity(0.16) : .clear))
+                .contentShape(Rectangle())
+                .onTapGesture { pick(person) }
+            }
+        }
+        .padding(4)
+        .frame(width: 280)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.cardBG))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+        .shadow(color: .black.opacity(0.16), radius: 12, y: 6)
+    }
+}
+
+/// What a text box needs to offer the picker: what's being typed after an `@`, who matches it, and
+/// which one is highlighted. Kept in the box's @State.
+struct MentionState {
+    var highlighted = 0
+    var dismissedAt: Int?
+
+    func query(_ text: String, cursor: Int) -> MentionQuery? {
+        guard let query = MentionQuery.at(text, cursor: cursor), query.range.location != dismissedAt else { return nil }
+        return query
+    }
+
+    /// Moves the highlight or closes; `pick` is the caller's. False when the picker isn't taking the key.
+    mutating func handle(_ key: MentionKey, query: MentionQuery?, count: Int) -> Bool {
+        guard let query, count > 0 else { return false }
+        switch key {
+        case .up: highlighted = (highlighted - 1 + count) % count
+        case .down: highlighted = (highlighted + 1) % count
+        case .close: dismissedAt = query.range.location
+        case .pick: break
+        }
+        return true
     }
 }
