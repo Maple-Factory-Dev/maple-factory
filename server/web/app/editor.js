@@ -92,7 +92,9 @@ export function markdownEditor({ value = "", placeholder = "Write in Markdown…
   const wrap = h("div", { class: "md-editor", "data-keep": keep },
     h("div", { class: "md-head" }, h("div", { class: "md-tabs" }, write, look), tools),
     box, preview,
-    h("div", { class: "md-foot" }, h("span", { class: "md-m" }, "M"), "Markdown supported"));
+    h("div", { class: "md-foot" },
+      h("span", { class: "md-keys" }, "⌘B bold · ⌘I italic · ⌘K link"), h("span", { class: "spacer" }),
+      h("span", { class: "md-m" }, "M"), "Markdown supported"));
 
   // Back in Write, the cursor is where it was.
   let saved = [0, 0];

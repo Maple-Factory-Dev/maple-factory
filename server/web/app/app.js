@@ -403,6 +403,9 @@ function noteView(id) {
 
 function mount(next, keepCompose) {
   const main = $("main");
+  // Moving the box being typed in blurs it, so put the focus and selection back after.
+  const active = document.activeElement;
+  const range = active && "selectionStart" in active ? [active.selectionStart, active.selectionEnd] : null;
   if (keepCompose) {
     // Swap everything but the boxes being typed in.
     const kept = new Map([...main.querySelectorAll("[data-keep]")].map((el) => [el.dataset.keep, el]));
@@ -412,6 +415,10 @@ function mount(next, keepCompose) {
     }
   }
   main.replaceChildren(next);
+  if (active && active !== document.activeElement && main.contains(active)) {
+    active.focus({ preventScroll: true });
+    if (range) try { active.setSelectionRange(...range); } catch {}
+  }
 }
 
 // ---- a task ----

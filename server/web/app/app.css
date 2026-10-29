@@ -104,8 +104,9 @@ textarea:focus, input:focus, select:focus { outline: 2px solid color-mix(in srgb
 .md-editor .md-input:focus { outline: 0; }
 .md-preview { padding: 12px 16px; }
 .md-nothing { color: var(--faint); }
-.md-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; height: 30px; padding: 0 12px; border-top: 1px solid var(--stroke); font-size: 11px; color: var(--faint); }
-.md-m { display: inline-grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 3px; font: 700 8px/1 var(--mono); }
+.md-foot { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-top: 1px solid var(--stroke); font-size: 11px; color: var(--faint); }
+.md-keys { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.md-m { flex: none; display: inline-grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 3px; font: 700 8px/1 var(--mono); }
 
 /* The composer, a draft's editor and scratchpad notes. */
 input[type="text"], select { width: 100%; min-width: 0; border: 1px solid var(--stroke); background: var(--card); border-radius: 9px; padding: 7px 10px; }
@@ -205,6 +206,7 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
   .status.live::before { margin-right: 0; }
   .fields { flex-direction: column; }
   .btn kbd { display: none; }
+  .md-keys { display: none; }
   :is(.composer, .card.draft) .actionbar .spacer { display: none; }
   :is(.composer, .card.draft) .actionbar .btn { flex: 1; }
   :is(.composer, .card.draft) .actionbar .btn.plan { flex-basis: 100%; order: -1; padding: 9px 14px; }
