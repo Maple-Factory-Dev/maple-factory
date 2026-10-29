@@ -232,24 +232,6 @@ struct FactoryStatusBar: View {
                          : "\(FactoryData.presence.count) online · \(state.fleet.running) running · \(state.queue.count) queued")
                 }
             }
-            HStack(spacing: 5) {
-                Image(systemName: "hand.raised").foregroundStyle(Theme.State.awaitingApproval)
-                Text("\(state.inbox(.approval, mine: true).count)\(state.isCompact ? "" : " awaiting you")")
-            }
-            HStack(spacing: 5) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(Theme.State.cancelled)
-                Text("\(state.handRaises.count)\(state.isCompact ? "" : " need a hand")")
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { state.destination = .needsHand; state.focusedTask = nil }
-            HStack(spacing: 5) {
-                Image(systemName: "xmark.octagon").foregroundStyle(Theme.State.cancelled)
-                Text("\(state.inbox(.failing, mine: true).count)\(state.isCompact ? "" : " failing")")
-            }
-            HStack(spacing: 5) {
-                Image(systemName: "eye").foregroundStyle(Theme.State.reviewing)
-                Text("\(state.inbox(.review, mine: true).count)\(state.isCompact ? "" : " ready for review")")
-            }
             Spacer()
             if state.isLive {
                 if let account = busiestAccount, let session = account.sessionWindow {
@@ -266,20 +248,13 @@ struct FactoryStatusBar: View {
                 }
                 Text(client.status == .live ? "Live" : client.status == .connecting ? "Connecting…" : client.status == .tooNew ? "Update needed" : "Reconnecting…")
             } else {
-            HStack(spacing: 5) {
-                ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
-                Text(state.isCompact ? "34% · 41%" : "34% session · 41% week")
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { state.destination = .usage; state.focusedTask = nil }
-            .help("Usage across all accounts")
-            }
-            if !state.isCompact && !state.isLive {
                 HStack(spacing: 5) {
-                    Image(systemName: "arrow.triangle.branch")
-                    Text("atlas-platform · main")
+                    ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
+                    Text(state.isCompact ? "34% · 41%" : "34% session · 41% week")
                 }
-                Text("Synced 2m ago")
+                .contentShape(Rectangle())
+                .onTapGesture { state.destination = .usage; state.focusedTask = nil }
+                .help("Usage across all accounts")
             }
         }
         .font(.system(size: 12))
