@@ -268,9 +268,13 @@ export interface Evidence {
   failed?: number | null;
   /** An uploaded image or video's path under /api/files/. */
   file?: string | null;
-  /** The agent's role, or a login for "I checked it". */
+  /** The agent's role, or the login of the person who attested. */
   by: string;
   at: number;
+  /** A person signed it off themselves instead of the agent proving it. */
+  attested?: boolean | null;
+  /** Why they attested, if they said. */
+  reason?: string | null;
 }
 
 export interface DoneItem {
@@ -1269,7 +1273,7 @@ export interface ClientMessage_TaskMove {
   id: string;
 }
 
-/** "I checked it" for a Done when item. */
+/** Attest to a Done when item yourself, with an optional reason. */
 export interface ClientMessage_TaskCheckedIt {
   type: "task.checkedIt";
   id: string;

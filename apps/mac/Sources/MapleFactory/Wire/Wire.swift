@@ -1498,11 +1498,15 @@ public enum Wire {
         public var failed: UInt32?
         /// An uploaded image or video's path under /api/files/.
         public var file: String?
-        /// The agent's role, or a login for "I checked it".
+        /// The agent's role, or the login of the person who attested.
         public var by: String
         public var at: UInt64
+        /// A person signed it off themselves instead of the agent proving it.
+        public var attested: Bool?
+        /// Why they attested, if they said.
+        public var reason: String?
 
-        public init(kind: ProofKind, summary: String, command: String? = nil, output: [String] = [], passed: UInt32? = nil, failed: UInt32? = nil, file: String? = nil, by: String, at: UInt64) {
+        public init(kind: ProofKind, summary: String, command: String? = nil, output: [String] = [], passed: UInt32? = nil, failed: UInt32? = nil, file: String? = nil, by: String, at: UInt64, attested: Bool? = nil, reason: String? = nil) {
             self.kind = kind
             self.summary = summary
             self.command = command
@@ -1512,6 +1516,8 @@ public enum Wire {
             self.file = file
             self.by = by
             self.at = at
+            self.attested = attested
+            self.reason = reason
         }
 
         public init(from decoder: Decoder) throws {
@@ -1525,6 +1531,8 @@ public enum Wire {
             file = try c.decodeIfPresent(String.self, forKey: .file)
             by = try c.decode(String.self, forKey: .by)
             at = try c.decode(UInt64.self, forKey: .at)
+            attested = try c.decodeIfPresent(Bool.self, forKey: .attested)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
         }
     }
 
@@ -3668,7 +3676,7 @@ public enum Wire {
         }
     }
 
-    /// "I checked it" for a Done when item.
+    /// Attest to a Done when item yourself, with an optional reason.
     public struct ClientMessageTaskCheckedIt: Codable, Hashable, Sendable {
         public var id: String
         public var item: UInt32
