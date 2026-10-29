@@ -510,6 +510,8 @@ import Security
     var teams: [String] { Array(Set(members.flatMap(\.teams) + (me?.teams ?? []))).sorted() }
 
     private func rebuildGoals() {
+        // Live first: the timeline's start, and so each due day, is the mockup's until it is.
+        if server != nil, FactoryData.liveGoals == nil { FactoryData.liveGoals = [] }
         factoryGoals = goals.map { LiveAdapter.goal($0, members: members, following: isFollowing($0)) }
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
     }
