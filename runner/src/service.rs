@@ -87,7 +87,7 @@ impl Manager {
         match std::env::consts::OS {
             "macos" => Ok(Self::Launchd),
             "linux" => Ok(Self::Systemd),
-            os => bail!("installing a service isn't supported on {os}; run `maple-runner` yourself"),
+            os => bail!("installing a service isn't supported on {os}; run `maple-runner run` yourself"),
         }
     }
 }

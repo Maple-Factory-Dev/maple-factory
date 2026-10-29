@@ -18,8 +18,12 @@ pub const HELP: Styles = Styles::styled()
     .invalid(AnsiColor::Yellow.on_default().effects(Effects::BOLD))
     .error(AnsiColor::Red.on_default().effects(Effects::BOLD));
 
-/// Whether this process colors its output.
+/// Whether this process colors its output. Never under `cargo test`, so tests can compare
+/// plain strings even when run from a terminal.
 pub fn enabled() -> bool {
+    if cfg!(test) {
+        return false;
+    }
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| colors(std::env::var_os("NO_COLOR").as_deref(), std::io::stdout().is_terminal()))
 }
