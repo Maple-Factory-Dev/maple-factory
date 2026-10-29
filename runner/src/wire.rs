@@ -1028,6 +1028,9 @@ pub struct Task {
     /// Its next session skips the wait for a free slot; cleared once it starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
+    /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1876,6 +1879,8 @@ pub enum ClientMessage {
         repo: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     #[serde(rename = "task.edit")]
     TaskEdit {
@@ -1888,6 +1893,9 @@ pub enum ClientMessage {
         shareable: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo: Option<String>,
+        /// Put it in this effort; an empty string takes it out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     /// Send a draft to planning.
     #[serde(rename = "task.plan")]

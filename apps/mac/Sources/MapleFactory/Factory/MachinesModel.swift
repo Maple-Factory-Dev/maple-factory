@@ -220,6 +220,12 @@ extension FactoryData {
     ]
 
     /// Tasks their owners let run in teammates' team slots. Everything else stays on the owner's machines.
+    /// Tasks that are part of a bigger effort.
+    static let seedEfforts: [String: String] = [
+        "ATL-136": "Login revamp", "ATL-138": "Login revamp", "ATL-149": "Login revamp", "ATL-152": "Login revamp", "ATL-163": "Login revamp",
+        "BIL-91": "Stripe hardening", "BIL-85": "Stripe hardening",
+    ]
+
     static let seedShareable: Set<String> = [
         "ATL-144", "ATL-149", "ATL-150", "ATL-158", "ATL-160", "BIL-93", "BIL-95", "DOC-5", "DOC-7", "ONB-21", "ONB-24",
     ]

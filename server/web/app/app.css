@@ -51,6 +51,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .item:hover { background: var(--fill); }
 .item .title { font-weight: 550; }
 .item .sub { font-size: 13px; color: var(--muted); }
+.item.current { background: color-mix(in srgb, var(--building) 9%, transparent); }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 8px; }
 
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 9px; border-radius: 99px; font-size: 12.5px; font-weight: 550; background: var(--fill); }

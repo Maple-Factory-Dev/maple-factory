@@ -530,6 +530,8 @@ export interface Task {
   startAt?: number | null;
   /** Its next session skips the wait for a free slot; cleared once it starts. */
   force?: boolean | null;
+  /** The bigger effort it's part of, like an epic: shared by name with other tasks in its goal. */
+  effort?: string | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -1276,6 +1278,7 @@ export interface ClientMessage_TaskCreate {
   intake?: string | null;
   repo?: string | null;
   after?: string[] | null;
+  effort?: string | null;
 }
 
 export interface ClientMessage_TaskEdit {
@@ -1285,6 +1288,8 @@ export interface ClientMessage_TaskEdit {
   brief?: string | null;
   shareable?: boolean | null;
   repo?: string | null;
+  /** Put it in this effort; an empty string takes it out. */
+  effort?: string | null;
 }
 
 /** Send a draft to planning. */

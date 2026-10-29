@@ -65,6 +65,9 @@ final class AppState {
     /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.
     var attestingItem: String? = nil
     var attestReason = ""
+    /// The task whose Effort row is naming a new effort, and the name typed so far.
+    var namingEffort: String? = nil
+    var effortDraft = ""
     /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
     var schedulingTask: String? = nil
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
@@ -319,6 +322,7 @@ final class AppState {
         task.autoReview = FactoryData.seedReviews[task.id]
         task.hand = FactoryData.seedHands[task.id]
         task.shareable = FactoryData.seedShareable.contains(task.id)
+        task.effort = FactoryData.seedEfforts[task.id]
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
         if task.id == "ATL-160" {
@@ -457,6 +461,17 @@ final class AppState {
 
     func tasks(for goal: Goal) -> [FactoryTask] {
         tasks.filter { $0.goal == goal.name }
+    }
+
+    /// The efforts tasks in `goal` (a goal's name) are part of, by name.
+    func efforts(in goal: String) -> [String] {
+        Set(tasks.filter { $0.goal == goal }.compactMap(\.effort)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Every task in `goal` that's part of `effort`, in id order (ATL-9 before ATL-10).
+    func tasks(inEffort effort: String, goal: String) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal && $0.effort == effort }
+            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
     func stats(for goal: Goal) -> (merged: Int, total: Int) {
@@ -1068,6 +1083,25 @@ final class AppState {
         showToast("Renamed \(id)", icon: "pencil")
     }
 
+    /// Puts a task in an effort, or takes it out of its effort (nil or blank).
+    func setEffort(_ id: String, _ name: String?) {
+        let name = name?.split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
+        let was = task(id).effort
+        guard name != (was ?? "") else { return }
+        if let client, isLive {
+            // Shows at once, here and in its siblings' Effort sections; the server's update confirms it.
+            client.expect(id) { $0.effort = name.isEmpty ? nil : name }
+            client.send(.taskEdit(.init(id: id, effort: name)))
+        } else {
+            update(id) { task in
+                task.effort = name.isEmpty ? nil : name
+                task.activity.insert(ActivityItem(who: FactoryData.me.name,
+                                                  text: name.isEmpty ? "Took it out of effort \(was ?? "")" : "Put it in effort \(name)", when: "now"), at: 0)
+            }
+        }
+        showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
+    }
+
     // MARK: Queue
 
     /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
@@ -1672,6 +1706,17 @@ final class AppState {
                 attestingItem = nil
                 attest(parts[1], item: parts.count > 2 ? Int(parts[2]) ?? 0 : 0, reason: attestReason)
                 attestReason = ""
+            // An Effort row's New effort…, its name typed in (`efforttype:<name>`), then Return; `effort:<id>:<name>` picks one.
+            case "effortnew": effortDraft = ""; namingEffort = parts[1]
+            case "efforttype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    effortDraft.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+            case "effortsave":
+                namingEffort = nil
+                setEffort(parts[1], effortDraft)
+            case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)

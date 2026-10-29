@@ -425,8 +425,10 @@ export const structs: Record<string, Struct> = {
       queueRank: "f64?",
       startAt: "u64?",
       force: "bool?",
+      effort: "string?",
     },
     fieldDocs: {
+      effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
       queueRank: "Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.",
       startAt: "Don't start its next session before this (ms); cleared once that session starts.",
@@ -821,10 +823,13 @@ export const unions: Record<string, Union> = {
         fields: { goal: "string", upTo: "RiskLevel?", note: "string?" },
       },
       "task.create": {
-        fields: { goal: "string", title: "string", brief: "string", shareable: "bool", plan: "bool", tickets: "TicketLink[]", agent: "string?", intake: "string?", repo: "string?", after: "string[]?" },
+        fields: { goal: "string", title: "string", brief: "string", shareable: "bool", plan: "bool", tickets: "TicketLink[]", agent: "string?", intake: "string?", repo: "string?", after: "string[]?", effort: "string?" },
         fieldDocs: { plan: "Send it to planning now; otherwise it stays a draft.", intake: "The request it was composed from, which then tracks it." },
       },
-      "task.edit": { fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?" } },
+      "task.edit": {
+        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?" },
+        fieldDocs: { effort: "Put it in this effort; an empty string takes it out." },
+      },
       "task.plan": { doc: "Send a draft to planning.", fields: { id: "string" } },
       "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
