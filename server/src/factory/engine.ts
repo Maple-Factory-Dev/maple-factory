@@ -13,7 +13,7 @@ import type {
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
@@ -114,6 +114,15 @@ export class Engine {
         const unknown = goal.repos.find((r) => known.length && !known.some((k) => k.name.toLowerCase() === r.toLowerCase()));
         if (unknown) fail(`${unknown} isn't one of the org's repos. Add it in Settings → Repositories (or grant the GitHub App access) first.`);
         if (this.store.goals().some((g) => g.prefix === goal.prefix && g.id !== goal.id)) fail(`Another goal already uses ${goal.prefix}.`);
+        const before = this.store.goal(goal.id);
+        // None (an older app) keeps what it had; all empty is none.
+        goal.prompts = goal.prompts ? cleanPrompts(goal.prompts) : (before?.prompts ?? null);
+        if (goal.prompts && !goal.prompts.planner && !goal.prompts.builder && !goal.prompts.reviewer) goal.prompts = null;
+        if (JSON.stringify(goal.prompts ?? null) !== JSON.stringify(before?.prompts ?? null) && member.role !== "admin") {
+          // Its lead before this save, so nobody can make themselves lead and change the prompts in one go.
+          const lead = before ? before.lead : goal.lead;
+          if (lead !== who) fail(`Only admins or ${lead}, its lead, can change ${goal.name}'s agent instructions.`);
+        }
         this.store.saveGoal(goal);
         this.hooks.broadcast({ type: "goal.updated", goal });
         return;
@@ -148,6 +157,14 @@ export class Engine {
         this.store.savePolicy(msg.policy);
         await audit(this.env, who, "policy.saved", null, msg.policy);
         return this.policyChanged();
+      }
+      case "prompts.save": {
+        if (member.role !== "admin") fail("Only admins can change the org's prompts.");
+        const prompts = cleanPrompts(msg.prompts);
+        this.store.savePrompts(prompts);
+        await audit(this.env, who, "prompts.saved", null, prompts);
+        this.hooks.broadcast({ type: "prompts.updated", prompts });
+        return;
       }
       case "goal.acceptRisk": {
         const goal = this.store.goal(msg.goal) ?? fail("That goal isn't there any more.");
@@ -768,7 +785,8 @@ export class Engine {
     const resumed = priv.movedFrom
       ? { reason: `This task was moved here from ${priv.movedFrom.machine}${priv.movedFrom.commit ? `; its work so far is on the branch, up to ${priv.movedFrom.commit.slice(0, 7)} (any "WIP" commit is unfinished)` : ""}.` }
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
-    const prompt = role === "planner" ? plannerPrompt(task, goal) : role === "builder" ? builderPrompt(task, goal, resumed) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main");
+    const org = this.store.prompts();
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org) : role === "builder" ? builderPrompt(task, goal, resumed, org) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",

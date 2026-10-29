@@ -1,7 +1,7 @@
 // What each factory session is told. Agents report back only through the `maple` MCP tools
 // (tools.ts); the prompts say which, and when to stop.
 
-import type { Goal, Task } from "../wire.ts";
+import type { Goal, PromptAdditions, Role, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
 
 /** The anchor on a change request made because the branch didn't merge: "Didn't merge into <base>". */
@@ -24,6 +24,22 @@ function brief(task: Task, goal: Goal | null) {
   ].filter((l) => l !== null).join("\n");
 }
 
+/** The longest a single prompt addition can be, so one can't crowd out the task itself. */
+export const PROMPT_ADDITION_MAX = 4000;
+
+/** Trimmed and capped, ready to save. */
+export function cleanPrompts(p: PromptAdditions): PromptAdditions {
+  const clean = (text: string | undefined) => (text ?? "").trim().slice(0, PROMPT_ADDITION_MAX).trim();
+  return { planner: clean(p.planner), builder: clean(p.builder), reviewer: clean(p.reviewer) };
+}
+
+/** The org's, then the goal's, instructions for this role: the goal adds to the org's, never replaces it. */
+function extra(role: Role, org: PromptAdditions | null, goal: Goal | null) {
+  const orgText = org?.[role]?.trim();
+  const goalText = goal?.prompts?.[role]?.trim();
+  return (orgText ? `\n\n## Org instructions\n${orgText}` : "") + (goalText ? `\n\n## Goal instructions\n${goalText}` : "");
+}
+
 function changes(task: Task) {
   const queued = task.changes.filter((c) => c.status !== "applied");
   if (!queued.length) return "";
@@ -36,11 +52,11 @@ function comments(task: Task) {
   return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}: ${c.text}`).join("\n");
 }
 
-export function plannerPrompt(task: Task, goal: Goal | null): string {
+export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null): string {
   const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
-${brief(task, goal)}${comments(task)}${changes(task)}${
+${brief(task, goal)}${extra("planner", org, goal)}${comments(task)}${changes(task)}${
     others.length
       ? `\n\n## The goal's other repos\n${others.map((r) => `- ${r}`).join("\n")}\nThis task changes ${taskRepo(task, goal)} only. If the work also needs changes in one of these, plan just this repo's part and list each other repo's part in \`otherRepos\` (repo, title, brief): it becomes its own task, planned and built there once this one merges.`
       : ""
@@ -69,13 +85,13 @@ function unmerged(task: Task) {
 The branch already has the reviewed, approved work, but it doesn't merge into ${base}. Only bring it up to date with origin/${base} and resolve the conflicts (${c.id}); don't redo or extend the plan. Re-prove only the Done when items the conflict resolution touched, then call \`finish\`.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null): string {
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
   return `You are the builder for a software factory task, working in this git worktree on its own branch.
 
-${brief(task, goal)}
+${brief(task, goal)}${extra("builder", org, goal)}
 
 ## Approved plan (v${task.planVersion})
 ${task.planSummary ?? ""}
@@ -95,14 +111,14 @@ If you're stuck on a decision only a person can make, call \`ask\`, end your tur
 When every step is done and every item is proven, call \`finish\` with a short summary of what changed. The factory commits anything left, pushes and opens the review.`;
 }
 
-export function reviewerPrompt(task: Task, goal: Goal | null, base: string): string {
+export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null): string {
   const done = task.doneWhen
     .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
   const previous = task.autoReview?.findings.filter((f) => f.status === "open") ?? [];
   return `You are the review agent for a software factory task. You review; you do not change code.
 
-${brief(task, goal)}
+${brief(task, goal)}${extra("reviewer", org, goal)}
 
 ## The plan it was built to
 ${task.planSummary ?? ""}
