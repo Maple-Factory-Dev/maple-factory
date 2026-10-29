@@ -98,8 +98,9 @@ function receive(m) {
     case "note.removed": state.notes = state.notes.filter((n) => n.id !== m.id); break;
     case "toast": toast(m.text); break;
     case "error":
-      // The task being created didn't take; let the composer try again.
-      if (creating) { creating = null; composer.busy = false; }
+      // The task being created didn't take; let the composer try again. Errors carry no request id, so
+      // take one that comes back soon after the create to be about it; any later one leaves it alone.
+      if (creating && Date.now() - creating.at < 5_000) createFailed();
       toast(m.message);
       break;
     default: return;
@@ -204,7 +205,7 @@ function tasksView() {
 
 // What's in the composer, so a re-render (or a trip to another page and back) doesn't lose it.
 const composer = { key: null, title: "", goal: null, repo: null, brief: "", shareable: false, note: null, busy: false };
-let creating = null; // { title, note } until its task.updated arrives
+let creating = null; // { title, note, at, timer } until its task.updated arrives
 
 const openGoals = () => state.goals.filter((g) => !g.archived);
 const reposOf = (g) => (g?.repos?.length ? g.repos : g?.repo ? [g.repo] : []);
@@ -214,7 +215,7 @@ function newTaskView(r) {
   const key = r.note ?? "";
   if (composer.key !== key) {
     const note = r.note && state.notes.find((n) => n.id === r.note);
-    Object.assign(composer, { key, title: note && note.title !== "Untitled note" ? note.title : "", brief: note?.body ?? "", repo: null, shareable: false, note: note?.id ?? null, busy: false });
+    Object.assign(composer, { key, title: note && note.title !== "Untitled note" ? note.title : "", brief: note?.body ?? "", repo: null, shareable: false, note: r.note ?? null, busy: false });
   }
   const goals = openGoals();
   if (!goals.length) return h("div", {}, h("h1", {}, "New task"), h("div", { class: "card empty" }, state.live ? "There's no goal to add a task to yet. Make one in the Mac app." : "Loading…"));
@@ -223,8 +224,9 @@ function newTaskView(r) {
   const repos = reposOf(goal);
   if (!repos.includes(composer.repo)) composer.repo = goal.repo ?? repos[0] ?? null;
 
-  const title = h("input", { type: "text", placeholder: "What should change?", value: composer.title, oninput: (e) => (composer.title = e.target.value) });
-  const brief = h("textarea", { rows: 10, placeholder: "The brief: what you want and why, what done looks like. Markdown works.", oninput: (e) => (composer.brief = e.target.value) });
+  // Only the text boxes are kept across re-renders; the selects, checkbox and buttons rebuild from `composer`.
+  const title = h("input", { type: "text", "data-keep": "new:title", placeholder: "What should change?", value: composer.title, oninput: (e) => (composer.title = e.target.value) });
+  const brief = h("textarea", { rows: 10, "data-keep": "new:brief", placeholder: "The brief: what you want and why, what done looks like. Markdown works.", oninput: (e) => (composer.brief = e.target.value) });
   brief.value = composer.brief;
   const goalSelect = h("select", { onchange: (e) => { composer.goal = e.target.value; composer.repo = null; render(); } },
     goals.map((g) => h("option", { value: g.id, selected: g.id === composer.goal }, g.name)));
@@ -234,23 +236,25 @@ function newTaskView(r) {
   const create = (plan) => {
     if (composer.busy) return;
     if (!composer.title.trim()) return toast("A task needs a title."), title.focus();
+    // Work out the repo now, from the goal that's picked now.
+    const repos = reposOf(state.goals.find((g) => g.id === composer.goal));
+    const repo = repos.length > 1 && repos.includes(composer.repo) ? composer.repo : null;
     composer.busy = true;
-    creating = { title: composer.title.trim(), note: composer.note };
-    if (!send({ type: "task.create", goal: composer.goal, title: composer.title.trim(), brief: composer.brief, shareable: composer.shareable, plan, tickets: [], repo: repos.length > 1 ? composer.repo : null })) {
-      composer.busy = false;
-      creating = null;
-    }
+    creating = { title: composer.title.trim(), note: composer.note && { id: composer.note, title: composer.title.trim() || "Untitled note", body: composer.brief }, at: Date.now(),
+      timer: setTimeout(() => { if (composer.busy) createFailed("The factory didn't answer; try again."); }, 15_000) };
+    if (!send({ type: "task.create", goal: composer.goal, title: composer.title.trim(), brief: composer.brief, shareable: composer.shareable, plan, tickets: [], repo })) return createFailed();
     render();
   };
   const park = () => {
     if (!composer.title.trim() && !composer.brief.trim()) return toast("There's nothing to save yet.");
     const old = composer.note && state.notes.find((n) => n.id === composer.note);
-    const id = old?.id ?? crypto.randomUUID();
+    const id = composer.note ?? crypto.randomUUID();
+    sentNotes.add(id);
     send({ type: "note.save", note: { id, owner: state.me.login, title: composer.title.trim() || "Untitled note", body: composer.brief, updatedAt: 0, taskId: old?.taskId ?? null } });
     composer.key = null;
     location.hash = `#/notes/${id}`;
   };
-  const form = h("form", { class: "composer", "data-keep": "new", onsubmit: (e) => e.preventDefault(),
+  const form = h("form", { class: "composer", onsubmit: (e) => e.preventDefault(),
     onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); create(true); } } },
     h("label", { class: "field" }, h("span", {}, "Title"), title),
     h("div", { class: "fields" },
@@ -275,11 +279,22 @@ function newTaskView(r) {
 /** A task appeared: if it's the one just composed here, open it, and mark the note it came from. */
 function created(t) {
   if (!creating || t.owner !== state.me?.login || t.title !== creating.title) return;
-  const note = creating.note && state.notes.find((n) => n.id === creating.note);
+  // The note's save went out before the task.create, so it's normally here; if not, link what was composed from it.
+  const from = creating.note;
+  const note = from && (state.notes.find((n) => n.id === from.id) ?? { ...from, owner: state.me.login, updatedAt: 0 });
   if (note) send({ type: "note.save", note: { ...note, taskId: t.id } });
+  clearTimeout(creating.timer);
   creating = null;
   Object.assign(composer, { key: null, busy: false });
   location.hash = `#/t/${t.id}`;
+}
+
+function createFailed(message) {
+  clearTimeout(creating?.timer);
+  creating = null;
+  composer.busy = false;
+  if (message) toast(message);
+  render();
 }
 
 // ---- the scratchpad ----
@@ -287,6 +302,7 @@ function created(t) {
 // What's typed into a note, ahead of the save that's on its way.
 const noteText = new Map(); // id → { title, body }
 const noteSaves = new Map(); // id → timer
+const sentNotes = new Set(); // ids a note.save has gone out for, confirmed or not
 
 function notesView() {
   const notes = [...state.notes].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -317,6 +333,7 @@ function saveNote(id, now) {
     const text = noteText.get(id);
     const note = state.notes.find((n) => n.id === id);
     if (!text) return;
+    sentNotes.add(id);
     send({ type: "note.save", note: { id, owner: state.me.login, title: text.title.trim() || "Untitled note", body: text.body, updatedAt: 0, taskId: note?.taskId ?? null } });
   };
   if (now) go();
@@ -342,7 +359,8 @@ function noteView(id) {
   const turn = () => {
     if (!text.title.trim() && !text.body.trim()) return toast("Write something first.");
     if (noteSaves.has(id)) saveNote(id, true);
-    composer.key = null;
+    // Fill the composer from what's typed here, which may be ahead of state.notes (or not in it at all yet).
+    Object.assign(composer, { key: id, title: text.title.trim(), brief: text.body, repo: null, shareable: false, note: id, busy: false });
     location.hash = `#/new?note=${id}`;
   };
   const remove = () => {
@@ -350,7 +368,9 @@ function noteView(id) {
     clearTimeout(noteSaves.get(id));
     noteSaves.delete(id);
     noteText.delete(id);
-    if (note) send({ type: "note.delete", id });
+    // A save that's gone out but not come back would bring the note back, so delete it then too.
+    if (note || sentNotes.has(id)) send({ type: "note.delete", id });
+    sentNotes.delete(id);
     location.hash = "#/notes";
   };
   const saved = noteSaves.has(id) ? "Saving…" : note ? `Saved ${ago(note.updatedAt)}` : "Not saved yet";
