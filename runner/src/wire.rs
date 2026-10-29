@@ -624,6 +624,9 @@ pub struct Goal {
     /// The GitHub team (slug) it's for: its members follow it unless they unfollow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
+    /// Added to its sessions' prompts after the org's. Only its lead or an admin can change them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptAdditions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1031,6 +1034,9 @@ pub struct Task {
     /// Its next session skips the wait for a free slot; cleared once it starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
+    /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1060,6 +1066,15 @@ pub struct RiskPolicy {
     pub final_reviews: BTreeMap<String, u32>,
     #[serde(default)]
     pub auto_merge: BTreeMap<String, bool>,
+}
+
+/// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptAdditions {
+    pub planner: String,
+    pub builder: String,
+    pub reviewer: String,
 }
 
 /// A goal letting the factory merge without human review, up to a risk level, on the record.
@@ -1255,6 +1270,141 @@ pub struct Member {
     pub role: String,
     #[serde(default)]
     pub teams: Vec<String>,
+}
+
+/// A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsTotals {
+    pub merged: u32,
+    pub auto_merged: u32,
+    pub cancelled: u32,
+    pub created: u32,
+    pub tasks_touched: u32,
+    pub hands_raised: u32,
+    /// Up right now, whenever they were raised.
+    pub hands_open: u32,
+    pub questions: u32,
+    pub steers: u32,
+    pub prompts: u32,
+    pub restarts: u32,
+    pub review_rounds: u32,
+    pub findings: u32,
+    pub plan_versions: u32,
+    pub approvals: u32,
+    /// From created to merged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle_median_ms: Option<u64>,
+    /// How long a hand stays up before someone answers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hand_open_median_ms: Option<u64>,
+    /// How long an agent's question waits for its answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_median_ms: Option<u64>,
+    /// Plans approved at version 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_try_approval: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_plan_versions: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_rounds_per_merge: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steers_per_task: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsCount {
+    pub key: String,
+    pub count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsDay {
+    /// YYYY-MM-DD (UTC).
+    pub day: String,
+    pub merges: u32,
+    pub hands: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsGoalRow {
+    pub goal: String,
+    pub name: String,
+    pub tasks: u32,
+    pub merged: u32,
+    pub hands: u32,
+    pub steers: u32,
+    pub review_rounds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle_median_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsAgentRow {
+    pub agent: String,
+    pub tasks: u32,
+    pub merged: u32,
+    pub hands: u32,
+    pub steers: u32,
+    pub review_rounds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_try_approval: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsTaskRow {
+    pub task: String,
+    pub title: String,
+    pub goal: String,
+    pub state: TaskState,
+    pub touchpoints: u32,
+    pub hands: u32,
+    pub steers: u32,
+    pub questions: u32,
+    pub review_rounds: u32,
+}
+
+/// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsSummary {
+    pub days: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub since: u64,
+    pub generated_at: u64,
+    /// Rows in the window worked out from older tasks' history rather than recorded as they happened.
+    pub inferred: u32,
+    pub totals: StatsTotals,
+    /// medianMs: how long they stayed up.
+    #[serde(default)]
+    pub hands_by_reason: Vec<StatsCount>,
+    #[serde(default)]
+    pub findings_by_kind: Vec<StatsCount>,
+    #[serde(default)]
+    pub findings_by_severity: Vec<StatsCount>,
+    #[serde(default)]
+    pub restarts_by_cause: Vec<StatsCount>,
+    #[serde(default)]
+    pub prompts: Vec<StatsCount>,
+    #[serde(default)]
+    pub review_verdicts: Vec<StatsCount>,
+    #[serde(default)]
+    pub daily: Vec<StatsDay>,
+    #[serde(default)]
+    pub goals: Vec<StatsGoalRow>,
+    #[serde(default)]
+    pub agents: Vec<StatsAgentRow>,
+    /// The tasks with the most touchpoints, most first.
+    #[serde(default)]
+    pub top_tasks: Vec<StatsTaskRow>,
 }
 
 /// Runner → server.
@@ -1703,6 +1853,11 @@ pub enum ClientMessage {
     PolicySave {
         policy: RiskPolicy,
     },
+    /// Admins only: the org's prompt additions.
+    #[serde(rename = "prompts.save")]
+    PromptsSave {
+        prompts: PromptAdditions,
+    },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]
     ReposRefresh,
@@ -1744,6 +1899,8 @@ pub enum ClientMessage {
         repo: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     #[serde(rename = "task.edit")]
     TaskEdit {
@@ -1756,6 +1913,9 @@ pub enum ClientMessage {
         shareable: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo: Option<String>,
+        /// Put it in this effort; an empty string takes it out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     /// Send a draft to planning.
     #[serde(rename = "task.plan")]
@@ -1863,6 +2023,13 @@ pub enum ClientMessage {
         mockup: String,
         text: String,
     },
+    /// Admins only: the factory's statistics, answered with `stats`.
+    #[serde(rename = "stats.get")]
+    StatsGet {
+        days: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+    },
 }
 
 /// Server → app.
@@ -1887,6 +2054,9 @@ pub enum ServerToClient {
         policy: RiskPolicy,
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
+        /// The org's prompt additions. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompts: Option<PromptAdditions>,
         #[serde(default)]
         online: Vec<Presence>,
         #[serde(default)]
@@ -1963,6 +2133,10 @@ pub enum ServerToClient {
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
     },
+    #[serde(rename = "prompts.updated")]
+    PromptsUpdated {
+        prompts: PromptAdditions,
+    },
     #[serde(rename = "repos.updated")]
     ReposUpdated {
         #[serde(default)]
@@ -1979,6 +2153,11 @@ pub enum ServerToClient {
     SessionEnded {
         machine: String,
         end: SessionEnd,
+    },
+    /// The statistics `stats.get` asked for, to that connection only.
+    #[serde(rename = "stats")]
+    Stats {
+        summary: StatsSummary,
     },
     #[serde(rename = "error")]
     Error {

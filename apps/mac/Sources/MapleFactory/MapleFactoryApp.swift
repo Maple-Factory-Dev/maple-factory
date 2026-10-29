@@ -315,7 +315,7 @@ struct ContentView: View {
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
         if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing,
-           ![.scratchpad, .usage, .needsHand, .machines, .intake].contains(state.destination) {
+           ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
                     .contentShape(Rectangle())
@@ -372,6 +372,7 @@ extension ContentView {
         case .activity: ActivityView()
         case .scratchpad: ScratchpadView()
         case .usage: UsageView()
+        case .statistics: StatisticsView()
         case .needsHand: NeedsHandView()
         case .machines:
             if client.isSignedIn { LiveMachinesView() } else { MachinesView() }

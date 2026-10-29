@@ -52,6 +52,8 @@ import Security
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
+    /// The org's additions to every session's prompt, by role; nil from an older server.
+    private(set) var prompts: Wire.PromptAdditions?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
     /// The newest released runner, when the factory has a release to offer.
@@ -59,6 +61,10 @@ import Security
     /// This factory's maple-server version, and a newer one when there is (admins only).
     private(set) var serverVersion: String?
     private(set) var serverUpdate: Wire.ServerUpdate?
+    /// The last statistics asked for (admins only).
+    private(set) var stats: Wire.StatsSummary?
+    /// Admins see Statistics; signed out, the mockup shows it.
+    var canSeeStats: Bool { !isSignedIn || me?.role == "admin" }
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
@@ -236,6 +242,7 @@ import Security
         drafts = [:]
         follows = [:]
         policy = nil
+        prompts = nil
         acceptances = []
         repos = []
         runnerLatest = nil
@@ -346,6 +353,7 @@ import Security
             FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
             policy = snapshot.policy
             acceptances = snapshot.acceptances
+            prompts = snapshot.prompts
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
@@ -416,10 +424,14 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+        case .promptsUpdated(let update):
+            prompts = update.prompts
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
             rebuild()
+        case .stats(let reply):
+            stats = reply.summary
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
@@ -517,6 +529,11 @@ import Security
         send(.policySave(.init(policy: LiveAdapter.wire(policy))))
     }
 
+    /// Admins only; the server trims them and says so with prompts.updated.
+    func save(prompts: Wire.PromptAdditions) {
+        send(.promptsSave(.init(prompts: prompts)))
+    }
+
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
         guard let goal = goal(named: name) else { return }
         send(.goalAcceptRisk(.init(goal: goal.id, upTo: upTo.map(LiveAdapter.wireLevel), note: note)))
@@ -608,10 +625,14 @@ import Security
         return request
     }
 
+    /// The factory's statistics over the last `days`; the answer lands in `stats`.
+    func loadStats(days: Int, goal: String? = nil) {
+        send(.statsGet(.init(days: UInt32(days), goal: goal)))
+    }
+
     /// Each task's diff as last fetched, and the change it was fetched for.
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
 
-    /// Fetches a task's diff unless the one held is for the same change (`key`).
     /// Agent time per goal over the last week (`GET /api/usage/goals`).
     struct GoalTime: Decodable {
         struct TaskTime: Decodable { let id: String; let ms: Double }
@@ -625,6 +646,7 @@ import Security
         (try? await api("/api/usage/goals")) ?? []
     }
 
+    /// Fetches a task's diff unless the one held is for the same change (`key`).
     func loadDiff(task id: String, key: String) async {
         guard diffs[id]?.key != key, let server, let token else { return }
         var request = URLRequest(url: server.appending(path: "/api/tasks/\(id)/diff"))
@@ -797,8 +819,11 @@ import Security
         return (health, clock.now - start)
     }
 
+    /// `-devAs <login>` signs in as that member instead (made a plain member if they're new), for screenshots of what a non-admin sees.
     nonisolated static func devSignIn(_ server: URL) async throws -> SignInResult {
-        var request = URLRequest(url: server.appending(path: "/dev/token"))
+        var url = server.appending(path: "/dev/token")
+        if let login = AppDefaults.string(forKey: "devAs"), !login.isEmpty { url.append(queryItems: [URLQueryItem(name: "as", value: login)]) }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         var result: SignInResult = try await load(request)
         result.server = server

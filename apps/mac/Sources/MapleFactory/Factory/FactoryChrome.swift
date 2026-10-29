@@ -21,6 +21,7 @@ struct FactoryTopBar: View {
                 case .activity: title("Activity", icon: "waveform.path.ecg")
                 case .scratchpad: title("Scratchpad", icon: "note.text")
                 case .usage: title("Usage", icon: "gauge.with.dots.needle.33percent")
+                case .statistics: title("Statistics", icon: "chart.bar.xaxis")
                 case .needsHand: title("Needs a hand", icon: "hand.raised")
                 case .machines: title("Machines", icon: "cpu")
                 case .intake: title("Requests", icon: "tray.and.arrow.down")
@@ -126,6 +127,7 @@ struct FactoryTopBar: View {
         case .activity: "Activity"
         case .scratchpad: "Scratchpad"
         case .usage: "Usage"
+        case .statistics: "Statistics"
         case .needsHand: "Needs a hand"
         case .machines: "Machines"
         case .intake: "Requests"

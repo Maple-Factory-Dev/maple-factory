@@ -232,6 +232,8 @@ struct FactoryTask: Identifiable {
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
+    /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.
+    var effort: String? = nil
     /// The GitHub repo it changes (live goals that span several), and the tasks it builds on.
     var repo: String? = nil
     var after: [String] = []
@@ -407,12 +409,12 @@ struct InboxItem: Identifiable {
 }
 
 enum Destination: Hashable {
-    case inbox, myTasks, activity, scratchpad, usage, needsHand, machines, intake, allGoals
+    case inbox, myTasks, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals
     case goal(String)
 
     /// The pages that aren't goals, by the names `-destination` takes.
     private static let pages: [String: Destination] = [
-        "inbox": .inbox, "mytasks": .myTasks, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage,
+        "inbox": .inbox, "mytasks": .myTasks, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
         "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals,
     ]
 

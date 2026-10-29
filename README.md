@@ -36,7 +36,7 @@ On a phone or any browser, `/app` is the web companion: the inbox and task pages
 diff, review, checks, proofs) with approve, request changes, merge and answers to agents; no terminals
 or machine settings. Task links (`/t/<ID>`) open the Mac app and fall back to it.
 End-to-end tests for each piece are in server/test (each says what it needs at the top). Launch flags for screenshots: `-onboardingURL localhost:8788
--onboardingContinue YES` plays the real sign-in; `-destination machines -liveSession first` opens a terminal.
+-onboardingContinue YES` plays the real sign-in (`-devAs <login>` as a member); `-destination machines -liveSession first` opens a terminal.
 
 ### Testing without taking over the screen
 

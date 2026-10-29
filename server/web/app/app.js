@@ -505,6 +505,7 @@ function taskView(id) {
       h("span", { class: "muted" }, `${name(t.owner)} · ${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
       t.after.map((id, i) => [i ? ", " : "", h("a", { href: `#/t/${id}` }, id)])),
+    effortLine(t),
     h("div", { class: "stepper" }, STATES.map((s, i) => h("span", { class: i <= reached ? `bg-${STATES[Math.min(i, reached)]}` : "" }))),
     t.waiting && h("p", { class: "muted" }, t.waiting),
     t.liveLog && !t.waiting && t.worker && h("p", { class: "muted" }, `${name(t.worker.role)}: ${t.liveLog}`),
@@ -512,10 +513,57 @@ function taskView(id) {
     t.hand && handCard(t),
     t.question && !t.hand && questionCard(t),
     t.state === "drafting" && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
+    t.effort && effortCard(t),
     h("div", { class: "tabs", style: "margin-top:22px" },
       h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, "Overview"),
       t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, `Diff +${t.diff.added} −${t.diff.removed}`)),
     tab === "diff" ? diffView(t) : overview(t));
+}
+
+// ---- efforts: tasks in a goal that share a name, like an epic ----
+
+const effortEdits = new Map(); // task id → the effort name being typed
+
+/** Every task in `t`'s goal that's part of `effort`, in id order (ATL-9 before ATL-10). */
+const effortTasks = (t, effort) => [...state.tasks.values()].filter((x) => x.goal === t.goal && x.effort === effort)
+  .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+function effortLine(t) {
+  const typed = effortEdits.get(t.id);
+  if (typed == null) {
+    return h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Effort: ",
+      t.effort ? h("b", {}, t.effort) : "none", " · ",
+      h("a", { href: "javascript:void 0", onclick: () => { effortEdits.set(t.id, t.effort ?? ""); render(); document.querySelector(`[data-keep="${t.id}:effort"] input`)?.focus(); } },
+        t.effort ? "Change" : "Add to an effort"));
+  }
+  const efforts = [...new Set([...state.tasks.values()].filter((x) => x.goal === t.goal && x.effort).map((x) => x.effort))].sort();
+  const save = () => {
+    const name = (effortEdits.get(t.id) ?? "").trim();
+    if (name !== (t.effort ?? "") && !send({ type: "task.edit", id: t.id, effort: name })) return;
+    effortEdits.delete(t.id);
+    render();
+  };
+  const cancel = () => { effortEdits.delete(t.id); render(); };
+  return h("form", { class: "row", "data-keep": `${t.id}:effort`, style: "font-size:13px;margin-top:6px;gap:6px", onsubmit: (e) => { e.preventDefault(); save(); } },
+    h("span", { class: "muted" }, "Effort"),
+    h("input", { type: "text", list: `efforts-${t.id}`, placeholder: "A name, like Login revamp; empty for none", value: typed, style: "flex:1;min-width:0",
+      oninput: (e) => effortEdits.set(t.id, e.target.value), onkeydown: (e) => { if (e.key === "Escape") cancel(); } }),
+    h("datalist", { id: `efforts-${t.id}` }, efforts.map((name) => h("option", { value: name }))),
+    h("button", { class: "btn small", type: "submit" }, "Save"),
+    h("button", { class: "btn small", type: "button", onclick: cancel }, "Cancel"));
+}
+
+function effortCard(t) {
+  const tasks = effortTasks(t, t.effort);
+  const counted = tasks.filter((x) => x.state !== "cancelled");
+  return [h("h2", { class: "row" }, h("span", {}, `Effort · ${t.effort}`), h("span", { class: "spacer" }),
+      h("span", { style: "text-transform:none;letter-spacing:0;font-weight:500" }, `${counted.filter((x) => x.state === "merged").length} of ${counted.length} merged`)),
+    h("div", { class: "list" }, tasks.map((x) => h("a", { class: `item${x.id === t.id ? " current" : ""}`, href: `#/t/${x.id}` },
+      h("span", { class: `dot bg-${x.state}` }),
+      h("div", { style: "flex:1;min-width:0" },
+        h("div", { class: "title" }, x.title),
+        h("div", { class: "sub" }, h("span", { class: "mono" }, x.id), x.id === t.id ? " · this task" : "")),
+      h("span", { class: `pill s-${x.state}` }, STATE_TITLE[x.state]))))];
 }
 
 function handCard(t) {
