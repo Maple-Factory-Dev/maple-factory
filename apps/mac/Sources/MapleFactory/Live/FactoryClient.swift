@@ -982,6 +982,10 @@ extension FactoryClient {
     /// What the task's worker session is doing, from its machine's live sessions: nil when there's no
     /// worker, its machine isn't known, or the machine doesn't list that session.
     func workerActivity(for worker: FactoryTask.Worker?) -> Wire.Activity? {
+        Self.workerActivity(for: worker, in: machines)
+    }
+
+    static func workerActivity(for worker: FactoryTask.Worker?, in machines: [Wire.Machine]) -> Wire.Activity? {
         guard let worker else { return nil }
         return machines.first { $0.id == worker.machine }?.sessions.first { $0.session.id == worker.session }?.activity ?? nil
     }
