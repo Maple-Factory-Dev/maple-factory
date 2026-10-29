@@ -180,6 +180,12 @@ struct ContentView: View {
         .onAppear { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: state.destination) { if state.sidebarFloating { state.toggleSidebar() } }
+        .onChange(of: client.notice) { _, notice in
+            guard let notice else { return }
+            state.serverRefused(notice)
+            // Cleared once shown, so the same refusal again still reaches the buttons.
+            client.notice = nil
+        }
         .confirmationDialog(
             "Archive \(state.archiving ?? "")?",
             isPresented: Binding(get: { state.archiving != nil }, set: { if !$0 { state.archiving = nil } }),
