@@ -63,11 +63,12 @@ struct TaskActionsMenu<Label: View>: View {
     let task: FactoryTask
     @ViewBuilder var label: Label
     @State private var confirmCancel = false
+    @State private var scheduling = false
 
     var body: some View {
         if task.state != .merged {
             Menu {
-                TaskActionButtons(task: task, confirmCancel: $confirmCancel)
+                TaskActionButtons(task: task, confirmCancel: $confirmCancel, schedule: { scheduling = true })
             } label: {
                 label
             }
@@ -75,6 +76,7 @@ struct TaskActionsMenu<Label: View>: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Task actions")
+            .popover(isPresented: $scheduling, arrowEdge: .bottom) { SchedulePopover(task: task) }
             .cancelTaskConfirmation(task: task, isPresented: Binding(
                 get: { confirmCancel || appState.confirmingCancel == task.id },
                 set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
@@ -83,14 +85,31 @@ struct TaskActionsMenu<Label: View>: View {
     }
 }
 
-/// Retry and Cancel task…, for a menu or a row's context menu. Cancel only asks; the caller shows
+/// The queue's (Move to top, Schedule…, Start now; Queue on a draft), Retry and Cancel task…, for a menu or a row's context menu. Cancel only asks; the caller shows
 /// the confirmation (`cancelTaskConfirmation`).
 struct TaskActionButtons: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     @Binding var confirmCancel: Bool
+    /// Shows the Schedule… popover; without it there's no Schedule….
+    var schedule: (() -> Void)? = nil
 
     var body: some View {
+        if task.queued {
+            Button { appState.moveToTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
+            Button { appState.moveToBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
+            if let schedule {
+                Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
+            }
+            Button { appState.startNow(task.id) } label: { Label("Start now", systemImage: "play") }
+            Divider()
+        } else if task.state == .drafting {
+            Button { appState.queue(task.id, before: nil) } label: { Label("Queue", systemImage: "list.number") }
+            if let schedule {
+                Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
+            }
+            Divider()
+        }
         if task.state != .merged {
             // Waiting on its plan's approval, nothing is running to retry; request changes instead.
             if task.state != .drafting && task.state != .awaitingApproval {

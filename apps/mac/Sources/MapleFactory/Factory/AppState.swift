@@ -221,6 +221,11 @@ final class AppState {
                                          when: "4m", via: "Slack #maple-requests"))
         }
         if task.hand != nil { task.needsYou = true }
+        // The mockup's queue: what's waiting for a slot, in the order it was approved.
+        if let at = FactoryData.queuedTasks.firstIndex(where: { $0.id == task.id }), task.detail.hasPrefix("Queued") {
+            task.queued = true
+            task.queueRank = Double(at)
+        }
         return task
     }
     /// Change requests and comments sent from this session.
@@ -877,6 +882,81 @@ final class AppState {
             return
         }
         update(id) { $0.state = .planning }
+    }
+
+    // MARK: Queue
+
+    /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
+    func queue(_ id: String, before: String?) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, before: before)))
+            return
+        }
+        let line = queueOrder.filter { $0.id != id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        let rank: Double
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            rank = at > 0 ? (line[at - 1].queueRank + target.queueRank) / 2 : target.queueRank - 1
+        } else {
+            rank = (line.map(\.queueRank).max() ?? 0) + 1
+        }
+        update(id) { task in
+            task.queueRank = rank
+            joinQueue(&task)
+        }
+    }
+
+    func moveToTop(_ id: String) { queue(id, before: "top") }
+    func moveToBottom(_ id: String) { queue(id, before: nil) }
+
+    /// Holds a task until `at`, keeping its place; a draft joins the queue.
+    func schedule(_ id: String, at: Date) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, startAt: UInt64(at.timeIntervalSince1970 * 1000))))
+            return
+        }
+        update(id) { task in
+            task.startAt = at
+            joinQueue(&task)
+        }
+    }
+
+    /// Clears its schedule and puts it at the front.
+    func startNow(_ id: String) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, before: "top", clearSchedule: true)))
+            return
+        }
+        let first = queueOrder.first { $0.id != id }
+        update(id) { task in
+            task.startAt = nil
+            if let first { task.queueRank = first.queueRank - 1 }
+            joinQueue(&task)
+        }
+    }
+
+    /// Takes its schedule off, keeping its place.
+    func unschedule(_ id: String) {
+        if let client, isLive {
+            client.send(.taskQueue(.init(id: id, clearSchedule: true)))
+            return
+        }
+        update(id) { task in
+            task.startAt = nil
+            joinQueue(&task)
+        }
+    }
+
+    /// The mockup's queue: a draft goes to planning.
+    private func joinQueue(_ task: inout FactoryTask) {
+        if task.state == .drafting { task.state = .planning }
+        task.queued = true
+        task.detail = task.scheduled ? "Scheduled" : "Waiting for a free slot"
+    }
+
+    /// Every queued task, front first.
+    var queueOrder: [FactoryTask] {
+        tasks.filter(\.queued).sorted { $0.queueRank < $1.queueRank }
     }
 
     func update(_ id: String, _ mutate: (inout FactoryTask) -> Void) {
