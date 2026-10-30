@@ -20,6 +20,11 @@
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
+//   POST /repos/:o/:r/actions/runs/:id/rerun-failed-jobs  the same, for the workflow run (every check is a GitHub Actions job)
+//   POST /repos/:o/:r/actions/jobs/:id/rerun              that job alone queues again, then passes
+//   POST /repos/:o/:r/check-runs/:id/rerequest            that check run alone queues again, then passes
+//   GET  /repos/:o/:r/actions/jobs/:id/logs               302 to the job's plain text log (timestamped lines; `##[error]` when it failed)
+//   GET  /repos/:o/:r/check-runs/:id                      a check run with its output
 //   POST /app-manifests/:code/conversions                /setup's new app; code `app-<owner>` makes one owned by <owner>
 //   GET  /users/:login                                   a personal account for each --user, otherwise an organization
 //   POST /login/oauth/access_token                       sign-in: code `as-<login>` is <login>'s user token
@@ -70,7 +75,7 @@ const installed = new Map(values.installed.map((r) => [r.toLowerCase(), 1000 + a
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
 const pulls = [];
-const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite }]
+const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite, log? }]
 const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
 const threads = new Map(); // `${owner}/${repo}#${number}` → [{ path, line, … }]
 let lastNumber = 0;
@@ -94,6 +99,43 @@ function checkRunsFor(owner, repo, sha) {
   const key = `${owner}/${repo}@${sha}`;
   if (!runs.has(key)) runs.set(key, values.ci.map((name) => ({ id: ++lastRun, name, status: "queued", conclusion: null, suite: 1 })));
   return runs.get(key);
+}
+
+/** A job's log as GitHub serves it: every line timestamped, a failure marked `##[error]`. */
+function jobLog(r) {
+  const at = (i) => new Date(Date.UTC(2026, 9, 29, 12, 0, i)).toISOString().replace("Z", "0000Z");
+  const lines = r.log ?? [
+    "##[group]Run actions/checkout@v4",
+    "Syncing repository: acme/greeter",
+    "##[endgroup]",
+    `##[group]Run npm ${r.name}`,
+    `> greeter@1.0.0 ${r.name}`,
+    ...(r.conclusion === "failure"
+      ? ["not ok 1 - says hello", "  expected: 'hello'", "  actual: 'helo'", "##[error]Process completed with exit code 1."]
+      : ["ok 1 - says hello"]),
+    "##[endgroup]",
+  ];
+  return "\uFEFF" + lines.map((l, i) => `${at(i)} ${l}`).join("\n") + "\n";
+}
+
+/** Where a run is: every fake check is a GitHub Actions job in workflow run 7. */
+const RUN = 7;
+const findRun = (owner, repo, id) => {
+  for (const [key, list] of runs) {
+    if (!key.startsWith(`${owner}/${repo}@`)) continue;
+    const r = list.find((x) => x.id === id);
+    if (r) return { r, sha: key.split("@")[1] };
+  }
+  return null;
+};
+
+/** A run starts again, and passes a moment later. */
+function restart(owner, repo, sha, r) {
+  Object.assign(r, { status: "in_progress", conclusion: null });
+  setTimeout(() => {
+    Object.assign(r, { status: "completed", conclusion: "success" });
+    deliver("check_run", { action: "completed", check_run: { head_sha: sha, name: r.name, conclusion: "success" }, repository: repository(owner, repo) });
+  }, 1500);
 }
 
 async function deliver(kind, payload) {
@@ -185,7 +227,7 @@ createServer((req, res) => {
       const list = checkRunsFor(body.owner, body.repo, body.sha);
       for (const r of body.runs) {
         const run = list.find((x) => x.name === r.name);
-        Object.assign(run, { status: "completed", conclusion: r.conclusion });
+        Object.assign(run, { status: "completed", conclusion: r.conclusion, ...(r.log ? { log: r.log } : {}) });
         if (!body.quiet) await deliver("check_run", { action: "completed", check_run: { head_sha: body.sha, name: run.name, conclusion: r.conclusion }, repository: repository(body.owner, body.repo) });
       }
       return send(res, 200, { runs: list });
@@ -335,7 +377,11 @@ createServer((req, res) => {
       const list = checkRunsFor(m[1], m[2], m[3]);
       return send(res, 200, {
         total_count: list.length,
-        check_runs: list.map((r) => ({ id: r.id, name: r.name, status: r.status, conclusion: r.conclusion, check_suite: { id: r.suite }, started_at: new Date(Date.now() - 42_000).toISOString(), completed_at: r.status === "completed" ? new Date().toISOString() : null })),
+        check_runs: list.map((r) => ({
+          id: r.id, name: r.name, status: r.status, conclusion: r.conclusion, check_suite: { id: r.suite }, app: { slug: "github-actions" },
+          html_url: `https://github.com/${m[1]}/${m[2]}/actions/runs/${RUN}/job/${r.id}`, details_url: `https://github.com/${m[1]}/${m[2]}/actions/runs/${RUN}/job/${r.id}`,
+          started_at: new Date(Date.now() - 42_000).toISOString(), completed_at: r.status === "completed" ? new Date().toISOString() : null,
+        })),
       });
     }
     if (req.method === "GET" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/commits\/([0-9a-f]+)\/status$/))) {
@@ -349,15 +395,53 @@ createServer((req, res) => {
       for (const [key, list] of runs) {
         const [repoKey, sha] = key.split("@");
         if (repoKey !== `${m[1]}/${m[2]}`) continue;
-        for (const r of list.filter((x) => x.suite === Number(m[3]) && x.conclusion === "failure")) {
-          Object.assign(r, { status: "in_progress", conclusion: null });
-          setTimeout(() => {
-            Object.assign(r, { status: "completed", conclusion: "success" });
-            deliver("check_run", { action: "completed", check_run: { head_sha: sha, name: r.name, conclusion: "success" }, repository: repository(m[1], m[2]) });
-          }, 1500);
-        }
+        for (const r of list.filter((x) => x.suite === Number(m[3]) && x.conclusion === "failure")) restart(m[1], m[2], sha, r);
       }
       return send(res, 201, {});
+    }
+    if (req.method === "POST" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/actions\/runs\/(\d+)\/rerun-failed-jobs$/))) {
+      const g = grant(req, m[2], "actions", "write");
+      if (g) return deny(g);
+      if (Number(m[3]) !== RUN) return send(res, 404, { message: "Not Found" });
+      for (const [key, list] of runs) {
+        const [repoKey, sha] = key.split("@");
+        if (repoKey !== `${m[1]}/${m[2]}`) continue;
+        for (const r of list.filter((x) => x.conclusion === "failure")) restart(m[1], m[2], sha, r);
+      }
+      return send(res, 201, {});
+    }
+    if (req.method === "POST" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/(actions\/jobs|check-runs)\/(\d+)\/(rerun|rerequest)$/))) {
+      const actions = m[3] === "actions/jobs";
+      if (actions !== (m[5] === "rerun")) return send(res, 404, { message: "Not Found" });
+      const g = grant(req, m[2], actions ? "actions" : "checks", "write");
+      if (g) return deny(g);
+      const found = findRun(m[1], m[2], Number(m[4]));
+      if (!found) return send(res, 404, { message: "Not Found" });
+      if (found.r.status !== "completed") return send(res, 403, { message: "This job is already running." });
+      restart(m[1], m[2], found.sha, found.r);
+      return send(res, 201, {});
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/actions\/jobs\/(\d+)\/logs$/))) {
+      const g = grant(req, m[2], "actions", "read");
+      if (g) return deny(g);
+      const found = findRun(m[1], m[2], Number(m[3]));
+      if (!found) return send(res, 404, { message: "Not Found" });
+      // GitHub redirects to a short-lived blob URL; this one is on the fake itself and needs no token.
+      res.writeHead(302, { location: `http://localhost:${values.port}/_blob/job-logs/${m[1]}/${m[2]}/${m[3]}` }).end();
+      return;
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/_blob\/job-logs\/([^/]+)\/([^/]+)\/(\d+)$/))) {
+      const found = findRun(m[1], m[2], Number(m[3]));
+      if (!found) return send(res, 404, { message: "Not Found" });
+      return res.writeHead(200, { "content-type": "text/plain" }).end(jobLog(found.r));
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/check-runs\/(\d+)$/))) {
+      const g = grant(req, m[2], "checks", "read");
+      if (g) return deny(g);
+      const found = findRun(m[1], m[2], Number(m[3]));
+      if (!found) return send(res, 404, { message: "Not Found" });
+      const r = found.r;
+      return send(res, 200, { id: r.id, name: r.name, status: r.status, conclusion: r.conclusion, output: { title: r.conclusion === "failure" ? "1 test failed" : "Passed", summary: jobLog(r), text: null } });
     }
     send(res, 404, { message: "Not Found" });
   });
