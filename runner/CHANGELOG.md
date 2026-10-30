@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.65.0 — 2026-10-30
+
+Runs a repo's preflight script (runtimes, brew, services) in a new worktree before its setup script: the first time a machine's checkout of the repo is used, and again when the command or a watched file such as .tool-versions or Brewfile changes.
+
 ## 0.64.0 — 2026-10-30
 
 Keeps up with the factory's latest protocol, which now carries each repository's description and owner avatar; nothing changes in how the runner works.
