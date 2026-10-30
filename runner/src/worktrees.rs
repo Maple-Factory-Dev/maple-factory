@@ -897,6 +897,8 @@ pub struct TaskWork<'a> {
     pub merged: bool,
     /// The PR's head commit and the commit the task last pushed.
     pub heads: &'a [String],
+    /// Merged, and its branch may still be on origin: delete it there too (see `delete_remote`).
+    pub delete_remote: bool,
 }
 
 fn is_sha(s: &str) -> bool {
@@ -1105,7 +1107,7 @@ mod tests {
     }
 
     fn work<'a>(wt: &'a str, repo: &'a str, merged: bool, heads: &'a [String]) -> TaskWork<'a> {
-        TaskWork { cwd: wt, repo_dir: repo, branch: "agent/fix", merged, heads }
+        TaskWork { cwd: wt, repo_dir: repo, branch: "agent/fix", merged, heads, delete_remote: false }
     }
 
     #[tokio::test]

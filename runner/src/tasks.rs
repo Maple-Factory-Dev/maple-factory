@@ -85,6 +85,9 @@ pub struct Cleanup {
     /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
     #[serde(default)]
     pub scripts: Option<crate::worktree_scripts::WorktreeScripts>,
+    /// Merged, and its branch may still be on origin: delete it there too, when that's safe.
+    #[serde(default)]
+    pub delete_remote: bool,
 }
 
 /// `task.diff` from the hub: what a task's branch changes against its base, for the apps' Diff tab.
@@ -293,7 +296,7 @@ async fn cleanup(emit: Emit<'_>, cwds: &[String], c: &Cleanup, path: Option<&str
             }
         }
     }
-    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads };
+    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads, delete_remote: c.delete_remote };
     match crate::worktrees::remove_task(cwds, work).await {
         Ok(removed) => {
             tracing::info!("task {}: {}", c.task_id, removed.message);
@@ -1541,6 +1544,7 @@ mod tests {
             merged: false,
             heads: vec![head.to_string()],
             repo: None,
+            delete_remote: false,
             scripts: Some(crate::worktree_scripts::WorktreeScripts {
                 create: None,
                 setup: None,

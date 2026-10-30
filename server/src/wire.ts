@@ -1195,6 +1195,8 @@ export interface RunnerMessage_TaskMerged {
   ok: boolean;
   commit?: string | null;
   message?: string | null;
+  /** What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`. */
+  branch?: string | null;
 }
 
 /** How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not. */
@@ -1394,6 +1396,8 @@ export interface ServerToRunner_TaskCleanup {
   repo?: string | null;
   /** The repo's worktree scripts: teardown runs first, and archive replaces the removal. */
   scripts?: WorktreeScripts | null;
+  /** Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch. */
+  deleteRemote?: boolean | null;
 }
 
 /** The answer to `task.token_request`. */

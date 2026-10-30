@@ -3661,12 +3661,15 @@ public enum Wire {
         public var ok: Bool
         public var commit: String?
         public var message: String?
+        /// What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`.
+        public var branch: String?
 
-        public init(taskId: String, ok: Bool, commit: String? = nil, message: String? = nil) {
+        public init(taskId: String, ok: Bool, commit: String? = nil, message: String? = nil, branch: String? = nil) {
             self.taskId = taskId
             self.ok = ok
             self.commit = commit
             self.message = message
+            self.branch = branch
         }
     }
 
@@ -4108,8 +4111,10 @@ public enum Wire {
         public var repo: String?
         /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
         public var scripts: WorktreeScripts?
+        /// Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch.
+        public var deleteRemote: Bool?
 
-        public init(taskId: String, cwd: String, repoDir: String, branch: String, merged: Bool, heads: [String] = [], repo: String? = nil, scripts: WorktreeScripts? = nil) {
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, merged: Bool, heads: [String] = [], repo: String? = nil, scripts: WorktreeScripts? = nil, deleteRemote: Bool? = nil) {
             self.taskId = taskId
             self.cwd = cwd
             self.repoDir = repoDir
@@ -4118,6 +4123,7 @@ public enum Wire {
             self.heads = heads
             self.repo = repo
             self.scripts = scripts
+            self.deleteRemote = deleteRemote
         }
 
         public init(from decoder: Decoder) throws {
@@ -4130,6 +4136,7 @@ public enum Wire {
             heads = try c.decodeIfPresent([String].self, forKey: .heads) ?? []
             repo = try c.decodeIfPresent(String.self, forKey: .repo)
             scripts = try c.decodeIfPresent(WorktreeScripts.self, forKey: .scripts)
+            deleteRemote = try c.decodeIfPresent(Bool.self, forKey: .deleteRemote)
         }
     }
 

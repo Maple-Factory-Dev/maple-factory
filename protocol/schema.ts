@@ -916,7 +916,10 @@ export const unions: Record<string, Union> = {
         doc: "What a task's branch changes against its base: line counts per file and the unified patch.",
         fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?" },
       },
-      "task.merged": { fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?" } },
+      "task.merged": {
+        fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?", branch: "string?" },
+        fieldDocs: { branch: "What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`." },
+      },
       "task.handed_off": {
         doc: "How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.",
         fields: { taskId: "string", ok: "bool", pushed: "string?", commit: "string?", message: "string?" },
@@ -1004,8 +1007,11 @@ export const unions: Record<string, Union> = {
       "draft.cancel": { fields: { id: "string" } },
       "task.cleanup": {
         doc: "Remove a finished task's worktree and local branch if nothing would be lost.",
-        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]", repo: "string?", scripts: "WorktreeScripts?" },
-        fieldDocs: { scripts: "The repo's worktree scripts: teardown runs first, and archive replaces the removal." },
+        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]", repo: "string?", scripts: "WorktreeScripts?", deleteRemote: "bool?" },
+        fieldDocs: {
+          scripts: "The repo's worktree scripts: teardown runs first, and archive replaces the removal.",
+          deleteRemote: "Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch.",
+        },
       },
       "task.token": {
         doc: "The answer to `task.token_request`.",
