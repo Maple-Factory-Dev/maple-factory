@@ -210,16 +210,18 @@ const WRAPPERS: &[&str] = &["sudo", "doas", "sh", "bash", "zsh", "fish", "dash",
 
 /// The flags that keep Claude Code or Codex from stopping at permission prompts, as far as
 /// `unattended` says; none for "ask" or another agent. Checked against `claude --help` (2.1) and
-/// `codex --help` (0.162):
+/// `codex --help` (0.164) and https://learn.chatgpt.com/docs/sandboxing/auto-review:
 /// - Claude Code, "project": `--allowedTools=mcp__agents,Bash(git:*),Bash(npm:*),…` (one argument: the flag takes
 ///   several values and would swallow a prompt after it) and `--permission-mode auto`: Claude Code's
 ///   classifier approves routine commands (`sed`, `grep`, …) and denies risky ones instead of waiting
 ///   for someone, where `acceptEdits` stopped a builder at its first `sed -i`.
 /// - Claude Code, "skip": `--permission-mode bypassPermissions`.
-/// - Codex, "project": `--ask-for-approval never --sandbox workspace-write -c sandbox_workspace_write.network_access=true`:
-///   the sandbox still writes only in the worktree, but its commands reach the network, so `npm ci` and
-///   `cargo fetch` work. `-c` takes a dotted config path with a TOML value; the key is `network_access`
-///   (bool, default false) under `sandbox_workspace_write` in Codex's config schema (codex-rs/core/config.schema.json).
+/// - Codex, "project": `--ask-for-approval on-request -c approvals_reviewer="auto_review"` routes eligible
+///   approvals (including Maple MCP calls) to automatic review: "Approve for me". With `never`, there
+///   is nothing to review. `--sandbox workspace-write -c sandbox_workspace_write.network_access=true`
+///   keeps the existing filesystem sandbox and network access for `npm ci` and `cargo fetch`.
+///   These invocation overrides follow agents.toml's arguments on every launch, including retries;
+///   they don't change personal configuration or override managed requirements.
 /// - Codex, "skip": `--dangerously-bypass-approvals-and-sandbox`.
 pub fn permission_args(agent: &str, unattended: &Unattended) -> Vec<String> {
     let args: &[&str] = match (agent, unattended.mode) {
@@ -235,9 +237,16 @@ pub fn permission_args(agent: &str, unattended: &Unattended) -> Vec<String> {
             return vec![format!("--allowedTools={rules}"), "--permission-mode".into(), "auto".into()];
         }
         ("claude", UnattendedMode::Skip) => &["--permission-mode", "bypassPermissions"],
-        ("codex", UnattendedMode::Project) => {
-            &["--ask-for-approval", "never", "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
-        }
+        ("codex", UnattendedMode::Project) => &[
+            "--ask-for-approval",
+            "on-request",
+            "-c",
+            r#"approvals_reviewer="auto_review""#,
+            "--sandbox",
+            "workspace-write",
+            "-c",
+            "sandbox_workspace_write.network_access=true",
+        ],
         ("codex", UnattendedMode::Skip) => &["--dangerously-bypass-approvals-and-sandbox"],
         _ => &[],
     };
@@ -422,7 +431,18 @@ mod tests {
         );
         assert_eq!(
             argv("/bin/zsh", &get("codex"), false, vec![], None, Some(&project), &[], Some("fix it"))[5..],
-            ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true", "fix it"]
+            [
+                "codex",
+                "--ask-for-approval",
+                "on-request",
+                "-c",
+                r#"approvals_reviewer="auto_review""#,
+                "--sandbox",
+                "workspace-write",
+                "-c",
+                "sandbox_workspace_write.network_access=true",
+                "fix it"
+            ]
         );
         // "skip": nothing asks.
         let skip = unattended(UnattendedMode::Skip, &[]);
@@ -444,6 +464,120 @@ mod tests {
     }
 
     #[test]
+    fn codex_project_launches_review_approvals_after_configured_args() {
+        let mut codex = get("codex");
+        // An ordinary agents.toml reviewer override must precede the factory's override.
+        codex.args = vec!["-c".into(), r#"approvals_reviewer="user""#.into(), "-m".into(), "old-model".into()];
+        let hooks = vec!["-c".into(), "notify=[]".into()];
+        let project = unattended(UnattendedMode::Project, &[]);
+        let images = vec!["/tmp/first image.png".into(), "/tmp/second.png".into()];
+        let prompt = "Read the repo.\n'quotes' \"double\" $HOME `ticks` --sandbox";
+        // Both new/retried launches and resume, with either prompt transport, use the same overrides.
+        for resume in [false, true] {
+            for prompt_file in [false, true] {
+                let actual = if prompt_file {
+                    argv_with_prompt_file("/bin/sh", &codex, resume, hooks.clone(), Some("factory-model"), Some(&project), &images)
+                } else {
+                    argv("/bin/sh", &codex, resume, hooks.clone(), Some("factory-model"), Some(&project), &images, Some(prompt))
+                };
+                let mut expected = vec!["codex"];
+                if resume {
+                    expected.extend(["resume", "--last"]);
+                }
+                expected.extend([
+                    "-c",
+                    "notify=[]",
+                    "-c",
+                    r#"approvals_reviewer="user""#,
+                    "--model",
+                    "factory-model",
+                    "--ask-for-approval",
+                    "on-request",
+                    "-c",
+                    r#"approvals_reviewer="auto_review""#,
+                    "--sandbox",
+                    "workspace-write",
+                    "-c",
+                    "sandbox_workspace_write.network_access=true",
+                    "--image=/tmp/first image.png,/tmp/second.png",
+                ]);
+                if prompt_file {
+                    assert_eq!(actual[4], r#"p="$(cat -- "$MAPLE_PROMPT_FILE")"; rm -f -- "$MAPLE_PROMPT_FILE"; exec "$0" "$@" "$p""#);
+                } else {
+                    expected.push(prompt);
+                }
+                assert_eq!(actual[5..], expected, "resume={resume}, prompt_file={prompt_file}");
+            }
+        }
+    }
+
+    #[test]
+    fn codex_project_prompt_file_keeps_the_prompt_intact() {
+        let dir = std::env::temp_dir().join(format!("maple-codex-prompt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let prompt = format!("Read this repo.\n{}\n'quotes' \"double\" $HOME `ticks` \\ backslash\nlast line", "x".repeat(20_000));
+        // Capture the actual argv delivered by the shell without launching a real Codex.
+        use std::os::unix::fs::PermissionsExt;
+        let capture = dir.join("capture");
+        std::fs::write(&capture, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&capture, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let codex = Agent { command: capture.to_str().unwrap().into(), ..get("codex") };
+        let project = unattended(UnattendedMode::Project, &[]);
+        for resume in [false, true] {
+            let file = dir.join("prompt.txt");
+            std::fs::write(&file, &prompt).unwrap();
+            let args = argv_with_prompt_file("/bin/sh", &codex, resume, vec![], None, Some(&project), &[]);
+            let out = std::process::Command::new(&args[0]).args(&args[1..]).env(PROMPT_FILE_ENV, &file).output().unwrap();
+            assert!(out.status.success());
+            assert!(!file.exists());
+            let stdout = String::from_utf8(out.stdout).unwrap();
+            let received: Vec<_> = stdout.split_terminator('\0').collect();
+            let mut expected = if resume { vec!["resume", "--last"] } else { vec![] };
+            expected.extend([
+                "--ask-for-approval",
+                "on-request",
+                "-c",
+                r#"approvals_reviewer="auto_review""#,
+                "--sandbox",
+                "workspace-write",
+                "-c",
+                "sandbox_workspace_write.network_access=true",
+                &prompt,
+            ]);
+            assert_eq!(received, expected);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn permission_modes_outside_codex_project_keep_existing_flags() {
+        let mut codex = get("codex");
+        codex.args = vec!["-c".into(), r#"approvals_reviewer="user""#.into()];
+        for mode in [None, Some(UnattendedMode::Ask), Some(UnattendedMode::Skip)] {
+            let settings = mode.map(|m| unattended(m, &[]));
+            let mut expected = vec!["codex", "-c", r#"approvals_reviewer="user""#];
+            if mode == Some(UnattendedMode::Skip) {
+                expected.push("--dangerously-bypass-approvals-and-sandbox");
+            }
+            expected.push("go");
+            assert_eq!(argv("/bin/sh", &codex, false, vec![], None, settings.as_ref(), &[], Some("go"))[5..], expected);
+        }
+        let custom = Agent {
+            id: "custom".into(),
+            label: "Custom".into(),
+            command: "custom".into(),
+            args: vec!["--own-permissions".into()],
+            prompt: PromptMode::Positional,
+            hooks: false,
+        };
+        for mode in [UnattendedMode::Ask, UnattendedMode::Project, UnattendedMode::Skip] {
+            let settings = unattended(mode, &["npm test"]);
+            assert_eq!(argv("/bin/sh", &get("shell"), false, vec![], None, Some(&settings), &[], None), ["/bin/sh", "-l"]);
+            assert_eq!(argv("/bin/sh", &custom, false, vec![], None, Some(&settings), &[], Some("go"))[5..], ["custom", "--own-permissions", "go"]);
+        }
+    }
+
+    #[test]
     fn codex_gets_a_tasks_images_once_before_the_prompt() {
         let images = vec!["/h/.config/maple/images/t1/3f9c1a2b-a.png".to_string(), "/h/.config/maple/images/t1/77d0e4aa-b.jpg".to_string()];
         let project = unattended(UnattendedMode::Project, &[]);
@@ -455,7 +589,9 @@ mod tests {
                 "--model",
                 "gpt-5.5-codex",
                 "--ask-for-approval",
-                "never",
+                "on-request",
+                "-c",
+                r#"approvals_reviewer="auto_review""#,
                 "--sandbox",
                 "workspace-write",
                 "-c",
