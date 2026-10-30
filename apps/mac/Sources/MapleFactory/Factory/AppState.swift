@@ -1227,6 +1227,38 @@ final class AppState {
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
     }
 
+    /// Model presets per agent for the task inspector's Model menu; anything else goes in as free text.
+    static func models(for agent: String) -> [String] {
+        switch agent {
+        case "claude": ["opus", "sonnet", "haiku"]
+        case "codex": ["gpt-5", "gpt-5-codex"]
+        default: []
+        }
+    }
+
+    /// Changes what builds a task and the model it asks for (nil or blank: the agent's default).
+    /// A running session keeps going; the change applies from its next one.
+    func setAgent(_ id: String, agent: String, model: String?) {
+        let trimmed = model?.trimmingCharacters(in: .whitespaces) ?? ""
+        let model = trimmed.isEmpty ? nil : trimmed
+        let was = task(id)
+        guard agent != was.builder || model != was.model else { return }
+        let text = agent != was.builder
+            ? "Switched it to \(agent)\(model.map { " · \($0)" } ?? "")"
+            : model.map { "Set its model to \($0)" } ?? "Set its model back to the default"
+        if let client, isLive {
+            client.expect(id) { $0.builder = agent; $0.model = model }
+            client.send(.taskEdit(.init(id: id, agent: agent, model: model ?? "")))
+        } else {
+            update(id) { task in
+                task.builder = agent
+                task.model = model
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: text, when: "now"), at: 0)
+            }
+        }
+        showToast("\(id): \(agentTitle(agent)) · \(model ?? "default model")", icon: "cpu")
+    }
+
     // MARK: Owner
 
     /// Whether you can give `id` to someone else: its owner or an admin can. Anyone can take a task over.
@@ -1968,6 +2000,8 @@ final class AppState {
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
             // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
             case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
+            // The inspector's Agent and Model menus: `model:<id>:<agent>:<model>`, no model for the default.
+            case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)

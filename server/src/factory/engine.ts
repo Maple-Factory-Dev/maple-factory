@@ -319,6 +319,20 @@ export class Engine {
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
         }
+        if (msg.agent != null || msg.model != null) {
+          // Any state until it's done: the change applies from its next session, and one running keeps going.
+          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; there's nothing left to build.`);
+          const agent = msg.agent != null ? msg.agent.trim() : task.agent;
+          if (!["claude", "codex"].includes(agent)) fail(`${agent || "That"} isn't an agent the factory runs: claude or codex.`);
+          const was = task.model ?? null;
+          let model = msg.model != null ? msg.model.trim() || null : was;
+          // A model the old agent knew means nothing to the new one.
+          if (msg.model == null && agent !== task.agent && model && !modelFits(agent, model)) model = null;
+          if (agent !== task.agent) this.event(task, who, `switched it to ${agent}${model ? ` · ${model}` : ""}`);
+          else if (model !== was) this.event(task, who, model ? `set its model to ${model}` : "set its model back to the default");
+          task.agent = agent;
+          task.model = model;
+        }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
         const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
         if (effort !== undefined && effort !== (task.effort ?? null)) {
@@ -776,7 +790,7 @@ export class Engine {
   }
 
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after" | "effort">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort">): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -814,7 +828,7 @@ export class Engine {
     const goal = this.store.goal(task.goal);
     if (!goal) return;
     for (const f of task.followUps.filter((f) => !f.task)) {
-      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
+      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, model: task.model ?? null, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
       f.task = part.id;
       this.event(task, "factory", `made ${part.id} for its ${f.repo} part`);
       await this.startPlanning(part, "factory");
@@ -914,7 +928,7 @@ export class Engine {
       worktree: { name: branchName(task), base: goal.base ?? null, existing },
       task: { id: task.id, repo: taskRepo(task, goal), scripts: this.store.scriptsFor(taskRepo(task, goal)) },
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
-      model: null,
+      model: task.model ?? null,
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
     const now_ = this.store.task(task.id);
@@ -2129,6 +2143,14 @@ function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
 /** An effort's name as stored: trimmed and spaces collapsed; blank is none. */
 function effortName(name: string | null | undefined): string | null {
   return name?.trim().replace(/\s+/g, " ") || null;
+}
+
+/** Whether a model name is one the agent takes: Claude's aliases and claude-* ids, or OpenAI's gpt-*, o-series and codex ones. */
+function modelFits(agent: string, model: string): boolean {
+  const m = model.toLowerCase();
+  if (agent === "claude") return /^(opus|sonnet|haiku|default|opusplan)\b|^claude-/.test(m);
+  if (agent === "codex") return /^(gpt-|o\d|codex)/.test(m);
+  return true;
 }
 
 function sourceTitle(r: { source: string; channel?: string | null }) {

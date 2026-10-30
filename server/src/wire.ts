@@ -595,6 +595,8 @@ export interface Task {
   shareable: boolean;
   /** claude or codex: what builds it. */
   agent: string;
+  /** The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine. */
+  model?: string | null;
   branch?: string | null;
   /** Where its worktree lives once building started. */
   machine?: string | null;
@@ -1537,6 +1539,10 @@ export interface ClientMessage_TaskEdit {
   repo?: string | null;
   /** Put it in this effort; an empty string takes it out. */
   effort?: string | null;
+  /** claude or codex; refused once it's merged or cancelled. Takes effect from its next session. */
+  agent?: string | null;
+  /** The model its next sessions use; an empty string goes back to the agent's default. */
+  model?: string | null;
 }
 
 /** Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot). */

@@ -227,6 +227,9 @@ struct FactoryTask: Identifiable {
         let session: String
     }
     var worker: Worker? = nil
+    /// What builds it, claude or codex, and the model its sessions ask for (nil: the agent's own default).
+    var builder = "claude"
+    var model: String? = nil
     /// The machine its worktree is on, once it has one (live only).
     var machine: String? = nil
     /// Its last pushed commit (live only).

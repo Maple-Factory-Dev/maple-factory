@@ -489,6 +489,7 @@ export const structs: Record<string, Struct> = {
       tickets: "TicketLink[]",
       shareable: "bool",
       agent: "string",
+      model: "string?",
       branch: "string?",
       machine: "string?",
       splitFrom: "string?",
@@ -516,6 +517,7 @@ export const structs: Record<string, Struct> = {
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
       agent: "claude or codex: what builds it.",
+      model: "The model its sessions ask the agent for, like \"opus\" or \"gpt-5\"; none: the agent's own default on that machine.",
       machine: "Where its worktree lives once building started.",
     },
   },
@@ -1000,8 +1002,12 @@ export const unions: Record<string, Union> = {
         fieldDocs: { plan: "Send it to planning now; otherwise it stays a draft.", intake: "The request it was composed from, which then tracks it." },
       },
       "task.edit": {
-        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?" },
-        fieldDocs: { effort: "Put it in this effort; an empty string takes it out." },
+        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?" },
+        fieldDocs: {
+          effort: "Put it in this effort; an empty string takes it out.",
+          agent: "claude or codex; refused once it's merged or cancelled. Takes effect from its next session.",
+          model: "The model its next sessions use; an empty string goes back to the agent's default.",
+        },
       },
       "task.assign": {
         doc: "Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).",

@@ -1131,6 +1131,9 @@ pub struct Task {
     pub shareable: bool,
     /// claude or codex: what builds it.
     pub agent: String,
+    /// The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Where its worktree lives once building started.
@@ -2221,6 +2224,12 @@ pub enum ClientMessage {
         /// Put it in this effort; an empty string takes it out.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        /// claude or codex; refused once it's merged or cancelled. Takes effect from its next session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// The model its next sessions use; an empty string goes back to the agent's default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
     #[serde(rename = "task.assign")]
