@@ -113,7 +113,7 @@ export class Engine {
       hasAgent: (m, agent) => this.hasAgent(m, agent),
       paused: (m) => this.store.settings(m.id).paused,
       toRunner: (machine, command) => this.toRunner(machine, command),
-      make: (goal, by, picks, shown) => this.scouted(goal, by, picks, shown),
+      make: (goal, by, picks, shown, made) => this.scouted(goal, by, picks, shown, made),
     });
     this.setup = new RepoSetup(store, {
       broadcast: (message) => hooks.broadcast(message),
@@ -921,8 +921,7 @@ export class Engine {
   }
 
   /** A Scout run's picks: a backlog task is picked up, a finding becomes a task; all go to planning. */
-  private async scouted(goal: Goal, by: string, picks: ScoutPick[], shown: Candidate[]): Promise<string[]> {
-    const ids: string[] = [];
+  private async scouted(goal: Goal, by: string, picks: ScoutPick[], shown: Candidate[], made: string[]) {
     for (const pick of picks) {
       const c = shown.find((x) => x.from === pick.from);
       const source = c && this.store.task(c.task);
@@ -930,8 +929,8 @@ export class Engine {
       if (c.kind === "backlog") {
         if (source.state !== "backlog") continue;
         this.event(source, "factory", `Scout picked it up from the backlog for @${by}`);
+        made.push(source.id);
         await this.startPlanning(source, by, source.plan.length > 0);
-        ids.push(source.id);
         continue;
       }
       // Made since by someone else (or a run that overlapped): don't make it twice.
@@ -942,10 +941,9 @@ export class Engine {
       task.scoutedFrom = pick.from;
       this.event(task, "factory", `Scouted from ${source.id}`);
       await audit(this.env, by, "task.created", task.id, { title: task.title, scoutedFrom: pick.from });
+      made.push(task.id);
       await this.startPlanning(task, by);
-      ids.push(task.id);
     }
-    return ids;
   }
 
   /** A plan just got its approvals: it builds, and its other repos' parts become tasks that wait on it. */
