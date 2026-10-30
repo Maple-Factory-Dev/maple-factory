@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { findingArea, findingDetail, inferEvents, median, summarize, type StatEvent } from "../src/factory/stats.ts";
+import { findingArea, findingDetail, inferEvents, median, statsWindow, summarize, type StatEvent } from "../src/factory/stats.ts";
 import { Store } from "../src/factory/store.ts";
 
 const DAY = 86_400_000;
@@ -110,6 +110,49 @@ test("counts, medians and rates over 30 days", () => {
   assert.deepEqual(s.agents.map((a) => [a.agent, a.merged]), [["claude", 1], ["codex", 1]]);
   // A-2: 2 hands, 2 steers; A-1: a hand, a question, a changes-requested round.
   assert.deepEqual(s.topTasks.slice(0, 2).map((r) => [r.task, r.touchpoints]), [["A-2", 4], ["A-1", 3]]);
+});
+
+test("24 hours and 3 days go by the hour, ending with this one", () => {
+  const now = NOW + 30 * 60_000; // 12:30 UTC
+  const at = (kind: StatEvent["kind"], ago: number, detail: Record<string, unknown> = {}): StatEvent =>
+    ({ id: String(n++), at: now - ago, kind, task: "H-1", goal: "g1", role: null, actor: null, detail });
+  const rows = [
+    at("merged", 10 * 60_000, { auto: true, cycleMs: H }), // 12:20 today, this hour
+    at("hand.raised", 15 * H, { reason: "needsInput" }), // 21:30 yesterday evening
+    at("merged", 25 * H, { auto: false, cycleMs: H }), // 11:30 yesterday: outside 24 hours
+    at("hand.raised", 50 * H, { reason: "proofBurden" }),
+    at("merged", 80 * H, { auto: false, cycleMs: H }), // outside 3 days
+  ];
+
+  const day = summarize(rows, [], { days: 1, now });
+  assert.equal(day.days, 1);
+  assert.equal(day.since, now - DAY);
+  assert.equal(day.daily.length, 24);
+  assert.equal(day.daily.at(-1)!.day, "2026-10-29T12:00");
+  assert.equal(day.daily[0].day, "2026-10-28T13:00");
+  assert.deepEqual(day.daily.at(-1), { day: "2026-10-29T12:00", merges: 1, hands: 0 });
+  assert.equal(day.daily.find((d) => d.day === "2026-10-28T21:00")!.hands, 1);
+  assert.equal(day.totals.merged, 1);
+  assert.equal(day.totals.handsRaised, 1);
+  assert.equal(day.daily.reduce((a, d) => a + d.merges, 0), 1);
+  assert.equal(day.daily.reduce((a, d) => a + d.hands, 0), 1);
+
+  const three = summarize(rows, [], { days: 3, now });
+  assert.equal(three.daily.length, 72);
+  assert.equal(three.daily.at(-1)!.day, "2026-10-29T12:00");
+  assert.equal(three.daily[0].day, "2026-10-26T13:00");
+  assert.equal(three.totals.merged, 2);
+  assert.equal(three.totals.handsRaised, 2);
+  assert.equal(three.daily.reduce((a, d) => a + d.merges, 0), 2);
+  assert.equal(three.daily.reduce((a, d) => a + d.hands, 0), 2);
+
+  // 7 days still goes by the day.
+  assert.equal(summarize(rows, [], { days: 7, now }).daily.at(-1)!.day, "2026-10-29");
+});
+
+test("the hub's windows: 1, 3, 7, 30 and 90 days, anything else reads as 30", () => {
+  for (const d of [1, 3, 7, 30, 90]) assert.equal(statsWindow(d), d);
+  for (const d of [5, 0, 2, 365, Number.NaN]) assert.equal(statsWindow(d), 30);
 });
 
 test("the window cuts off: 7 days, 90 days, and one goal", () => {
