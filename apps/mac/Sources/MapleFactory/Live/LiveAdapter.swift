@@ -192,6 +192,7 @@ import SwiftUI
             let done = t.plan.filter { $0.progress == .done }.count
             return t.worker == nil ? "Queued" : "Step \(min(done + 1, max(t.plan.count, 1))) of \(max(t.plan.count, 1))"
         case .reviewing:
+            if t.liveLog == FactoryTask.mergingLog { return FactoryTask.mergingLog }
             guard let round = t.autoReview?.rounds.last else { return "In review" }
             switch round.verdict {
             case .inProgress: return "Review round \(round.number)"
