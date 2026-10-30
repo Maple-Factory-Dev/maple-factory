@@ -437,7 +437,11 @@ struct VideoProof: View {
             ProofCaption(icon: "video", caption: caption)
         }
         .task(id: path) { await load() }
-        .onDisappear { player?.pause() }
+        // Off screen, the player and what it buffered go; the poster's back with Play next time.
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPlay)) { _ in
             if let file, player == nil { play(file) }
         }
@@ -753,7 +757,10 @@ struct ProofLightboxView: View {
             }
         }
         .onAppear(perform: startVideo)
-        .onDisappear { player?.pause() }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
         // Another proof shown in the same lightbox opens fitted, like the first.
         .onChange(of: lightbox) {
             zoom = 1
