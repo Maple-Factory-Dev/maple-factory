@@ -12,7 +12,7 @@ struct OrgSettingsView: View {
     static let demoPick = Notification.Name("OrgSettingsView.demoPick")
 
     enum Pane: String, CaseIterable {
-        case general, account, appearance, repos, secrets, people, prompts, merging, runner, notifications, updates
+        case general, account, appearance, repos, secrets, people, prompts, connectors, merging, runner, notifications, updates
 
         var title: String {
             switch self {
@@ -23,6 +23,7 @@ struct OrgSettingsView: View {
             case .secrets: "Secrets"
             case .people: "People"
             case .prompts: "Prompts"
+            case .connectors: "Connectors"
             case .merging: "Merging"
             case .runner: "Runner"
             case .notifications: "Notifications"
@@ -39,6 +40,7 @@ struct OrgSettingsView: View {
             case .secrets: "key"
             case .people: "person.2"
             case .prompts: "text.bubble"
+            case .connectors: "puzzlepiece.extension"
             case .merging: "arrow.triangle.merge"
             case .runner: "laptopcomputer"
             case .notifications: "bell"
@@ -56,6 +58,7 @@ struct OrgSettingsView: View {
             case .secrets: .yellow
             case .people: .blue
             case .prompts: .purple
+            case .connectors: .indigo
             case .merging: .green
             case .runner: .gray
             case .notifications: .red
@@ -73,7 +76,7 @@ struct OrgSettingsView: View {
     static let headerPane = Pane.account
     static let sidebarGroups = [
         SidebarGroup(title: nil, panes: [.general]),
-        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .merging]),
+        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .connectors, .merging]),
         SidebarGroup(title: "This Mac", panes: [.runner, .notifications]),
     ]
     static let footerPane = Pane.updates
@@ -95,6 +98,7 @@ struct OrgSettingsView: View {
                 case .secrets: SecretsSettings()
                 case .people: PeopleSettings()
                 case .prompts: PromptSettings()
+                case .connectors: ConnectorSettings()
                 case .merging: MergingSettings()
                 case .runner: RunnerSettings()
                 case .notifications: NotificationSettings()

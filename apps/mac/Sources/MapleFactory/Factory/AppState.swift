@@ -2156,6 +2156,12 @@ final class AppState {
                 }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
+            // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
+            // Signing in, it waits for the connectors to arrive (and Settings to be on screen).
+            case "connector":
+                for _ in 0..<300 where client?.connectors == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .seconds(1))
+                NotificationCenter.default.post(name: ConnectorSettings.demoEdit, object: nil, userInfo: ["name": parts[1]])
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
             // The first screenshot or video proof on screen, shown large (`lightbox:open`, or `lightbox:image` / `lightbox:video`
