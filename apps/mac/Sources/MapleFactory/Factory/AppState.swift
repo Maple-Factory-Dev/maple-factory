@@ -1658,7 +1658,7 @@ final class AppState {
         guard !isLive else { return }
         // A hold lasts while it waits to merge; sent back to build, it counts down again next time.
         heldMerges = heldMerges.filter { id in tasks.contains { $0.id == id && $0.state == .reviewing } }
-        for task in tasks where task.state == .reviewing && task.mergeAt == nil && !autoMerging.contains(task.id) && !heldMerges.contains(task.id) {
+        for task in tasks where task.state == .reviewing && task.hand == nil && task.mergeAt == nil && !autoMerging.contains(task.id) && !heldMerges.contains(task.id) {
             let gate = mergeGate(for: task)
             guard gate.canMerge, gate.autoMerge else { continue }
             let id = task.id
@@ -1673,7 +1673,7 @@ final class AppState {
                 try? await Task.sleep(for: self.mergeGrace)
                 let current = self.task(id)
                 let gate = self.mergeGate(for: current)
-                guard current.mergeAt != nil, current.state == .reviewing, gate.canMerge, gate.autoMerge else {
+                guard current.mergeAt != nil, current.state == .reviewing, current.hand == nil, gate.canMerge, gate.autoMerge else {
                     self.update(id) { task in
                         task.mergeAt = nil
                         task.mergeFrom = nil
@@ -1774,6 +1774,7 @@ final class AppState {
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
+            case "hold": holdMerge(parts[1])
             // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
@@ -1903,6 +1904,27 @@ final class AppState {
             case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // `reviews:low:1`: the policy's final reviews for a level; `green:<id>` proves all its Done when items and passes its checks.
+            // `area:Auth:off`: a sensitive area switched off (or on) in the policy.
+            case "area":
+                if let index = policy.sensitiveAreas.firstIndex(where: { $0.name == parts[1] }) {
+                    policy.sensitiveAreas[index].enabled = parts.count < 3 || ["yes", "on", "true"].contains(parts[2].lowercased())
+                }
+            case "reviews":
+                if let level = RiskLevel.allCases.first(where: { $0.title.lowercased() == parts[1].lowercased() }) {
+                    policy.finalReviews[level] = parts.count > 2 ? Int(parts[2]) ?? 1 : 1
+                }
+            case "green":
+                withAnimation(.snappy(duration: 0.3)) {
+                    update(parts[1]) { task in
+                        for index in task.doneWhen.indices { task.doneWhen[index].status = .proven }
+                        guard var pr = task.pr else { return }
+                        for index in pr.checks.indices { pr.checks[index].status = .passed }
+                        task.pr = pr
+                        task.checksFailing = false
+                    }
+                }
+                sweepForAutoMerge()
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

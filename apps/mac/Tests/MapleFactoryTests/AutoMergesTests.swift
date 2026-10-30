@@ -44,6 +44,7 @@ struct AutoMergesTests {
         state.mergeGrace = .milliseconds(300)
         state.update("ONB-19") { task in
             task.areas = []
+            task.hand = nil
             task.mergeAt = nil
             task.autoReview = nil
             for index in task.doneWhen.indices { task.doneWhen[index].status = .proven }
@@ -73,6 +74,14 @@ struct AutoMergesTests {
         #expect(state.task("ONB-19").state == .reviewing)
         try await Task.sleep(for: .milliseconds(400))
         #expect(state.task("ONB-19").state == .merged)
+        #expect(state.task("ONB-19").mergeAt == nil)
+    }
+
+    @Test func aRaisedHandKeepsItFromCountingDown() throws {
+        let hand = try #require(AppState().task("ONB-19").hand)
+        let state = ready()
+        state.update("ONB-19") { $0.hand = hand }
+        state.sweepForAutoMerge()
         #expect(state.task("ONB-19").mergeAt == nil)
     }
 
