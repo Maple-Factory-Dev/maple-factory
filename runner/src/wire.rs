@@ -1150,6 +1150,35 @@ pub struct Diff {
     pub files: Vec<String>,
 }
 
+/// Another in-flight task (building or in review) whose changes touch some of the same files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOverlap {
+    pub task: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+/// How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeForecast {
+    #[serde(default)]
+    pub overlaps: Vec<MergeOverlap>,
+    /// Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet).
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    /// The task whose merge brought the conflicts in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    /// When the last dry-run merge ran (ms); none: never.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<u64>,
+    /// The branch it was checked against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -1249,6 +1278,9 @@ pub struct Task {
     /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_at: Option<u64>,
+    /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_forecast: Option<MergeForecast>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1944,6 +1976,18 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed.
+    #[serde(rename = "task.merge_check")]
+    TaskMergeCheck {
+        task_id: String,
+        /// The check ran; false: `message` says why not.
+        ok: bool,
+        clean: bool,
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
     #[serde(rename = "task.handed_off")]
     TaskHandedOff {
@@ -2089,6 +2133,13 @@ pub enum ServerToRunner {
     /// Report a task's diff against its base (answered with `task.diff`).
     #[serde(rename = "task.diff")]
     TaskDiff {
+        task_id: String,
+        cwd: String,
+        base: String,
+    },
+    /// Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`).
+    #[serde(rename = "task.merge_check")]
+    TaskMergeCheck {
         task_id: String,
         cwd: String,
         base: String,

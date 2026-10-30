@@ -483,6 +483,20 @@ export const structs: Record<string, Struct> = {
     fields: { role: "Role", agent: "string", machine: "string", session: "uuid", startedAt: "u64" },
   },
   Diff: { fields: { added: "u32", removed: "u32", files: "string[]" } },
+  MergeOverlap: {
+    doc: "Another in-flight task (building or in review) whose changes touch some of the same files.",
+    fields: { task: "string", files: "string[]" },
+  },
+  MergeForecast: {
+    doc: "How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base.",
+    fields: { overlaps: "MergeOverlap[]", conflicts: "string[]", since: "string?", checkedAt: "u64?", base: "string?" },
+    fieldDocs: {
+      conflicts: "Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet).",
+      since: "The task whose merge brought the conflicts in.",
+      checkedAt: "When the last dry-run merge ran (ms); none: never.",
+      base: "The branch it was checked against.",
+    },
+  },
   Task: {
     fields: {
       id: "string",
@@ -532,8 +546,10 @@ export const structs: Record<string, Struct> = {
       force: "bool?",
       effort: "string?",
       mergeAt: "u64?",
+      mergeForecast: "MergeForecast?",
     },
     fieldDocs: {
+      mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
       effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
@@ -915,6 +931,11 @@ export const unions: Record<string, Union> = {
         fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?" },
       },
       "task.merged": { fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?" } },
+      "task.merge_check": {
+        doc: "How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed.",
+        fields: { taskId: "string", ok: "bool", clean: "bool", conflicts: "string[]", message: "string?" },
+        fieldDocs: { ok: "The check ran; false: `message` says why not." },
+      },
       "task.handed_off": {
         doc: "How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.",
         fields: { taskId: "string", ok: "bool", pushed: "string?", commit: "string?", message: "string?" },
@@ -985,6 +1006,10 @@ export const unions: Record<string, Union> = {
       },
       "task.diff": {
         doc: "Report a task's diff against its base (answered with `task.diff`).",
+        fields: { taskId: "string", cwd: "string", base: "string" },
+      },
+      "task.merge_check": {
+        doc: "Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`).",
         fields: { taskId: "string", cwd: "string", base: "string" },
       },
       "task.merge": {
