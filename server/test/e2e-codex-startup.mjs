@@ -40,6 +40,7 @@ const run = (bin, args, options = {}) => execFileSync(bin, args, { encoding: "ut
 function launch(bin, args, name, env = {}) {
   const child = spawn(bin, args, { cwd: root, detached: true, env: { ...process.env, HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "home/.config"), ...env }, stdio: ["ignore", "pipe", "pipe"] });
   children.add(child);
+  child.on("exit", () => children.delete(child));
   child.on("error", (error) => errors.push(`${name}: ${error.message}`));
   for (const stream of [child.stdout, child.stderr]) stream.on("data", (data) => appendFileSync(join(dir, `${name}.log`), data));
   return child;
@@ -62,11 +63,10 @@ const screen = (id) => {
   catch { return "<pane unavailable>"; }
 };
 async function stop(child) {
-  if (!child?.pid) return;
-  // Wrangler's entrypoint starts another Node process and workerd. Terminate the
-  // test-owned process group even when the entrypoint has already exited.
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  // Signal the test-owned group while its parent is still live. A completed
+  // command's PID/group may have been reused, so never signal it after exit.
   try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
-  if (child.exitCode !== null || child.signalCode !== null) return;
   const ended = once(child, "exit");
   await Promise.race([ended, pause(3000)]);
   if (child.exitCode === null && child.signalCode === null) {
@@ -317,11 +317,15 @@ try {
   for (const name of ["migration", "worker", "runner"]) if (existsSync(join(dir, `${name}.log`))) report(`${name} log tail=${readFileSync(join(dir, `${name}.log`), "utf8").split("\n").slice(-12).join("\n")}`);
   process.exitCode = 1;
 } finally {
+  const cleanup = async (child) => {
+    try { await stop(child); }
+    catch (error) { report(`CLEANUP FAILED: ${error.message}`); process.exitCode = 1; }
+  };
   feed?.close();
-  await stop(runner);
+  await cleanup(runner);
   if (existsSync(socket)) { try { run(tmux, ["-S", socket, "kill-server"]); } catch {} }
-  await stop(worker);
-  for (const child of children) await stop(child);
+  await cleanup(worker);
+  for (const child of [...children]) await cleanup(child);
   for (const file of ["auth.json", "config.toml"]) rmSync(join(dir, "codex", file), { force: true });
   if (keep) console.log(`Artifacts: ${dir}`);
   else rmSync(dir, { recursive: true, force: true });
