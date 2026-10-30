@@ -127,7 +127,7 @@ struct FactorySidebar: View {
                 .frame(width: 28, height: 26)
                 .contentShape(Rectangle())
                 .onTapGesture { state.toggleSidebar() }
-                .help("Collapse sidebar (⌃⌘S)")
+                .help("Collapse Sidebar (⌘B)")
                 .padding(.top, 9)
                 .padding(.trailing, 12)
         }
