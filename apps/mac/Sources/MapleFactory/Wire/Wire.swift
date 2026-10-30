@@ -4758,6 +4758,15 @@ public enum Wire {
         }
     }
 
+    /// Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).
+    public struct ClientMessageMembersRevoke: Codable, Hashable, Sendable {
+        public var login: String
+
+        public init(login: String) {
+            self.login = login
+        }
+    }
+
     /// Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.
     public struct ClientMessageConnectorsSave: Codable, Hashable, Sendable {
         public var connectors: [McpConnector]
@@ -5235,6 +5244,7 @@ public enum Wire {
         case promptsSave(ClientMessagePromptsSave)
         case adminsGrant(ClientMessageAdminsGrant)
         case adminsRevoke(ClientMessageAdminsRevoke)
+        case membersRevoke(ClientMessageMembersRevoke)
         case connectorsSave(ClientMessageConnectorsSave)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
@@ -5307,6 +5317,7 @@ public enum Wire {
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
             case "admins.grant": self = .adminsGrant(try ClientMessageAdminsGrant(from: decoder))
             case "admins.revoke": self = .adminsRevoke(try ClientMessageAdminsRevoke(from: decoder))
+            case "members.revoke": self = .membersRevoke(try ClientMessageMembersRevoke(from: decoder))
             case "connectors.save": self = .connectorsSave(try ClientMessageConnectorsSave(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
@@ -5432,6 +5443,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .adminsRevoke(let body):
                 try c.encode("admins.revoke", forKey: .type)
+                try body.encode(to: encoder)
+            case .membersRevoke(let body):
+                try c.encode("members.revoke", forKey: .type)
                 try body.encode(to: encoder)
             case .connectorsSave(let body):
                 try c.encode("connectors.save", forKey: .type)
