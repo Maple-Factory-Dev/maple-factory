@@ -430,6 +430,8 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
+    /// Bumped by every New Task, so the composer puts the caret in the title even when it's already open.
+    var composeFocusRequest = 0
     /// Your Scratchpad: the factory's copy when signed in.
     var notes: [Note] {
         get { isLive ? client?.notes ?? [] : mockNotes }
@@ -762,6 +764,7 @@ final class AppState {
             focusedTask = nil
             isComposing = true
         }
+        composeFocusRequest += 1
     }
 
     /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
@@ -2056,6 +2059,9 @@ final class AppState {
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
             // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
+            // A left click at a point in the window (`click:<x>:<y>`, points from the top left), or on a card (`click:<task>`).
+            case "click" where parts.count > 2 && Double(parts[1]) != nil:
+                Headless.click(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
             // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
             // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
             case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))

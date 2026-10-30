@@ -81,6 +81,16 @@ enum Headless {
         window.sendEvent(event)
     }
 
+    /// A left click at `point` (window points, from the top left) as far as focus goes (`click:<x>:<y>`): the view
+    /// under it that takes focus gets it. A clicked mouse event isn't delivered to a window that's never key.
+    @MainActor static func click(at point: CGPoint) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView else { return }
+        var view = content.hitTest(CGPoint(x: point.x, y: content.bounds.height - point.y))
+        while let current = view, !current.acceptsFirstResponder { view = current.superview }
+        if let view { window.makeFirstResponder(view) }
+        print("headless: click at \(point) focused \(view.map { String(describing: type(of: $0)) } ?? "nothing")")
+    }
+
     /// `key:` as characters, key code and modifiers: `cmd+b` → ("b", 11, .command). Modifiers are cmd, ctrl, opt
     /// (or alt) and shift, joined by `+`; the last part is the key.
     static func keyStroke(_ key: String) -> (characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags) {
