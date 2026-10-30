@@ -160,8 +160,8 @@ struct AccountSettings: View {
     }
 }
 
-/// The factory's icon, for everyone in it: the sidebar, the factory menu and the Dock. Admins change it;
-/// everyone else sees it with the lock note.
+/// The factory's name and icon, for everyone in it: the sidebar, the factory menu and the Dock. Admins
+/// change them; everyone else sees them with the lock note.
 struct AppearanceSettings: View {
     @Environment(FactoryClient.self) private var client
     @State private var busy = false
@@ -174,10 +174,11 @@ struct AppearanceSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Appearance", detail: "The factory's icon, for everyone in it: at the top of the sidebar, in the factory menu, and in the Dock on each Mac that shows it (Settings › General).")
+            SettingsHeader(title: "Appearance", detail: "The factory's name and icon, for everyone in it: at the top of the sidebar, in the factory menu, and (the icon) in the Dock on each Mac that shows it (Settings › General).")
             if !client.isSignedIn {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its icon."))
+                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its name and icon."))
             } else {
+                FactoryNameCard()
                 SettingsCard {
                     HStack(alignment: .center, spacing: 28) {
                         VStack(spacing: 8) {
@@ -267,6 +268,68 @@ struct AppearanceSettings: View {
         Task {
             defer { busy = false }
             do { try await client.removeIcon() } catch { problem = FactoryClient.describe(error) }
+        }
+    }
+}
+
+/// The factory's name: what an admin calls it in place of the GitHub org. Blank, or Use Org Name, goes back to the org's.
+struct FactoryNameCard: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var draft = ""
+    @State private var busy = false
+    @State private var problem: String?
+
+    private var isAdmin: Bool { client.isAdmin }
+    private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var unchanged: Bool { trimmed == (client.displayName ?? "") }
+
+    var body: some View {
+        SettingsCard {
+            LabeledContent("Name") {
+                TextField(client.orgName, text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!isAdmin || busy)
+                    .onSubmit(save)
+            }
+            Text(trimmed.count > FactoryClient.maxName
+                 ? "The name can be up to \(FactoryClient.maxName) characters."
+                 : "Shown instead of \(client.orgName). Leave it blank to use the org's name.")
+                .font(.system(size: 12))
+                .foregroundStyle(trimmed.count > FactoryClient.maxName ? Theme.State.cancelled : Theme.textMuted)
+        }
+        HStack {
+            if !isAdmin {
+                Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            } else if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.State.cancelled)
+            }
+            Spacer()
+            if isAdmin {
+                Button("Use Org Name") { clear() }.disabled(busy || client.displayName == nil)
+                Button("Save") { save() }.disabled(busy || unchanged || trimmed.count > FactoryClient.maxName)
+            }
+        }
+        .onAppear { draft = client.displayName ?? "" }
+        // Someone else renamed it (name.updated): show theirs.
+        .onChange(of: client.displayName) { _, name in draft = name ?? "" }
+    }
+
+    private func save() {
+        guard isAdmin, !unchanged, trimmed.count <= FactoryClient.maxName else { return }
+        run { try await client.setName(trimmed) }
+    }
+
+    private func clear() {
+        draft = ""
+        run { try await client.clearName() }
+    }
+
+    private func run(_ work: @escaping () async throws -> Void) {
+        problem = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do { try await work() } catch { problem = FactoryClient.describe(error) }
         }
     }
 }
