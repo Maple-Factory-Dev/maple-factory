@@ -86,6 +86,12 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .btn.danger { background: var(--cancelled); border-color: transparent; color: #fff; }
 .btn kbd { font: 11px var(--mono); opacity: 0.7; margin-left: 8px; }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.rename { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; margin-top: 14px; padding: 10px 14px; border: 1px solid var(--stroke); border-radius: 10px; background: var(--card); font-size: 14px; }
+.rename .to, .rename .from, .rename label { grid-column: 2; }
+.rename .from { color: var(--faint); }
+.rename.keep .to { color: var(--faint); text-decoration: line-through; }
+.rename.keep .from { color: var(--text); text-decoration: none; }
+.rename label { font-size: 13px; color: var(--muted); margin-top: 4px; cursor: pointer; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 
 .callout { border-radius: 12px; padding: 14px 16px; margin-top: 16px; border: 1px solid; }
@@ -168,6 +174,12 @@ select { appearance: none; padding-right: 30px; cursor: pointer;
 
 .check { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--stroke); }
 .check:first-child { border-top: 0; }
+.ci-check .row { flex-wrap: wrap; }
+.check-log { max-height: 360px; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--stroke);
+  background: var(--fill); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.check-log .step { font-weight: 650; }
+.check-log .error { color: var(--cancelled); background: color-mix(in srgb, var(--cancelled) 12%, transparent); font-weight: 600; }
+.bad-text { color: var(--cancelled); }
 .mark { flex: none; width: 18px; text-align: center; }
 .check-head { display: flex; align-items: baseline; gap: 6px 8px; flex-wrap: wrap; }
 .check-head .check-text { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }

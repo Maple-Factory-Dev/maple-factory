@@ -82,6 +82,7 @@ import SwiftUI
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
+        task.suggestedTitle = t.suggestedTitle
         task.effort = t.effort
         let goal = goals.first { $0.id == t.goal }
         if let goal, goal.repos.count > 1 { task.repo = t.repo ?? goal.repo }
@@ -357,7 +358,7 @@ import SwiftUI
         case .passed: .passed
         case .failed: .failed
         }
-        return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required)
+        return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required, url: c.url.flatMap(URL.init(string:)))
     }
 
     private static func review(_ r: Wire.AutoReview) -> AutoReview {

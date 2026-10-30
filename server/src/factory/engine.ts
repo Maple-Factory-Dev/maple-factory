@@ -23,7 +23,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
-import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed, reviewThreads } from "../github.ts";
+import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -347,7 +347,11 @@ export class Engine {
         // A backlog task without a plan is still a draft, just parked.
         const unplanned = task.state === "drafting" || (task.state === "backlog" && !task.plan.length);
         if (!unplanned && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
-        if (msg.title != null && msg.title.trim()) task.title = msg.title.trim();
+        if (msg.title != null && msg.title.trim()) {
+          task.title = msg.title.trim();
+          // The person named it; the planner's suggestion is moot.
+          task.suggestedTitle = null;
+        }
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
         if (msg.repo != null && msg.repo !== task.repo) {
@@ -446,6 +450,10 @@ export class Engine {
         }
         if (task.state !== "awaitingApproval") fail("There's no plan waiting for approval.");
         if (task.approvals.includes(who)) fail("You've already approved it.");
+        if (msg.keepTitle && task.suggestedTitle) {
+          task.suggestedTitle = null;
+          this.event(task, who, "kept the title");
+        }
         task.approvals.push(who);
         for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
         this.event(task, who, "approved the plan");
@@ -666,6 +674,26 @@ export class Engine {
         await audit(this.env, who, "task.rerunChecks", task.id, { asked });
         return;
       }
+      case "task.rerunCheck": {
+        const app = githubApp(this.env);
+        const priv = this.store.private(task.id);
+        if (!app || !priv.gh || !task.pr) fail("Its checks aren't on GitHub.");
+        if (task.pr!.state !== "open") fail("Its pull request isn't open.");
+        const check = (priv.checks ?? []).find((c) => c.name === msg.check);
+        if (!check) fail(`There's no check ${msg.check} on it.`);
+        if (check!.status === "queued" || check!.status === "running") fail(`${check!.name} is still running.`);
+        await rerunCheck(app!, priv.gh!.owner, priv.gh!.repo, check!).catch((e) => fail((e as Error).message));
+        for (const c of task.pr!.checks) if (c.name === check!.name) c.status = "queued";
+        this.store.savePrivate(task.id, { ...priv, checks: (priv.checks ?? []).map((c) => (c.name === check!.name ? { ...c, status: "queued" as const, duration: null } : c)) });
+        this.event(task, who, `ran ${check!.name} again`);
+        this.save(task);
+        this.hooks.wakeIn(CI_POLL_MS);
+        await audit(this.env, who, "task.rerunCheck", task.id, { check: check!.name });
+        return;
+      }
+      case "task.checkLog":
+        // The org hub answers this one on the asking connection (checkLog).
+        return;
       case "task.split": {
         if (task.state !== "awaitingApproval" && task.state !== "building") fail("Only a planned task that isn't finished can be split.");
         const steps = task.plan;
@@ -711,6 +739,7 @@ export class Engine {
             machine: null,
             intake: null,
             splitFrom: task.id,
+            suggestedTitle: null,
             followUps: [],
           };
           this.save(part);
@@ -848,6 +877,12 @@ export class Engine {
   private async approved(task: Task, why: string) {
     task.state = "building";
     task.waiting = null;
+    if (task.suggestedTitle) {
+      const old = task.title;
+      task.title = task.suggestedTitle;
+      task.suggestedTitle = null;
+      this.event(task, "factory", `renamed it from "${old}"`);
+    }
     this.event(task, "factory", why);
     this.stat(task, "plan.approved", { version: task.planVersion, approvals: task.approvals.length }, task.approvals.at(-1) ?? "factory");
     const goal = this.store.goal(task.goal);
@@ -1330,6 +1365,20 @@ export class Engine {
     return reviewThreads(app, gh.owner, gh.repo, task.pr.number);
   }
 
+  /** One of a task's CI checks' log, for `task.checkLog`: read from GitHub each time, never kept. */
+  async checkLog(id: string, name: string): Promise<ServerToClient & { type: "checkLog" }> {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    if (!task) fail("That task isn't there any more.");
+    const priv = this.store.private(id);
+    if (!app || !priv.gh || !task!.pr) fail("Its checks aren't on GitHub.");
+    const check = (priv.checks ?? []).find((c) => c.name === name);
+    if (!check) fail(`There's no check ${name} on it.`);
+    const url = check!.url ?? (task!.pr!.url ? `${task!.pr!.url}/checks` : null);
+    const log = await checkLog(app!, priv.gh!.owner, priv.gh!.repo, check!).catch((e) => fail((e as Error).message));
+    return { type: "checkLog", id, check: check!.name, url, text: log.text, truncated: log.truncated, failedStep: log.failedStep };
+  }
+
   /** Reads CI again for every pull request still waiting on it; the hub's alarm calls this. */
   async pollCI() {
     for (const task of this.store.tasks().filter((t) => this.ciPending(t))) await this.refreshChecks(task.id);
@@ -1349,10 +1398,15 @@ export class Engine {
       return;
     }
     const before = now_.pr.checks.map((c) => `${c.name}:${c.status}`).join();
-    now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true }));
+    const links = now_.pr.checks.map((c) => c.url ?? "").join();
+    now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true, url: c.url ?? null }));
     this.store.savePrivate(id, { ...this.store.private(id), checks: found });
     if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
-    if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) return;
+    if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) {
+      // Same results, but a check's link changed (a re-run is a new job): the apps get the new one.
+      if (now_.pr.checks.map((c) => c.url ?? "").join() !== links) this.save(now_);
+      return;
+    }
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
     else if (found.length && found.every((c) => c.status === "passed")) this.event(now_, "factory", "CI passed");
@@ -1580,6 +1634,9 @@ export class Engine {
         });
         task.doneWhen = done.map((d) => ({ text: str(d.text, "doneWhen[].text"), proof: proofKind(d.proof), status: "pending", evidence: null }));
         task.planSummary = str(a.summary, "summary");
+        // A revised plan replaces (or drops) the earlier suggestion.
+        const title = typeof a.title === "string" ? a.title.trim().slice(0, 120).trim() : "";
+        task.suggestedTitle = title && title !== task.title ? title : null;
         task.planVersion += 1;
         this.stat(task, "plan.submitted", { version: task.planVersion, steps: task.plan.length }, null, s.role);
         const risk = obj(a.risk);

@@ -245,6 +245,8 @@ struct FactoryTask: Identifiable {
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
+    /// The planner's proposed title, taken when the plan is approved (unless an approver keeps the current one).
+    var suggestedTitle: String? = nil
     /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.
     var effort: String? = nil
     /// The GitHub repo it changes (live goals that span several), and the tasks it builds on.
@@ -314,6 +316,30 @@ struct PullRequest {
     var requiredChecksPassing: Bool { checks.filter(\.required).allSatisfy { $0.status == .passed } }
 }
 
+/// A CI check's log, as the log sheet shows it: the job's log, or the check run's output.
+struct CheckLog: Equatable {
+    var text: String
+    /// Only the log's end came back.
+    var truncated: Bool
+    /// The first line GitHub marked as an error.
+    var failedStep: String?
+    var url: URL?
+}
+
+/// A check log asked for: on its way, there, or refused (expired, or a check from outside GitHub).
+enum CheckLogLoad: Equatable {
+    case loading
+    case loaded(CheckLog)
+    case failed(String)
+}
+
+/// The check whose log the log sheet shows.
+struct CheckLogRequest: Identifiable, Equatable {
+    let taskID: String
+    let check: String
+    var id: String { "\(taskID)/\(check)" }
+}
+
 struct CICheck: Identifiable {
     enum Status { case queued, running, passed, failed }
 
@@ -321,6 +347,8 @@ struct CICheck: Identifiable {
     var status: Status
     var duration: String
     var required = true
+    /// Its run on GitHub (the job's page for GitHub Actions); none from an older server, and in the mockup.
+    var url: URL? = nil
     var id: String { name }
 
     private static let suite: [(name: String, duration: String, required: Bool)] = [

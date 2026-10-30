@@ -197,6 +197,10 @@ final class AppState {
     var machineSheet: MachineSheet? = nil
     /// The goal being made or edited, full page in place of the content (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
+    /// The CI check whose log is open in the log sheet.
+    var checkLogShown: CheckLogRequest? = nil
+    /// The mockup's check logs, as they load.
+    private var mockCheckLogs: [String: CheckLogLoad] = [:]
     var queue = FactoryData.seedQueue
 
     /// A queued task got a slot: it starts building like a freshly approved plan.
@@ -1613,17 +1617,18 @@ final class AppState {
         return true
     }
 
-    func approvePlan(_ id: String) {
+    /// `keepTitle` turns down the plan's suggested title.
+    func approvePlan(_ id: String, keepTitle: Bool = false) {
         if let client, isLive {
             guard beginInFlight(id, .approvePlan) else { return }
-            client.send(.taskApprovePlan(.init(id: id)))
+            client.send(.taskApprovePlan(.init(id: id, keepTitle: keepTitle ? true : nil)))
             return
         }
-        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id) }) { return }
-        approvePlanInMockup(id)
+        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id, keepTitle: keepTitle) }) { return }
+        approvePlanInMockup(id, keepTitle: keepTitle)
     }
 
-    private func approvePlanInMockup(_ id: String) {
+    private func approvePlanInMockup(_ id: String, keepTitle: Bool) {
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -1635,9 +1640,15 @@ final class AppState {
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
                 // Picked up from the backlog.
                 if task.state == .backlog { task.state = .awaitingApproval }
+                if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
+                    if let title = task.suggestedTitle {
+                        task.activity.insert(ActivityItem(who: "Factory", text: "Renamed it from \"\(task.title)\"", when: "now"), at: 0)
+                        task.title = title
+                        task.suggestedTitle = nil
+                    }
                     startBuilding(&task, prNumber: prNumber)
                     started = true
                 }
@@ -1796,6 +1807,62 @@ final class AppState {
         }
         showToast(byFactory ? "Factory auto-merged \(id) (#\(number ?? 0))" : "Merged \(id) into main",
                   icon: byFactory ? "bolt.fill" : "arrow.triangle.merge", color: Theme.State.merged)
+    }
+
+    /// Opens the log sheet on one of a task's CI checks and reads its log.
+    func showCheckLog(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        checkLogShown = request
+        loadCheckLog(request)
+    }
+
+    func loadCheckLog(_ request: CheckLogRequest) {
+        if let client, isLive { return client.loadCheckLog(request) }
+        mockCheckLogs[request.id] = .loading
+        let failed = task(request.taskID).pr?.checks.first { $0.name == request.check }?.status == .failed
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.4))
+            self.mockCheckLogs[request.id] = .loaded(CheckLog.sample(request.check, failed: failed))
+        }
+    }
+
+    func checkLog(_ request: CheckLogRequest) -> CheckLogLoad {
+        if let client, isLive { return client.checkLogs[request.id] ?? .loading }
+        return mockCheckLogs[request.id] ?? .loading
+    }
+
+    /// Runs one of the pull request's checks again (a GitHub Actions job, or the check run).
+    func rerunCheck(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        if let client, isLive {
+            client.send(.taskRerunCheck(.init(id: id, check: check)))
+            client.forgetCheckLog(request)
+            showToast("Running \(check) again", icon: "arrow.clockwise")
+            return
+        }
+        mockCheckLogs[request.id] = nil
+        withAnimation(.snappy(duration: 0.25)) {
+            update(id) { task in
+                guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }) else { return }
+                pr.checks[index].status = .running
+                pr.checks[index].duration = ""
+                task.pr = pr
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Re-ran \(check)", when: "now"), at: 0)
+            }
+        }
+        showToast("Running \(check) again on #\(task(id).pr?.number ?? 0)", icon: "arrow.clockwise", color: Theme.State.building)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }), pr.checks[index].status == .running else { return }
+                    pr.checks[index].status = .passed
+                    pr.checks[index].duration = "2:\(10 + index * 7)"
+                    task.pr = pr
+                    task.checksFailing = pr.checks.contains { $0.status == .failed }
+                }
+            }
+        }
     }
 
     func rerunFailedChecks(_ id: String) {
@@ -2106,6 +2173,9 @@ final class AppState {
             case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
+            // A PR card check row's View Log (`checklog:<id>:<check>`) and Re-run (`reruncheck:<id>:<check>`).
+            case "checklog": showCheckLog(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
+            case "reruncheck": rerunCheck(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)

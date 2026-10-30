@@ -5,6 +5,18 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.56.0 — 2026-10-29
+
+The protocol carries a plan's suggested title for its task.
+
+## 0.55.0 — 2026-10-29
+
+The protocol carries each check's link, its log and re-running one check.
+
+## 0.54.0 — 2026-10-29
+
+MCP connectors: sessions get the factory's connectors (Claude through a per-session 0600 config, Codex through -c overrides, with secrets in the pane's one-shot env file, never argv), and only the runner's own Maple server is pre-allowed.
+
 ## 0.53.0 — 2026-10-29
 
 Sign a machine's Codex in from the app: the runner runs `codex login --device-auth` and reports its link and one-time code to the machine's owner, then checks its agents again as soon as it's signed in. From this release there's no Intel Mac build.

@@ -80,7 +80,7 @@ struct PullRequestCard: View {
 
     private func checkRow(_ check: CICheck) -> some View {
         HStack(spacing: 8) {
-            checkIcon(check.status).frame(width: 14)
+            Self.checkIcon(check.status).frame(width: 14)
             Text(check.name)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.text)
@@ -96,18 +96,48 @@ struct PullRequestCard: View {
             Text(statusText(check))
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(check.status == .failed ? Theme.State.cancelled : Theme.textFaint)
-            Link(destination: pr.url.appending(path: "checks")) {
-                Image(systemName: "text.alignleft")
-                    .font(.system(size: 10))
+            Menu {
+                checkActions(check)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(Theme.textFaint)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
-            .help("Logs for \(check.name)")
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Log, re-run or open \(check.name) on GitHub")
         }
+        .contentShape(Rectangle())
+        .contextMenu { checkActions(check) }
+        .onTapGesture(count: 2) { if !pr.isLocal { state.showCheckLog(task.id, check: check.name) } }
         .padding(.horizontal, 10)
         .frame(height: 30)
     }
 
-    @ViewBuilder private func checkIcon(_ status: CICheck.Status) -> some View {
+    /// A check row's menu (and right-click): its log, running it again, and its run on GitHub.
+    @ViewBuilder private func checkActions(_ check: CICheck) -> some View {
+        Button("View Log…", systemImage: "text.alignleft") { state.showCheckLog(task.id, check: check.name) }
+            .disabled(pr.isLocal || check.status == .queued)
+        Button("Re-run", systemImage: "arrow.clockwise") { state.rerunCheck(task.id, check: check.name) }
+            .disabled(!Self.canRerun(check, pr: pr))
+        Divider()
+        Link(destination: Self.githubURL(check, pr: pr)) { Label("Open on GitHub", systemImage: "arrow.up.right.square") }
+    }
+
+    /// A finished check, on a pull request that's still open.
+    static func canRerun(_ check: CICheck, pr: PullRequest) -> Bool {
+        (check.status == .failed || check.status == .passed) && (pr.state == .open || pr.state == .draft) && !pr.isLocal
+    }
+
+    /// The check's own run, or the pull request's Checks tab when the server didn't say.
+    static func githubURL(_ check: CICheck, pr: PullRequest) -> URL {
+        check.url ?? pr.url.appending(path: "checks")
+    }
+
+    @ViewBuilder static func checkIcon(_ status: CICheck.Status) -> some View {
         switch status {
         case .passed: Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.State.merged)
         case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.State.cancelled)

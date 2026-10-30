@@ -398,7 +398,10 @@ export const structs: Record<string, Struct> = {
       findings: "Finding[]",
     },
   },
-  CICheck: { fields: { name: "string", status: "CheckStatus", duration: "string?", required: "bool" } },
+  CICheck: {
+    fields: { name: "string", status: "CheckStatus", duration: "string?", required: "bool", url: "string?" },
+    fieldDocs: { url: "Its run on GitHub (the job's page for GitHub Actions). None: an older server." },
+  },
   PullRequest: {
     fields: { number: "u32", url: "string?", state: "PRState", head: "string?", branch: "string", base: "string", checks: "CICheck[]" },
     fieldDocs: { url: "On GitHub; none for a local repo." },
@@ -493,6 +496,7 @@ export const structs: Record<string, Struct> = {
       plan: "PlanStep[]",
       planVersion: "u32",
       planSummary: "string?",
+      suggestedTitle: "string?",
       doneWhen: "DoneItem[]",
       approvals: "string[]",
       approvalsNeeded: "u32",
@@ -531,6 +535,7 @@ export const structs: Record<string, Struct> = {
       mergeAt: "u64?",
     },
     fieldDocs: {
+      suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
       effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
@@ -1116,7 +1121,11 @@ export const unions: Record<string, Union> = {
         doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",
         fields: { id: "string", notes: "ReviewNote[]", summary: "string?" },
       },
-      "task.approvePlan": { doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.", fields: { id: "string" } },
+      "task.approvePlan": {
+        doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.",
+        fields: { id: "string", keepTitle: "bool?" },
+        fieldDocs: { keepTitle: "Turn down the plan's suggested title and keep the current one." },
+      },
       "task.answer": { doc: "Answer the agent's question.", fields: { id: "string", text: "string" } },
       "task.answerPrompt": {
         doc: "Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.",
@@ -1144,6 +1153,11 @@ export const unions: Record<string, Union> = {
         fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
+      "task.rerunCheck": { doc: "Run one of the pull request's CI checks again, by name.", fields: { id: "string", check: "string" } },
+      "task.checkLog": {
+        doc: "The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.",
+        fields: { id: "string", check: "string" },
+      },
       "task.split": {
         doc: "Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.",
         fields: { id: "string", parts: "u32" },
@@ -1245,6 +1259,17 @@ export const unions: Record<string, Union> = {
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
+      checkLog: {
+        doc: "The CI check log `task.checkLog` asked for, to that connection only.",
+        fields: { id: "string", check: "string", url: "string?", text: "string", truncated: "bool", failedStep: "string?" },
+        fieldDocs: {
+          id: "The task.",
+          url: "The check's run on GitHub.",
+          text: "The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.",
+          truncated: "Only the log's end is kept.",
+          failedStep: "The first line GitHub marked as an error, when there is one.",
+        },
+      },
       error: { fields: { message: "string", requestId: "string?" } },
     },
   },

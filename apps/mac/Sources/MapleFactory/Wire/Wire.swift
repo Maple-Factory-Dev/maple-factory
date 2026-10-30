@@ -2080,12 +2080,15 @@ public enum Wire {
         public var status: CheckStatus
         public var duration: String?
         public var required: Bool
+        /// Its run on GitHub (the job's page for GitHub Actions). None: an older server.
+        public var url: String?
 
-        public init(name: String, status: CheckStatus, duration: String? = nil, required: Bool) {
+        public init(name: String, status: CheckStatus, duration: String? = nil, required: Bool, url: String? = nil) {
             self.name = name
             self.status = status
             self.duration = duration
             self.required = required
+            self.url = url
         }
     }
 
@@ -2397,6 +2400,8 @@ public enum Wire {
         public var plan: [PlanStep]
         public var planVersion: UInt32
         public var planSummary: String?
+        /// The planner's proposed title, taken when the plan is approved.
+        public var suggestedTitle: String?
         public var doneWhen: [DoneItem]
         public var approvals: [String]
         public var approvalsNeeded: UInt32
@@ -2447,7 +2452,7 @@ public enum Wire {
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2459,6 +2464,7 @@ public enum Wire {
             self.plan = plan
             self.planVersion = planVersion
             self.planSummary = planSummary
+            self.suggestedTitle = suggestedTitle
             self.doneWhen = doneWhen
             self.approvals = approvals
             self.approvalsNeeded = approvalsNeeded
@@ -2510,6 +2516,7 @@ public enum Wire {
             plan = try c.decodeIfPresent([PlanStep].self, forKey: .plan) ?? []
             planVersion = try c.decode(UInt32.self, forKey: .planVersion)
             planSummary = try c.decodeIfPresent(String.self, forKey: .planSummary)
+            suggestedTitle = try c.decodeIfPresent(String.self, forKey: .suggestedTitle)
             doneWhen = try c.decodeIfPresent([DoneItem].self, forKey: .doneWhen) ?? []
             approvals = try c.decodeIfPresent([String].self, forKey: .approvals) ?? []
             approvalsNeeded = try c.decode(UInt32.self, forKey: .approvalsNeeded)
@@ -4793,9 +4800,12 @@ public enum Wire {
     /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
         public var id: String
+        /// Turn down the plan's suggested title and keep the current one.
+        public var keepTitle: Bool?
 
-        public init(id: String) {
+        public init(id: String, keepTitle: Bool? = nil) {
             self.id = id
+            self.keepTitle = keepTitle
         }
     }
 
@@ -4916,6 +4926,28 @@ public enum Wire {
         }
     }
 
+    /// Run one of the pull request's CI checks again, by name.
+    public struct ClientMessageTaskRerunCheck: Codable, Hashable, Sendable {
+        public var id: String
+        public var check: String
+
+        public init(id: String, check: String) {
+            self.id = id
+            self.check = check
+        }
+    }
+
+    /// The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.
+    public struct ClientMessageTaskCheckLog: Codable, Hashable, Sendable {
+        public var id: String
+        public var check: String
+
+        public init(id: String, check: String) {
+            self.id = id
+            self.check = check
+        }
+    }
+
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     public struct ClientMessageTaskSplit: Codable, Hashable, Sendable {
         public var id: String
@@ -5030,6 +5062,8 @@ public enum Wire {
         case taskQueue(ClientMessageTaskQueue)
         case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
+        case taskRerunCheck(ClientMessageTaskRerunCheck)
+        case taskCheckLog(ClientMessageTaskCheckLog)
         case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
         case taskCheckedIt(ClientMessageTaskCheckedIt)
@@ -5099,6 +5133,8 @@ public enum Wire {
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
             case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
+            case "task.rerunCheck": self = .taskRerunCheck(try ClientMessageTaskRerunCheck(from: decoder))
+            case "task.checkLog": self = .taskCheckLog(try ClientMessageTaskCheckLog(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
@@ -5276,6 +5312,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRerunCheck(let body):
+                try c.encode("task.rerunCheck", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCheckLog(let body):
+                try c.encode("task.checkLog", forKey: .type)
                 try body.encode(to: encoder)
             case .taskSplit(let body):
                 try c.encode("task.split", forKey: .type)
@@ -5670,6 +5712,30 @@ public enum Wire {
         }
     }
 
+    /// The CI check log `task.checkLog` asked for, to that connection only.
+    public struct ServerToClientCheckLog: Codable, Hashable, Sendable {
+        /// The task.
+        public var id: String
+        public var check: String
+        /// The check's run on GitHub.
+        public var url: String?
+        /// The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.
+        public var text: String
+        /// Only the log's end is kept.
+        public var truncated: Bool
+        /// The first line GitHub marked as an error, when there is one.
+        public var failedStep: String?
+
+        public init(id: String, check: String, url: String? = nil, text: String, truncated: Bool, failedStep: String? = nil) {
+            self.id = id
+            self.check = check
+            self.url = url
+            self.text = text
+            self.truncated = truncated
+            self.failedStep = failedStep
+        }
+    }
+
     public struct ServerToClientError: Codable, Hashable, Sendable {
         public var message: String
         public var requestId: String?
@@ -5707,6 +5773,7 @@ public enum Wire {
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
+        case checkLog(ServerToClientCheckLog)
         case error(ServerToClientError)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
@@ -5741,6 +5808,7 @@ public enum Wire {
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
+            case "checkLog": self = .checkLog(try ServerToClientCheckLog(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
             default: self = .unknown(type)
             }
@@ -5823,6 +5891,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .stats(let body):
                 try c.encode("stats", forKey: .type)
+                try body.encode(to: encoder)
+            case .checkLog(let body):
+                try c.encode("checkLog", forKey: .type)
                 try body.encode(to: encoder)
             case .error(let body):
                 try c.encode("error", forKey: .type)

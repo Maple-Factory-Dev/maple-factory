@@ -952,6 +952,9 @@ pub struct CICheck {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<String>,
     pub required: bool,
+    /// Its run on GitHub (the job's page for GitHub Actions). None: an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1165,6 +1168,9 @@ pub struct Task {
     pub plan_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_summary: Option<String>,
+    /// The planner's proposed title, taken when the plan is approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_title: Option<String>,
     #[serde(default)]
     pub done_when: Vec<DoneItem>,
     #[serde(default)]
@@ -2474,6 +2480,9 @@ pub enum ClientMessage {
     #[serde(rename = "task.approvePlan")]
     TaskApprovePlan {
         id: String,
+        /// Turn down the plan's suggested title and keep the current one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        keep_title: Option<bool>,
     },
     /// Answer the agent's question.
     #[serde(rename = "task.answer")]
@@ -2544,6 +2553,18 @@ pub enum ClientMessage {
     #[serde(rename = "task.rerunChecks")]
     TaskRerunChecks {
         id: String,
+    },
+    /// Run one of the pull request's CI checks again, by name.
+    #[serde(rename = "task.rerunCheck")]
+    TaskRerunCheck {
+        id: String,
+        check: String,
+    },
+    /// The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.
+    #[serde(rename = "task.checkLog")]
+    TaskCheckLog {
+        id: String,
+        check: String,
     },
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     #[serde(rename = "task.split")]
@@ -2783,6 +2804,23 @@ pub enum ServerToClient {
     #[serde(rename = "stats")]
     Stats {
         summary: StatsSummary,
+    },
+    /// The CI check log `task.checkLog` asked for, to that connection only.
+    #[serde(rename = "checkLog")]
+    CheckLog {
+        /// The task.
+        id: String,
+        check: String,
+        /// The check's run on GitHub.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        /// The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.
+        text: String,
+        /// Only the log's end is kept.
+        truncated: bool,
+        /// The first line GitHub marked as an error, when there is one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed_step: Option<String>,
     },
     #[serde(rename = "error")]
     Error {

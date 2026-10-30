@@ -63,6 +63,7 @@ async function planner() {
     await call("ask", { question: "Formal or casual greeting?", options: ["Formal", "Casual"] });
     answer = await nextLine();
   }
+  const rename = prompt.match(/\[rename: ([^\]]+)\]/);
   const plan = await call("submit_plan", {
     summary: `Add a greeting file for ${data.task.id}, so the factory has something real to commit, push and merge.${answer ? ` (${answer})` : ""}`,
     steps: [
@@ -76,6 +77,8 @@ async function planner() {
     // "[risky]" rates it high, so a person approves and merges it instead of the factory.
     risk: prompt.includes("[risky]") ? { level: "high", reasons: ["It touches the release path."], areas: ["release"] } : { level: "low", reasons: ["One new text file."], areas: [] },
     footprint: { files: 1, lines: 1 },
+    // "[rename: X]": the plan suggests X as the task's title.
+    ...(rename ? { title: rename[1] } : {}),
     // "[cross-repo]": the goal's next repo gets the part that uses this one, as its own task.
     otherRepos: prompt.includes("[cross-repo]")
       ? [...prompt.matchAll(/^- ([\w.-]+\/[\w.-]+)$/gm)].slice(0, 1).map(([, repo]) => ({ repo, title: `Use ${data.task.id}'s greeting`, brief: `Show the greeting ${data.task.id} adds. Add hello.txt with a greeting.` }))
