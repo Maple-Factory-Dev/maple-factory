@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// What the proof lightbox shows: a screenshot (and its upload, for Open in Preview) or a recording from where it was.
-enum ProofLightbox {
+enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
     case video(URL, poster: NSImage?, caption: String, at: Double = 0)
 
@@ -2243,6 +2243,16 @@ final class AppState {
                 case "zoom", "pan": NotificationCenter.default.post(name: ProofLightboxView.demoZoom, object: Array(parts.dropFirst()))
                 default: NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1])
                 }
+            // A trackpad scroll at a point in the window, headless: `scroll:<x>:<y>:<dx>:<dy>`, with `:cmd` to hold ⌘.
+            case "scroll" where parts.count > 4:
+                let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
+                Headless.scroll(at: CGPoint(x: n[0], y: n[1]), by: CGPoint(x: n[2], y: n[3]), command: parts.count > 5 && parts[5] == "cmd")
+            // A left-button drag in the window, headless: `drag:<x>:<y>:<dx>:<dy>`; and a double-click, `doubleclick:<x>:<y>`.
+            case "drag" where parts.count > 4:
+                let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
+                await Headless.drag(from: CGPoint(x: n[0], y: n[1]), by: CGPoint(x: n[2], y: n[3]))
+            case "doubleclick" where parts.count > 2:
+                await Headless.doubleClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
             // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
             // A left click at a point in the window (`click:<x>:<y>`, points from the top left), or on a card (`click:<task>`).

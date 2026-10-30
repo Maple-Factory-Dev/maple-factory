@@ -630,10 +630,14 @@ private struct ZoomableProofImage: View {
     /// The frame in window coordinates, for the scroll monitor to find the cursor.
     @State private var frameInWindow: CGRect = .zero
     @State private var monitor: Any?
+    /// What the monitor calls: this view's latest `scrolled`, so it reads the zoom and pan on screen, not the ones
+    /// it was installed with.
+    @State private var relay = ScrollRelay()
 
     var body: some View {
         let content = CGSize(width: fitted.width * zoom, height: fitted.height * zoom)
         let frame = CGSize(width: min(room.width, content.width), height: min(room.height, content.height))
+        let _ = relay.handle = scrolled
         Image(nsImage: image)
             .resizable()
             .interpolation(.high)
@@ -664,7 +668,7 @@ private struct ZoomableProofImage: View {
             }
             .pointerStyle(zoom > 1 ? (dragFrom == nil ? .grabIdle : .grabActive) : nil)
             .onAppear {
-                monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { scrolled($0) }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [relay] in relay.handle?($0) ?? $0 }
             }
             .onDisappear {
                 if let monitor { NSEvent.removeMonitor(monitor) }
@@ -674,20 +678,30 @@ private struct ZoomableProofImage: View {
 
     /// ⌘-scroll zooms about the cursor (or the centre, off the image); a plain scroll pans a zoomed image.
     private func scrolled(_ event: NSEvent) -> NSEvent? {
-        guard let view = event.window?.contentView, event.window == NSApp.mainWindow || Headless.isOn else { return event }
-        var point = view.convert(event.locationInWindow, from: nil)
+        // A headless `scroll:` comes from off screen, with no window: it's for the main window, at the point it says.
+        let headless = Headless.isOn && event.window == nil ? Headless.scrollPoint : nil
+        guard let window = headless != nil ? Snapshotter.shared?.mainWindow : event.window, let view = window.contentView,
+              window == NSApp.mainWindow || Headless.isOn else { return event }
+        var point = view.convert(headless ?? event.locationInWindow, from: nil)
         if !view.isFlipped { point.y = view.bounds.height - point.y }
         let precise = event.hasPreciseScrollingDeltas
         if event.modifierFlags.contains(.command) {
             let anchor = frameInWindow.contains(point) ? CGPoint(x: point.x - frameInWindow.midX, y: point.y - frameInWindow.midY) : .zero
+            if Headless.isOn { print("headless: ⌘-scroll zooms from \(zoom) about \(anchor)") }
             zoomTo(zoom * exp(event.scrollingDeltaY * (precise ? 0.01 : 0.1)), anchor)
             return nil
         }
         guard zoom > 1 else { return event }
+        if Headless.isOn { print("headless: scroll pans from \(pan) at zoom \(zoom)") }
         let step: CGFloat = precise ? 1 : 10
         panTo(CGSize(width: pan.width + event.scrollingDeltaX * step, height: pan.height + event.scrollingDeltaY * step))
         return nil
     }
+}
+
+/// Holds the scroll monitor's handler, so a monitor installed once calls the view as it is now.
+private final class ScrollRelay {
+    var handle: ((NSEvent) -> NSEvent?)?
 }
 
 /// A proof shown as large as the window allows, over a dimmed window. Esc, the close button or a click
@@ -727,6 +741,8 @@ struct ProofLightboxView: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            // A window resized keeps the zoom in its new cap and the pan in its new room.
+            .onChange(of: room) { setZoom(zoom, at: .zero, room: room) }
             .onReceive(NotificationCenter.default.publisher(for: Self.demoZoom)) { note in
                 guard let parts = note.object as? [String], let command = parts.first else { return }
                 let numbers = parts.dropFirst().compactMap { Double($0) }.map { CGFloat($0) }
@@ -738,6 +754,14 @@ struct ProofLightboxView: View {
         }
         .onAppear(perform: startVideo)
         .onDisappear { player?.pause() }
+        // Another proof shown in the same lightbox opens fitted, like the first.
+        .onChange(of: lightbox) {
+            zoom = 1
+            pan = .zero
+            player?.pause()
+            player = nil
+            startVideo()
+        }
     }
 
     @ViewBuilder private func media(in room: CGSize) -> some View {
