@@ -8,7 +8,7 @@
 import type { Env } from "../env.ts";
 import type {
   ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  McpConnector, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
@@ -17,6 +17,7 @@ import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPromp
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
+import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
@@ -233,6 +234,16 @@ export class Engine {
         this.store.savePrompts(prompts);
         await audit(this.env, who, "prompts.saved", null, prompts);
         this.hooks.broadcast({ type: "prompts.updated", prompts });
+        return;
+      }
+      case "connectors.save": {
+        if (member.role !== "admin") fail("Only admins can change the factory's connectors.");
+        const result = merged(msg.connectors, this.store.connectors());
+        const connectors = typeof result === "string" ? fail(result) : result;
+        this.store.saveConnectors(connectors);
+        const shown = redacted(connectors);
+        await audit(this.env, who, "connectors.saved", null, shown);
+        this.hooks.broadcast({ type: "connectors.updated", connectors: shown });
         return;
       }
       case "goal.acceptRisk": {
@@ -943,6 +954,7 @@ export class Engine {
       task: { id: task.id, repo: taskRepo(task, goal), scripts: this.store.scriptsFor(taskRepo(task, goal)) },
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
       model: task.model ?? null,
+      connectors: this.connectors(),
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
     const now_ = this.store.task(task.id);
@@ -982,6 +994,11 @@ export class Engine {
       }
     }
     return null;
+  }
+
+  /** The enabled MCP connectors for a session.open, secrets included: these go to runners only. */
+  connectors(): McpConnector[] {
+    return this.store.connectors().filter((c) => c.enabled);
   }
 
   private hasAgent(machine: Machine, agent: string) {
