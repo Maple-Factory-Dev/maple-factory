@@ -803,6 +803,10 @@ struct RepositoriesSettings: View {
                         .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+
+            if client.isSignedIn, client.githubApp != nil || !client.repoOwners.isEmpty {
+                OtherGitHubAccounts()
+            }
         }
         .padding(20)
     }
@@ -811,6 +815,94 @@ struct RepositoriesSettings: View {
         let name = adding.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         client.send(.reposAdd(.init(name: name)))
+        adding = ""
+    }
+}
+
+/// Repos from GitHub accounts besides the factory's own: the app has to be public to be installed there,
+/// and an admin approves each account, or its installation adds nothing (anyone can install a public app).
+struct OtherGitHubAccounts: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var adding = ""
+
+    private var isAdmin: Bool { client.me?.role == "admin" }
+
+    var body: some View {
+        SettingsCard {
+            SettingsHeader(title: "Other GitHub accounts",
+                           detail: "Repos in another org (or someone's own account) come in once an admin approves it here and the GitHub App is installed there.")
+
+            if client.repoOwners.isEmpty {
+                Text("None yet: only \(client.org.isEmpty ? "the factory's own account" : client.org)'s installations add repos.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(client.repoOwners, id: \.self) { owner in
+                        HStack(spacing: 8) {
+                            Image(systemName: "building.2").foregroundStyle(Theme.textMuted).frame(width: 16)
+                            Text(owner).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
+                            Text("\(client.repos.filter { $0.source == .github && $0.name.lowercased().hasPrefix(owner.lowercased() + "/") }.count) repos")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                            Spacer()
+                            if isAdmin {
+                                Button {
+                                    client.setRepoOwners(client.repoOwners.filter { $0 != owner })
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Stop adding \(owner)'s repos")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if isAdmin {
+                HStack {
+                    TextField("An org or account's GitHub login", text: $adding)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(approve)
+                    Button("Approve", action: approve)
+                        .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            if let app = client.githubApp {
+                Divider()
+                step(1, "Make the app public", "Once, in the app's Advanced settings on GitHub: GitHub only installs a private app on the account that owns it.",
+                     link: app.settingsUrl, button: "Open \(app.slug)'s settings")
+                step(2, "Install it on the org", "Pick the org and its repos, then Refresh above.",
+                     link: app.installUrl, button: "Install on GitHub")
+            }
+        }
+    }
+
+    private func step(_ n: Int, _ title: String, _ detail: String, link: String, button: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(n)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Theme.fill))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.text)
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if let url = URL(string: link) {
+                Link(button, destination: url).font(.system(size: 12))
+            }
+        }
+    }
+
+    private func approve() {
+        let login = adding.trimmingCharacters(in: .whitespaces)
+        guard !login.isEmpty else { return }
+        if !client.repoOwners.contains(where: { $0.lowercased() == login.lowercased() }) {
+            client.setRepoOwners(client.repoOwners + [login])
+        }
         adding = ""
     }
 }

@@ -60,6 +60,10 @@ import Security
     private(set) var secrets: [Wire.RepoSecret] = []
     /// The repos with worktree scripts (Settings › Repositories); empty from an older server.
     private(set) var repoScripts: [Wire.RepoWorktreeScripts] = []
+    /// Other GitHub accounts an admin approved, whose installations of the app add repos; empty from an older server.
+    private(set) var repoOwners: [String] = []
+    /// The factory's GitHub App and its links; nil with no app, or from an older server.
+    private(set) var githubApp: Wire.GitHubAppInfo?
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
     /// Runner releases with their notes, newest first (What's new); empty from an older server.
@@ -273,6 +277,8 @@ import Security
         repos = []
         secrets = []
         repoScripts = []
+        repoOwners = []
+        githubApp = nil
         runnerLatest = nil
         runnerReleases = []
         serverVersion = nil
@@ -394,6 +400,8 @@ import Security
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
+            repoOwners = snapshot.repoOwners ?? []
+            githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
@@ -464,6 +472,7 @@ import Security
         case .reposUpdated(let update):
             repos = update.repos
             if let scripts = update.scripts { repoScripts = scripts }
+            if let owners = update.repoOwners { repoOwners = owners }
         case .secretsUpdated(let update):
             secrets = update.secrets
         case .runnerReleased(let update):
@@ -675,6 +684,11 @@ import Security
     /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
     func save(scripts: Wire.WorktreeScripts, for repo: String) {
         send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    }
+
+    /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.
+    func setRepoOwners(_ owners: [String]) {
+        send(.reposOwnersSet(.init(owners: owners)))
     }
 
     /// `repo`'s worktree scripts, if it has any.
