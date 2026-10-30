@@ -1036,12 +1036,19 @@ function mockup(m) {
   const body = m.kind === "terminal"
     ? h("div", { class: "terminal" }, m.lines.map((l) => h("div", { class: l.style }, l.text || " ", l.callout && h("span", { class: "callout-n" }, l.callout))))
     : h("div", { class: "browser" }, h("div", { class: "url" }, m.url ?? m.title),
-      h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }));
+      fitted(h("div", { class: "mockup-fit" }, h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }))));
   return h("div", { style: "margin-bottom:14px" },
     h("div", { class: "row", style: "margin-bottom:6px" }, h("b", {}, m.title), h("span", { class: "muted" }, m.status === "approved" ? "· approved" : m.status === "changesRequested" ? "· changes asked" : "")),
     body,
     m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
 }
+
+/** On a phone a mockup renders 800px wide and scales down by --fit to its box (app.css). */
+// A re-render drops the old box, which reports a size of 0 on its way out: let go of it then.
+const fit = new ResizeObserver((entries) => {
+  for (const e of entries) e.target.isConnected ? e.target.style.setProperty("--fit", Math.min(1, e.contentRect.width / 800)) : fit.unobserve(e.target);
+});
+const fitted = (el) => (fit.observe(el), el);
 
 const attesting = new Map(); // task id → { item, note }: the Done when item being attested and the reason typed so far
 
