@@ -2080,6 +2080,17 @@ final class AppState {
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
+            // The ⌘K palette: `palette:open`, `palette:type:state:reviewing`, `palette:down` (or `up`), `palette:run`, `palette:close`.
+            case "palette":
+                switch parts[1] {
+                case "open": if !showPalette { togglePalette() }
+                case "close": if showPalette { togglePalette() }
+                case "type": paletteQuery = parts.dropFirst(2).joined(separator: ":")
+                case "down": movePaletteSelection(1)
+                case "up": movePaletteSelection(-1)
+                case "run": runPaletteSelection()
+                default: break
+                }
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             // `secret:add` opens Settings › Secrets' Add sheet (with `-window settings-sheet`).
             case "secret" where parts.count > 3 && parts[1] == "save":
