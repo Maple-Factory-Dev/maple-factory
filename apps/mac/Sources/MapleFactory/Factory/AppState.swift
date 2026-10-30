@@ -1931,9 +1931,10 @@ final class AppState {
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
-            // The first screenshot or video proof on screen, shown large (`lightbox:open`), and put away (`lightbox:close`).
+            // The first screenshot or video proof on screen, shown large (`lightbox:open`, or `lightbox:image` / `lightbox:video`
+            // for the first of that kind), and put away (`lightbox:close`).
             case "lightbox":
-                if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: nil) }
+                if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.

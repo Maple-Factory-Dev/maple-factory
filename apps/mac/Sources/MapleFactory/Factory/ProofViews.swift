@@ -359,9 +359,9 @@ private struct ScreenshotProof: View {
             }
             ProofCaption(icon: "photo", caption: caption)
         }
-        .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { note in
             // Only the first proof on screen answers, so one lightbox opens.
-            guard let image, state.lightbox == nil else { return }
+            guard let image, state.lightbox == nil, note.object as? String != "video" else { return }
             state.showLightbox(.image(image, caption: caption, attachment: path))
         }
         .task(id: path) {
@@ -441,8 +441,8 @@ struct VideoProof: View {
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPlay)) { _ in
             if let file, player == nil { play(file) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { _ in
-            if file != nil, state.lightbox == nil { expand() }
+        .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { note in
+            if file != nil, state.lightbox == nil, note.object as? String != "image" { expand() }
         }
     }
 
@@ -615,7 +615,7 @@ private struct MediaProof: View {
 /// A proof shown as large as the window allows, over a dimmed window. Esc, the close button or a click
 /// on the backdrop puts it away; Open in Preview (or QuickTime) still hands the file to the Mac.
 struct ProofLightboxView: View {
-    /// A demo script's `lightbox:open`: the first screenshot or video proof on screen opens itself here.
+    /// A demo script's `lightbox:open` (or `:image`, `:video`): the first such proof on screen opens itself here.
     static let demoOpen = Notification.Name("ProofLightboxView.demoOpen")
     static let padding: CGFloat = 48
     /// Room under the media for its caption and buttons.
