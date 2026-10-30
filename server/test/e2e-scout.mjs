@@ -55,6 +55,8 @@ const call = (session, tool, args = {}) => new Promise((resolve, reject) => {
   toHub({ type: "mcp.request", reqId, session, tool, args });
 });
 let draftRun = null;
+// The task that plays the loop out; sessions for any other (an earlier run's) just open.
+let first = null;
 const roles = {
   async planner(s) {
     await call(s, "submit_plan", {
@@ -116,7 +118,6 @@ await until("scoutItems 2", () => policy.scoutItems === 2);
 step(`goal ${goal.name}; the policy's scoutItems is ${policy.scoutItems}`);
 
 const inGoal = () => [...tasks.values()].filter((t) => t.goal === goal.id);
-let first = null;
 send({ type: "task.create", goal: goal.id, title: "Add a greeting", brief: "Add hello.txt.", shareable: false, plan: true, tickets: [], agent: "claude" });
 await until("the task", () => (first = inGoal()[0]?.id));
 await until("its plan", () => tasks.get(first).state === "awaitingApproval");
