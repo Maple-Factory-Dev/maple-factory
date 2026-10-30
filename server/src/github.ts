@@ -8,7 +8,7 @@
 // needs. GITHUB_API_URL can point all of it at a fake GitHub for tests; it's only honored on localhost.
 
 import type { Env } from "./env.ts";
-import type { OrgRepo } from "./wire.ts";
+import type { GitHubAppInfo, OrgRepo } from "./wire.ts";
 
 export const API = "https://api.github.com";
 const USER_AGENT = "maple-factory";
@@ -35,6 +35,25 @@ export function githubApp(env: Env): GitHubApp | null {
   const privateKey = env.GITHUB_APP_PRIVATE_KEY?.trim();
   if (!issuer || !privateKey) return null;
   return { issuer, privateKey, api: apiBase(env.GITHUB_API_URL) };
+}
+
+/** The app's settings page on GitHub (under the org, or the personal account that owns it). */
+export function appSettingsUrl(env: Env, slug: string): string {
+  return env.GITHUB_OWNER_TYPE === "User"
+    ? `https://github.com/settings/apps/${encodeURIComponent(slug)}`
+    : `https://github.com/organizations/${encodeURIComponent(env.GITHUB_ORG)}/settings/apps/${encodeURIComponent(slug)}`;
+}
+
+/** The app's links for the apps, when /setup recorded its slug: where it's made public, and installed. */
+export function githubAppInfo(env: Env): GitHubAppInfo | null {
+  const slug = env.GITHUB_APP_SLUG?.trim();
+  if (!slug || !env.GITHUB_ORG) return null;
+  return {
+    slug,
+    ownerType: env.GITHUB_OWNER_TYPE ?? null,
+    settingsUrl: `${appSettingsUrl(env, slug)}/advanced`,
+    installUrl: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`,
+  };
 }
 
 /** The API base: GITHUB_API_URL only when it's a local test server, else api.github.com. */

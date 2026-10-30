@@ -14,7 +14,7 @@ import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
-import { goalRepos, REPO, taskRepo } from "./repos.ts";
+import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
@@ -152,6 +152,22 @@ export class Engine {
         await audit(this.env, who, "repo.added", null, { name });
         this.reposUpdated();
         return;
+      }
+      case "repos.owners.set": {
+        if (member.role !== "admin") fail("Only admins can change which GitHub accounts add repos.");
+        const org = (this.env.GITHUB_ORG ?? "").toLowerCase();
+        const owners: string[] = [];
+        for (const raw of msg.owners) {
+          const login = raw.trim().replace(/^@/, "").replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "");
+          if (!login) continue;
+          if (!OWNER.test(login)) fail(`${login} isn't a GitHub account's login.`);
+          if (login.toLowerCase() !== org && !owners.some((o) => o.toLowerCase() === login.toLowerCase())) owners.push(login);
+        }
+        this.store.saveRepoOwners(owners);
+        await audit(this.env, who, "repo.owners_set", null, { owners });
+        this.reposUpdated();
+        // Their repos come in (or the removed ones' go) once the app's installations are read again.
+        return this.refreshRepos(true);
       }
       case "repos.remove": {
         if (member.role !== "admin") fail("Only admins can remove repos.");
@@ -1331,7 +1347,10 @@ export class Engine {
     }
     let granted: OrgRepo[];
     try {
-      granted = await installedRepos(app);
+      // The factory's own account, and the others an admin approved: the app is public, so anyone
+      // can install it, and their installations mustn't add repos here.
+      const owners = new Set([this.env.GITHUB_ORG, ...this.store.repoOwners()].filter(Boolean).map((o) => o.toLowerCase()));
+      granted = await installedRepos(app, (login) => owners.has(login.toLowerCase()));
     } catch (e) {
       if (asked) fail(`Couldn't read the app's repos: ${(e as Error).message}`);
       return;
@@ -2086,7 +2105,7 @@ export class Engine {
   }
 
   private reposUpdated() {
-    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts() });
+    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts(), repoOwners: this.store.repoOwners() });
   }
 
   private event(task: Task, who: string, text: string) {
