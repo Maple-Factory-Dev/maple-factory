@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.56.0 — 2026-10-29
+
+The protocol carries a plan's suggested title for its task.
+
 ## 0.55.0 — 2026-10-29
 
 The protocol carries each check's link, its log and re-running one check.
