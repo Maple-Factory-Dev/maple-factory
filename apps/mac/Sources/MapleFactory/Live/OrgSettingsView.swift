@@ -299,69 +299,65 @@ struct AppearanceSettings: View {
     static let demoPick = Notification.Name("AppearanceSettings.demoPick")
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Appearance", detail: "The factory's name and icon, for everyone in it: at the top of the sidebar, in the factory menu, and (the icon) in the Dock on each Mac that shows it (Settings › General).")
+        SettingsPane("Appearance", subtitle: "The factory's name and icon, for everyone in it: at the top of the sidebar, in the factory menu, and (the icon) in the Dock on each Mac that shows it (Settings › General).") {
             if !client.isSignedIn {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its name and icon."))
+                SettingsUnavailable(detail: "Connect to a factory to see its name and icon.")
             } else {
                 FactoryNameCard()
-                SettingsCard {
-                    HStack(alignment: .center, spacing: 28) {
-                        VStack(spacing: 8) {
-                            HStack(spacing: 10) {
-                                FactoryIcon(name: client.workspaceName, image: client.icon, size: 22)
-                                Text(client.workspaceName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 12)
-                            .frame(width: 200, height: 44)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
-                            Text("Sidebar").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                        }
-                        VStack(spacing: 8) {
-                            Image(nsImage: client.icon.map(MapleIcon.dockImage) ?? MapleIcon.dockImage)
-                                .resizable()
-                                .frame(width: 72, height: 72)
-                            Text("Dock").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(targeted ? Theme.accent : Theme.stroke, style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: isAdmin ? [5, 4] : []))
-                    )
-                    .overlay { if busy { ProgressView().controlSize(.small) } }
-                    .dropDestination(for: URL.self) { urls, _ in
-                        guard isAdmin, let url = urls.first else { return false }
-                        upload(url)
-                        return true
-                    } isTargeted: { targeted = isAdmin && $0 }
-                    Text(isAdmin
-                         ? "Choose an image or drop one on the preview. A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB."
-                         : "A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    if !isAdmin {
-                        Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    } else if let problem {
-                        Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.State.cancelled)
-                    }
-                    Spacer()
+                SettingsSection("Icon", caption: isAdmin
+                                ? "Choose an image or drop one on the preview. A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB."
+                                : "A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB.") {
+                    SettingsBlock { preview }
                     if isAdmin {
-                        Button("Remove", role: .destructive) { remove() }.disabled(busy || client.iconLink == nil)
-                        Button("Choose Image…") { choose() }.disabled(busy)
+                        SettingsRow("Factory icon", detail: problem, detailColor: Theme.State.cancelled) {
+                            Button("Remove", role: .destructive) { remove() }.disabled(busy || client.iconLink == nil)
+                            Button("Choose Image…") { choose() }.disabled(busy)
+                        }
+                    } else {
+                        SettingsNote("Only admins can change this.")
                     }
                 }
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPick)) { note in
             guard isAdmin, let path = note.object as? String else { return }
             if path == "remove" { remove() } else { upload(URL(fileURLWithPath: path)) }
         }
+    }
+
+    /// The icon where people see it: the sidebar and the Dock. Admins drop an image on it.
+    private var preview: some View {
+        HStack(alignment: .center, spacing: 28) {
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    FactoryIcon(name: client.workspaceName, image: client.icon, size: 22)
+                    Text(client.workspaceName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .frame(width: 200, height: 44)
+                .background(RoundedRectangle(cornerRadius: 10).fill(SettingsKit.sidebarBG))
+                Text("Sidebar").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            }
+            VStack(spacing: 8) {
+                Image(nsImage: client.icon.map(MapleIcon.dockImage) ?? MapleIcon.dockImage)
+                    .resizable()
+                    .frame(width: 72, height: 72)
+                Text("Dock").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(targeted ? Theme.accent : Theme.stroke, style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: isAdmin ? [5, 4] : []))
+        )
+        .overlay { if busy { ProgressView().controlSize(.small) } }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard isAdmin, let url = urls.first else { return false }
+            upload(url)
+            return true
+        } isTargeted: { targeted = isAdmin && $0 }
     }
 
     private func choose() {
@@ -412,29 +408,27 @@ struct FactoryNameCard: View {
     static let demo = Notification.Name("FactoryNameCard.demo")
 
     var body: some View {
-        SettingsCard {
-            LabeledContent("Name") {
+        SettingsSection("Name", caption: trimmed.count > FactoryClient.maxName ? nil : "Shown instead of \(client.orgName). Leave it blank to use the org's name.") {
+            SettingsRow("Factory name") {
                 TextField(client.orgName, text: $draft)
                     .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
                     .disabled(!isAdmin || busy)
                     .onSubmit(save)
+                if isAdmin {
+                    Button("Save") { save() }.disabled(busy || unchanged || trimmed.count > FactoryClient.maxName)
+                }
             }
-            Text(trimmed.count > FactoryClient.maxName
-                 ? "The name can be up to \(FactoryClient.maxName) characters."
-                 : "Shown instead of \(client.orgName). Leave it blank to use the org's name.")
-                .font(.system(size: 12))
-                .foregroundStyle(trimmed.count > FactoryClient.maxName ? Theme.State.cancelled : Theme.textMuted)
-        }
-        HStack {
-            if !isAdmin {
-                Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-            } else if let problem {
-                Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.State.cancelled)
+            if trimmed.count > FactoryClient.maxName {
+                SettingsNote("The name can be up to \(FactoryClient.maxName) characters.", systemImage: "exclamationmark.triangle", color: Theme.State.cancelled)
             }
-            Spacer()
             if isAdmin {
-                Button("Use Org Name") { clear() }.disabled(busy || client.displayName == nil)
-                Button("Save") { save() }.disabled(busy || unchanged || trimmed.count > FactoryClient.maxName)
+                SettingsButtonRow("GitHub organization", value: client.orgName, button: "Use Org Name", disabled: busy || client.displayName == nil) { clear() }
+                if let problem {
+                    SettingsNote(problem, systemImage: "exclamationmark.triangle", color: Theme.State.cancelled)
+                }
+            } else {
+                SettingsNote("Only admins can change this.")
             }
         }
         .onAppear { draft = client.displayName ?? "" }
@@ -645,20 +639,10 @@ struct FactoryAdminsCard: View {
     static let demo = Notification.Name("FactoryAdminsCard.demo")
 
     var body: some View {
-        SettingsCard {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Factory admins").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("Admins change the factory's settings, secrets and prompts. Owners of the GitHub organization always are; an admin can make anyone else who has signed in one too.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
-            }
-            VStack(spacing: 0) {
-                ForEach(Array(client.members.enumerated()), id: \.element.login) { index, member in
-                    if index > 0 { Hairline() }
-                    row(member)
-                }
-            }
+        SettingsSection("Factory admins", caption: "Admins change the factory's settings, secrets and prompts. Owners of the GitHub organization always are; an admin can make anyone else who has signed in one too.") {
+            ForEach(client.members, id: \.login) { member in row(member) }
             if !client.isAdmin {
-                Label("Only admins can change who's an admin.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                SettingsNote("Only admins can change who's an admin.")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
@@ -688,7 +672,7 @@ struct FactoryAdminsCard: View {
             }
         }
         .font(.system(size: 12.5))
-        .padding(.vertical, 6)
+        .settingsRowPadding()
     }
 
     /// GitHub owner, Admin · added by @x, or Member.
@@ -697,29 +681,6 @@ struct FactoryAdminsCard: View {
         if member.adminSource == "granted" { return member.adminGrantedBy.map { "Admin · added by @\($0)" } ?? "Admin" }
         // An older server doesn't say why; then GitHub is the only way to be one.
         return "GitHub owner"
-    }
-}
-
-struct SettingsHeader: View {
-    let title: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-            Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-struct SettingsCard<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) { content }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
     }
 }
 
@@ -734,13 +695,16 @@ struct PromptSettings: View {
     private var current: Wire.PromptAdditions { client.prompts ?? LiveAdapter.noPrompts }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Prompts", detail: "Added to every factory session's prompt for its role, after the task's brief. A goal's own instructions come after these.")
+        SettingsPane("Prompts", subtitle: "Added to every factory session's prompt for its role, after the task's brief. A goal's own instructions come after these.") {
             if !client.isSignedIn {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its prompts."))
+                SettingsUnavailable(detail: "Connect to a factory to see its prompts.")
             } else {
-                SettingsCard {
-                    PromptFields(prompts: $draft, editable: isAdmin, height: 96)
+                ForEach(PromptFields.roles, id: \.label) { role in
+                    SettingsSection(role.label, caption: role.hint) {
+                        SettingsBlock {
+                            PromptEditor(hint: role.hint, text: $draft[dynamicMember: role.key], editable: isAdmin, height: 96)
+                        }
+                    }
                 }
                 HStack {
                     if !isAdmin {
@@ -761,8 +725,6 @@ struct PromptSettings: View {
                 }
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
         .onAppear { draft = current }
         // Another admin's save, or the server's trimmed echo of ours.
         .onChange(of: client.prompts) { _, new in draft = new ?? LiveAdapter.noPrompts }
@@ -776,44 +738,36 @@ struct MergingSettings: View {
     private var isAdmin: Bool { client.me?.role == "admin" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Merging", detail: "What happens after a change is approved, for everyone in the factory.")
+        SettingsPane("Merging", subtitle: "What happens after a change is approved, for everyone in the factory.") {
             if !client.isSignedIn || client.riskPolicy == nil {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see how it merges."))
+                SettingsUnavailable(detail: "Connect to a factory to see how it merges.")
             } else {
-                SettingsCard {
-                    Toggle("Merge approved changes automatically", isOn: Binding(
-                        get: { client.riskPolicy?.autoMerges ?? true },
-                        set: { on in
-                            guard var policy = client.riskPolicy else { return }
-                            policy.autoMerges = on
-                            client.save(policy: policy)
-                        }
-                    ))
-                    .disabled(!isAdmin)
-                    Text("When a change is proven, reviewed and its checks pass, the factory merges it if its risk level (or its goal's accepted risk) allows. Off: nothing merges on its own; ready changes wait in Pending merge until someone clicks Merge.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+                SettingsSection("After approval") {
+                    SettingsToggle("Merge approved changes automatically",
+                                   detail: "When a change is proven, reviewed and its checks pass, the factory merges it if its risk level (or its goal's accepted risk) allows. Off: nothing merges on its own; ready changes wait in Pending merge until someone clicks Merge.",
+                                   isOn: policy(\.autoMerges))
+                    SettingsToggle("Fix merges automatically",
+                                   detail: "When an approved change won't merge into its base, a builder brings the branch up to date, resolves the conflicts and pushes, and review runs again. It tries twice before asking you. Off: the factory raises its hand and you pick what to do.",
+                                   isOn: policy(\.autoFixMerges))
+                    if !isAdmin {
+                        SettingsNote("Only admins can change this.")
+                    }
                 }
-                SettingsCard {
-                    Toggle("Fix merges automatically", isOn: Binding(
-                        get: { client.riskPolicy?.autoFixMerges ?? true },
-                        set: { on in
-                            guard var policy = client.riskPolicy else { return }
-                            policy.autoFixMerges = on
-                            client.save(policy: policy)
-                        }
-                    ))
-                    .disabled(!isAdmin)
-                    Text("When an approved change won't merge into its base, a builder brings the branch up to date, resolves the conflicts and pushes, and review runs again. It tries twice before asking you. Off: the factory raises its hand and you pick what to do.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
-                }
-                if !isAdmin {
-                    Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                }
+                .disabled(!isAdmin)
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
+    }
+
+    /// One of the risk policy's switches, saved as it flips.
+    private func policy(_ key: WritableKeyPath<RiskPolicy, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { client.riskPolicy?[keyPath: key] ?? true },
+            set: { on in
+                guard var policy = client.riskPolicy else { return }
+                policy[keyPath: key] = on
+                client.save(policy: policy)
+            }
+        )
     }
 }
 
@@ -823,38 +777,52 @@ struct PromptFields: View {
     var editable = true
     var height: CGFloat = 64
 
+    static let roles: [(label: String, hint: String, key: WritableKeyPath<Wire.PromptAdditions, String>)] = [
+        ("Planning", "How the planner should plan: conventions, what a plan must cover.", \.planner),
+        ("Building", "What the builder must do: test commands, style, what not to touch.", \.builder),
+        ("Review", "What the review agent should check for.", \.reviewer),
+    ]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            editor("Planning", "How the planner should plan: conventions, what a plan must cover.", $prompts.planner)
-            editor("Building", "What the builder must do: test commands, style, what not to touch.", $prompts.builder)
-            editor("Review", "What the review agent should check for.", $prompts.reviewer)
-        }
-    }
-
-    private func editor(_ label: String, _ hint: String, _ text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
-                Spacer()
-                if text.wrappedValue.count > 3500 {
-                    Text("\(text.wrappedValue.count) / 4000").font(.system(size: 11)).foregroundStyle(text.wrappedValue.count > 4000 ? Theme.State.awaitingApproval : Theme.textFaint)
+            ForEach(Self.roles, id: \.label) { role in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(role.label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+                    PromptEditor(hint: role.hint, text: $prompts[dynamicMember: role.key], editable: editable, height: height)
                 }
             }
-            TextEditor(text: text)
-                .font(.system(size: 12.5))
-                .scrollContentBackground(.hidden)
-                .disabled(!editable)
-                .opacity(editable ? 1 : 0.75)
-                .padding(6)
-                .frame(height: height)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
-                .overlay(alignment: .topLeading) {
-                    if text.wrappedValue.isEmpty {
-                        Text(editable ? hint : "None").font(.system(size: 12.5)).foregroundStyle(Theme.textFaint)
-                            .padding(.horizontal, 11).padding(.vertical, 6).allowsHitTesting(false)
-                    }
-                }
         }
+    }
+}
+
+/// One role's prompt addition: a multi-line editor, with its count near the limit.
+struct PromptEditor: View {
+    let hint: String
+    @Binding var text: String
+    var editable = true
+    var height: CGFloat = 64
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(.system(size: 12.5))
+            .scrollContentBackground(.hidden)
+            .disabled(!editable)
+            .opacity(editable ? 1 : 0.75)
+            .padding(6)
+            .frame(height: height)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+            .overlay(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(editable ? hint : "None").font(.system(size: 12.5)).foregroundStyle(Theme.textFaint)
+                        .padding(.horizontal, 11).padding(.vertical, 6).allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if text.count > 3500 {
+                    Text("\(text.count) / 4000").font(.system(size: 11)).foregroundStyle(text.count > 4000 ? Theme.State.awaitingApproval : Theme.textFaint)
+                        .padding(6)
+                }
+            }
     }
 }
 
@@ -882,93 +850,92 @@ struct RepositoriesSettings: View {
     }
 
     private var list: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Repositories")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                    Text("The ones the GitHub App is installed on come from GitHub: grant or remove its access there. Goals pick from these. Click one for its worktree scripts.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Button {
-                    refreshing = true
-                    client.send(.reposRefresh)
-                    Task { try? await Task.sleep(for: .seconds(1.5)); refreshing = false }
-                } label: {
-                    Label(refreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(!client.isSignedIn || refreshing)
-            }
-
+        SettingsPane("Repositories",
+                     subtitle: "The ones the GitHub App is installed on come from GitHub: grant or remove its access there. Goals pick from these. Click one for its worktree scripts.",
+                     accessory: AnyView(refresh)) {
             if !client.isSignedIn {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its repositories."))
-            } else if client.repos.isEmpty {
-                ContentUnavailableView("No repositories yet", systemImage: "shippingbox",
-                                       description: Text(isAdmin ? "Install the GitHub App on your org, or add one below." : "An admin installs the GitHub App on the org, or adds them here."))
+                SettingsUnavailable(detail: "Connect to a factory to see its repositories.")
             } else {
-                TextField("Filter \(client.repos.count) repositories", text: $filter)
-                    .textFieldStyle(.roundedBorder)
-                List(client.repos.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter.trimmingCharacters(in: .whitespaces)) }, id: \.name) { repo in
-                    HStack(spacing: 10) {
-                        Image(systemName: repo.isPrivate ? "lock" : "globe")
-                            .foregroundStyle(Theme.textMuted)
-                            .frame(width: 16)
-                        Text(repo.name)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(Theme.text)
-                        if let branch = repo.defaultBranch {
-                            Text(branch).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
-                        }
-                        if client.scripts(for: repo.name) != nil {
-                            Text("scripts")
-                                .font(.system(size: 10.5, weight: .medium))
-                                .foregroundStyle(Theme.textMuted)
-                                .padding(.horizontal, 6).padding(.vertical, 1)
-                                .background(Capsule().fill(Theme.fill))
-                                .help("Has worktree scripts")
-                        }
-                        Spacer()
-                        Text(repo.source == .github ? "GitHub App" : "Added by hand")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.textMuted)
-                        if repo.source == .manual && isAdmin {
-                            Button {
-                                client.send(.reposRemove(.init(name: repo.name)))
-                            } label: {
-                                Image(systemName: "minus.circle")
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Remove \(repo.name)")
-                        }
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textFaint)
+                SettingsSection(client.repos.isEmpty ? "Repositories" : "\(client.repos.count) repositories",
+                                accessory: client.repos.count > 8 ? AnyView(TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 180)) : nil) {
+                    if client.repos.isEmpty {
+                        SettingsRow("No repositories yet", detail: isAdmin ? "Install the GitHub App on your org, or add one below." : "An admin installs the GitHub App on the org, or adds them here.")
                     }
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selected = repo.name }
-                    .help("Open \(repo.name)'s worktree scripts")
+                    ForEach(shown, id: \.name) { repo in row(repo) }
+                    if isAdmin {
+                        SettingsRow("Add a repository") {
+                            TextField("owner/name, or its GitHub URL", text: $adding)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 240)
+                                .onSubmit(add)
+                            Button("Add", action: add)
+                                .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
                 }
-                .listStyle(.bordered(alternatesRowBackgrounds: true))
-            }
-
-            if isAdmin && client.isSignedIn {
-                HStack {
-                    TextField("owner/name, or its GitHub URL", text: $adding)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(add)
-                    Button("Add", action: add)
-                        .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
+                if client.githubApp != nil || !client.repoOwners.isEmpty {
+                    OtherGitHubAccounts()
                 }
-            }
-
-            if client.isSignedIn, client.githubApp != nil || !client.repoOwners.isEmpty {
-                OtherGitHubAccounts()
             }
         }
-        .padding(20)
+    }
+
+    private var shown: [Wire.OrgRepo] {
+        let query = filter.trimmingCharacters(in: .whitespaces)
+        return client.repos.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    private var refresh: some View {
+        Button {
+            refreshing = true
+            client.send(.reposRefresh)
+            Task { try? await Task.sleep(for: .seconds(1.5)); refreshing = false }
+        } label: {
+            Label(refreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
+        }
+        .disabled(!client.isSignedIn || refreshing)
+    }
+
+    private func row(_ repo: Wire.OrgRepo) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: repo.isPrivate ? "lock" : "globe")
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 16)
+            Text(repo.name)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let branch = repo.defaultBranch {
+                Text(branch).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
+            }
+            if client.scripts(for: repo.name) != nil {
+                Text("scripts")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.fill))
+                    .help("Has worktree scripts")
+            }
+            Spacer(minLength: 8)
+            Text(repo.source == .github ? "GitHub App" : "Added by hand")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+            if repo.source == .manual && isAdmin {
+                Button {
+                    client.send(.reposRemove(.init(name: repo.name)))
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove \(repo.name)")
+            }
+            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textFaint)
+        }
+        .settingsRowPadding()
+        .contentShape(Rectangle())
+        .onTapGesture { selected = repo.name }
+        .help("Open \(repo.name)'s worktree scripts")
     }
 
     private func add() {
@@ -988,50 +955,41 @@ struct OtherGitHubAccounts: View {
     private var isAdmin: Bool { client.me?.role == "admin" }
 
     var body: some View {
-        SettingsCard {
-            SettingsHeader(title: "Other GitHub accounts",
-                           detail: "Repos in another org (or someone's own account) come in once an admin approves it here and the GitHub App is installed there.")
-
+        SettingsSection("Other GitHub accounts", caption: "Repos in another org (or someone's own account) come in once an admin approves it here and the GitHub App is installed there.") {
             if client.repoOwners.isEmpty {
-                Text("None yet: only \(client.org.isEmpty ? "the factory's own account" : client.org)'s installations add repos.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textFaint)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(client.repoOwners, id: \.self) { owner in
-                        HStack(spacing: 8) {
-                            Image(systemName: "building.2").foregroundStyle(Theme.textMuted).frame(width: 16)
-                            Text(owner).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
-                            let count = client.repos.filter { $0.source == .github && $0.name.lowercased().hasPrefix(owner.lowercased() + "/") }.count
-                            Text(count == 1 ? "1 repo" : "\(count) repos")
-                                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                            Spacer()
-                            if isAdmin {
-                                Button {
-                                    client.setRepoOwners(client.repoOwners.filter { $0 != owner })
-                                } label: {
-                                    Image(systemName: "minus.circle")
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Stop adding \(owner)'s repos")
-                            }
+                SettingsRow("None yet", detail: "Only \(client.org.isEmpty ? "the factory's own account" : client.org)'s installations add repos.")
+            }
+            ForEach(client.repoOwners, id: \.self) { owner in
+                HStack(spacing: 8) {
+                    Image(systemName: "building.2").foregroundStyle(Theme.textMuted).frame(width: 16)
+                    Text(owner).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
+                    let count = client.repos.filter { $0.source == .github && $0.name.lowercased().hasPrefix(owner.lowercased() + "/") }.count
+                    Text(count == 1 ? "1 repo" : "\(count) repos")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    Spacer()
+                    if isAdmin {
+                        Button {
+                            client.setRepoOwners(client.repoOwners.filter { $0 != owner })
+                        } label: {
+                            Image(systemName: "minus.circle")
                         }
+                        .buttonStyle(.borderless)
+                        .help("Stop adding \(owner)'s repos")
                     }
                 }
+                .settingsRowPadding()
             }
-
             if isAdmin {
-                HStack {
+                SettingsRow("Approve an account") {
                     TextField("An org or account's GitHub login", text: $adding)
                         .textFieldStyle(.roundedBorder)
+                        .frame(width: 220)
                         .onSubmit(approve)
                     Button("Approve", action: approve)
                         .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-
             if let app = client.githubApp {
-                Divider()
                 step(1, "Make the app public", "Once, in the app's Advanced settings on GitHub: GitHub only installs a private app on the account that owns it.",
                      link: app.settingsUrl, button: "Open \(app.slug)'s settings")
                 step(2, "Install it on the org", "Pick the org and its repos, then Refresh above.",
@@ -1056,6 +1014,7 @@ struct OtherGitHubAccounts: View {
                 Link(button, destination: url).font(.system(size: 12))
             }
         }
+        .settingsRowPadding()
     }
 
     private func approve() {
@@ -1073,46 +1032,37 @@ struct PeopleSettings: View {
     @Environment(FactoryClient.self) private var client
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        SettingsPane("People", subtitle: "Who runs the factory, and who shows in your sidebar.") {
             if client.isSignedIn { FactoryAdminsCard() }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("People in your sidebar")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                Text(client.sidebarPicks == nil
-                     ? "Until you pick, it shows people on your GitHub teams. Pick the ones you work with; only you see this."
-                     : "Only you see this. Everyone in the org can still be mentioned and assigned.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             let others = client.members.filter { $0.login != client.me?.login }
-            if others.isEmpty {
-                ContentUnavailableView("Just you so far", systemImage: "person", description: Text("Members of the org show up here once they sign in."))
-            } else {
-                List(others, id: \.login) { member in
-                    let shown = client.sidebarMembers.contains { $0.login == member.login }
-                    Toggle(isOn: Binding(get: { shown }, set: { on in
-                        let current = client.sidebarMembers.map(\.login).filter { $0 != client.me?.login }
-                        client.sidebarPicks = on ? current + [member.login] : current.filter { $0 != member.login }
-                    })) {
-                        HStack(spacing: 8) {
-                            AgentAvatar(agent: LiveAdapter.person(member.login, members: client.members), size: 20)
-                            Text(member.name ?? member.login).foregroundStyle(Theme.text)
-                            Text("@\(member.login)").foregroundStyle(Theme.textMuted)
-                            if !member.teams.isEmpty {
-                                Text(member.teams.joined(separator: ", ")).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
-                            }
-                        }
-                    }
-                    .toggleStyle(.checkbox)
+            SettingsSection("People in your sidebar",
+                            caption: client.sidebarPicks == nil
+                                ? "Until you pick, it shows people on your GitHub teams. Pick the ones you work with; only you see this."
+                                : "Only you see this. Everyone in the org can still be mentioned and assigned.",
+                            accessory: client.sidebarPicks != nil ? AnyView(Button("Go back to my teams") { client.sidebarPicks = nil }) : nil) {
+                if others.isEmpty {
+                    SettingsRow("Just you so far", detail: "Members of the org show up here once they sign in.")
                 }
-                .listStyle(.bordered(alternatesRowBackgrounds: true))
-                if client.sidebarPicks != nil {
-                    Button("Go back to my teams") { client.sidebarPicks = nil }
+                ForEach(others, id: \.login) { member in
+                    let shown = client.sidebarMembers.contains { $0.login == member.login }
+                    HStack(spacing: 8) {
+                        AgentAvatar(agent: LiveAdapter.person(member.login, members: client.members), size: 22)
+                        Text(member.name ?? member.login).foregroundStyle(Theme.text).lineLimit(1)
+                        Text("@\(member.login)").foregroundStyle(Theme.textMuted).lineLimit(1)
+                        if !member.teams.isEmpty {
+                            Text(member.teams.joined(separator: ", ")).font(.system(size: 11)).foregroundStyle(Theme.textFaint).lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Toggle("Show \(member.name ?? member.login)", isOn: Binding(get: { shown }, set: { on in
+                            let current = client.sidebarMembers.map(\.login).filter { $0 != client.me?.login }
+                            client.sidebarPicks = on ? current + [member.login] : current.filter { $0 != member.login }
+                        }))
+                        .toggleStyle(.switch).controlSize(.small).labelsHidden()
+                    }
+                    .font(.system(size: 13))
+                    .settingsRowPadding()
                 }
             }
         }
-        .padding(20)
     }
 }
