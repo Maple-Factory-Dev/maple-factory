@@ -307,6 +307,9 @@ struct ContentView: View {
         .sheet(item: Binding(get: { state.goalSheet }, set: { state.goalSheet = $0 })) { sheet in
             if case .edit(let id) = sheet { GoalSheet(editing: client.goals.first { $0.id == id }) } else { GoalSheet(prefill: state.goalPrefill) }
         }
+        .sheet(item: Binding(get: { state.checkLogShown }, set: { state.checkLogShown = $0 })) { request in
+            CheckLogSheet(request: request).environment(state)
+        }
         .sheet(item: Binding(get: { state.machineSheet }, set: { state.machineSheet = $0 })) { sheet in
             MachineSetupSheet(sheet: sheet, machine: {
                 if case .edit(let id) = sheet, let machine = state.machines.first(where: { $0.id == id }) { return machine }

@@ -197,6 +197,10 @@ final class AppState {
     var machineSheet: MachineSheet? = nil
     /// The goal being made or edited in the sheet (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
+    /// The CI check whose log is open in the log sheet.
+    var checkLogShown: CheckLogRequest? = nil
+    /// The mockup's check logs, as they load.
+    private var mockCheckLogs: [String: CheckLogLoad] = [:]
     var queue = FactoryData.seedQueue
 
     /// A queued task got a slot: it starts building like a freshly approved plan.
@@ -1798,6 +1802,59 @@ final class AppState {
                   icon: byFactory ? "bolt.fill" : "arrow.triangle.merge", color: Theme.State.merged)
     }
 
+    /// Opens the log sheet on one of a task's CI checks and reads its log.
+    func showCheckLog(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        checkLogShown = request
+        loadCheckLog(request)
+    }
+
+    func loadCheckLog(_ request: CheckLogRequest) {
+        if let client, isLive { return client.loadCheckLog(request) }
+        mockCheckLogs[request.id] = .loading
+        let failed = task(request.taskID).pr?.checks.first { $0.name == request.check }?.status == .failed
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.4))
+            self.mockCheckLogs[request.id] = .loaded(CheckLog.sample(request.check, failed: failed))
+        }
+    }
+
+    func checkLog(_ request: CheckLogRequest) -> CheckLogLoad {
+        if let client, isLive { return client.checkLogs[request.id] ?? .loading }
+        return mockCheckLogs[request.id] ?? .loading
+    }
+
+    /// Runs one of the pull request's checks again (a GitHub Actions job, or the check run).
+    func rerunCheck(_ id: String, check: String) {
+        if let client, isLive {
+            client.send(.taskRerunCheck(.init(id: id, check: check)))
+            showToast("Running \(check) again", icon: "arrow.clockwise")
+            return
+        }
+        withAnimation(.snappy(duration: 0.25)) {
+            update(id) { task in
+                guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }) else { return }
+                pr.checks[index].status = .running
+                pr.checks[index].duration = ""
+                task.pr = pr
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Re-ran \(check)", when: "now"), at: 0)
+            }
+        }
+        showToast("Running \(check) again on #\(task(id).pr?.number ?? 0)", icon: "arrow.clockwise", color: Theme.State.building)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }), pr.checks[index].status == .running else { return }
+                    pr.checks[index].status = .passed
+                    pr.checks[index].duration = "2:\(10 + index * 7)"
+                    task.pr = pr
+                    task.checksFailing = pr.checks.contains { $0.status == .failed }
+                }
+            }
+        }
+    }
+
     func rerunFailedChecks(_ id: String) {
         if let client, isLive {
             client.send(.taskRerunChecks(.init(id: id)))
@@ -2106,6 +2163,9 @@ final class AppState {
             case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
+            // A PR card check row's View Log (`checklog:<id>:<check>`) and Re-run (`reruncheck:<id>:<check>`).
+            case "checklog": showCheckLog(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
+            case "reruncheck": rerunCheck(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
