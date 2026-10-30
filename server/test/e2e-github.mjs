@@ -4,7 +4,7 @@
 // runner MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL pointing at the fake's bare repos; the repo folder's
 // origin is https://github.com/acme/greeter.git; the fake runs with `--ci test`.
 // Checks: the runner fetches and pushes with app tokens, the PR opens on GitHub, auto-merge waits for
-// CI, a failed check blocks it until it's run again, the merge is GitHub's squash and deletes the
+// CI, a failed check blocks it until it's run again, it counts down (a short MERGE_GRACE_MS) and the merge is GitHub's squash and deletes the
 // task's branch on GitHub (but not one that moved after the merge), and a cancelled task's PR is
 // closed with a comment.
 
@@ -78,7 +78,10 @@ errors = [];
 
 send({ type: "task.rerunChecks", id });
 t = await wait("merged", () => tasks.get(id)?.state === "merged" && tasks.get(id), 30000);
-step(`ran test again, it passed, and the factory merged it: ${t.events.slice(-2).map((e) => e.text).join("; ")}`);
+const told = t.events.map((e) => e.text);
+const countdown = told.findIndex((x) => x.startsWith("will auto-merge"));
+if (countdown < 0 || countdown > told.findIndex((x) => x.startsWith("auto-merged"))) throw new Error(`no countdown before the merge: ${told.join(" / ")}`);
+step(`ran test again, it passed, and the factory counted down and merged it: ${t.events.slice(countdown, countdown + 3).map((e) => e.text).join("; ")}`);
 const hello = execFileSync("git", ["--git-dir", origin, "show", "main:hello.txt"], { encoding: "utf8" });
 const subject = execFileSync("git", ["--git-dir", origin, "log", "-1", "--format=%s", "main"], { encoding: "utf8" }).trim();
 if (!hello.includes(id)) throw new Error(`main has ${JSON.stringify(hello)}`);

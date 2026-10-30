@@ -21,6 +21,10 @@ export interface TaskPrivate {
   mergeBy?: string | null;
   /** The head it was last noted as waiting for a person to merge (autoMerges off), so it's said once per head. */
   pendingMerge?: string | null;
+  /** The head a person held the auto-merge on (task.holdMerge), so its countdown doesn't start again. */
+  mergeHeld?: string | null;
+  /** The head the auto-merge countdown (task.mergeAt) started for. */
+  mergeHead?: string | null;
   /** Times the factory sent it back to fix a merge on its own (autoFixMerges). */
   mergeFixes?: number;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.

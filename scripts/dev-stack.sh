@@ -4,6 +4,7 @@
 #   scripts/dev-stack.sh up | down | logs | port
 # MAPLE_DEV_INSTANCE=agent runs a second, separate stack beside it: its own runner home
 # (/tmp/mfh-agent), D1 state, logs, runner id (agent-mac) and a free port unless MAPLE_PORT says.
+# MERGE_GRACE_MS=1500 shortens the auto-merge countdown (default 10s), as the e2e tests like it.
 # `down` stops only what this instance started (by pid), never another instance or a real runner.
 # A stack from before pid files is found by its port and runner home instead.
 set -e
@@ -70,7 +71,7 @@ up)
   stop server; stop runner
   echo "$PORT" >"$LOGS/port"
   (cd "$ROOT/server" && npx wrangler d1 migrations apply maple --local $PERSIST >/dev/null)
-  (cd "$ROOT/server" && exec nohup npx wrangler dev --port "$PORT" --inspector-port 0 $PERSIST) >"$LOGS/server.log" 2>&1 </dev/null &
+  (cd "$ROOT/server" && exec nohup npx wrangler dev --port "$PORT" --inspector-port 0 $PERSIST ${MERGE_GRACE_MS:+--var "MERGE_GRACE_MS:$MERGE_GRACE_MS"}) >"$LOGS/server.log" 2>&1 </dev/null &
   echo $! >"$LOGS/server.pid"
   for _ in $(seq 1 40); do curl -sf "localhost:$PORT/healthz" >/dev/null && break; sleep 0.5; done
   (cd "$ROOT/runner" && cargo build -q)

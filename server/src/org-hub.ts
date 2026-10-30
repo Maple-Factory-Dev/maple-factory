@@ -75,6 +75,7 @@ export class OrgHub extends DurableObject<Env> {
   async alarm() {
     await applySettings(this.env);
     await this.engine.pollCI();
+    await this.engine.mergeDue();
     await this.engine.pump();
     await this.checkRunnerRelease();
   }

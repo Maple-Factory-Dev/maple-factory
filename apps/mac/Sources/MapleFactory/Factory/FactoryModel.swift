@@ -269,6 +269,9 @@ struct FactoryTask: Identifiable {
     var queueRank: Double = 0
     /// Held until then, when it was scheduled.
     var startAt: Date? = nil
+    /// The factory auto-merges it then unless someone holds it; and when that countdown started.
+    var mergeAt: Date? = nil
+    var mergeFrom: Date? = nil
 
     /// What its next session does, while it's queued.
     var nextStep: String {

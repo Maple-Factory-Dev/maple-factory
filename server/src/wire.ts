@@ -590,6 +590,8 @@ export interface Task {
   force?: boolean | null;
   /** The bigger effort it's part of, like an epic: shared by name with other tasks in its goal. */
   effort?: string | null;
+  /** The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down. */
+  mergeAt?: number | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -1565,6 +1567,12 @@ export interface ClientMessage_TaskMerge {
   id: string;
 }
 
+/** Stop the auto-merge counting down on a task; a person merges it instead. */
+export interface ClientMessage_TaskHoldMerge {
+  type: "task.holdMerge";
+  id: string;
+}
+
 export interface ClientMessage_TaskCancel {
   type: "task.cancel";
   id: string;
@@ -1631,8 +1639,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
