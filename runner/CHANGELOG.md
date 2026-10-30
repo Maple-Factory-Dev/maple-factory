@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.58.0 — 2026-10-30
+
+After the factory merges a task, the runner deletes its leftover branch on origin when nothing unmerged would be lost, and says what became of it.
+
 ## 0.57.0 — 2026-10-29
 
 The runner can dry-run merge a task's branch into its base, so the factory finds a conflict before it merges instead of after.
