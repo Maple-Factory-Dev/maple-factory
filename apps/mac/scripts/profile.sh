@@ -9,7 +9,7 @@
 #   updates   a task edit every 100ms and a teammate moving every 250ms: CPU over 20s
 #   browse    each proven task's Overview, its screenshot and video large, Diff, Statistics, twice over:
 #             footprint right after, and again 30s later (steady), with the run's peak
-#   countdown the demo factory with an auto-merge counting down on screen: CPU over 7s
+#   countdown the demo factory with an auto-merge counting down on screen: CPU over 6s of it
 # Each phase also leaves a `sample` of the process (<phase>.sample.txt) in <out-dir>.
 set -eu
 unset CDPATH
@@ -34,7 +34,7 @@ footprint() {
 main_idle() {
   awk '
     /^Call graph:/ { graph = 1 }
-    graph && /com\.apple\.main-thread/ && !total { match($0, /[0-9]+ Thread_/); total = substr($0, RSTART, RLENGTH) + 0; main = 1; next }
+    graph && /com\.apple\.main-thread|: Main Thread/ && !total { match($0, /[0-9]+ Thread_/); total = substr($0, RSTART, RLENGTH) + 0; main = 1; next }
     main && /^    [0-9]+ Thread_|^Total number in stack/ { main = 0 }
     main && /mach_msg2_trap|mach_msg_trap/ { match($0, /[0-9]+ +mach_msg/); n = substr($0, RSTART, RLENGTH) + 0; if (n > idle) idle = n }
     END { printf "%d of %d", idle, total }' "$1"
@@ -125,8 +125,10 @@ run() {
   until_marker p-before-countdown
   record "screen_idle_cpu_pct" "$(cpu "$PID" 3)"
   until_marker p-countdown
+  # A second for the card's own transition to settle; then 6s of the 10s countdown.
+  sleep 1
   sample "$PID" 5 -file "$OUT/countdown.sample.txt" >/dev/null 2>&1 &
-  record "countdown_cpu_pct" "$(cpu "$PID" 7)"
+  record "countdown_cpu_pct" "$(cpu "$PID" 6)"
   wait $! || true
   record "countdown_main_idle_samples" "$(main_idle "$OUT/countdown.sample.txt")"
   finish_app

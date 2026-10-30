@@ -47,8 +47,8 @@ import Testing
         }
         #expect(cache.index(of: "MF-404", in: tasks) == nil)
         #expect(cache.handRaises(in: tasks).map(\.id) == tasks.filter { $0.hand != nil }.map(\.id))
-        let fresh = AppState.liveInbox(tasks, me: me, dismissed: [])
-        let cached = cache.inbox(dismissed: [], me: me.id) { AppState.liveInbox(tasks, me: me, dismissed: []) }
+        let fresh = AppState.liveInbox(tasks, me: me, dismissed: []) { AppState.mentionItems($0, me: me) }
+        let cached = cache.inbox(tasks, me: me, dismissed: [])
         #expect(cached.map(\.taskID) == fresh.map(\.taskID))
         #expect(cached.map(\.kind) == fresh.map(\.kind))
     }
@@ -73,7 +73,7 @@ import Testing
         #expect(client.tasksRevision != revision)
         expectFresh(&cache, client)
         let me = LiveAdapter.person("bob", members: client.members)
-        let inbox = cache.inbox(dismissed: [], me: me.id) { [] }
+        let inbox = cache.inbox(client.factoryTasks, me: me, dismissed: [])
         #expect(inbox.contains { $0.kind == .mention && $0.taskID == "MF-1" })
 
         client.apply(try decode(#"{"type":"task.removed","id":"MF-2"}"#))
@@ -91,29 +91,39 @@ import Testing
         #expect(cache.handRaises(in: client.factoryTasks).map(\.id) == ["MF-9"])
     }
 
-    @Test func keptUntilTheRevisionMoves() {
+    @Test func keptUntilTheRevisionMoves() throws {
+        let client = FactoryClient()
+        client.apply(try decode(snapshot([task("MF-1", comments: mention), task("MF-2"), task("MF-3")])))
+        let me = LiveAdapter.person("bob", members: client.members)
         var cache = TaskCache()
-        let one = [FactoryTask.none]
-        cache.sync(revision: 1, live: true)
-        var builds = 0
-        _ = cache.inbox(dismissed: [], me: "bob") { builds += 1; return [] }
-        _ = cache.inbox(dismissed: [], me: "bob") { builds += 1; return [] }
-        #expect(builds == 1)
-        // Dismissing a mention, or someone else signed in, builds it again.
-        _ = cache.inbox(dismissed: ["c1"], me: "bob") { builds += 1; return [] }
-        _ = cache.inbox(dismissed: ["c1"], me: "carol") { builds += 1; return [] }
-        #expect(builds == 3)
-        cache.sync(revision: 1, live: true)
-        _ = cache.inbox(dismissed: ["c1"], me: "carol") { builds += 1; return [] }
-        #expect(builds == 3)
-        cache.sync(revision: 2, live: true)
-        _ = cache.inbox(dismissed: ["c1"], me: "carol") { builds += 1; return [] }
-        #expect(builds == 4)
-        // The mockup's revision 2 isn't the factory's.
-        cache.sync(revision: 2, live: false)
-        _ = cache.inbox(dismissed: ["c1"], me: "carol") { builds += 1; return [] }
-        #expect(builds == 5)
-        #expect(cache.index(of: one[0].id, in: one) == 0)
+        func inbox(_ dismissed: Set<String> = [], me: Person = me) -> [InboxItem] {
+            cache.sync(revision: client.tasksRevision, live: true)
+            return cache.inbox(client.factoryTasks, me: me, dismissed: dismissed)
+        }
+        #expect(inbox().count == 1)
+        #expect(inbox().count == 1)
+        #expect(cache.builds.inbox == 1)
+        // Dismissing a mention, or someone else signed in, works it out again.
+        #expect(inbox(["mention-c1"]).isEmpty)
+        _ = inbox(["mention-c1"], me: LiveAdapter.person("carol", members: client.members))
+        #expect(cache.builds.inbox == 3)
+
+        // A task edited: a new inbox, but only the edited task's mentions are looked for again, and
+        // only if its comments changed.
+        _ = inbox()
+        let mentionsBefore = cache.builds.mentions
+        client.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-2", state: "awaitingApproval"))}"#))
+        #expect(inbox().map(\.kind).sorted { "\($0)" < "\($1)" } == [.approval, .mention])
+        #expect(cache.builds.inbox == 5)
+        #expect(cache.builds.mentions == mentionsBefore)
+        client.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-3", comments: mention.replacingOccurrences(of: "c1", with: "c2")))}"#))
+        #expect(inbox().filter { $0.kind == .mention }.map(\.taskID).sorted() == ["MF-1", "MF-3"])
+        #expect(cache.builds.mentions == mentionsBefore + 1)
+
+        // The mockup's revision isn't the factory's.
+        cache.sync(revision: client.tasksRevision, live: false)
+        _ = cache.inbox(client.factoryTasks, me: me, dismissed: [])
+        #expect(cache.builds.inbox == 7)
     }
 
     @Test func presenceTouchesOnlyTheTasksSomeoneCameToOrLeft() throws {

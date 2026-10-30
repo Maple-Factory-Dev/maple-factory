@@ -336,21 +336,21 @@ private struct ScreenshotProof: View {
     let path: String
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client: FactoryClient?
+    /// Decoded at the size it's shown (CGImageSource's thumbnail), not the screenshot's own: a 3200px
+    /// capture decoded whole is 25 MB, and those stayed alive. The lightbox decodes the whole one when it opens.
     @State private var image: NSImage?
     @State private var failed: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let image {
-                Button {
-                    state.showLightbox(.image(image, caption: caption, attachment: path))
-                } label: {
+                Button(action: showLarge) {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
-                        .frame(maxWidth: min(image.size.width, 380), alignment: .leading)
+                        .frame(maxWidth: min(image.size.width, Self.maxWidth), alignment: .leading)
                 }
                 .buttonStyle(.plain)
                 .help("View larger")
@@ -361,18 +361,51 @@ private struct ScreenshotProof: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { note in
             // Only the first proof on screen answers, so one lightbox opens.
-            guard let image, state.lightbox == nil, note.object as? String != "video" else { return }
-            state.showLightbox(.image(image, caption: caption, attachment: path))
+            guard image != nil, state.lightbox == nil, note.object as? String != "video" else { return }
+            showLarge()
         }
         .task(id: path) {
             do {
                 guard let client else { throw FactoryClient.ClientError.message("Not signed in.") }
-                guard let loaded = NSImage(data: try await client.attachment(path)) else { throw FactoryClient.ClientError.message("Not an image.") }
+                guard let loaded = Self.thumbnail(try await client.attachment(path), width: Self.maxWidth * 2) else {
+                    throw FactoryClient.ClientError.message("Not an image.")
+                }
                 image = loaded
             } catch {
                 failed = FactoryClient.describe(error)
             }
         }
+    }
+
+    static let maxWidth: CGFloat = 380
+
+    /// The screenshot whole, in the lightbox.
+    private func showLarge() {
+        Task {
+            guard let client, let data = try? await client.attachment(path), let full = NSImage(data: data) else { return }
+            state.showLightbox(.image(full, caption: caption, attachment: path))
+        }
+    }
+
+    /// The image in `data` decoded at most `width` pixels wide (never wider than its own), keeping the size
+    /// in points the whole one has, so it lays out the same.
+    nonisolated static func thumbnail(_ data: Data, width: CGFloat) -> NSImage? {
+        guard let size = NSImage(data: data)?.size, size.width > 0, size.height > 0,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let pixelWidth = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+              let pixelHeight = properties[kCGImagePropertyPixelHeight] as? CGFloat
+        else { return nil }
+        // The longest side, so a tall screenshot is as sharp as a wide one at that width.
+        let longest = min(max(pixelWidth, pixelHeight), width * max(1, pixelHeight / pixelWidth))
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(longest.rounded(.up)),
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return NSImage(cgImage: thumbnail, size: size)
     }
 }
 

@@ -669,10 +669,11 @@ final class AppState {
     private var liveInbox: [InboxItem] {
         let tasks = tasks, me = FactoryData.me, dismissed = dismissedMentions
         syncTaskCache()
-        return taskCache.inbox(dismissed: dismissed, me: me.id) { Self.liveInbox(tasks, me: me, dismissed: dismissed) }
+        return taskCache.inbox(tasks, me: me, dismissed: dismissed)
     }
 
-    static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>) -> [InboxItem] {
+    static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>,
+                          mentions: (FactoryTask) -> [InboxItem]) -> [InboxItem] {
         var items: [InboxItem] = []
         for task in tasks {
             let mine = task.owner.id == me.id
@@ -688,7 +689,7 @@ final class AppState {
             if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
                 items.append(InboxItem(kind: .failing, taskID: task.id, assignee: task.owner, message: "Checks are failing", when: task.updated))
             }
-            items += Self.mentionItems(task, me: me).filter { !dismissedMentions.contains($0.id) }
+            items += mentions(task).filter { !dismissedMentions.contains($0.id) }
         }
         return items
     }
