@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.64.0 — 2026-10-30
+
+Keeps up with the factory's latest protocol, which now carries each repository's description and owner avatar; nothing changes in how the runner works.
+
 ## 0.63.0 — 2026-10-30
 
 Keeps up with the factory's latest protocol, which now tells apps about a Scout run still going when they reconnect; nothing changes in how the runner works.
