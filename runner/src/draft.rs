@@ -1,7 +1,8 @@
 //! Draft with AI (`draft.run`): the hub's drafter, run once and unable to change anything.
 //!
 //! With a repo or folder, the agent works in a throwaway worktree made the way a task's is (from
-//! GitHub's copy of the base branch, see `tasks::start`), which is removed afterwards; without one
+//! GitHub's copy of the base branch, see `tasks::start`), which is removed afterwards; a folder that
+//! isn't a git checkout, or has no origin to fetch, is read in place as it is; without either
 //! (picking a goal) it runs in an empty folder with no tools at all. Claude Code gets only its read
 //! tools (`--tools Read,Grep,Glob`); Codex runs with `--sandbox read-only`. What it's doing goes to
 //! the hub as `draft.progress` ("Reading lib/session.ts"), as does what it says along the way (a
@@ -61,7 +62,10 @@ pub async fn run(sessions: Sessions, r: Run) {
     let say = |kind: DraftLineKind, text: &str| sessions.emit(Outbound::DraftProgress { id: r.id.clone(), text: text.to_string(), kind });
     let mut worktree: Option<PathBuf> = None;
     let work = async {
-        let cwd = if r.repo.is_some() || r.folder.is_some() {
+        let cwd = if let Some(dir) = in_place(r.folder.as_deref()).await? {
+            say(DraftLineKind::Tool, &format!("Reading {} as it is on this machine…", r.folder.as_deref().unwrap_or_default()));
+            dir
+        } else if r.repo.is_some() || r.folder.is_some() {
             say(DraftLineKind::Tool, &format!("Fetching {}…", r.repo.as_deref().or(r.folder.as_deref()).unwrap_or("the code")));
             let req = crate::worktrees::Request { name: worktree_name(&r.id)?, base: r.base.clone(), existing: false };
             let started = crate::tasks::start(&emit, &r.id, r.folder.as_deref().unwrap_or(""), r.repo.as_deref(), &req, &crate::tasks::Places::here(), None).await?;
@@ -74,7 +78,7 @@ pub async fn run(sessions: Sessions, r: Run) {
             dir
         };
         say(DraftLineKind::Tool, "Thinking…");
-        tokio::time::timeout(TIMEOUT, ask(&r, &cwd, worktree.is_some(), &say)).await.map_err(|_| anyhow!("It took longer than 8 minutes, so it was stopped."))?
+        tokio::time::timeout(TIMEOUT, ask(&r, &cwd, r.repo.is_some() || r.folder.is_some(), &say)).await.map_err(|_| anyhow!("It took longer than 8 minutes, so it was stopped."))?
     };
     let result = tokio::select! {
         r = work => r,
@@ -83,7 +87,7 @@ pub async fn run(sessions: Sessions, r: Run) {
     RUNNING.lock().unwrap().remove(&r.id);
     if let Some(dir) = &worktree {
         remove(dir, &worktree_name(&r.id).unwrap_or_default()).await;
-    } else {
+    } else if r.folder.is_none() && r.repo.is_none() {
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("maple-{}", r.id)));
     }
     let (output, error) = match result {
@@ -91,6 +95,28 @@ pub async fn run(sessions: Sessions, r: Run) {
         Err(e) => (None, Some(crate::tasks::scrub(&e.to_string(), None))),
     };
     sessions.emit(Outbound::DraftDone { id: r.id.clone(), output, error });
+}
+
+/// The folder to read as it is, when `folder` isn't in a git repository or its repository has no
+/// origin: there's nothing to fetch a worktree from. None: make a worktree (or there's no folder).
+async fn in_place(folder: Option<&str>) -> Result<Option<PathBuf>> {
+    let Some(folder) = folder.filter(|f| !f.trim().is_empty()) else { return Ok(None) };
+    let dir = expand_home(folder);
+    if !dir.is_dir() {
+        bail!("{folder} isn't a folder on this machine.");
+    }
+    let origin = Command::new("git")
+        .arg("-C")
+        .arg(&dir)
+        .args(["remote", "get-url", "origin"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await?;
+    // Outside a repository `git remote` fails as well, so one check covers both.
+    Ok((!origin.success()).then_some(dir))
 }
 
 /// `draft-<uuid>` → `draft-<first 8 of the uuid>`, under `agent/` like a task's.
@@ -110,10 +136,9 @@ async fn remove(dir: &Path, name: &str) {
     crate::worktrees::poke(true);
 }
 
-/// Runs the agent once in `cwd` and returns its last message.
-async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(DraftLineKind, &str) + Sync)) -> Result<String> {
-    let agent = crate::agent_config::find(&r.agent).ok_or_else(|| anyhow!("This machine doesn't know the agent {}.", r.agent))?;
-    let args: Vec<String> = match r.agent.as_str() {
+/// The agent's arguments: with `read`, only its read tools (Claude Code) or a read-only sandbox (Codex).
+fn args(r: &Run, read: bool) -> Result<Vec<String>> {
+    Ok(match r.agent.as_str() {
         "claude" => {
             let tools = if read { "Read,Grep,Glob" } else { "" };
             // `--tools` takes a list, so `--` ends it before the prompt.
@@ -132,7 +157,13 @@ async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(DraftLineKind, &str)
                 .collect()
         }
         other => bail!("Draft with AI works with Claude Code or Codex, not {other}."),
-    };
+    })
+}
+
+/// Runs the agent once in `cwd` and returns its last message.
+async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(DraftLineKind, &str) + Sync)) -> Result<String> {
+    let agent = crate::agent_config::find(&r.agent).ok_or_else(|| anyhow!("This machine doesn't know the agent {}.", r.agent))?;
+    let args = args(r, read)?;
     let script = format!("exec {} \"$@\"", if agent.command.is_empty() { r.agent.as_str() } else { agent.command.as_str() });
     let mut child = Command::new(crate::agents::login_shell())
         .args(["-l", "-i", "-c", &script, "maple-draft"])
@@ -242,6 +273,61 @@ fn trim(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_on(folder: &Path, agent: &str) -> Run {
+        Run { id: "draft-0b7c1e2a".into(), agent: agent.into(), prompt: "What's here?".into(), repo: None, folder: Some(folder.to_string_lossy().into_owned()), base: None }
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        assert!(std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap().status.success(), "git {args:?}");
+    }
+
+    /// Every file under `dir` and its contents.
+    fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut all = vec![];
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                all.extend(snapshot(&p));
+            } else {
+                all.push((p.clone(), std::fs::read(&p).unwrap()));
+            }
+        }
+        all.sort();
+        all
+    }
+
+    #[tokio::test]
+    async fn reads_a_plain_folder_in_place_with_read_tools() {
+        let dir = std::env::temp_dir().join(format!("maple-draft-plain-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("lib/session.ts"), "export const ttl = 60;\n").unwrap();
+        let before = snapshot(&dir);
+        let r = run_on(&dir, "claude");
+        assert_eq!(in_place(r.folder.as_deref()).await.unwrap(), Some(dir.clone()));
+        let claude = args(&r, true).unwrap();
+        let tools = claude.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(claude[tools + 1], "Read,Grep,Glob");
+        assert!(args(&run_on(&dir, "codex"), true).unwrap().windows(2).any(|w| w == ["--sandbox", "read-only"]));
+        // Nothing was made or changed there: no repository, no worktree.
+        assert_eq!(snapshot(&dir), before);
+        assert!(!dir.join(".git").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn reads_a_checkout_without_origin_in_place_and_makes_a_worktree_with_one() {
+        let dir = std::env::temp_dir().join(format!("maple-draft-git-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "--quiet"]);
+        let folder = Some(dir.to_string_lossy().into_owned());
+        assert_eq!(in_place(folder.as_deref()).await.unwrap(), Some(dir.clone()));
+        git(&dir, &["remote", "add", "origin", "https://github.com/acme/app.git"]);
+        assert_eq!(in_place(folder.as_deref()).await.unwrap(), None);
+        assert_eq!(in_place(None).await.unwrap(), None);
+        assert!(in_place(Some("/no/such/maple/folder")).await.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn names_the_worktree_from_the_id() {
