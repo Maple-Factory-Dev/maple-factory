@@ -203,6 +203,7 @@ struct GoalEditorView: View {
             case "summary": summary = value
             case "folder": source = .folder; folder = value
             case "repo": source = .repo; repo = value
+            case "repofilter": repoFilter = value
             // `goalfill:due:2026-11-19`, or `goalfill:due:` for none.
             case "due": due = Self.dayFormat.date(from: value)
             // `goalfill:color:Indigo`, or any hex for a custom one: `goalfill:color:#123456`.
