@@ -1,6 +1,6 @@
 // Who may open a terminal, and cutting people off, against the fake GitHub: only a machine's owner and admins
-// get its terminals; someone who leaves the org loses their session cookie, app token and open apps at their
-// next request; an admin's "Revoke access" (members.revoke) does the same at once, and they can sign in again.
+// get its terminals, and taking back an admin's grant closes those they opened as one; someone who leaves the org
+// loses their session cookie, app token and open apps (by the org hub's sweep, or at their next request); an admin's "Revoke access" (members.revoke) does the same at once, and they can sign in again.
 //   node server/test/e2e-access.mjs http://localhost:8788 [fake GitHub URL] [wrangler --persist-to folder]
 // The fake runs with --owner acme:alice --member acme:bob --member acme:carol --member acme:dave --installed acme/greeter;
 // the server with GITHUB_ORG=acme, GITHUB_API_URL pointing at the fake, the GitHub App's id, key, client id/secret,
@@ -143,21 +143,29 @@ for (const [who, auth] of [["bob (owner)", bob], ["alice (admin)", alice]]) {
   term.ws.close();
 }
 
-// ---- 2. Leaving the org: cut off at the next request ------------------------------------------------------
+// ---- 2. Leaving the org: cut off by the org hub's sweep, before she makes another request -------------------
 
 const carolApp = await appSignIn("carol");
 check(await meStatus(carol) === 200 && await meStatus(carolApp) === 200, "carol's cookie and app token work while she's in acme");
 check(d1("SELECT count(*) AS n FROM app_tokens WHERE login = 'carol'")[0].n === 1, "she has an app token");
 const carolFeed = await feed(carolApp);
 await fetch(`${gh}/_leave`, { method: "POST", body: JSON.stringify({ org: "acme", login: "carol" }) });
+// No request from carol here: the org hub's alarm re-checks the people with apps open and closes hers.
+const carolClosed = await until("carol's feed closing", () => carolFeed.closed);
+check(carolClosed.code === 4003, `after she leaves acme, her open feed closes without her making a request (${carolClosed.code} ${carolClosed.reason})`);
 const cookieAfter = await meStatus(carol);
 const tokenAfter = await meStatus(carolApp);
-check(cookieAfter === 401 && tokenAfter === 401, `after she leaves acme, her cookie and app token get ${cookieAfter} and ${tokenAfter} on /api/me`);
-const carolClosed = await until("carol's feed closing", () => carolFeed.closed);
-check(carolClosed.code === 4003, `her open feed closes (${carolClosed.code} ${carolClosed.reason})`);
+check(cookieAfter === 401 && tokenAfter === 401, `her cookie and app token get ${cookieAfter} and ${tokenAfter} on /api/me`);
 check(d1("SELECT count(*) AS n FROM app_tokens WHERE login = 'carol'")[0].n === 0, "her app_tokens rows are gone");
 const revokedRow = d1("SELECT revoked_at FROM members WHERE login = 'carol'")[0];
 check(revokedRow.revoked_at > 0, `members.revoked_at is set (${revokedRow.revoked_at})`);
+
+// A stale check is claimed before GitHub is asked, so a burst of requests from one member asks it far fewer times.
+const asks = async () => (await (await fetch(`${gh}/_log`)).json()).log.filter((e) => e.path === "/orgs/acme/members/bob").length;
+const asksBefore = await asks();
+const burst = await Promise.all(Array.from({ length: 8 }, () => meStatus(bob)));
+const githubAsks = (await asks()) - asksBefore;
+check(burst.every((s) => s === 200) && githubAsks >= 1 && githubAsks < burst.length, `8 requests at once from bob with a stale check ask GitHub ${githubAsks} time(s)`);
 
 // ---- 3. An admin's "Revoke access" ------------------------------------------------------------------------
 
@@ -170,7 +178,16 @@ const refused = await bobFeed.ask({ type: "members.revoke", login: "dave" }, "bo
 check(refused.type === "error", `bob, a member, can't revoke dave: "${refused.message}"`);
 check(await meStatus(dave) === 200, "and dave's still in");
 
-// Make dave an admin for a moment, so he has a terminal open to lose.
+// Make dave an admin for a moment: a terminal he opens on bobs-mac closes when the grant is taken back.
+await aliceFeed.ask({ type: "admins.grant", login: "dave" }, "dave's grant", (m) => m.members?.find((x) => x.login === "dave")?.role === "admin");
+const adminTerm = await open(terminal, daveApp);
+await until("dave's replay", () => adminTerm.seen.find((x) => typeof x === "string" && x.startsWith("replay for ")));
+await aliceFeed.ask({ type: "admins.revoke", login: "dave" }, "dave's grant taken back", (m) => m.members?.find((x) => x.login === "dave")?.role === "member");
+const adminClosed = await until("dave's admin terminal closing", () => adminTerm.closed);
+check(adminClosed.code === 4003, `taking back dave's admin closes his terminal on bobs-mac (${adminClosed.code} ${adminClosed.reason})`);
+check(await meStatus(daveApp) === 200, "but he's still signed in");
+
+// Admin again, so he has a terminal open to lose when he's revoked.
 await aliceFeed.ask({ type: "admins.grant", login: "dave" }, "dave's grant", (m) => m.members?.find((x) => x.login === "dave")?.role === "admin");
 const daveTerm = await open(terminal, daveApp);
 await until("dave's replay", () => daveTerm.seen.find((x) => typeof x === "string" && x.startsWith("replay for ")));

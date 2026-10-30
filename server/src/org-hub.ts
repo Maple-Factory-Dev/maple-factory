@@ -8,7 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { maySignIn, revokeMember, toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, recheckEvery, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
@@ -76,10 +76,29 @@ export class OrgHub extends DurableObject<Env> {
    *  and a scheduled task whose time came starts even if no machine reports in. */
   async alarm() {
     await applySettings(this.env);
+    await this.recheckConnected();
     await this.engine.pollCI();
     await this.engine.mergeDue();
     await this.engine.pump();
     await this.checkRunnerRelease();
+  }
+
+  /** Apps live on one socket and rarely make a request, so the request-time membership check would miss them:
+   *  while any are connected, asks again about the people behind them once their check is stale, and cuts off
+   *  anyone who has left. */
+  private async recheckConnected() {
+    const logins = new Set(this.ctx.getWebSockets("client").map((ws) => (ws.deserializeAttachment() as Client).member.login));
+    if (!logins.size) return;
+    for (const login of logins) {
+      const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ?").bind(login).first<MemberRow>();
+      if (!row || !(await stillMember(this.env, row, false))) await this.cutOff(login);
+    }
+    await this.armRecheck();
+  }
+
+  /** The next membership sweep, while apps are connected: at most a second apart (the e2e tests check every time). */
+  private async armRecheck() {
+    await this.wakeAt(Date.now() + Math.max(recheckEvery(this.env), 1000));
   }
 
   /** While apps are connected, reads the runner releases again hourly and tells the apps when they
@@ -124,6 +143,7 @@ export class OrgHub extends DurableObject<Env> {
         this.ctx.acceptWebSocket(pair[1], ["client"]);
         pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
         await this.armRunnerCheck();
+        await this.armRecheck();
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
       case "/machine": {
@@ -373,6 +393,8 @@ export class OrgHub extends DurableObject<Env> {
       const c = ws.deserializeAttachment() as Client;
       if (c.member.login === row.login) ws.serializeAttachment({ ...c, member: updated });
     }
+    // Terminals they opened on others' machines as an admin close; their own stay open.
+    if (!grant && updated.role !== "admin") await this.dropViewers(row.login, "admin");
     this.broadcast({ type: "members.updated", members });
     return null;
   }
@@ -395,9 +417,15 @@ export class OrgHub extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets("client")) {
       if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
     }
-    await Promise.all((await machineRows(this.env)).map((m) =>
-      machineHub(this.env, m.id).fetch(`https://hub/drop-viewers?login=${encodeURIComponent(login)}`, { method: "POST" })));
+    await this.dropViewers(login);
     this.broadcast({ type: "members.updated", members: await this.members() });
+  }
+
+  /** Asks every machine to close `login`'s terminals (with `role`, only those they opened with that role). */
+  private async dropViewers(login: string, role?: string) {
+    const query = new URLSearchParams({ login, ...(role ? { role } : {}) });
+    await Promise.all((await machineRows(this.env)).map((m) =>
+      machineHub(this.env, m.id).fetch(`https://hub/drop-viewers?${query}`, { method: "POST" })));
   }
 
   private async recentEnds(): Promise<EndedSession[]> {

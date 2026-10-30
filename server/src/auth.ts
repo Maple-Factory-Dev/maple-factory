@@ -1,8 +1,9 @@
 // Who may use this factory: members of one GitHub organization (or, when GITHUB_ORG is someone's
 // personal account, just them), and anyone in GITHUB_ALLOWED_LOGINS, who signs in as a member. The web signs in with GitHub's
 // OAuth redirect and gets a signed cookie; the apps use GitHub's device flow and get a bearer
-// token. Membership is checked with GitHub at every sign-in, and again on a request once that check is
-// MEMBERSHIP_RECHECK_MS old; someone who has left is revoked then (revokeMember), as an admin can do by hand.
+// token. Membership is checked with GitHub at every sign-in, and again on a request (or, for apps left open, by the
+// org hub's alarm) once that check is MEMBERSHIP_RECHECK_MS old; someone who has left is revoked then (revokeMember),
+// as an admin can do by hand.
 // Roles and teams come from GitHub; an admin can also make someone admin here (members.admin_granted_by),
 // which raises their role but never lets them in.
 
@@ -110,23 +111,33 @@ export async function revokeMember(env: Env, login: string, by: string, notify =
   if (notify) await orgHub(env).fetch("https://org/revoked", { method: "POST", body: login });
 }
 
+/** How old a membership check may get (ms): MEMBERSHIP_RECHECK_MS in the env (the e2e tests set 0), else 10 minutes. */
+export function recheckEvery(env: Env): number {
+  return env.MEMBERSHIP_RECHECK_MS ? Number(env.MEMBERSHIP_RECHECK_MS) : MEMBERSHIP_RECHECK_MS;
+}
+
 /** Whether `row` may still use the factory: asks GitHub again once the last answer is stale, and revokes them
- *  if they've left. When GitHub can't say, the last answer stands, so an outage signs nobody out. */
-async function stillMember(env: Env, row: MemberRow): Promise<boolean> {
+ *  if they've left (`notify` tells the org hub, which the hub itself skips). checked_at is claimed before the
+ *  call, so concurrent requests from one member ask GitHub once; when GitHub can't say, the claim is undone
+ *  and the last answer stands, so an outage signs nobody out. */
+export async function stillMember(env: Env, row: MemberRow, notify = true): Promise<boolean> {
   if (!stillAllowed(env, row.login)) return false;
-  const every = env.MEMBERSHIP_RECHECK_MS ? Number(env.MEMBERSHIP_RECHECK_MS) : MEMBERSHIP_RECHECK_MS;
-  if (row.checked_at !== null && Date.now() - row.checked_at < every) return true;
+  const now = Date.now();
+  if (row.checked_at !== null && now - row.checked_at < recheckEvery(env)) return true;
+  const claim = await env.DB.prepare("UPDATE members SET checked_at = ? WHERE login = ? AND checked_at IS ?")
+    .bind(now, row.login, row.checked_at).run();
+  if (!claim.meta.changes) return true; // Another request is asking GitHub now.
   let allowed: boolean;
   try {
     allowed = await maySignIn(env, row.login);
   } catch {
+    await env.DB.prepare("UPDATE members SET checked_at = ? WHERE login = ? AND checked_at = ?").bind(row.checked_at, row.login, now).run();
     return true;
   }
   if (!allowed) {
-    await revokeMember(env, row.login, "github");
+    await revokeMember(env, row.login, "github", notify);
     return false;
   }
-  await env.DB.prepare("UPDATE members SET checked_at = ? WHERE login = ?").bind(Date.now(), row.login).run();
   return true;
 }
 

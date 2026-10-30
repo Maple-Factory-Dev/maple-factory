@@ -59,10 +59,14 @@ export class MachineHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/drop-viewers": {
-        // Someone's access was revoked: their open terminals close now.
+        // Someone's access was revoked: their open terminals close now. With role=admin their admin grant was
+        // taken back, so only the terminals they opened as an admin close, and none on a machine they own.
         const login = url.searchParams.get("login") ?? "";
+        const role = url.searchParams.get("role");
+        if (role && (await this.machine()).owner === login) return new Response(null, { status: 204 });
         for (const ws of this.ctx.getWebSockets(VIEWER)) {
-          if ((ws.deserializeAttachment() as Viewer).login === login) ws.close(4003, "access revoked");
+          const viewer = ws.deserializeAttachment() as Viewer;
+          if (viewer.login === login && (!role || viewer.role === role)) ws.close(4003, role ? "admin access taken back" : "access revoked");
         }
         return new Response(null, { status: 204 });
       }
