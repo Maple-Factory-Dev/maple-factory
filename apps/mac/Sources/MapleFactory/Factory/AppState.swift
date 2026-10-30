@@ -2196,6 +2196,8 @@ final class AppState {
                 if let client, let factory = client.savedFactories.first(where: { $0.id == parts.dropFirst().joined(separator: ":") }) {
                     if client.switchTo(factory) { didSwitchFactory() }
                 }
+            // `dock:off` / `dock:on` is Settings › General's "Show the factory's icon in the Dock".
+            case "dock": AppDefaults.set(["yes", "on", "true"].contains(parts[1].lowercased()), forKey: DockIcon.settingKey)
             case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.

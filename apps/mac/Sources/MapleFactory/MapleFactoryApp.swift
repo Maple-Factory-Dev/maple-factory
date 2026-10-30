@@ -117,6 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Headless: no Dock icon, no activation, no updates or banners; the user keeps the screen.
         if let (state, client) = Self.headless {
+            // Only traced (`-dockTrace`), the way a real launch would show it.
+            DockIcon.apply(client.icon)
             Headless.start(state: state, client: client)
             return
         }
