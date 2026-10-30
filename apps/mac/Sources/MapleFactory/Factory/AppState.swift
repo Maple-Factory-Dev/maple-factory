@@ -1934,6 +1934,10 @@ final class AppState {
             case "top": moveToTop(parts[1])
             case "bottom": moveToBottom(parts[1])
             case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            // The Drafts column's: a draft dropped on another (`draftdrop:<id>:<before>`, none: the bottom), Move to top / bottom.
+            case "draftdrop": rankDraft(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "drafttop": moveDraftToTop(parts[1])
+            case "draftbottom": moveDraftToBottom(parts[1])
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil
@@ -2017,6 +2021,10 @@ final class AppState {
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
             // A key pressed in the window, headless: `key:esc`.
             case "key": Headless.press(parts[1])
+            // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
+            // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
+            case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
+            case "menupick": Headless.pickMenuItem(parts.dropFirst().joined(separator: ":"))
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
