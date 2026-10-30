@@ -1613,17 +1613,18 @@ final class AppState {
         return true
     }
 
-    func approvePlan(_ id: String) {
+    /// `keepTitle` turns down the plan's suggested title.
+    func approvePlan(_ id: String, keepTitle: Bool = false) {
         if let client, isLive {
             guard beginInFlight(id, .approvePlan) else { return }
-            client.send(.taskApprovePlan(.init(id: id)))
+            client.send(.taskApprovePlan(.init(id: id, keepTitle: keepTitle ? true : nil)))
             return
         }
-        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id) }) { return }
-        approvePlanInMockup(id)
+        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id, keepTitle: keepTitle) }) { return }
+        approvePlanInMockup(id, keepTitle: keepTitle)
     }
 
-    private func approvePlanInMockup(_ id: String) {
+    private func approvePlanInMockup(_ id: String, keepTitle: Bool) {
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -1635,9 +1636,15 @@ final class AppState {
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
                 // Picked up from the backlog.
                 if task.state == .backlog { task.state = .awaitingApproval }
+                if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
+                    if let title = task.suggestedTitle {
+                        task.activity.insert(ActivityItem(who: "Factory", text: "Renamed it from \"\(task.title)\"", when: "now"), at: 0)
+                        task.title = title
+                        task.suggestedTitle = nil
+                    }
                     startBuilding(&task, prNumber: prNumber)
                     started = true
                 }
