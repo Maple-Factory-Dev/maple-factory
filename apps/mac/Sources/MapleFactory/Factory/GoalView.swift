@@ -242,6 +242,7 @@ struct BoardColumns: View {
             }
         }
         .animation(.snappy, value: state.boardHidesEmptyColumns)
+        .animation(.snappy, value: columns.map(\.id))
         .animation(.snappy, value: columns.map { $0.tasks.map(\.id) })
     }
 
