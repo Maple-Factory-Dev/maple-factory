@@ -4,6 +4,7 @@
 // goal's code, what the task should say. Drafts live in the OrgHub's kv and only their owner sees them.
 
 import type { Draft, DraftLine, DraftLineKind, Goal, Machine, ServerToClient, ServerToRunner } from "../wire.ts";
+import { goalMayFetch } from "./repos.ts";
 import type { Store } from "./store.ts";
 
 type Deps = {
@@ -48,11 +49,11 @@ export class Drafts {
     return saved && saved.draft.machine === machine ? saved : null;
   }
 
-  /** Whether a draft's run may have a read-only token for owner/repo: only its goal's repos. */
+  /** Whether a draft's run may have a read-only token for owner/repo: only its goal's (`goalMayFetch`). */
   mayFetch(runId: string, machine: string, repo: string): boolean {
     const saved = this.forRun(runId, machine);
     const goal = saved?.draft.goal ? this.store.goal(saved.draft.goal) : null;
-    return Boolean(saved && saved.draft.state === "reading" && goal?.repos.some((r) => r.toLowerCase() === repo.toLowerCase()));
+    return Boolean(saved && saved.draft.state === "reading" && goal && goalMayFetch(goal, repo));
   }
 
   async start(owner: string, id: string, idea: string, goal: string | null, agent: string | null) {

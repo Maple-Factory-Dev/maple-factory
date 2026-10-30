@@ -1259,14 +1259,22 @@ export class Engine {
           this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
-        if (this.drafts.forRun(msg.taskId, machine) || this.scout.forRun(msg.taskId, machine) || this.setup.forRun(msg.taskId, machine)) {
+        const draft = this.drafts.forRun(msg.taskId, machine), scouting = this.scout.forRun(msg.taskId, machine), setup = this.setup.forRun(msg.taskId, machine);
+        if (draft || scouting || setup) {
           // Draft with AI and Scout read their goal's code, Set up with AI its repo's: a fetch of one of those repos, nothing more.
           const full = `${msg.owner}/${msg.repo}`;
-          const mayFetch = msg.taskId.startsWith(SCOUT_PREFIX) ? this.scout.mayFetch(msg.taskId, machine, full)
-            : msg.taskId.startsWith(SETUP_PREFIX) ? this.setup.mayFetch(msg.taskId, machine, full)
+          const mayFetch = scouting ? this.scout.mayFetch(msg.taskId, machine, full)
+            : setup ? this.setup.mayFetch(msg.taskId, machine, full)
             : this.drafts.mayFetch(msg.taskId, machine, full);
           if (msg.purpose !== "fetch" || !mayFetch) {
-            return await reply(null, "A draft can only fetch its goal's repos.", "api"), null;
+            const goalId = scouting?.run.goal ?? draft?.draft.goal ?? null;
+            const goal = goalId ? this.store.goal(goalId) : null;
+            const repos = goal ? goalRepos(goal) : [];
+            const theirs = setup ? setup.run.repo
+              : repos.length ? `${goal!.name}'s repos (${repos.join(", ")})`
+              : goal?.folder ? `${goal.name}'s folder (${goal.folder})` : "its goal's repos";
+            const what = msg.purpose !== "fetch" ? `can only fetch, not push, ${full}` : `can't fetch ${full}: it reads ${theirs}`;
+            return await reply(null, `${scouting ? "Scout" : setup ? "Set up with AI" : "Draft with AI"} ${what}.`, "api"), null;
           }
           try {
             await reply((await repoToken(app, msg.owner, msg.repo, PERMISSIONS.fetch)).token, null, null);
