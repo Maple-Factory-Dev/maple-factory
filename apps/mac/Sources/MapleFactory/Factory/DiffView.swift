@@ -46,8 +46,12 @@ struct DiffView: View {
 
     private var draft: ReviewDraft { appState.reviewDraft(for: task.id) }
 
-    /// The picked file, else the first with hunks (files can arrive after the view does).
-    private var current: DiffFile? { files.first { $0.path == selected } ?? files.first { !$0.hunks.isEmpty } ?? files.first }
+    /// The picked file, else the tree's first with hunks (files can arrive after the view does).
+    private var current: DiffFile? {
+        if let picked = files.first(where: { $0.path == selected }) { return picked }
+        let ordered = DiffTreeNode.build(files).flatMap(\.files)
+        return ordered.first { !$0.hunks.isEmpty } ?? ordered.first
+    }
 
     private var threads: [Wire.ReviewThread] {
         appState.isLive ? client.threads[task.id]?.threads ?? [] : FactoryData.reviewThreads(for: task.id)
@@ -58,8 +62,7 @@ struct DiffView: View {
             toolbar
             Hairline()
             HStack(spacing: 0) {
-                // A single file needs no tree beside it; its header already says what changed.
-                if files.count > 1 {
+                if !files.isEmpty {
                     DiffFileTree(
                         task: task,
                         nodes: DiffTreeNode.build(files),
