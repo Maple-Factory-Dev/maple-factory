@@ -155,6 +155,9 @@ impl Sessions {
                 Err(e) => warn!("could not reattach to {}: {e:#}", existing.name),
             }
         }
+        // Connector files of sessions that ended while the runner was down: their secrets go too.
+        let live: HashSet<Uuid> = sessions.inner.lock().unwrap().keys().copied().collect();
+        sessions.hooks.sweep_session_mcp_configs(&live);
         tokio::spawn(sessions.clone().watch_exits());
         Ok(sessions)
     }
@@ -221,6 +224,7 @@ impl Sessions {
         cwd: &str,
         model: Option<&str>,
         unattended: Option<&agents::Unattended>,
+        connectors: &[wire::McpConnector],
         images: &[String],
         prompt: Option<&str>,
         resume: bool,
@@ -266,12 +270,20 @@ impl Sessions {
         }
         // A task's repo secrets: in a one-shot file outside its worktree that the pane's shell reads
         // and removes, so they're only ever in the pane's processes, not tmux's session environment.
+        // Codex's connector secrets go the same way (`agents::connector_args` only names them).
         let secrets = secrets.filter(|(_, env)| !env.is_empty());
-        if let Some((repo, env)) = secrets {
-            let file = crate::secrets::env_file(id, env).inspect_err(|_| {
+        let mut env: Vec<(String, String)> = secrets.map(|(_, env)| env.to_vec()).unwrap_or_default();
+        if agent_name == "codex" && agent.hooks {
+            env.extend(agents::codex_connector_env(connectors));
+        }
+        let sourced = !env.is_empty();
+        if sourced {
+            let file = crate::secrets::env_file(id, &env).inspect_err(|_| {
                 self.ports.lock().unwrap().remove(&id);
             })?;
             args.extend(["-e".into(), format!("{}={}", crate::secrets::FILE_ENV, file.display())]);
+        }
+        if let Some((repo, env)) = secrets {
             meta.push((crate::secrets::OPTION, env.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" ")));
             meta.push((crate::secrets::REPO_OPTION, repo.to_string()));
         }
@@ -282,13 +294,25 @@ impl Sessions {
             args.extend(["-e".into(), format!("{}={}", agents::PROMPT_FILE_ENV, file.display())]);
         }
         args.extend(["-P".into(), "-F".into(), "#{pane_pid}".into(), "--".into()]);
-        let hook_args = if agent.hooks { self.hooks.agent_args(agent_name) } else { vec![] };
+        let mut hook_args = vec![];
+        if agent.hooks {
+            hook_args = self.hooks.agent_args(agent_name);
+            // The factory's connectors: Claude Code reads them (secrets and all) from a file only this user can read.
+            let config = match agent_name {
+                "claude" => self.hooks.write_session_mcp_config(id, connectors).inspect_err(|_| {
+                    self.ports.lock().unwrap().remove(&id);
+                    remove_secrets_file(id);
+                })?,
+                _ => None,
+            };
+            hook_args.extend(agents::connector_args(agent_name, config.as_deref(), connectors));
+        }
         let argv = if long.is_some() {
             agents::argv_with_prompt_file(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images)
         } else {
             agents::argv(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images, prompt)
         };
-        args.extend(if secrets.is_some() { crate::secrets::source_first(argv) } else { argv });
+        args.extend(if sourced { crate::secrets::source_first(argv) } else { argv });
         // The browser decides the size; an SSH client attaching later doesn't resize it.
         // (Set per window: `window-size manual` in the startup config crashes tmux 3.6a.)
         args.extend([";".into(), "set-option".into(), "-w".into(), "-t".into(), name.clone(), "window-size".into(), "manual".into()]);
@@ -301,13 +325,21 @@ impl Sessions {
             Err(e) => {
                 self.ports.lock().unwrap().remove(&id);
                 remove_secrets_file(id);
+                self.hooks.remove_session_mcp_config(id);
                 return Err(e);
             }
         };
 
         let info =
             SessionInfo { id, agent: agent_name.to_string(), cwd: cwd.to_string(), pid: out.lines().next().and_then(|l| l.trim().parse().ok()), started_at };
-        self.adopt(info.clone(), task)?;
+        if let Err(e) = self.adopt(info.clone(), task) {
+            // Untracked, it would run with nobody to end it (or remove its files): stop it now.
+            let _ = self.tmux.run(&["kill-session", "-t", &name]).await;
+            self.ports.lock().unwrap().remove(&id);
+            remove_secrets_file(id);
+            self.hooks.remove_session_mcp_config(id);
+            return Err(e);
+        }
         Ok(info)
     }
 
@@ -588,6 +620,7 @@ impl Sessions {
         self.requested.lock().unwrap().remove(&id);
         // Its shell removes its secrets file as it starts; this is for one that never did.
         remove_secrets_file(id);
+        self.hooks.remove_session_mcp_config(id);
         let (cause, detail) = ends::classify(seen);
         let end = SessionEnd {
             id,
@@ -739,6 +772,38 @@ mod tests {
         assert_eq!(parse_ports("52411"), None);
         assert_eq!(parse_ports("a b"), None);
     }
+
+    #[tokio::test]
+    async fn a_sessions_connectors_file_goes_when_it_ends() {
+        // Short: the tmux socket path must stay under 104 bytes.
+        let dir = PathBuf::from(format!("/tmp/mf-test-{}", &Uuid::new_v4().to_string()[..8]));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let tmux = Tmux::new("t", &dir).unwrap();
+        let hooks = Hooks::prepare(&dir, "t").unwrap();
+        let sessions = Sessions::start(tx, tmux, hooks).await.unwrap();
+        let id = Uuid::new_v4();
+        let jira = wire::McpConnector {
+            name: "jira".into(),
+            transport: wire::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec![],
+            url: None,
+            env: [("JIRA_API_TOKEN".to_string(), "secret".to_string())].into(),
+            headers: Default::default(),
+            enabled: true,
+            auto_allow: false,
+        };
+        // As `open` writes it for a Claude Code session; a plain shell stands in for the agent.
+        let file = sessions.hooks.write_session_mcp_config(id, std::slice::from_ref(&jira)).unwrap().unwrap();
+        sessions.open(id, "shell", dir.to_str().unwrap(), None, None, &[jira], &[], None, false, 80, 24, None, None).await.unwrap();
+        assert!(file.exists() && sessions.is_live(id));
+        sessions.kill(id).await;
+        assert!(!sessions.is_live(id));
+        assert!(!file.exists(), "the session's connectors file is removed when it ends");
+        let _ = sessions.tmux.run(&["kill-server"]).await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -765,4 +830,5 @@ mod paste_tests {
         agent.feed(b"\x1b[2J\x1b[H hello");
         assert!(agent.on);
     }
+
 }

@@ -226,7 +226,7 @@ enum Headless {
         }
         Task { @MainActor in
             await self.waitUntilReady()
-            // Made now, so the script's actions (`secret:add`) reach its views before the shot.
+            // Made now, so the script's actions (`secret:add`, `connector:jira`) reach its views before the shot.
             if AppDefaults.string(forKey: "window")?.hasPrefix("settings") == true {
                 self.settingsWindow.orderBack(nil)
             }

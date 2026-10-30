@@ -57,6 +57,8 @@ import Security
     private(set) var policy: Wire.RiskPolicy?
     /// The org's additions to every session's prompt, by role; nil from an older server.
     private(set) var prompts: Wire.PromptAdditions?
+    /// The factory's MCP connectors, secret values blank (only which keys are set). None: an older server.
+    private(set) var connectors: [Wire.McpConnector]?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
     /// Every repo's secrets: names and who changed them when, never a value.
@@ -279,6 +281,7 @@ import Security
         follows = [:]
         policy = nil
         prompts = nil
+        connectors = nil
         acceptances = []
         repos = []
         secrets = []
@@ -399,6 +402,7 @@ import Security
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             prompts = snapshot.prompts
+            connectors = snapshot.connectors
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
@@ -507,6 +511,8 @@ import Security
             // Every app shows the new name at once, and the factory switcher keeps it.
             displayName = update.name
             remember()
+        case .connectorsUpdated(let update):
+            connectors = update.connectors
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
@@ -724,6 +730,11 @@ import Security
     /// `repo`'s worktree scripts, if it has any.
     func scripts(for repo: String) -> Wire.RepoWorktreeScripts? {
         repoScripts.first { $0.repo.lowercased() == repo.lowercased() }
+    }
+
+    /// Admins only: the whole list. A secret left blank keeps the stored value; connectors.updated echoes it.
+    func save(connectors: [Wire.McpConnector]) {
+        send(.connectorsSave(.init(connectors: connectors)))
     }
 
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
