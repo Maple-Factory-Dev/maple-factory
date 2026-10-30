@@ -204,7 +204,7 @@ impl Sessions {
             .lock()
             .unwrap()
             .values()
-            .map(|s| wire::LiveSession { session: wire_info(&s.info, s.task.as_ref()), activity: s.agent.as_ref().map(wire_activity) })
+            .map(|s| wire::LiveSession { session: wire_info(&s.info, s.task.as_ref()), activity: s.agent.as_ref().map(wire_activity), shares: None })
             .collect();
         list.sort_by_key(|s| s.session.started_at);
         (list, self.exits.lock().unwrap().iter().cloned().collect())

@@ -1457,10 +1457,41 @@ public enum Wire {
     public struct LiveSession: Codable, Hashable, Sendable {
         public var session: SessionInfo
         public var activity: Activity?
+        /// Teammates its machine's owner (or an admin) let into its terminal.
+        public var shares: [SessionShare]?
 
-        public init(session: SessionInfo, activity: Activity? = nil) {
+        public init(session: SessionInfo, activity: Activity? = nil, shares: [SessionShare]? = nil) {
             self.session = session
             self.activity = activity
+            self.shares = shares
+        }
+    }
+
+    /// A teammate let into a session's terminal: to watch it, or with `canType` to type into it too.
+    public struct SessionShare: Codable, Hashable, Sendable {
+        public var login: String
+        public var canType: Bool
+        /// Who shared it.
+        public var by: String
+        /// When it was shared or last changed.
+        public var at: UInt64
+
+        public init(login: String, canType: Bool, by: String, at: UInt64) {
+            self.login = login
+            self.canType = canType
+            self.by = by
+            self.at = at
+        }
+    }
+
+    /// One teammate in a `session.share`: the server fills in who and when.
+    public struct ShareGrant: Codable, Hashable, Sendable {
+        public var login: String
+        public var canType: Bool
+
+        public init(login: String, canType: Bool) {
+            self.login = login
+            self.canType = canType
         }
     }
 
@@ -4683,6 +4714,26 @@ public enum Wire {
         }
     }
 
+    /// The machine's owner or an admin: who else may open this session's terminal, the whole list (empty unshares it).
+    public struct ClientMessageSessionShare: Codable, Hashable, Sendable {
+        public var machine: String
+        public var id: String
+        public var shares: [ShareGrant]
+
+        public init(machine: String, id: String, shares: [ShareGrant] = []) {
+            self.machine = machine
+            self.id = id
+            self.shares = shares
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            machine = try c.decode(String.self, forKey: .machine)
+            id = try c.decode(String.self, forKey: .id)
+            shares = try c.decodeIfPresent([ShareGrant].self, forKey: .shares) ?? []
+        }
+    }
+
     public struct ClientMessageGoalSave: Codable, Hashable, Sendable {
         public var goal: Goal
 
@@ -5344,6 +5395,7 @@ public enum Wire {
         case sessionDetach(ClientMessageSessionDetach)
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
+        case sessionShare(ClientMessageSessionShare)
         case goalSave(ClientMessageGoalSave)
         case draftStart(ClientMessageDraftStart)
         case draftGoal(ClientMessageDraftGoal)
@@ -5419,6 +5471,7 @@ public enum Wire {
             case "session.detach": self = .sessionDetach(try ClientMessageSessionDetach(from: decoder))
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
+            case "session.share": self = .sessionShare(try ClientMessageSessionShare(from: decoder))
             case "goal.save": self = .goalSave(try ClientMessageGoalSave(from: decoder))
             case "draft.start": self = .draftStart(try ClientMessageDraftStart(from: decoder))
             case "draft.goal": self = .draftGoal(try ClientMessageDraftGoal(from: decoder))
@@ -5515,6 +5568,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .sessionKill(let body):
                 try c.encode("session.kill", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionShare(let body):
+                try c.encode("session.share", forKey: .type)
                 try body.encode(to: encoder)
             case .goalSave(let body):
                 try c.encode("goal.save", forKey: .type)

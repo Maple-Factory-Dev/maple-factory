@@ -150,7 +150,17 @@ export const structs: Record<string, Struct> = {
     fieldDocs: { step: "The plan step or todo it is on, when the agent says." },
   },
   LiveSession: {
-    fields: { session: "SessionInfo", activity: "Activity?" },
+    fields: { session: "SessionInfo", activity: "Activity?", shares: "SessionShare[]?" },
+    fieldDocs: { shares: "Teammates its machine's owner (or an admin) let into its terminal." },
+  },
+  SessionShare: {
+    doc: "A teammate let into a session's terminal: to watch it, or with `canType` to type into it too.",
+    fields: { login: "string", canType: "bool", by: "string", at: "u64" },
+    fieldDocs: { by: "Who shared it.", at: "When it was shared or last changed." },
+  },
+  ShareGrant: {
+    doc: "One teammate in a `session.share`: the server fills in who and when.",
+    fields: { login: "string", canType: "bool" },
   },
   SessionEnd: {
     doc: "How a session ended, kept with the task so its card can say why and recovery can decide what to do.",
@@ -1095,6 +1105,10 @@ export const unions: Record<string, Union> = {
       "session.detach": { fields: { id: "uuid" } },
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
+      "session.share": {
+        doc: "The machine's owner or an admin: who else may open this session's terminal, the whole list (empty unshares it).",
+        fields: { machine: "string", id: "uuid", shares: "ShareGrant[]" },
+      },
       "goal.save": { fields: { goal: "Goal" } },
       "draft.start": {
         doc: "Draft with AI: turn `idea` into a task. `id` is the app's own (a UUID), for its `draft.updated`s.",
