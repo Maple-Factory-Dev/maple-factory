@@ -758,6 +758,58 @@ func agentTitle(_ name: String) -> String {
     }
 }
 
+/// An agent's mark: the bundled Claude and Codex logos as template images, so they take the
+/// foreground style in light and dark mode. Anything else gets an SF Symbol.
+enum AgentMark {
+    /// The bundled mark for an agent, or nil when there isn't one.
+    @MainActor static func bundled(_ agent: String) -> NSImage? {
+        if let image = cache[agent] { return image }
+        guard ["claude", "codex"].contains(agent),
+              let url = Bundle.module.url(forResource: agent, withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = true
+        cache[agent] = image
+        return image
+    }
+
+    /// The SF Symbol an agent without a bundled mark falls back to.
+    static func symbol(_ agent: String) -> String {
+        agent == "shell" ? "terminal" : "cpu"
+    }
+
+    /// The mark as an `Image`, sized for menus and pickers that ignore `.frame`.
+    @MainActor static func image(_ agent: String, size: CGFloat = 14) -> Image {
+        guard let mark = bundled(agent), let sized = mark.copy() as? NSImage else { return Image(systemName: symbol(agent)) }
+        sized.size = NSSize(width: size, height: size)
+        sized.isTemplate = true
+        return Image(nsImage: sized)
+    }
+
+    @MainActor private static var cache: [String: NSImage] = [:]
+}
+
+/// An agent's mark at `size` points, tinted by the foreground style.
+struct AgentIcon: View {
+    let agent: String
+    var size: CGFloat = 14
+
+    var body: some View {
+        if let mark = AgentMark.bundled(agent) {
+            Image(nsImage: mark)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+                .accessibilityLabel(agentTitle(agent))
+        } else {
+            Image(systemName: AgentMark.symbol(agent))
+                .font(.system(size: size * 0.85))
+                .frame(width: size, height: size)
+                .accessibilityLabel(agentTitle(agent))
+        }
+    }
+}
+
 func shortPath(_ path: String) -> String {
     let home = NSHomeDirectory()
     return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
