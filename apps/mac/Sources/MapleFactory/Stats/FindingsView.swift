@@ -38,6 +38,9 @@ struct FindingsView: View {
                 severity = Wire.Severity(rawValue: parts[2])
             case "area": area = area == arg ? nil : arg
             case "severity": severity = severity?.rawValue == arg ? nil : Wire.Severity(rawValue: arg)
+            case "hidefixed": setHideFixed(!hideFixed)
+            case "status": setStatus(status?.rawValue == arg ? nil : Wire.FindingStatus(rawValue: arg))
+            case "clearfilters": kind = nil; severity = nil; area = nil; status = nil; hideFixed = false; query = ""
             case "row": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { open(r.task) }
             case "select": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { toggle(r) }
             case "selectall": selectAll(visible(f))
@@ -162,12 +165,13 @@ struct FindingsView: View {
     // MARK: What happened to them
 
     private func outcomes(_ o: Wire.StatsFindingOutcomes) -> some View {
-        let parts: [(String, UInt32, Color)] = [("Fixed", o.fixed, Theme.State.merged), ("Disputed", o.disputed, Theme.State.awaitingApproval),
-                                                ("Open", o.open, Theme.State.cancelled), ("Unknown", o.unknown, Theme.textFaint)]
+        let parts: [(String, UInt32, Color, Wire.FindingStatus?)] = [("Fixed", o.fixed, Theme.State.merged, .fixed),
+                                                                     ("Disputed", o.disputed, Theme.State.awaitingApproval, .disputed),
+                                                                     ("Open", o.open, Theme.State.cancelled, .open), ("Unknown", o.unknown, Theme.textFaint, nil)]
         let total = max(1, parts.reduce(0) { $0 + $1.1 })
         return StatsCard {
             VStack(alignment: .leading, spacing: 12) {
-                cardTitle("What happened to them", note: o.roundsToFixMedian.map { "fixed in \(rounds($0)) (median)" })
+                cardTitle("What happened to them", note: (o.roundsToFixMedian.map { "fixed in \(rounds($0)) (median) · " } ?? "") + "click to filter")
                 GeometryReader { geo in
                     HStack(spacing: 2) {
                         ForEach(parts.filter { $0.1 > 0 }, id: \.0) { p in
@@ -177,14 +181,24 @@ struct FindingsView: View {
                     .clipShape(Capsule())
                 }
                 .frame(height: 8)
-                HStack(spacing: 14) {
-                    ForEach(parts.filter { $0.1 > 0 || $0.0 != "Unknown" }, id: \.0) { p in
+                HStack(spacing: 6) {
+                    ForEach(parts.filter { $0.1 > 0 || $0.3 != nil }, id: \.0) { p in
+                        let selected = p.3 != nil && status == p.3
                         HStack(spacing: 5) {
                             Circle().fill(p.2).frame(width: 7, height: 7)
-                            Text(p.0).foregroundStyle(Theme.textMuted)
+                            Text(p.0).foregroundStyle(selected ? Theme.text : Theme.textMuted)
                             Text("\(p.1)").foregroundStyle(Theme.text).monospacedDigit()
                         }
-                        .help(p.0 == "Unknown" ? "Findings of tasks that are gone, whose status wasn't kept" : "\(p.0): \(p.1)")
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.fillSelected : .clear))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard let s = p.3 else { return }
+                            withAnimation(.snappy(duration: 0.2)) { setStatus(selected ? nil : s) }
+                        }
+                        .help(p.3 == nil ? "Findings of tasks that are gone, whose status wasn't kept"
+                              : selected ? "Show every finding again" : "\(p.0): \(p.1) · click to show only these")
                     }
                 }
                 .font(.system(size: 12))
