@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+// Wire, the factory API and sign-in storage live in MapleKit, shared with iOS.
+@_exported import MapleKit
 
 @main
 struct MapleFactoryApp: App {

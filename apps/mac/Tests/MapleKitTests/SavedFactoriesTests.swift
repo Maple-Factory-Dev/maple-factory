@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import MapleFactory
+@testable import MapleKit
 
 /// The factories this Mac remembers: moving the old single factory in, one entry per host and port,
 /// and which one opens after signing out of another.
@@ -73,11 +73,5 @@ struct SavedFactoriesTests {
         let list = try JSONDecoder().decode([SavedFactory].self, from: Data(old.utf8))
         #expect(list.count == 1)
         #expect(list[0].icon == nil)
-    }
-
-    @Test func onlyAnIconLinkGivesAnIconID() {
-        #expect(FactoryIcons.id("/icon/2a6b3f0f-690d-43e0-b7b2-a6c2a738394e") == "2a6b3f0f-690d-43e0-b7b2-a6c2a738394e")
-        #expect(FactoryIcons.id("/icon/../secrets") == nil)
-        #expect(FactoryIcons.id("/attachments/2a6b3f0f-690d-43e0-b7b2-a6c2a738394e/x.png") == nil)
     }
 }

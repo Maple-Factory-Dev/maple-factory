@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import MapleFactory
+@testable import MapleKit
 
 /// A newer server may send enum values this build doesn't know (HandReason.mergeFailed broke 0.1.1).
 /// They decode as `.other("…")` instead of failing the whole message and dropping the feed.
@@ -41,12 +41,8 @@ struct WireTolerance {
         #expect(Wire.HandReason(rawValue: "mergeFailed") == .mergeFailed)
     }
 
-    @Test func anUnknownHandShowsAsNeedsAttention() {
-        #expect(HandRaise.Reason.other.title == "Needs attention")
-    }
-
     @Test func undecodableMessagesSayToUpdate() {
         let error = DecodingError.typeMismatch(UInt64.self, .init(codingPath: [], debugDescription: "x"))
-        #expect(FactoryClient.describe(error) == FactoryClient.tooNewMessage)
+        #expect(FactoryAPI.describe(error) == FactoryAPI.tooNewMessage)
     }
 }

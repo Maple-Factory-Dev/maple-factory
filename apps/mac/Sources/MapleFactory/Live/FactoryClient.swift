@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import Security
 
 /// The app's connection to a real factory: who you are, the live machines, recent session ends, and
 /// the goals and tasks. Views that were designed against mock data read the adapted copies
@@ -185,7 +184,7 @@ import Security
         savedFactories = SavedFactories.migrate(SavedFactories.load(), currentURL: defaults.string(forKey: "factoryURL"),
                                                 currentOrg: defaults.string(forKey: "factoryOrg"))
         if let saved = defaults.string(forKey: "factoryURL"), let url = URL(string: saved),
-           let token = Keychain.read(account: saved) {
+           let token = Keychain.app.read(account: saved) {
             server = url
             self.token = token
             org = defaults.string(forKey: "factoryOrg") ?? ""
@@ -225,7 +224,7 @@ import Security
         org = result.org
         AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
         AppDefaults.set(result.org, forKey: "factoryOrg")
-        Keychain.write(result.token, account: result.server.absoluteString)
+        Keychain.app.write(result.token, account: result.server.absoluteString)
         remember()
         connect()
     }
@@ -235,7 +234,7 @@ import Security
     @discardableResult
     func switchTo(_ factory: SavedFactory) -> Bool {
         guard SavedFactory.key(factory.server) != serverKey || !isSignedIn else { return true }
-        guard let token = Keychain.read(account: factory.server.absoluteString) else { return false }
+        guard let token = Keychain.app.read(account: factory.server.absoluteString) else { return false }
         disconnect()
         resetFactoryState()
         server = factory.server
@@ -252,7 +251,7 @@ import Security
     /// Signs out of this factory only; the most recent other one opens in its place, when there is one.
     func signOut() {
         if let server {
-            Keychain.delete(account: server.absoluteString)
+            Keychain.app.delete(account: server.absoluteString)
             savedFactories = SavedFactories.remove(server, from: savedFactories)
             try? FileManager.default.removeItem(at: FactoryIcons.folder(for: server))
         }
@@ -1071,79 +1070,26 @@ import Security
 
     private func api<T: Decodable>(_ path: String, method: String = "GET") async throws -> T {
         guard let server, let token else { throw ClientError.message("Not signed in.") }
-        var request = URLRequest(url: server.appending(path: path))
-        request.httpMethod = method
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return try await Self.load(request)
+        return try await FactoryAPI(server: server, token: token).load(path, method: method)
     }
 
     // MARK: Before signing in
 
-    struct Health: Decodable {
-        let ok: Bool
-        let protocolVersion: Int
-        let org: String?
-        /// "github", "dev" (a local server signs you in as its DEV_LOGIN) or "unconfigured".
-        let signIn: String
-        let devLogin: String?
+    // The factory API lives in MapleKit (shared with iOS); these keep the app's call sites as they were.
+    typealias Health = FactoryAPI.Health
+    typealias SignInResult = FactoryAPI.SignInResult
+    typealias DeviceCode = FactoryAPI.DeviceCode
+    typealias Enrollment = FactoryAPI.Enrollment
+    typealias ClientError = FactoryAPI.ClientError
 
-        enum CodingKeys: String, CodingKey { case ok, org, signIn, devLogin, protocolVersion = "protocol" }
-    }
+    nonisolated static func serverURL(from typed: String) -> URL? { FactoryAPI.serverURL(from: typed) }
+    nonisolated static func websocketURL(_ server: URL, path: String) -> URL { FactoryAPI.websocketURL(server, path: path) }
+    nonisolated static func probe(_ server: URL) async throws -> (Health, Duration) { try await FactoryAPI.probe(server) }
+    nonisolated static func startDeviceFlow(_ server: URL) async throws -> DeviceCode { try await FactoryAPI.startDeviceFlow(server) }
 
-    struct SignInResult: Decodable {
-        var server: URL = URL(string: "about:blank")!
-        let token: String
-        let member: Wire.Member
-        let org: String
-
-        enum CodingKeys: String, CodingKey { case token, member, org }
-    }
-
-    struct DeviceCode: Decodable {
-        let deviceCode: String
-        let userCode: String
-        let verificationUri: URL
-        let interval: Int
-        let expiresIn: Int
-    }
-
-    struct Enrollment: Decodable {
-        let code: String
-        let expiresAt: Double
-        let commands: [String]
-    }
-
-    enum ClientError: LocalizedError {
-        case message(String)
-        var errorDescription: String? { if case .message(let text) = self { text } else { nil } }
-    }
-
-    /// "localhost:8787" → http://localhost:8787; anything else is https unless it says otherwise.
-    nonisolated static func serverURL(from typed: String) -> URL? {
-        var text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        while text.hasSuffix("/") { text.removeLast() }
-        guard !text.isEmpty else { return nil }
-        if !text.contains("://") {
-            let local = text.hasPrefix("localhost") || text.hasPrefix("127.0.0.1") || text.hasSuffix(".local") || text.contains(".local:")
-            text = (local ? "http://" : "https://") + text
-        }
-        guard let url = URL(string: text), url.host() != nil else { return nil }
-        return url
-    }
-
-    nonisolated static func websocketURL(_ server: URL, path: String) -> URL {
-        var components = URLComponents(url: server.appending(path: path), resolvingAgainstBaseURL: false)!
-        components.scheme = server.scheme == "https" ? "wss" : "ws"
-        return components.url!
-    }
-
-    nonisolated static func probe(_ server: URL) async throws -> (Health, Duration) {
-        let clock = ContinuousClock()
-        let start = clock.now
-        var request = URLRequest(url: server.appending(path: "/healthz"))
-        request.timeoutInterval = 8
-        let health: Health = try await load(request)
-        return (health, clock.now - start)
+    /// Nil while GitHub is still waiting on the person. The sign-in is labelled with this Mac's name.
+    nonisolated static func pollDeviceFlow(_ server: URL, code: String) async throws -> SignInResult? {
+        try await FactoryAPI.pollDeviceFlow(server, code: code, deviceLabel: Host.current().localizedName ?? "Mac")
     }
 
     /// `-devAs <login>` signs in as that member instead (made a plain member if they're new), for screenshots of what a non-admin sees.
@@ -1157,73 +1103,11 @@ import Security
         return result
     }
 
-    nonisolated static func startDeviceFlow(_ server: URL) async throws -> DeviceCode {
-        var request = URLRequest(url: server.appending(path: "/auth/device/start"))
-        request.httpMethod = "POST"
-        return try await load(request)
-    }
+    nonisolated private static func load<T: Decodable>(_ request: URLRequest) async throws -> T { try await FactoryAPI.load(request) }
 
-    /// Nil while GitHub is still waiting on the person.
-    nonisolated static func pollDeviceFlow(_ server: URL, code: String) async throws -> SignInResult? {
-        var request = URLRequest(url: server.appending(path: "/auth/device/poll"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["deviceCode": code, "label": Host.current().localizedName ?? "Mac"])
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 202 { return nil }
-        guard status == 200 else { throw ClientError.message(String(data: data, encoding: .utf8) ?? "Sign-in failed (\(status)).") }
-        var result = try JSONDecoder().decode(SignInResult.self, from: data)
-        result.server = server
-        return result
-    }
+    nonisolated static let tooNewMessage = FactoryAPI.tooNewMessage
 
-    nonisolated private static func load<T: Decodable>(_ request: URLRequest) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 204 { return try JSONDecoder().decode(T.self, from: Data("{}".utf8)) }
-        guard (200..<300).contains(status) else {
-            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw ClientError.message(text.isEmpty || text.hasPrefix("<") ? "The server answered \(status)." : text)
-        }
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw ClientError.message("That doesn't look like a Maple factory.")
-        }
-    }
-
-    nonisolated static let tooNewMessage = "This factory is newer than this app — update Maple Factory."
-
-    nonisolated static func describe(_ error: Error, response: URLResponse? = nil) -> String {
-        if let http = response as? HTTPURLResponse, http.statusCode == 401 { return "Your sign-in expired." }
-        if error is DecodingError { return tooNewMessage }
-        let ns = error as NSError
-        switch ns.code {
-        case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost: return "Can't reach the factory."
-        case NSURLErrorNotConnectedToInternet: return "You're offline."
-        case NSURLErrorTimedOut: return "The factory took too long to answer."
-        case NSURLErrorNetworkConnectionLost: return "The connection dropped."
-        default: return (error as? LocalizedError)?.errorDescription ?? ns.localizedDescription
-        }
-    }
-}
-
-/// A factory signed into on this Mac. Its token is in the Keychain under `server`.
-struct SavedFactory: Codable, Equatable, Identifiable, Sendable {
-    var server: URL
-    var org: String
-    /// The org's name, or the host when it has none.
-    var name: String
-    var lastUsed: Date
-    /// The factory's icon as this Mac last cached it (a file path); nil shows the letter tile.
-    var icon: String? = nil
-
-    var id: String { Self.key(server) }
-    var host: String { id }
-
-    /// One entry per host and port: http and https to the same place are the same factory.
-    static func key(_ url: URL) -> String { "\(url.host() ?? "")\(url.port.map { ":\($0)" } ?? "")" }
+    nonisolated static func describe(_ error: Error, response: URLResponse? = nil) -> String { FactoryAPI.describe(error, response: response) }
 }
 
 /// Where factory icons are cached: Application Support/Maple Factory/Factory Icons/<host:port>/<id>,
@@ -1252,94 +1136,15 @@ enum FactoryIcons {
     }
 }
 
-/// The saved-factory list's rules, kept pure so they can be tested; stored in defaults under `factories`.
-enum SavedFactories {
-    static let defaultsKey = "factories"
-
-    static func load(_ defaults: UserDefaults = AppDefaults) -> [SavedFactory]? {
-        defaults.data(forKey: defaultsKey).flatMap { try? JSONDecoder().decode([SavedFactory].self, from: $0) }
-    }
-
-    static func store(_ list: [SavedFactory], _ defaults: UserDefaults = AppDefaults) {
-        defaults.set(try? JSONEncoder().encode(list), forKey: defaultsKey)
-    }
-
-    /// The list as saved, or, before there was one, the single factory this Mac was signed into.
-    static func migrate(_ saved: [SavedFactory]?, currentURL: String?, currentOrg: String?, now: Date = Date()) -> [SavedFactory] {
-        if let saved { return saved }
-        guard let currentURL, let url = URL(string: currentURL), url.host() != nil else { return [] }
-        let org = currentOrg ?? ""
-        let name = org.isEmpty || org == "local" ? url.host() ?? "Factory" : org
-        return [SavedFactory(server: url, org: org, name: name, lastUsed: now)]
-    }
-
-    /// Adds the factory, or replaces the entry for the same host and port where it stands.
-    static func upsert(_ factory: SavedFactory, into list: [SavedFactory]) -> [SavedFactory] {
-        var list = list
-        if let index = list.firstIndex(where: { $0.id == factory.id }) {
-            list[index] = factory
-        } else {
-            list.append(factory)
-        }
-        return list
-    }
-
-    static func remove(_ server: URL, from list: [SavedFactory]) -> [SavedFactory] {
-        list.filter { $0.id != SavedFactory.key(server) }
-    }
-
-    /// The factory to open after signing out of one: the most recently used of those left.
-    static func fallback(_ list: [SavedFactory]) -> SavedFactory? {
-        list.max { $0.lastUsed < $1.lastUsed }
-    }
+/// The saved-factory list in the app's defaults (a headless run's own suite, or the real ones).
+extension SavedFactories {
+    static func load() -> [SavedFactory]? { load(AppDefaults) }
+    static func store(_ list: [SavedFactory]) { store(list, AppDefaults) }
 }
 
-/// The factory token, in the login keychain under the factory's URL. A plain-http (local dev)
-/// factory's token goes in defaults instead: every rebuild of an unsigned dev app would otherwise
-/// ask for keychain access, and a localhost dev token guards nothing. A headless run keeps every
-/// token in its own wiped defaults, so it never replaces the real app's keychain item for a URL.
-enum Keychain {
-    private static let service = "dev.maplefactory.app"
-    private static let devKey = "devFactoryTokens"
-
-    static func isDev(_ account: String, headless: Bool = Headless.isOn) -> Bool { headless || account.hasPrefix("http://") }
-
-    static func read(account: String) -> String? {
-        if isDev(account) { return (AppDefaults.dictionary(forKey: devKey) as? [String: String])?[account] }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-            kSecAttrAccount as String: account, kSecReturnData as String: true,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func write(_ value: String, account: String) {
-        delete(account: account)
-        if isDev(account) {
-            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
-            tokens[account] = value
-            AppDefaults.set(tokens, forKey: devKey)
-            return
-        }
-        let item: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-            kSecAttrAccount as String: account, kSecValueData as String: Data(value.utf8),
-        ]
-        SecItemAdd(item as CFDictionary, nil)
-    }
-
-    static func delete(account: String) {
-        if isDev(account) {
-            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
-            tokens[account] = nil
-            AppDefaults.set(tokens, forKey: devKey)
-            return
-        }
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-        SecItemDelete(query as CFDictionary)
-    }
+extension Keychain {
+    /// The app's factory tokens; a headless run keeps all of them in its own defaults.
+    static let app = Keychain(service: "dev.maplefactory.app", defaults: AppDefaults, allInDefaults: Headless.isOn)
 }
 
 extension FactoryClient {
