@@ -48,11 +48,12 @@ const feed = new WebSocket(`${ws}/client/connect`, { headers: member });
 const tasks = new Map();
 const errors = [];
 let me = null;
+let machines = [];
 let goals = [];
 let poke = null;
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
-  if (m.type === "snapshot") { me = m.me; goals = m.goals; for (const t of m.tasks) tasks.set(t.id, t); }
+  if (m.type === "snapshot") { machines = m.machines ?? []; me = m.me; goals = m.goals; for (const t of m.tasks) tasks.set(t.id, t); }
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
   if (m.type === "error") errors.push(m.message);
@@ -71,6 +72,12 @@ const wait = async (what, test, ms = 20000) => {
 await new Promise((r) => (feed.onopen = r));
 send({ type: "subscribe" });
 await wait("snapshot", () => me);
+
+// Runners other tests left behind (or yours) would get the work: paused while this runs, as e2e-model does.
+const settings = (paused) => ({ capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused, pausedUntil: null });
+const others = machines.filter((x) => x.id !== runnerId && x.owner === me.login && !x.settings?.paused);
+for (const x of others) send({ type: "machine.settings", machine: x.id, settings: settings(true) });
+await new Promise((r) => setTimeout(r, 500));
 
 const prefix = `RV${Date.now() % 1000}`;
 send({ type: "goal.save", goal: { id: "", name: `Review ${prefix}`, prefix, color: "#0E8FA3", summary: "Reviewing from the web", lead: "", folder: "/tmp/mf-review", base: "main" } });
@@ -150,5 +157,7 @@ const refused = await wait("the refusal", () => errors.length > early && errors.
 check(/Add a comment to a line first/.test(refused), `an empty review is refused ("${refused}")`);
 check(tasks.get(id).changes.length === changes + 1, "and asks for no change");
 
+for (const x of others) send({ type: "machine.settings", machine: x.id, settings: settings(false) });
+await new Promise((r) => setTimeout(r, 500));
 console.log(`${id}, ${mid}: ${failures ? `${failures} failed` : "all ok"}`);
 process.exit(failures ? 1 : 0);
