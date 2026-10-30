@@ -30,8 +30,9 @@ type Deps = {
   hasAgent(machine: Machine, agent: string): boolean;
   paused(machine: Machine): boolean;
   toRunner(machine: string, command: ServerToRunner): Promise<boolean>;
-  /** Turn the picks into tasks in planning; the ids of the tasks they became. */
-  make(goal: Goal, by: string, picks: ScoutPick[], candidates: Candidate[]): Promise<string[]>;
+  /** Turn the picks into tasks in planning, pushing each task's id into `made` as soon as it exists
+   *  (so the ones made before a throw are still known). */
+  make(goal: Goal, by: string, picks: ScoutPick[], candidates: Candidate[], made: string[]): Promise<void>;
 };
 
 type Saved = { run: ScoutRun; id: string; machine: string | null; candidates: Candidate[] };
@@ -156,7 +157,12 @@ export class Scout {
     // Saved as done first, so a second `draft.done` can't make the tasks twice.
     saved.run.state = "done";
     this.store.set(`scout:${goal.id}`, JSON.stringify(saved));
-    saved.run.tasks = await this.deps.make(goal, saved.run.by, picks, saved.candidates);
+    try {
+      await this.deps.make(goal, saved.run.by, picks, saved.candidates, saved.run.tasks);
+    } catch (e) {
+      // Failed, not running, so a second `draft.done` still makes nothing; the tasks made so far stay on it.
+      Object.assign(saved.run, { state: "failed", error: e instanceof Error ? e.message : String(e) });
+    }
     this.save(saved);
   }
 }

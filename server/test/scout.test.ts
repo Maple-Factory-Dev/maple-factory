@@ -6,10 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { Engine } from "../src/factory/engine.ts";
 import { Drafts } from "../src/factory/drafts.ts";
 import { goalMayFetch } from "../src/factory/repos.ts";
-import { candidates, parsePicks } from "../src/factory/scout.ts";
+import { candidates, parsePicks, Scout } from "../src/factory/scout.ts";
 import { DEFAULT_POLICY, validPolicy } from "../src/factory/policy.ts";
 import { Store } from "../src/factory/store.ts";
-import type { Finding, ServerToClient, ServerToRunner, Task } from "../src/wire.ts";
+import type { Finding, ScoutRun, ServerToClient, ServerToRunner, Task } from "../src/wire.ts";
 
 function sqlStorage() {
   const db = new DatabaseSync(":memory:");
@@ -176,6 +176,57 @@ test("nothing left over: done straight away, no machine used", async () => {
   await f.scout();
   assert.equal(f.sent.length, 0);
   assert.deepEqual(f.runs().map((r) => r.state), ["done"]);
+});
+
+/** A Scout on its own, on one online machine, whose `make` makes one task and then throws. */
+async function throwingScout() {
+  const store = new Store(sqlStorage());
+  store.saveGoal({ id: "g", name: "Goal", prefix: "S", summary: "", lead: "me", repos: [], repo: null, archived: false } as never);
+  store.saveTask(task("T-1", { autoReview: review([finding("f1"), finding("f2")]) }));
+  const sent: ServerToRunner[] = [];
+  const broadcast: ServerToClient[] = [];
+  let makes = 0;
+  const machine = { id: "m1", name: "m1", owner: "me", online: true, health: null };
+  const scout = new Scout(store, {
+    broadcast: (m) => broadcast.push(m),
+    machines: async () => [machine] as never,
+    hasAgent: () => true,
+    paused: () => false,
+    toRunner: async (_, c) => (sent.push(c), true),
+    make: async (_goal, _by, _picks, _shown, made) => {
+      makes++;
+      made.push("S-1");
+      throw new Error("startPlanning blew up");
+    },
+  });
+  await scout.start("me", "g");
+  const run = sent.find((c) => c.type === "draft.run") as Extract<ServerToRunner, { type: "draft.run" }>;
+  const items = ["f1", "f2"].map((id) => ({ from: `T-1#${id}`, title: `Fix ${id}`, brief: `${id} is still there.`, doneWhen: [] }));
+  const output = JSON.stringify({ items });
+  await scout.done(run.id, "m1", output, null);
+  const stored = () => (JSON.parse(store.get("scout:g")!) as { run: ScoutRun }).run;
+  const runs = () => broadcast.filter((m) => m.type === "scout.updated").map((m) => (m as { run: ScoutRun }).run);
+  return { scout, run, output, stored, runs, makes: () => makes };
+}
+
+test("make throws after one task: the run is failed, with the error and that task", async () => {
+  const { stored, runs, makes } = await throwingScout();
+  assert.equal(makes(), 1);
+  for (const r of [stored(), runs().at(-1)!]) {
+    assert.equal(r.state, "failed");
+    assert.equal(r.error, "startPlanning blew up");
+    assert.deepEqual(r.tasks, ["S-1"]);
+  }
+});
+
+test("a second draft.done after make threw makes nothing more", async () => {
+  const { scout, run, output, stored, runs, makes } = await throwingScout();
+  const before = stored();
+  const broadcasts = runs().length;
+  await scout.done(run.id, "m1", output, null);
+  assert.equal(makes(), 1);
+  assert.deepEqual(stored(), before);
+  assert.equal(runs().length, broadcasts);
 });
 
 test("goalMayFetch: a goal's repos, or for a folder goal with none, its origin", () => {
