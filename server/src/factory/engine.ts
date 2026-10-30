@@ -1072,7 +1072,8 @@ export class Engine {
   }
 
   /** A repo's secret values, to a machine with a planning, building or reviewing task on that repo assigned to it, or (no task: the
-   *  `maple-runner secrets pull` CLI) to a machine whose owner is a member. Every release is audited. */
+   *  `maple-runner secrets pull` CLI) to a machine whose owner is an admin. Every release is audited. The runner's own check that the
+   *  CLI was run by a person isn't relied on: an agent on the machine can get around it. */
   private async releaseSecrets(machine: string, msg: Extract<RunnerMessage, { type: "secrets.request" }>) {
     const reply = (values: Record<string, string> | null, error: string | null, code: string | null) =>
       this.toRunner(machine, { type: "secrets.reply", reqId: msg.reqId, values, error, code });
@@ -1089,8 +1090,10 @@ export class Engine {
       actor = task.id;
     } else {
       const owner = (await this.hooks.machines()).find((m) => m.id === machine)?.owner;
-      if (!owner || !(await this.hooks.members()).some((m) => m.login === owner)) return reply(null, "This machine's owner isn't a member of the org.", "forbidden");
-      actor = owner;
+      const member = owner ? (await this.hooks.members()).find((m) => m.login === owner) : undefined;
+      if (!member) return reply(null, "This machine's owner isn't a member of the org.", "forbidden");
+      if (member.role !== "admin") return reply(null, "Only an admin's machine can pull secrets; ask an admin to pull, or run it from a task.", "forbidden");
+      actor = owner!;
     }
     let values: Record<string, string>;
     try {
