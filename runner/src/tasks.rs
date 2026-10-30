@@ -610,11 +610,28 @@ pub async fn open(
         let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
         return Ok(Opened { worktree, prompt, images, env });
     }
-    let started = start(&emit, &task.id, cwd, task.repo.as_deref(), req, &Places::here()).await?;
+    // The repo's create and setup scripts run with its secrets, so they're fetched first then.
+    let scripts = task.scripts.as_ref().filter(|s| {
+        use crate::worktree_scripts::{Phase, command};
+        command(Some(s), Phase::Create).is_some() || command(Some(s), Phase::Setup).is_some()
+    });
+    let early = match scripts {
+        Some(_) => Some(crate::secrets::for_task(&emit, &task.id, task.repo.as_deref()).await),
+        None => None,
+    };
+    let path = match scripts {
+        Some(_) => crate::proof::login_path().await,
+        None => None,
+    };
+    let with = scripts.map(|s| Scripts { scripts: s, env: early.as_deref().unwrap_or_default(), path: path.as_deref() });
+    let started = start(&emit, &task.id, cwd, task.repo.as_deref(), req, &Places::here(), with.as_ref()).await?;
     // A worktree the runner just made: Claude Code shouldn't stop to ask whether to trust it.
     crate::trust::trust_worktree(&expand_home(&started.worktree));
     let p = crate::factory::prepare(&expand_home(&started.worktree), prompt, &task.projects).await;
-    let env = crate::secrets::for_task(&emit, &task.id, task.repo.as_deref().or(p.repo.as_deref())).await;
+    let env = match early {
+        Some(env) => env,
+        None => crate::secrets::for_task(&emit, &task.id, task.repo.as_deref().or(p.repo.as_deref())).await,
+    };
     sessions.emit(Outbound::TaskStarted {
         task_id: task.id.clone(),
         repo: p.repo,
@@ -684,7 +701,22 @@ async fn reattach(dir: &Path, cwd: &str, want: &str) -> Result<()> {
 /// fetch that fails fails the task: it never falls back to what the machine has. The task's own
 /// branch is fetched too when GitHub has it (another machine pushed it before Retry moved the task
 /// here): then the worktree carries on from it (`worktrees::create_from`).
-pub async fn start(emit: Emit<'_>, task_id: &str, cwd: &str, repo: Option<&str>, req: &crate::worktrees::Request, at: &Places) -> Result<Started> {
+/// A task's worktree scripts for `start`, with the secrets and PATH they run with.
+pub struct Scripts<'a> {
+    pub scripts: &'a crate::worktree_scripts::WorktreeScripts,
+    pub env: &'a [(String, String)],
+    pub path: Option<&'a str>,
+}
+
+pub async fn start(
+    emit: Emit<'_>,
+    task_id: &str,
+    cwd: &str,
+    repo: Option<&str>,
+    req: &crate::worktrees::Request,
+    at: &Places,
+    scripts: Option<&Scripts<'_>>,
+) -> Result<Started> {
     let fetch_override = at.fetch_url.as_deref();
     valid_name(&req.name)?;
     let base = req.base.as_deref().map(str::trim).filter(|b| !b.is_empty());
@@ -708,7 +740,16 @@ pub async fn start(emit: Emit<'_>, task_id: &str, cwd: &str, repo: Option<&str>,
             None => clone(emit, task_id, &at.managed, owner, name, base, own, fetch_override).await?,
         }
     };
-    let worktree = crate::worktrees::create_from(&root, &req.name, &format!("origin/{base}")).await?;
+    let for_task = scripts.map(|s| crate::worktree_scripts::ForTask {
+        scripts: s.scripts,
+        task_id,
+        repo,
+        base: Some(base.as_str()),
+        env: s.env,
+        emit: Some(emit),
+        path: s.path,
+    });
+    let worktree = crate::worktrees::create_with(&root, &req.name, &format!("origin/{base}"), for_task.as_ref()).await?;
     Ok(Started { worktree, repo_dir: crate::worktrees::abbreviate(&root), base })
 }
 
@@ -1002,7 +1043,7 @@ mod tests {
         let checkout = root.join("Projects/widgets");
         sh(&root, &["clone", "--quiet", bare.to_str().unwrap(), checkout.to_str().unwrap()]);
         let emit = |m: Outbound| panic!("unexpected message {m:?}");
-        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None)).await.unwrap();
+        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None), None).await.unwrap();
         let wt = expand_home(&s.worktree);
         commit(&wt, "b.txt", "fixed\n", "the builder's work");
         std::fs::write(wt.join("b.txt"), "still editing\n").unwrap();
@@ -1027,7 +1068,7 @@ mod tests {
         let checkout = root.join("Projects/widgets");
         sh(root, &["clone", "--quiet", bare.to_str().unwrap(), checkout.to_str().unwrap()]);
         let emit = |m: Outbound| panic!("unexpected message {m:?}");
-        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(root, None)).await.unwrap();
+        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(root, None), None).await.unwrap();
         let wt = expand_home(&s.worktree);
         for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
             sh(&wt, &["config", k, v]);
@@ -1135,7 +1176,7 @@ mod tests {
         }
         // origin isn't GitHub, so no token is asked for.
         let emit = |m: Outbound| panic!("unexpected message {m:?}");
-        let s = start(&emit, "t1", studio.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None)).await.unwrap();
+        let s = start(&emit, "t1", studio.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None), None).await.unwrap();
         let wt = expand_home(&s.worktree);
         commit(&wt, "b.txt", "half done\n", "the builder's first commit");
         std::fs::write(wt.join("c.txt"), "not committed yet\n").unwrap();
@@ -1163,13 +1204,13 @@ mod tests {
         assert_eq!(sh(&wt, &["status", "--porcelain"]), "");
 
         // laptop starts the task: from the pushed branch, not main.
-        let l = start(&emit, "t1", laptop.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None)).await.unwrap();
+        let l = start(&emit, "t1", laptop.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None), None).await.unwrap();
         let lwt = expand_home(&l.worktree);
         assert_eq!((l.base.as_str(), sh(&lwt, &["rev-parse", "HEAD"])), ("main", head.clone()));
         assert_eq!(std::fs::read_to_string(lwt.join("c.txt")).unwrap(), "not committed yet\n");
         assert_eq!(sh(&lwt, &["rev-parse", "--abbrev-ref", "HEAD"]), "agent/fix-1a2b");
         // Another task there, whose branch GitHub doesn't have, starts from main as before.
-        let other = start(&emit, "t2", laptop.to_str().unwrap(), None, &req("other-0000"), &places(&root, None)).await.unwrap();
+        let other = start(&emit, "t2", laptop.to_str().unwrap(), None, &req("other-0000"), &places(&root, None), None).await.unwrap();
         assert_eq!(sh(&expand_home(&other.worktree), &["rev-parse", "HEAD"]), base);
 
         // Nothing beyond the base: nothing to carry, and nothing pushed.
@@ -1220,7 +1261,7 @@ mod tests {
 
         // origin isn't GitHub, so no token is asked for: the machine's own credentials.
         let emit = |m: Outbound| panic!("unexpected message {m:?}");
-        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None)).await.unwrap();
+        let s = start(&emit, "t1", checkout.to_str().unwrap(), None, &req("fix-1a2b"), &places(&root, None), None).await.unwrap();
         assert_eq!(s.base, "main");
         let wt = expand_home(&s.worktree);
         assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), upstream);
@@ -1236,7 +1277,7 @@ mod tests {
 
         // A fetch that fails fails the task, with no worktree from local state.
         sh(&checkout, &["remote", "set-url", "origin", root.join("remotes/gone.git").to_str().unwrap()]);
-        let err = format!("{:#}", start(&emit, "t2", checkout.to_str().unwrap(), None, &req("other-0000"), &places(&root, None)).await.unwrap_err());
+        let err = format!("{:#}", start(&emit, "t2", checkout.to_str().unwrap(), None, &req("other-0000"), &places(&root, None), None).await.unwrap_err());
         assert!(err.contains("Couldn't fetch") && err.contains("never from this machine's copy"), "{err}");
         assert!(!crate::worktrees::worktree_path(&checkout, "other-0000").unwrap().exists());
         std::fs::remove_dir_all(&root).unwrap();
@@ -1264,7 +1305,7 @@ mod tests {
         let sent = Mutex::new(Vec::new());
         let emit = token_hub(TOKEN, &sent);
 
-        let s = start(&emit, "t1", "", Some("acme/widgets"), &req("fix-1a2b"), &at).await.unwrap();
+        let s = start(&emit, "t1", "", Some("acme/widgets"), &req("fix-1a2b"), &at, None).await.unwrap();
         let clone = root.join("managed/acme/widgets");
         assert_eq!(expand_home(&s.repo_dir), clone);
         assert_eq!((s.base.as_str(), sh(&expand_home(&s.worktree), &["rev-parse", "HEAD"])), ("main", head.clone()));
@@ -1275,11 +1316,11 @@ mod tests {
         // It's reported as managed now, and the next task uses it rather than cloning again.
         let found = crate::repos::scan(&at.roots, &at.managed).await;
         assert_eq!((found.len(), found[0].managed, found[0].repo.as_str()), (1, true, "acme/widgets"));
-        let again = start(&emit, "t2", "", Some("acme/widgets"), &req("next-0000"), &at).await.unwrap();
+        let again = start(&emit, "t2", "", Some("acme/widgets"), &req("next-0000"), &at, None).await.unwrap();
         assert_eq!(again.repo_dir, s.repo_dir);
 
         // A repo the token can't reach: a clear error with the token scrubbed, and nothing left behind.
-        let err = format!("{:#}", start(&emit, "t3", "", Some("acme/missing"), &req("fix-1a2b"), &at).await.unwrap_err());
+        let err = format!("{:#}", start(&emit, "t3", "", Some("acme/missing"), &req("fix-1a2b"), &at, None).await.unwrap_err());
         assert!(err.contains("Couldn't fetch from GitHub") && !err.contains(TOKEN), "{err}");
         assert!(!root.join("managed/acme/missing").exists());
         assert_eq!(std::fs::read_dir(root.join("managed/.partial")).unwrap().count(), 0);
@@ -1304,14 +1345,14 @@ mod tests {
             let _ = std::fs::remove_dir_all(dir.join(".git/logs/refs/remotes"));
         }
         sh(&fresh, &["fetch", "--quiet", bare.to_str().unwrap()]);
-        let s = start(&emit, "t1", "", Some("acme/widgets"), &req("a-0000"), &at).await.unwrap();
+        let s = start(&emit, "t1", "", Some("acme/widgets"), &req("a-0000"), &at, None).await.unwrap();
         assert_eq!(expand_home(&s.repo_dir), fresh);
 
         // Once the runner has its own clone, that one.
         let managed = root.join("managed/acme/widgets");
         sh(&root, &["clone", "--quiet", bare.to_str().unwrap(), managed.to_str().unwrap()]);
         sh(&managed, &["remote", "set-url", "origin", "https://github.com/acme/widgets.git"]);
-        let s = start(&emit, "t2", "", Some("acme/widgets"), &req("b-0000"), &at).await.unwrap();
+        let s = start(&emit, "t2", "", Some("acme/widgets"), &req("b-0000"), &at, None).await.unwrap();
         assert_eq!(expand_home(&s.repo_dir), managed);
         let found = crate::repos::scan(&at.roots, &at.managed).await;
         assert_eq!(found.iter().filter(|c| c.repo == "acme/widgets").count(), 3, "{found:?}");

@@ -69,6 +69,9 @@ pub struct TaskStart {
     pub repo: Option<String>,
     #[serde(default)]
     pub projects: Vec<Project>,
+    /// The repo's worktree scripts (see `worktree_scripts`).
+    #[serde(default)]
+    pub scripts: Option<crate::worktree_scripts::WorktreeScripts>,
 }
 
 /// What the repo's `.factory.toml` did, for the project page.

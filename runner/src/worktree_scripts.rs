@@ -46,6 +46,23 @@ impl Phase {
     }
 }
 
+/// A task's scripts and what they run with, before its worktree's path is known.
+pub struct ForTask<'a> {
+    pub scripts: &'a WorktreeScripts,
+    pub task_id: &'a str,
+    pub repo: Option<&'a str>,
+    pub base: Option<&'a str>,
+    pub env: &'a [(String, String)],
+    pub emit: Option<Emit<'a>>,
+    pub path: Option<&'a str>,
+}
+
+impl<'a> ForTask<'a> {
+    pub fn context(&self, root: &'a Path, worktree: &'a Path, branch: &'a str) -> Context<'a> {
+        Context { task_id: self.task_id, repo: self.repo, root, worktree, branch, base: self.base, env: self.env, emit: self.emit, path: self.path }
+    }
+}
+
 /// The task a script runs for, and where.
 pub struct Context<'a> {
     pub task_id: &'a str,

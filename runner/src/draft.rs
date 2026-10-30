@@ -64,7 +64,7 @@ pub async fn run(sessions: Sessions, r: Run) {
         let cwd = if r.repo.is_some() || r.folder.is_some() {
             say(DraftLineKind::Tool, &format!("Fetching {}…", r.repo.as_deref().or(r.folder.as_deref()).unwrap_or("the code")));
             let req = crate::worktrees::Request { name: worktree_name(&r.id)?, base: r.base.clone(), existing: false };
-            let started = crate::tasks::start(&emit, &r.id, r.folder.as_deref().unwrap_or(""), r.repo.as_deref(), &req, &crate::tasks::Places::here()).await?;
+            let started = crate::tasks::start(&emit, &r.id, r.folder.as_deref().unwrap_or(""), r.repo.as_deref(), &req, &crate::tasks::Places::here(), None).await?;
             let dir = expand_home(&started.worktree);
             worktree = Some(dir.clone());
             dir
