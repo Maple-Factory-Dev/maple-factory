@@ -40,7 +40,11 @@ import Security
     private(set) var goals: [Wire.Goal] = []
     private(set) var tasks: [Wire.Task] = []
     /// The tasks and goals as the views' models, rebuilt when they change.
-    private(set) var factoryTasks: [FactoryTask] = []
+    private(set) var factoryTasks: [FactoryTask] = [] {
+        didSet { tasksRevision &+= 1 }
+    }
+    /// Counts changes to `factoryTasks`: what's worked out from the tasks is cached against it.
+    private(set) var tasksRevision = 0
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -330,13 +334,16 @@ import Security
         socket = nil
     }
 
+    /// One for every message from the feed, not one each.
+    private let decoder = JSONDecoder()
+
     private func receive(_ socket: URLSessionWebSocketTask, gen: Int) async {
         while gen == generation {
             do {
                 let message = try await socket.receive()
                 lastHeard = Date()
                 guard case .string(let text) = message, let data = text.data(using: .utf8) else { continue }
-                apply(try JSONDecoder().decode(Wire.ServerToClient.self, from: data))
+                apply(try decoder.decode(Wire.ServerToClient.self, from: data))
             } catch {
                 guard gen == generation else { return }
                 if error is DecodingError {
@@ -579,10 +586,28 @@ import Security
         }.map { .mention(author: LiveAdapter.person($0.author, members: members).firstName, text: $0.text) }
     }
 
-    private func adapt(_ task: Wire.Task) -> FactoryTask {
+    private func adapt(_ task: Wire.Task, viewers: [String: [Person]]? = nil) -> FactoryTask {
         var adapted = LiveAdapter.task(task, goals: goals, members: members, me: me?.login)
-        adapted.viewers = online.filter { $0.viewing == task.id && $0.login != me?.login }.map { LiveAdapter.person($0.login, members: members) }
+        adapted.viewers = (viewers ?? Self.viewers(online, me: me?.login, members: members))[task.id] ?? []
         return adapted
+    }
+
+    /// Who's looking at each task, by its id, besides you.
+    static func viewers(_ online: [Wire.Presence], me: String?, members: [Wire.Member]) -> [String: [Person]] {
+        var viewers: [String: [Person]] = [:]
+        for presence in online where presence.login != me {
+            guard let id = presence.viewing else { continue }
+            viewers[id, default: []].append(LiveAdapter.person(presence.login, members: members))
+        }
+        return viewers
+    }
+
+    /// The tasks whose viewers aren't `viewers`', by index, with the viewers they now have.
+    static func viewerChanges(_ tasks: [FactoryTask], viewers: [String: [Person]]) -> [(index: Int, viewers: [Person])] {
+        tasks.indices.compactMap { index in
+            let now = viewers[tasks[index].id] ?? []
+            return now.map(\.id) == tasks[index].viewers.map(\.id) ? nil : (index, now)
+        }
     }
 
     /// Whether a goal is in your sidebar: what you chose, else whether you lead it, are on its team,
@@ -615,7 +640,8 @@ import Security
     private func rebuild() {
         rebuildGoals()
         FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) }
-        factoryTasks = tasks.map(adapt)
+        let viewers = Self.viewers(online, me: me?.login, members: members)
+        factoryTasks = tasks.map { adapt($0, viewers: viewers) }
         applyPresence()
         intake = intakeRequests.map { LiveAdapter.request($0, goals: goals, members: members) }
         riskPolicy = policy.map(LiveAdapter.policy)
@@ -789,10 +815,12 @@ import Security
     private func applyPresence() {
         let people = online.map { (person: LiveAdapter.person($0.login, members: members), viewing: $0.viewing) }
         FactoryData.livePresence = server == nil ? nil : people
-        for index in factoryTasks.indices {
-            let id = factoryTasks[index].id
-            factoryTasks[index].viewers = people.filter { $0.viewing == id && $0.person.github != me?.login }.map(\.person)
-        }
+        // Only the tasks someone came to or left change, in one write: a ping that moves no one redraws nothing.
+        let changes = Self.viewerChanges(factoryTasks, viewers: Self.viewers(online, me: me?.login, members: members))
+        guard !changes.isEmpty else { return }
+        var tasks = factoryTasks
+        for change in changes { tasks[change.index].viewers = change.viewers }
+        factoryTasks = tasks
     }
 
     /// The goal a view knows by name.
@@ -921,8 +949,14 @@ import Security
         return try await Self.load(request)
     }
 
-    /// Attachments fetched this run, by path; they never change once stored.
-    private static let attachmentCache = NSCache<NSString, NSData>()
+    /// Attachments fetched this run, by path; they never change once stored. Screenshots and recordings
+    /// add up, so it keeps at most 64 MB of them, each costing its size.
+    private static let attachmentCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = attachmentCacheLimit
+        return cache
+    }()
+    nonisolated static let attachmentCacheLimit = 64 * 1024 * 1024
 
     /// An attachment's bytes (`/attachments/…`), with this app's token: AsyncImage can't send one.
     func attachment(_ path: String) async throws -> Data {
@@ -936,7 +970,7 @@ import Security
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw ClientError.message(status == 404 ? "It isn't there anymore." : "The server answered \(status).") }
-        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString)
+        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString, cost: data.count)
         return data
     }
 
