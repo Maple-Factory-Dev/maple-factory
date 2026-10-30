@@ -277,6 +277,7 @@ struct FindingsView: View {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         let rows = visible(f)
         let kinds = Wire.FindingKind.allCases.filter { k in f.recent.contains { $0.kind == k } }
+        let fixed = f.recent.filter { $0.status == .fixed }.count
 
         return StatsCard {
             VStack(alignment: .leading, spacing: 0) {
@@ -290,6 +291,13 @@ struct FindingsView: View {
                     ForEach(Self.severities, id: \.self) { s in
                         chip(severityTitle(s), dot: severityColor(s), active: severity == s) { severity = severity == s ? nil : s }
                     }
+                    Divider().frame(height: 16).padding(.horizontal, 4)
+                    chip("Hide fixed · \(fixed)", icon: "eye.slash", active: hideFixed) { setHideFixed(!hideFixed) }
+                        .help(hideFixed ? "Show fixed findings again" : "Hide the findings that were fixed, to see what's left")
+                    if let status {
+                        let (title, color) = Self.statusStyle(status)
+                        chip(title, dot: color, active: true, removable: true) { setStatus(nil) }
+                    }
                     if let area {
                         Divider().frame(height: 16).padding(.horizontal, 4)
                         chip(area, icon: "folder", active: true) { self.area = nil }
@@ -301,12 +309,12 @@ struct FindingsView: View {
                         .frame(maxWidth: 200)
                 }
                 .padding(.bottom, 10)
-                let filtered = kind != nil || severity != nil || area != nil || !needle.isEmpty
+                let filtered = kind != nil || severity != nil || area != nil || status != nil || hideFixed || !needle.isEmpty
                 if filtered || !rows.isEmpty {
                     HStack(spacing: 8) {
                         if filtered {
                             Text("\(counted(rows.count, "finding")) shown")
-                            Button("Clear filters") { withAnimation(.snappy(duration: 0.2)) { kind = nil; severity = nil; area = nil; query = "" } }
+                            Button("Clear filters") { withAnimation(.snappy(duration: 0.2)) { kind = nil; severity = nil; area = nil; status = nil; hideFixed = false; query = "" } }
                                 .buttonStyle(.link)
                         }
                         Spacer()
@@ -380,7 +388,7 @@ struct FindingsView: View {
                 .foregroundStyle(Theme.textFaint)
             }
             Spacer(minLength: 8)
-            status(r.status)
+            statusBadge(r.status)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 6)
@@ -414,14 +422,39 @@ struct FindingsView: View {
         return f.recent.filter { keys.contains($0.pickKey) && seen.insert($0.pickKey).inserted }
     }
 
-    @ViewBuilder private func status(_ s: Wire.FindingStatus?) -> some View {
-        let (title, color): (String, Color) = switch s {
+    /// Hide fixed, on or off; it and a Fixed status filter never both hold.
+    private func setHideFixed(_ on: Bool) {
+        hideFixed = on
+        if on, status == .fixed { status = nil }
+        unpickHidden()
+    }
+
+    /// A status filter, or none; Fixed turns Hide fixed off.
+    private func setStatus(_ s: Wire.FindingStatus?) {
+        status = s
+        if s == .fixed { hideFixed = false }
+        unpickHidden()
+    }
+
+    /// Unticks the findings Hide fixed or the status filter just hid, so the pick bar counts what's on screen.
+    private func unpickHidden() {
+        guard let f = summary.findings else { return }
+        let hidden = f.recent.filter { r in (hideFixed && r.status == .fixed) || (status != nil && r.status != status) }
+        picked.subtract(hidden.map(\.pickKey))
+    }
+
+    static func statusStyle(_ s: Wire.FindingStatus?) -> (String, Color) {
+        switch s {
         case .fixed: ("Fixed", Theme.State.merged)
         case .disputed: ("Disputed", Theme.State.awaitingApproval)
         case .open: ("Open", Theme.State.cancelled)
         case .other(let v): (v.capitalized, Theme.textMuted)
         case nil: ("Task gone", Theme.textFaint)
         }
+    }
+
+    @ViewBuilder private func statusBadge(_ s: Wire.FindingStatus?) -> some View {
+        let (title, color) = Self.statusStyle(s)
         Text(title)
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(color)
@@ -453,12 +486,12 @@ struct FindingsView: View {
         .frame(height: 6)
     }
 
-    private func chip(_ title: String, dot: Color? = nil, icon: String? = nil, active: Bool, action: @escaping () -> Void) -> some View {
+    private func chip(_ title: String, dot: Color? = nil, icon: String? = nil, active: Bool, removable: Bool = false, action: @escaping () -> Void) -> some View {
         HStack(spacing: 5) {
             if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
             if let icon { Image(systemName: icon).font(.system(size: 10)) }
             Text(title).lineLimit(1)
-            if active && icon != nil { Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textMuted) }
+            if active && (icon != nil || removable) { Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textMuted) }
         }
         .font(.system(size: 12, weight: active ? .medium : .regular))
         .foregroundStyle(Theme.text)
