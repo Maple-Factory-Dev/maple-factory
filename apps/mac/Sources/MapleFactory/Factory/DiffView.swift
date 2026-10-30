@@ -35,6 +35,8 @@ struct DiffView: View {
     private let gutterWidth: CGFloat = 98
     @State private var codeWidth: CGFloat = 600
     @State private var cache = DiffRenderCache()
+    /// Where the file's lines are scrolled to, so the demo script can move through a long file.
+    @State private var scroll = ScrollPosition(edge: .top)
 
     static let demo = Notification.Name("DiffView.demo")
 
@@ -148,6 +150,7 @@ struct DiffView: View {
 
     private func pick(_ file: DiffFile) {
         selected = file.path
+        scroll = ScrollPosition(edge: .top)
         if file.hunks.isEmpty, loaded[file.path] == nil, !loading.contains(file.path) { load(file) }
     }
 
@@ -166,6 +169,7 @@ struct DiffView: View {
                     fileBody(file, hunks: hunks, rendered: rendered(file, hunks: hunks))
                         .padding(.bottom, 24)
                 }
+                .scrollPosition($scroll)
                 .id(file.path)
             }
         }
@@ -660,7 +664,8 @@ struct DiffView: View {
 
     /// `diff:file:<path>` picks a file, `diff:select:<from>:<to>` lines by their row in the file,
     /// `diff:comment` opens the composer, `diff:type:<text>` types into it, `diff:add` adds it,
-    /// `diff:summary:<text>` fills the summary and `diff:submit` submits the review.
+    /// `diff:summary:<text>` fills the summary, `diff:submit` submits the review and `diff:scroll:<y>` (or
+    /// `diff:scroll:bottom`) scrolls the file's lines.
     private func playDemo(_ parts: [String]) {
         guard let action = parts.first else { return }
         let argument = parts.dropFirst().joined(separator: ":")
@@ -682,6 +687,8 @@ struct DiffView: View {
         case "summary": draft.summary = argument
         case "submit": submit()
         case "threads": showThreads.toggle()
+        case "scroll":
+            if argument == "bottom" { withAnimation { scroll.scrollTo(edge: .bottom) } } else if let y = Double(argument) { withAnimation { scroll.scrollTo(y: y) } }
         default: break
         }
     }
