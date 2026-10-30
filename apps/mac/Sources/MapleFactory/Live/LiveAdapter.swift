@@ -357,7 +357,7 @@ import SwiftUI
         case .passed: .passed
         case .failed: .failed
         }
-        return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required)
+        return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required, url: c.url.flatMap(URL.init(string:)))
     }
 
     private static func review(_ r: Wire.AutoReview) -> AutoReview {

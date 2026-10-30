@@ -9,7 +9,8 @@
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [] };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
+/** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
 let socket = null;
 let retry = 1000;
 
@@ -137,7 +138,19 @@ function receive(m) {
     case "note.updated": state.notes = [...state.notes.filter((n) => n.id !== m.note.id), m.note]; break;
     case "note.removed": state.notes = state.notes.filter((n) => n.id !== m.id); break;
     case "toast": toast(m.text); break;
+    case "checkLog": {
+      const key = `${m.id}/${m.check}`;
+      // Only into a panel still waiting for it: one closed (or re-run) since doesn't open again.
+      if (state.checkLogs.get(key)?.loading) state.checkLogs.set(key, { text: m.text, truncated: m.truncated, failedStep: m.failedStep ?? null, url: m.url ?? null });
+      break;
+    }
     case "error":
+      // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its panel.
+      if (m.requestId?.startsWith("checkLog:")) {
+        const key = m.requestId.slice(9);
+        if (state.checkLogs.get(key)?.loading) state.checkLogs.set(key, { error: m.message });
+        break;
+      }
       // The task being created didn't take; let the composer try again. Errors carry no request id, so
       // take one that comes back soon after the create to be about it; any later one leaves it alone.
       if (creating && Date.now() - creating.at < 5_000) createFailed();
@@ -890,9 +903,60 @@ function pull(t) {
       h("span", { class: "mono muted" }, `${pr.branch} → ${pr.base}`)),
     pr.checks.length === 0
       ? h("p", { class: "muted", style: "margin:8px 0 0" }, pr.url ? "No CI checks reported." : "No CI: a local repo's change is checked by its proofs and review.")
-      : pr.checks.map((c) => h("div", { class: "check" },
-        h("span", { class: `mark ${c.status === "passed" ? "ok" : c.status === "failed" ? "bad" : "wait"}` }, c.status === "passed" ? "✓" : c.status === "failed" ? "✕" : "•"),
-        h("div", { class: "row", style: "flex:1" }, c.name, h("span", { class: "spacer" }), h("span", { class: "muted" }, c.duration ?? c.status)))))];
+      : pr.checks.map((c) => ciCheck(t, c)))];
+}
+
+/** A CI check: its link on GitHub, Log (read from GitHub into a panel below it) and Re-run once it's finished. */
+function ciCheck(t, c) {
+  const pr = t.pr;
+  const key = `${t.id}/${c.name}`;
+  const log = state.checkLogs.get(key);
+  const finished = c.status === "passed" || c.status === "failed";
+  const href = c.url || (pr.url && `${pr.url}/checks`);
+  const toggleLog = () => {
+    if (log && !log.loading) state.checkLogs.delete(key);
+    else if (!log && send({ type: "task.checkLog", id: t.id, check: c.name })) state.checkLogs.set(key, { loading: true });
+    render();
+  };
+  // The log shown is the old run's; a new run has its own, so close it.
+  const rerun = () => {
+    if (!send({ type: "task.rerunCheck", id: t.id, check: c.name })) return;
+    state.checkLogs.delete(key);
+    toast(`Running ${c.name} again`);
+    render();
+  };
+  return h("div", { class: "check ci-check" },
+    h("span", { class: `mark ${c.status === "passed" ? "ok" : c.status === "failed" ? "bad" : "wait"}` }, c.status === "passed" ? "✓" : c.status === "failed" ? "✕" : "•"),
+    h("div", { style: "flex:1;min-width:0" },
+      h("div", { class: "row" },
+        href ? h("a", { href, target: "_blank", rel: "noopener", title: `${c.name} on GitHub` }, c.name) : c.name,
+        h("span", { class: "spacer" }),
+        h("span", { class: "muted" }, c.duration ?? c.status),
+        pr.url && c.status !== "queued" && h("button", { class: "btn small", onclick: toggleLog }, log && !log.loading ? "Hide log" : "Log"),
+        pr.url && finished && (pr.state === "open" || pr.state === "draft") && t.state !== "merged" && t.state !== "cancelled" &&
+          h("button", { class: "btn small", onclick: rerun }, "Re-run"),
+        href && h("a", { class: "btn small", href, target: "_blank", rel: "noopener" }, "GitHub ↗")),
+      log && checkLogPanel(log)));
+}
+
+function checkLogPanel(log) {
+  if (log.loading) return h("p", { class: "muted", style: "margin:8px 0 0" }, "Reading the log from GitHub…");
+  if (log.error) return h("p", { class: "muted", style: "margin:8px 0 0" }, log.error);
+  const lines = log.text.replace(/\n+$/, "").split("\n").filter((l) => !l.startsWith("##[endgroup]"));
+  const pre = h("pre", { class: "check-log", onscroll: () => (log.scrollTop = pre.scrollTop) }, lines.map((l) =>
+    l.startsWith("##[group]") ? h("div", { class: "step" }, "▸ ", l.slice(9))
+      : l.includes("##[error]") ? h("div", { class: "error" }, "Error: ", l.replace("##[error]", ""))
+        : h("div", {}, l || " ")));
+  // Opens at the first error, a few lines above it; a redraw keeps where it was scrolled to.
+  requestAnimationFrame(() => {
+    const err = pre.querySelector(".error");
+    if (log.scrollTop != null) pre.scrollTop = log.scrollTop;
+    else if (err) pre.scrollTop = Math.max(0, err.offsetTop - pre.offsetTop - 80);
+  });
+  return h("div", { style: "margin-top:8px" },
+    (log.failedStep || log.truncated) && h("div", { class: "row muted", style: "font-size:13px;margin-bottom:6px" },
+      log.failedStep && h("b", { class: "bad-text" }, `✕ ${log.failedStep}`), h("span", { class: "spacer" }), log.truncated && "Showing the end of the log"),
+    pre);
 }
 
 function mockup(m) {
