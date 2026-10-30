@@ -3,7 +3,7 @@
 //
 //   node server/test/fake-github.mjs --port 18803 --public-key app.pub.pem --installed acme/greeter \
 //     --remotes '/tmp/mfgh/remotes/{owner}/{repo}.git' --webhook-url http://localhost:8788/integrations/github \
-//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice]
+//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice] [--owner acme:alice]
 //
 // Point the server at it with GITHUB_API_URL=http://localhost:18803 (only honored on localhost) and
 // the runner's pushes at the bare repos with MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL. It checks
@@ -22,6 +22,7 @@
 //   GET  /users/:login                                   a personal account for each --user, otherwise an organization
 //   POST /login/oauth/access_token                       sign-in: code `as-<login>` is <login>'s user token
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
+//                                                        (its admin, for each --owner org:login)
 //
 // and, for the test driver: GET /_log, POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
@@ -48,13 +49,15 @@ const { values } = parseArgs({
     ci: { type: "string", multiple: true, default: [] },
     user: { type: "string", multiple: true, default: [] },
     member: { type: "string", multiple: true, default: [] },
+    owner: { type: "string", multiple: true, default: [] },
   },
 });
 
 const publicKey = createPublicKey(readFileSync(values["public-key"], "utf8"));
 const users = new Set(values.user.map((u) => u.toLowerCase()));
 const ownerType = (login) => (users.has(login.toLowerCase()) ? "User" : "Organization");
-const members = new Set(values.member.map((m) => m.toLowerCase()));
+const owners = new Set(values.owner.map((m) => m.toLowerCase()));
+const members = new Set([...values.member.map((m) => m.toLowerCase()), ...owners]);
 const installed = new Map(values.installed.map((r, i) => [r.toLowerCase(), 1000 + i]));
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
@@ -172,7 +175,8 @@ createServer((req, res) => {
       return me ? send(res, 200, { id: me.length, login: me, name: me, avatar_url: null }) : send(res, 401, { message: "Bad credentials" });
     }
     if (req.method === "GET" && me && (m = url.pathname.match(/^\/user\/memberships\/orgs\/([\w-]+)$/))) {
-      return members.has(`${m[1]}:${me}`.toLowerCase()) ? send(res, 200, { state: "active", role: "member" }) : send(res, 404, { message: "Not Found" });
+      const key = `${m[1]}:${me}`.toLowerCase();
+      return members.has(key) ? send(res, 200, { state: "active", role: owners.has(key) ? "admin" : "member" }) : send(res, 404, { message: "Not Found" });
     }
     if (req.method === "GET" && me && url.pathname === "/user/teams") return send(res, 200, []);
     if (req.method === "GET" && (m = url.pathname.match(/^\/users\/([\w-]+)$/))) {
