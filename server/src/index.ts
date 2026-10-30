@@ -3,7 +3,7 @@
 import type { Env } from "./env.ts";
 import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
-import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
+import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { remove as removeName, set as setName } from "./name.ts";
 import { installScript } from "./install.ts";
@@ -101,9 +101,14 @@ export default {
       const machine = url.searchParams.get("machine") ?? "";
       const session = url.searchParams.get("session") ?? "";
       if (!MACHINE_ID.test(machine) || !/^[0-9a-f-]{36}$/.test(session)) return text("Expected machine and session.", 400);
+      // A terminal can type into a task's session, which has its repo's secrets: the machine's owner and admins only.
+      const row = await machineRow(env, machine);
+      if (!row) return text("No such machine.", 404);
+      if (row.owner !== me.login && me.role !== "admin") return text(`Only ${row.owner} or an admin can open terminals on ${row.name ?? row.id}.`, 403);
       const target = new URL("https://hub/view");
       target.searchParams.set("session", session);
       target.searchParams.set("login", me.login);
+      target.searchParams.set("role", me.role);
       for (const key of ["cols", "rows"]) if (url.searchParams.has(key)) target.searchParams.set(key, url.searchParams.get(key)!);
       return machineHub(env, machine).fetch(new Request(target, request));
     }

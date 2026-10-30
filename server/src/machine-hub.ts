@@ -12,6 +12,8 @@ import { orgHub } from "./util.ts";
 
 interface Viewer {
   login: string;
+  /** Their role when they opened it; the worker let them in as the machine's owner or an admin. */
+  role: string;
   session: string;
   nonce: string;
   /** False until the replay arrives; live output before it is already in the replay. */
@@ -54,6 +56,14 @@ export class MachineHub extends DurableObject<Env> {
       case "/disconnect": {
         for (const ws of this.ctx.getWebSockets(RUNNER)) ws.close(4001, "token replaced or machine removed");
         if ((await request.text()) === "forget") await this.ctx.storage.deleteAll();
+        return new Response(null, { status: 204 });
+      }
+      case "/drop-viewers": {
+        // Someone's access was revoked: their open terminals close now.
+        const login = url.searchParams.get("login") ?? "";
+        for (const ws of this.ctx.getWebSockets(VIEWER)) {
+          if ((ws.deserializeAttachment() as Viewer).login === login) ws.close(4003, "access revoked");
+        }
         return new Response(null, { status: 204 });
       }
       case "/state": return Response.json(await this.machine());
@@ -109,7 +119,7 @@ export class MachineHub extends DurableObject<Env> {
 
   private acceptViewer(url: URL): Response {
     const session = url.searchParams.get("session") ?? "";
-    const viewer: Viewer = { login: url.searchParams.get("login") ?? "", session, nonce: crypto.randomUUID(), ready: false };
+    const viewer: Viewer = { login: url.searchParams.get("login") ?? "", role: url.searchParams.get("role") ?? "member", session, nonce: crypto.randomUUID(), ready: false };
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], [VIEWER, `s:${session}`]);
     pair[1].serializeAttachment(viewer);
