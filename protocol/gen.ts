@@ -260,7 +260,7 @@ public enum JSONValue: Codable, Hashable, Sendable {
 const outputs: Record<string, string> = {
   "runner/src/wire.rs": rust(),
   "server/src/wire.ts": ts(),
-  "apps/mac/Sources/MapleFactory/Wire/Wire.swift": swift(),
+  "apps/mac/Sources/MapleKit/Wire.swift": swift(),
 };
 
 const check = process.argv.includes("--check");
