@@ -2011,6 +2011,8 @@ export interface ServerToClient_Snapshot {
   secrets: RepoSecret[];
   /** The repos that have worktree scripts. None: an older server. */
   scripts?: RepoWorktreeScripts[] | null;
+  /** Each repo's latest Set up with AI run. None: an older server. */
+  setupRuns?: RepoSetupRun[] | null;
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes (What's new). None: an older server. */

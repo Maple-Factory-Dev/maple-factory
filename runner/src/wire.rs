@@ -2812,6 +2812,9 @@ pub enum ServerToClient {
         /// The repos that have worktree scripts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<Vec<RepoWorktreeScripts>>,
+        /// Each repo's latest Set up with AI run. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup_runs: Option<Vec<RepoSetupRun>>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,

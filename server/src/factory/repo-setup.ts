@@ -120,7 +120,8 @@ export class RepoSetup {
 
   /** Every repo's latest run, for an app that's just connected. */
   runs(): RepoSetupRun[] {
-    return this.store.repos().map((r) => this.load(r.name)?.run).filter((r): r is RepoSetupRun => !!r);
+    const lost = (r: RepoSetupRun): RepoSetupRun => r.state === "running" && Date.now() - r.startedAt >= STALE_MS ? { ...r, state: "failed", progress: null, error: "Its agent stopped answering." } : r;
+    return this.store.repos().map((r) => this.load(r.name)?.run).filter((r): r is RepoSetupRun => !!r).map(lost);
   }
 
   async start(by: string, name: string, agentWanted: string | null) {

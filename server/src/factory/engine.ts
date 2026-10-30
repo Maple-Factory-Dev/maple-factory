@@ -95,6 +95,7 @@ const fail = (message: string): never => {
 export class Engine {
   private drafts: Drafts;
   private scout: Scout;
+  private setup: RepoSetup;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
@@ -112,6 +113,24 @@ export class Engine {
       toRunner: (machine, command) => this.toRunner(machine, command),
       make: (goal, by, picks, shown) => this.scouted(goal, by, picks, shown),
     });
+    this.setup = new RepoSetup(store, {
+      broadcast: (message) => hooks.broadcast(message),
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      isAdmin: (login) => this.isAdmin(login),
+      toRunner: (machine, command) => this.toRunner(machine, command),
+    });
+  }
+
+  /** Whether someone who has signed in is an admin here (a GitHub owner, or granted). */
+  private async isAdmin(login: string): Promise<boolean> {
+    return (await this.hooks.members()).some((m) => m.login.toLowerCase() === login.toLowerCase() && m.role === "admin");
+  }
+
+  /** Every repo's latest Set up with AI run, for an app that's just connected. */
+  setupRuns() {
+    return this.setup.runs();
   }
 
   // ---------------------------------------------------------------------------
@@ -135,6 +154,15 @@ export class Engine {
       case "goal.scout":
         try {
           await this.scout.start(who, msg.goal);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
+      case "repo.setup.start":
+      case "repo.setup.cancel":
+        try {
+          if (msg.type === "repo.setup.start") await this.setup.start(who, msg.repo, msg.agent ?? null);
+          else await this.setup.cancel(who, msg.repo);
         } catch (e) {
           fail((e as Error).message);
         }
@@ -1102,11 +1130,13 @@ export class Engine {
     switch (msg.type) {
       case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
       case "draft.progress":
-        // A Scout run only reports what it picked, at the end.
-        if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        // A Scout run only reports what it picked, at the end; a setup run shows what it's reading.
+        if (msg.id.startsWith(SETUP_PREFIX)) this.setup.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        else if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
         return null;
       case "draft.done":
         if (msg.id.startsWith(SCOUT_PREFIX)) await this.scout.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        else if (msg.id.startsWith(SETUP_PREFIX)) this.setup.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         else await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         return null;
       case "session.opened": {
@@ -1223,9 +1253,12 @@ export class Engine {
           this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
-        if (this.drafts.forRun(msg.taskId, machine) || this.scout.forRun(msg.taskId, machine)) {
-          // Draft with AI and Scout read their goal's code: a fetch of one of that goal's repos, nothing more.
-          const mayFetch = msg.taskId.startsWith(SCOUT_PREFIX) ? this.scout.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`) : this.drafts.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`);
+        if (this.drafts.forRun(msg.taskId, machine) || this.scout.forRun(msg.taskId, machine) || this.setup.forRun(msg.taskId, machine)) {
+          // Draft with AI and Scout read their goal's code, Set up with AI its repo's: a fetch of one of those repos, nothing more.
+          const full = `${msg.owner}/${msg.repo}`;
+          const mayFetch = msg.taskId.startsWith(SCOUT_PREFIX) ? this.scout.mayFetch(msg.taskId, machine, full)
+            : msg.taskId.startsWith(SETUP_PREFIX) ? this.setup.mayFetch(msg.taskId, machine, full)
+            : this.drafts.mayFetch(msg.taskId, machine, full);
           if (msg.purpose !== "fetch" || !mayFetch) {
             return await reply(null, "A draft can only fetch its goal's repos.", "api"), null;
           }
