@@ -9,6 +9,8 @@ struct TaskFocusView: View {
     @State private var mode: ComposerMode
     @State private var tab: Tab = .overview
     @FocusState private var composerFocused: Bool
+    @State private var choosingModel = false
+    @State private var otherModel = ""
 
     enum Tab { case overview, diff, session }
 
@@ -126,11 +128,12 @@ struct TaskFocusView: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: mainWidth + railWidth + 120, alignment: .leading)
                 .frame(maxWidth: .infinity)
-                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort` at its effort.
+                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort`
+                // at its effort, `-scroll details` at the rail's details.
                 .task {
-                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort"].contains(target) else { return }
+                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
-                    proxy.scrollTo(target, anchor: target == "effort" ? .bottom : .top)
+                    proxy.scrollTo(target, anchor: target == "doneWhen" ? .top : .bottom)
                 }
               }
             }
@@ -376,7 +379,7 @@ struct TaskFocusView: View {
             if !task.tickets.isEmpty || task.intakeID != nil { railCard { LinkedCard(task: task) } }
             if let risk { railCard { RiskBox(task: task, risk: risk) } }
 
-            railCard { details }
+            railCard { details }.id("details")
             if let effort = task.effort { railCard { EffortSection(task: task, effort: effort) }.id("effort") }
 
             if !touchedFiles.isEmpty {
@@ -452,14 +455,7 @@ struct TaskFocusView: View {
                     Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
                 }
             }
-            if let agent = task.agent {
-                detailRow("Agent") {
-                    HStack(spacing: 6) {
-                        AgentAvatar(agent: agent, size: 18)
-                        Text(agent.name)
-                    }
-                }
-            }
+            agentRows
             if appState.isLive {
                 if let worker = task.worker {
                     detailRow("Runs on") {
@@ -525,6 +521,78 @@ struct TaskFocusView: View {
 
     private func dateLabel(_ offset: Int) -> String {
         FactoryData.date(offset).formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// What builds it and the model it asks for: menus until it's merged or cancelled. A change applies
+    /// from its next session, so a running one keeps going.
+    @ViewBuilder private var agentRows: some View {
+        let done = task.state == .merged || task.state == .cancelled
+        let agents = appState.isLive ? appState.liveAgents : ["claude", "codex"]
+        let presets = AppState.models(for: task.builder)
+        detailRow("Agent") {
+            Menu {
+                ForEach(agents.contains(task.builder) ? agents : [task.builder] + agents, id: \.self) { agent in
+                    Button {
+                        // A model the old agent knew means nothing to the new one.
+                        let keep = task.model.flatMap { AppState.models(for: agent).contains($0) ? $0 : nil }
+                        appState.setAgent(task.id, agent: agent, model: keep)
+                    } label: {
+                        if agent == task.builder { Label(agentTitle(agent), systemImage: "checkmark") } else { Text(agentTitle(agent)) }
+                    }
+                }
+            } label: {
+                Text(agentTitle(task.builder))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(done)
+            .help(done ? "It's \(task.state == .merged ? "merged" : "cancelled")" : "What builds it, from its next session")
+        }
+        detailRow("Model") {
+            VStack(alignment: .leading, spacing: 2) {
+                Menu {
+                    Button {
+                        appState.setAgent(task.id, agent: task.builder, model: nil)
+                    } label: {
+                        if task.model == nil { Label("Default", systemImage: "checkmark") } else { Text("Default") }
+                    }
+                    Divider()
+                    ForEach(presets, id: \.self) { model in
+                        Button {
+                            appState.setAgent(task.id, agent: task.builder, model: model)
+                        } label: {
+                            if task.model == model { Label(model, systemImage: "checkmark") } else { Text(model) }
+                        }
+                    }
+                    if let model = task.model, !presets.contains(model) {
+                        Label(model, systemImage: "checkmark")
+                    }
+                    Divider()
+                    Button("Other…") {
+                        otherModel = task.model.flatMap { presets.contains($0) ? nil : $0 } ?? ""
+                        choosingModel = true
+                    }
+                } label: {
+                    Text(task.model ?? "Default").font(.system(size: 12, design: task.model == nil ? .default : .monospaced))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(done)
+                .help(task.model == nil ? "\(agentTitle(task.builder))'s own default on the machine it runs on" : "Its sessions run \(agentTitle(task.builder)) with --model \(task.model!)")
+                if hasSession, !done {
+                    Text("Applies from the next session")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+        }
+        .alert("Model for \(task.id)", isPresented: $choosingModel) {
+            TextField(task.builder == "codex" ? "gpt-5" : "claude-opus-4-1", text: $otherModel)
+            Button("Use") { appState.setAgent(task.id, agent: task.builder, model: otherModel) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Any model \(agentTitle(task.builder)) takes with --model. Leave it blank for its default.")
+        }
     }
 
     private func detailRow<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {

@@ -1953,6 +1953,8 @@ final class AppState {
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
             // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
             case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
+            // The inspector's Agent and Model menus: `model:<id>:<agent>:<model>`, no model for the default.
+            case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
