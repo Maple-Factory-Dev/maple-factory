@@ -594,6 +594,13 @@ pub enum Inbound {
     DraftRun(crate::draft::Run),
     #[serde(rename = "draft.cancel")]
     DraftCancel { id: String },
+    /// Sign an agent in with a device code, or cancel that (see `agent_login`).
+    #[serde(rename = "agent.login")]
+    AgentLogin {
+        agent: String,
+        #[serde(default)]
+        cancel: bool,
+    },
     /// Remove a merged or closed task's worktree and local branch (see `worktrees::remove_task`).
     #[serde(rename = "task.cleanup")]
     TaskCleanup(crate::tasks::Cleanup),
