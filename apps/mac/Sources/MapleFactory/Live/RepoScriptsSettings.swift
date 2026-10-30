@@ -56,12 +56,12 @@ struct RepoScriptsDetail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header.padding(.horizontal, 20).padding(.top, 20).padding(.bottom, 10)
+            header.padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 10)
             ScrollView {
-                content.padding(.horizontal, 20).padding(.bottom, 14)
+                content.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 20)
             }
             Divider()
-            footer.padding(.horizontal, 20).padding(.vertical, 12)
+            footer.padding(.horizontal, 28).padding(.vertical, 12)
         }
         .font(.system(size: 13))
         .onAppear { draft = current }
@@ -71,22 +71,15 @@ struct RepoScriptsDetail: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(
-                title: "Worktree scripts",
-                detail: "Your own commands for a task's worktree, in place of or around what the runner does. Each runs with sh -c in the repo's main checkout, with the variables below and the repo's secrets. One that fails stops the task, with its output."
-            )
-            SettingsCard {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsTitle(title: "Worktree scripts",
+                          subtitle: "Your own commands for a task's worktree, in place of or around what the runner does. Each runs with sh -c in the repo's main checkout, with the variables below and the repo's secrets. One that fails stops the task, with its output.")
+            SettingsSection("Scripts") {
                 field("Create", "Makes the worktree instead of git worktree add. It must leave a git worktree on $MAPLE_BRANCH at $MAPLE_WORKTREE.", "bin/worktree-create", $draft.create)
-                Divider()
                 field("Setup", "Runs once the worktree exists, before the agent starts: install, seed, copy config.", "bin/worktree-setup", $draft.setup)
-                Divider()
                 field("Teardown", "Runs before a finished task's worktree is removed: stop services, drop databases.", "bin/worktree-teardown", $draft.teardown)
-                Divider()
                 field("Archive", "Runs instead of the removal when a finished task is cleaned up. It owns the folder and the branch.", "bin/worktree-archive", $draft.archive)
-                Divider()
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Timeout").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted).frame(width: 70, alignment: .leading)
+                SettingsRow("Timeout", detail: draft.timeoutProblem, detailColor: Theme.State.cancelled) {
                     if isAdmin {
                         TextField("600", text: $draft.timeout)
                             .textFieldStyle(.roundedBorder)
@@ -96,18 +89,16 @@ struct RepoScriptsDetail: View {
                         readOnly(draft.timeout.isEmpty ? "600" : draft.timeout).frame(width: 80)
                     }
                     Text("seconds each").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    if let problem = draft.timeoutProblem {
-                        Text(problem).font(.system(size: 11.5)).foregroundStyle(Theme.State.cancelled)
-                    }
                 }
             }
-            SettingsCard {
-                Text("Variables").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-                    ForEach(Self.variables, id: \.0) { name, what in
-                        GridRow {
-                            Text(name).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text).textSelection(.enabled)
-                            Text(what).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+            SettingsSection("Variables") {
+                SettingsBlock {
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                        ForEach(Self.variables, id: \.0) { name, what in
+                            GridRow {
+                                Text(name).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text).textSelection(.enabled)
+                                Text(what).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                            }
                         }
                     }
                 }
@@ -181,7 +172,8 @@ struct RepoScriptsDetail: View {
                     readOnly(text.wrappedValue)
                 }
             }
-            Text(hint).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint).padding(.leading, 78).fixedSize(horizontal: false, vertical: true)
+            Text(hint).font(SettingsKit.caption).foregroundStyle(Theme.textMuted).padding(.leading, 78).fixedSize(horizontal: false, vertical: true)
         }
+        .settingsRowPadding()
     }
 }
