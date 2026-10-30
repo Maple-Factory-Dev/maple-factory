@@ -139,8 +139,18 @@ struct TaskActionButtons: View {
             if task.state == .drafting {
                 Button { appState.plan(task.id) } label: { Label("Send to planning", systemImage: "paperplane") }
             }
-            // Waiting on its plan's approval, nothing is running to retry; request changes instead.
-            if task.state != .drafting && task.state != .awaitingApproval {
+            if task.state == .backlog {
+                // Picked up again: planned again (or for the first time), or its plan approved and built.
+                Button { appState.plan(task.id) } label: { Label(task.plan.isEmpty ? "Send to planning" : "Plan again", systemImage: "paperplane") }
+                if !task.plan.isEmpty {
+                    Button { appState.approvePlan(task.id) } label: { Label("Approve & build", systemImage: "hammer") }
+                }
+            }
+            if task.state == .drafting || task.state == .awaitingApproval {
+                Button { appState.sendToBacklog(task.id) } label: { Label("Send to backlog", systemImage: TaskState.backlog.icon) }
+            }
+            // Waiting on its plan's approval or in the backlog, nothing is running to retry; request changes instead.
+            if task.state != .drafting && task.state != .awaitingApproval && task.state != .backlog {
                 Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
             }
             if task.state != .cancelled {
@@ -469,6 +479,51 @@ struct ApprovalBlock: View {
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
                 .padding(.top, 2)
+            }
+            // Not now: parked, and nothing runs on it until someone picks it up.
+            SecondaryButton(title: "Send to backlog", enabled: !state.isInFlight(task.id, .approvePlan)) {
+                state.sendToBacklog(task.id)
+            }
+        }
+    }
+}
+
+/// A parked task: nothing runs on it until someone approves its plan, asks for changes or plans it.
+struct BacklogBlock: View {
+    @Environment(AppState.self) private var state
+    let task: FactoryTask
+    var onRequestChanges: () -> Void
+
+    var body: some View {
+        let planned = !task.plan.isEmpty
+        let approving = state.isInFlight(task.id, .approvePlan)
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: TaskState.backlog.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.State.backlog)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("In the backlog: nothing runs until you pick it up")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text(planned ? "Plan v\(task.planVersion) is kept. Approve it to build, or ask for changes first."
+                                 : "Not planned yet. Edit its brief, then send it to planning.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if planned {
+                DecisionButtons {
+                    PrimaryButton(title: "Approve & build", icon: "hammer", busy: approving, busyTitle: "Approving…") {
+                        state.approvePlan(task.id)
+                    }
+                    RequestChangesButton(enabled: !approving, action: onRequestChanges)
+                }
+            }
+            SecondaryButton(title: "Send to planning", enabled: !approving) {
+                state.plan(task.id)
             }
         }
     }
@@ -895,11 +950,16 @@ struct TaskComposer: View {
     @State private var draft = ""
     @State private var interruptNow = false
     @State private var mention = MentionState()
+    @State private var taskRef = MentionState()
 
-    // The box is a TextField, so its cursor isn't known: an `@name` at the end is what's being typed.
+    // The box is a TextField, so its cursor isn't known: an `@name` or `#ref` at the end is what's being typed.
     private var mentionQuery: MentionQuery? { mention.query(draft, cursor: (draft as NSString).length) }
     private var mentionCandidates: [Person] {
         mentionQuery.map { MentionQuery.matches(FactoryData.people, $0.query) } ?? []
+    }
+    private var taskQuery: TaskRefQuery? { taskRef.taskQuery(draft, cursor: (draft as NSString).length) }
+    private var taskCandidates: [FactoryTask] {
+        taskQuery.map { TaskRefQuery.matches(appState.tasks, $0.query) } ?? []
     }
 
     var body: some View {
@@ -910,7 +970,7 @@ struct TaskComposer: View {
             if task.isSteerable, let agent = task.agent {
                 HStack(spacing: 2) {
                     // On a plan waiting for approval, steering means asking for the next version of it.
-                    modeTab(task.state == .awaitingApproval ? "Revise plan" : "Steer \(agent.name)", icon: "sparkle", mode: .steer)
+                    modeTab(task.state == .awaitingApproval || task.state == .backlog ? "Revise plan" : "Steer \(agent.name)", icon: "sparkle", mode: .steer)
                     modeTab("Comment", icon: "bubble.left", mode: .comment)
                     Spacer()
                     if steering, task.state == .building {
@@ -948,10 +1008,10 @@ struct TaskComposer: View {
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
-                .onExitCommand { if !mentionKey(.close) { focused.wrappedValue = false } }
-                .onSubmit { if !mentionKey(.pick) { send() } }
+                .onExitCommand { if !pickerKey(.close) { focused.wrappedValue = false } }
+                .onSubmit { if !pickerKey(.pick) { send() } }
                 .onKeyPress(keys: [.upArrow, .downArrow, .tab]) { press in
-                    mentionKey(press.key == .upArrow ? .up : press.key == .downArrow ? .down : .pick) ? .handled : .ignored
+                    pickerKey(press.key == .upArrow ? .up : press.key == .downArrow ? .down : .pick) ? .handled : .ignored
                 }
                 // Teammates to @mention, just above the box.
                 .overlay(alignment: .topLeading) {
@@ -961,12 +1021,25 @@ struct TaskComposer: View {
                             .offset(y: -MentionPicker.height(candidates.count) - 8)
                     }
                 }
+                // Tasks to reference after a `#`, in the same place.
+                .overlay(alignment: .topLeading) {
+                    let candidates = taskCandidates
+                    if !candidates.isEmpty {
+                        TaskRefPicker(tasks: candidates, highlighted: min(taskRef.highlighted, candidates.count - 1)) { pickTask($0) }
+                            .offset(y: -TaskRefPicker.height(candidates.count) - 8)
+                    }
+                }
                 .onChange(of: mentionQuery?.range.location) { mention.highlighted = 0 }
+                .onChange(of: taskQuery?.range.location) { taskRef.highlighted = 0 }
                 .onReceive(NotificationCenter.default.publisher(for: Self.demoType)) { note in
                     mode = .comment
                     draft = note.userInfo?["text"] as? String ?? ""
                     focused.wrappedValue = true
                 }
+                .onReceive(NotificationCenter.default.publisher(for: MentionKey.demo)) { note in
+                    if let key = note.object as? MentionKey { _ = pickerKey(key) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Self.demoSend)) { _ in send() }
 
             HStack {
                 Image(systemName: "paperclip").foregroundStyle(Theme.textMuted)
@@ -1004,11 +1077,11 @@ struct TaskComposer: View {
     private var placeholder: String {
         guard mode == .steer, task.isSteerable, let agent = task.agent else {
             // Say so up front, so a comment on a plan isn't mistaken for a revision that never comes.
-            if task.state == .awaitingApproval, task.isSteerable { return "Comment for teammates; doesn't send the plan back to \(task.agent?.name ?? "the planner")…" }
+            if task.state == .awaitingApproval || task.state == .backlog, task.isSteerable { return "Comment for teammates; doesn't send the plan back to \(task.agent?.name ?? "the planner")…" }
             return "Comment or @mention someone…"
         }
         switch task.state {
-        case .awaitingApproval: return "What should \(agent.name) change for plan v\(task.planVersion + 1)?"
+        case .awaitingApproval, .backlog: return "What should \(agent.name) change for plan v\(task.planVersion + 1)?"
         case .building: return "Tell \(agent.name) what to change mid-build…"
         case .reviewing: return "What should \(agent.name) fix before merge?"
         default: return "Tell \(agent.name) what to change in the plan…"
@@ -1041,6 +1114,8 @@ struct TaskComposer: View {
 
     /// `-actions "mention:cc @"` (AppState.play): types into the composer, for recordings.
     static let demoType = Notification.Name("TaskComposer.demoType")
+    /// `-actions "post:1"`: sends what's in the composer, as Return would.
+    static let demoSend = Notification.Name("TaskComposer.demoSend")
 
     private func mentionKey(_ key: MentionKey) -> Bool {
         let candidates = mentionCandidates
@@ -1052,6 +1127,22 @@ struct TaskComposer: View {
     private func pickMention(_ person: Person) {
         guard let query = mentionQuery else { return }
         draft = query.inserting(person, into: draft).text
+        focused.wrappedValue = true
+    }
+
+    /// Whichever picker is open takes the key.
+    private func pickerKey(_ key: MentionKey) -> Bool { mentionKey(key) || taskKey(key) }
+
+    private func taskKey(_ key: MentionKey) -> Bool {
+        let candidates = taskCandidates
+        guard taskRef.handle(key, query: taskQuery, count: candidates.count) else { return false }
+        if key == .pick { pickTask(candidates[min(taskRef.highlighted, candidates.count - 1)]) }
+        return true
+    }
+
+    private func pickTask(_ task: FactoryTask) {
+        guard let query = taskQuery else { return }
+        draft = query.inserting(task, into: draft).text
         focused.wrappedValue = true
     }
 

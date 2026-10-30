@@ -60,6 +60,8 @@ import Security
     private(set) var secrets: [Wire.RepoSecret] = []
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
+    /// Runner releases with their notes, newest first (What's new); empty from an older server.
+    private(set) var runnerReleases: [Wire.RunnerRelease] = []
     /// This factory's maple-server version, and a newer one when there is (admins only).
     private(set) var serverVersion: String?
     private(set) var serverUpdate: Wire.ServerUpdate?
@@ -253,6 +255,7 @@ import Security
         repos = []
         secrets = []
         runnerLatest = nil
+        runnerReleases = []
         serverVersion = nil
         serverUpdate = nil
         toast = nil
@@ -345,7 +348,8 @@ import Security
         }
     }
 
-    private func apply(_ message: Wire.ServerToClient) {
+    /// One message from the feed (internal for tests).
+    func apply(_ message: Wire.ServerToClient) {
         switch message {
         case .snapshot(let snapshot):
             attempt = 0
@@ -368,6 +372,7 @@ import Security
             repos = snapshot.repos
             secrets = snapshot.secrets
             runnerLatest = snapshot.runnerLatest
+            runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
             rebuild()
@@ -435,6 +440,10 @@ import Security
             repos = update.repos
         case .secretsUpdated(let update):
             secrets = update.secrets
+        case .runnerReleased(let update):
+            // The hub's hourly look at the release feed: every outdated badge and What's new follows.
+            runnerLatest = update.runnerLatest
+            runnerReleases = update.runnerReleases
         case .promptsUpdated(let update):
             prompts = update.prompts
         case .policyUpdated(let update):
@@ -516,6 +525,8 @@ import Security
     var teams: [String] { Array(Set(members.flatMap(\.teams) + (me?.teams ?? []))).sorted() }
 
     private func rebuildGoals() {
+        // Live first: the timeline's start, and so each due day, is the mockup's until it is.
+        if server != nil, FactoryData.liveGoals == nil { FactoryData.liveGoals = [] }
         factoryGoals = goals.map { LiveAdapter.goal($0, members: members, following: isFollowing($0)) }
         FactoryData.liveGoals = server == nil ? nil : factoryGoals
     }
@@ -1002,13 +1013,120 @@ extension FactoryClient {
     /// Whether the machine's runner is older than the latest release ("0.2.0" < "0.10.1").
     func runnerOutdated(_ machine: Wire.Machine) -> Bool {
         guard let version = machine.version, let latest = runnerLatest else { return false }
+        return Self.version(version, isOlderThan: latest)
+    }
+
+    /// Compares release numbers only ("0.2.0" < "0.10.1"); a prerelease counts as its release.
+    static func version(_ a: String, isOlderThan b: String) -> Bool {
         let parts = { (v: String) in v.split(separator: "-")[0].split(separator: ".").map { Int($0) ?? 0 } }
-        let (a, b) = (parts(version), parts(latest))
-        for i in 0..<max(a.count, b.count) {
-            let (x, y) = (i < a.count ? a[i] : 0, i < b.count ? b[i] : 0)
-            if x != y { return x < y }
+        let (x, y) = (parts(a), parts(b))
+        for i in 0..<max(x.count, y.count) {
+            let (p, q) = (i < x.count ? x[i] : 0, i < y.count ? y[i] : 0)
+            if p != q { return p < q }
         }
         return false
+    }
+
+    /// The releases after `version` up to `through` (the latest, by default), newest first: what an
+    /// update from `version` brings. Every release up to `through` when `version` is nil.
+    func releases(newerThan version: String?, through: String? = nil) -> [Wire.RunnerRelease] {
+        Self.releases(runnerReleases, newerThan: version, through: through ?? runnerLatest)
+    }
+
+    static func releases(_ all: [Wire.RunnerRelease], newerThan version: String?, through: String?) -> [Wire.RunnerRelease] {
+        all.filter { release in
+            (version.map { Self.version($0, isOlderThan: release.version) } ?? true)
+                && (through.map { !Self.version($0, isOlderThan: release.version) } ?? true)
+        }
+        .sorted { Self.version($1.version, isOlderThan: $0.version) }
+    }
+
+    /// The release a machine runs, when the changelog has it.
+    func release(_ version: String?) -> Wire.RunnerRelease? {
+        version.flatMap { v in runnerReleases.first { $0.version == v } }
+    }
+
+    /// Where a machine's runner update is, as its card and Settings › Runner show it.
+    func updatePhase(_ machine: Wire.Machine) -> RunnerUpdatePhase {
+        Self.updatePhase(machine, latest: runnerLatest)
+    }
+
+    /// What the machine's sidebar row shows about its runner: a newer release, or an update under way.
+    /// Nothing while it's offline, where the offline icon says enough.
+    static func sidebarUpdateBadge(_ machine: Wire.Machine, latest: String?) -> SidebarUpdateBadge? {
+        guard machine.online else { return nil }
+        let phase = updatePhase(machine, latest: latest)
+        if case .outdated(let version) = phase { return .available(version) }
+        return phase.isBusy ? .updating : nil
+    }
+
+    static func updatePhase(_ machine: Wire.Machine, latest: String?) -> RunnerUpdatePhase {
+        let outdated = { () -> RunnerUpdatePhase in
+            guard let version = machine.version, let latest, Self.version(version, isOlderThan: latest) else { return .current }
+            return .outdated(latest)
+        }
+        guard let update = machine.update else { return outdated() }
+        switch update.state {
+        case .checking: return .checking
+        case .installing: return .installing(update.target)
+        // Offline here is the runner swapping itself out, not the machine gone.
+        case .restarting: return .restarting(update.target)
+        case .updated: return machine.online ? .updated(update.target ?? machine.version ?? "", from: update.from) : outdated()
+        case .upToDate: return outdated() == .current ? .upToDate(machine.version ?? update.target) : outdated()
+        case .failed: return .failed(update.message, target: update.target)
+        case .other: return outdated()
+        }
+    }
+}
+
+/// A machine's runner in its sidebar row.
+enum SidebarUpdateBadge: Equatable {
+    /// This newer release is out.
+    case available(String)
+    /// Checking, installing or restarting.
+    case updating
+
+    /// The line it adds to the row's tooltip.
+    var helpLine: String {
+        switch self {
+        case .available(let version): "Runner update available: \(version)"
+        case .updating: "Updating its runner…"
+        }
+    }
+}
+
+/// A machine's runner, as far as updating it goes.
+enum RunnerUpdatePhase: Equatable {
+    /// On the latest release (or there's none to compare with), nothing in flight.
+    case current
+    /// A newer release is out.
+    case outdated(String)
+    case checking
+    case installing(String?)
+    /// Swapping itself out: offline for a moment, sessions still running in tmux.
+    case restarting(String?)
+    /// Came back on `version`, from `from` when known.
+    case updated(String, from: String?)
+    /// Asked, and it already runs the latest.
+    case upToDate(String?)
+    case failed(String?, target: String?)
+
+    /// Checking, installing or restarting: no second update until it's done.
+    var isBusy: Bool {
+        switch self {
+        case .checking, .installing, .restarting: true
+        default: false
+        }
+    }
+
+    /// The line the card shows while it's busy.
+    var progressText: String? {
+        switch self {
+        case .checking: "Checking for a runner update…"
+        case .installing(let v): "Installing runner \(v ?? "update")…"
+        case .restarting(let v): "Restarting into runner \(v ?? "the update")… (sessions keep running)"
+        default: nil
+        }
     }
 }
 

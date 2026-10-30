@@ -3,7 +3,7 @@ import SwiftUI
 extension FactoryTask {
     /// Planner and builder agents can be redirected until the work is merged or cancelled.
     var isSteerable: Bool {
-        agent != nil && [.planning, .awaitingApproval, .building, .reviewing].contains(state)
+        agent != nil && [.planning, .awaitingApproval, .backlog, .building, .reviewing].contains(state)
     }
 
     var activeStep: Int? { plan.firstIndex { $0.progress == .active } }
@@ -13,7 +13,7 @@ extension FactoryTask {
         let name = agent?.name ?? "The agent"
         switch state {
         case .planning: return "\(name) will fold this into the plan"
-        case .awaitingApproval: return "\(name) will post plan v\(planVersion + 1)"
+        case .awaitingApproval, .backlog: return "\(name) will post plan v\(planVersion + 1)"
         case .building: return activeStep.map { "Applies after step \($0 + 1)" } ?? "Applies at the next step"
         case .reviewing: return "Sends \(id) back to Building"
         default: return "Queued"

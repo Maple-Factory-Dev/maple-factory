@@ -16,12 +16,20 @@ enum LocalRunner {
         return FileManager.default.isExecutableFile(atPath: dir.appending(path: "maple-runner").path) ? dir : nil
     }
 
+    /// The runner's home: $HOME, as the runner reads it (a dev runner's home, set for a headless run), else this user's.
+    static var home: URL {
+        ProcessInfo.processInfo.environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    /// Where the service writes its log (launchd's StandardOutPath).
+    static var logFile: URL { home.appending(path: "Library/Logs/maple-runner.log") }
+
     /// Where the runner's service keeps its copy, and our tmux beside it.
     static var installDir: URL { FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/maple/bin") }
 
     /// What `maple-runner enroll` left in ~/.config/maple/runner.json, if this Mac is enrolled.
     static var enrolled: Enrolled? {
-        let file = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/maple/runner.json")
+        let file = home.appending(path: ".config/maple/runner.json")
         guard let data = try? Data(contentsOf: file) else { return nil }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

@@ -46,6 +46,8 @@ pub enum TaskState {
     Planning,
     /// The plan waits for its approvals.
     AwaitingApproval,
+    /// Parked for later, planned or not; nothing runs until someone picks it up.
+    Backlog,
     /// Approved: queued for a slot, or a builder is working.
     Building,
     /// Pushed: the review agent and people are reviewing it.
@@ -359,6 +361,27 @@ pub enum RepoSource {
     Other,
 }
 
+/// Where a runner update someone asked for is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunnerUpdateState {
+    /// Asked the machine; it's reading the release feed.
+    Checking,
+    /// Downloading and checking the new runner.
+    Installing,
+    /// Restarting into it (sessions keep running in tmux).
+    Restarting,
+    /// Back online on the new version.
+    Updated,
+    /// It already runs the latest release.
+    UpToDate,
+    /// It couldn't; `message` says why.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// What a session's agent is doing, from its hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -603,6 +626,40 @@ pub struct Machine {
     pub capacity: Option<u32>,
     #[serde(default)]
     pub usage: Vec<AgentUsage>,
+    /// The runner update someone asked for, while it runs and for a few minutes after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<MachineUpdate>,
+}
+
+/// A runner update in progress on a machine, or how it just ended.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineUpdate {
+    pub state: RunnerUpdateState,
+    /// The version it's updating to, once known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// The version it ran when the update was asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// When it reached this state.
+    pub at: u64,
+}
+
+/// One runner release in the feed's changelog (maple-runner/changes.json).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerRelease {
+    pub version: String,
+    /// ISO 8601.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+    /// What changed, from runner/CHANGELOG.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
 /// A session end with the machine it was on, for lists.
@@ -1426,6 +1483,87 @@ pub struct StatsCostRow {
     pub unpriced: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingCell {
+    pub kind: FindingKind,
+    pub severity: Severity,
+    pub count: u32,
+}
+
+/// Where findings land: a folder, by the file's first two folders.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingArea {
+    /// "server/src", "(root)" for a file at the top, "(no file)" when the finding names none.
+    pub key: String,
+    pub count: u32,
+    pub tasks: u32,
+    /// Blockers and majors.
+    pub serious: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingOutcomes {
+    pub fixed: u32,
+    pub disputed: u32,
+    pub open: u32,
+    /// Findings of tasks that are gone, whose status wasn't kept.
+    pub unknown: u32,
+    /// Rounds from the one that raised a finding to the one that saw it fixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounds_to_fix_median: Option<f64>,
+}
+
+/// Findings raised on one agent's work.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingAgent {
+    pub agent: String,
+    pub rounds: u32,
+    pub findings: u32,
+    pub serious: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_round: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindingRow {
+    pub task: String,
+    pub title: String,
+    pub kind: FindingKind,
+    pub severity: Severity,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    pub area: String,
+    /// None for a task that's gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<FindingStatus>,
+    pub raised_in: u32,
+    /// When its round came in.
+    pub at: u64,
+}
+
+/// The window's review findings, from their text, file and status.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsFindings {
+    #[serde(default)]
+    pub matrix: Vec<StatsFindingCell>,
+    /// Most findings first, up to 12.
+    #[serde(default)]
+    pub areas: Vec<StatsFindingArea>,
+    pub outcomes: StatsFindingOutcomes,
+    #[serde(default)]
+    pub by_agent: Vec<StatsFindingAgent>,
+    /// Newest first, up to 60.
+    #[serde(default)]
+    pub recent: Vec<StatsFindingRow>,
+}
+
 /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1468,6 +1606,9 @@ pub struct StatsSummary {
     /// Keyed "agent · model".
     #[serde(default)]
     pub cost_by_agent: Vec<StatsCostRow>,
+    /// The findings breakdown; none from a server older than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings: Option<StatsFindings>,
 }
 
 /// Runner → server.
@@ -2025,9 +2166,14 @@ pub enum ClientMessage {
         /// The member's login.
         owner: String,
     },
-    /// Send a draft to planning.
+    /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     #[serde(rename = "task.plan")]
     TaskPlan {
+        id: String,
+    },
+    /// Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.
+    #[serde(rename = "task.backlog")]
+    TaskBacklog {
         id: String,
     },
     #[serde(rename = "task.comment")]
@@ -2045,6 +2191,7 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<String>,
     },
+    /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     #[serde(rename = "task.approvePlan")]
     TaskApprovePlan {
         id: String,
@@ -2181,6 +2328,9 @@ pub enum ServerToClient {
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
+        /// Runner releases, newest first, with their notes (What's new). None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runner_releases: Option<Vec<RunnerRelease>>,
         /// This factory's maple-server version.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server_version: Option<String>,
@@ -2258,6 +2408,16 @@ pub enum ServerToClient {
     SecretsUpdated {
         #[serde(default)]
         secrets: Vec<RepoSecret>,
+    },
+    /// A runner release came out (or the feed changed) since the snapshot.
+    #[serde(rename = "runner.released")]
+    RunnerReleased {
+        /// The newest released runner version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runner_latest: Option<String>,
+        /// Runner releases, newest first, with their notes.
+        #[serde(default)]
+        runner_releases: Vec<RunnerRelease>,
     },
     /// Something worth a passing line in the app.
     #[serde(rename = "toast")]

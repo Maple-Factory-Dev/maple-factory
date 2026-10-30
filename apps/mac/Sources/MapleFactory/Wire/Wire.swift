@@ -113,6 +113,8 @@ public enum Wire {
         case planning
         /// The plan waits for its approvals.
         case awaitingApproval
+        /// Parked for later, planned or not; nothing runs until someone picks it up.
+        case backlog
         /// Approved: queued for a slot, or a builder is working.
         case building
         /// Pushed: the review agent and people are reviewing it.
@@ -125,13 +127,14 @@ public enum Wire {
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .building, .reviewing, .merged, .cancelled]
+        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged, .cancelled]
 
         public init(rawValue: String) {
             switch rawValue {
             case "drafting": self = .drafting
             case "planning": self = .planning
             case "awaitingApproval": self = .awaitingApproval
+            case "backlog": self = .backlog
             case "building": self = .building
             case "reviewing": self = .reviewing
             case "merged": self = .merged
@@ -145,6 +148,7 @@ public enum Wire {
             case .drafting: "drafting"
             case .planning: "planning"
             case .awaitingApproval: "awaitingApproval"
+            case .backlog: "backlog"
             case .building: "building"
             case .reviewing: "reviewing"
             case .merged: "merged"
@@ -1082,6 +1086,63 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where a runner update someone asked for is.
+    public enum RunnerUpdateState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Asked the machine; it's reading the release feed.
+        case checking
+        /// Downloading and checking the new runner.
+        case installing
+        /// Restarting into it (sessions keep running in tmux).
+        case restarting
+        /// Back online on the new version.
+        case updated
+        /// It already runs the latest release.
+        case upToDate
+        /// It couldn't; `message` says why.
+        case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RunnerUpdateState] = [.checking, .installing, .restarting, .updated, .upToDate, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "checking": self = .checking
+            case "installing": self = .installing
+            case "restarting": self = .restarting
+            case "updated": self = .updated
+            case "upToDate": self = .upToDate
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .checking: "checking"
+            case .installing: "installing"
+            case .restarting: "restarting"
+            case .updated: "updated"
+            case .upToDate: "upToDate"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RunnerUpdateState, b: RunnerUpdateState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// What a session's agent is doing, from its hooks.
     public enum AgentState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Running a turn.
@@ -1437,8 +1498,10 @@ public enum Wire {
         /// Factory sessions it takes now, settings and cores considered.
         public var capacity: UInt32?
         public var usage: [AgentUsage]
+        /// The runner update someone asked for, while it runs and for a few minutes after.
+        public var update: MachineUpdate?
 
-        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = []) {
+        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = [], update: MachineUpdate? = nil) {
             self.id = id
             self.name = name
             self.owner = owner
@@ -1451,6 +1514,7 @@ public enum Wire {
             self.settings = settings
             self.capacity = capacity
             self.usage = usage
+            self.update = update
         }
 
         public init(from decoder: Decoder) throws {
@@ -1467,6 +1531,43 @@ public enum Wire {
             settings = try c.decodeIfPresent(MachineSettings.self, forKey: .settings)
             capacity = try c.decodeIfPresent(UInt32.self, forKey: .capacity)
             usage = try c.decodeIfPresent([AgentUsage].self, forKey: .usage) ?? []
+            update = try c.decodeIfPresent(MachineUpdate.self, forKey: .update)
+        }
+    }
+
+    /// A runner update in progress on a machine, or how it just ended.
+    public struct MachineUpdate: Codable, Hashable, Sendable {
+        public var state: RunnerUpdateState
+        /// The version it's updating to, once known.
+        public var target: String?
+        /// The version it ran when the update was asked for.
+        public var from: String?
+        /// Why it failed.
+        public var message: String?
+        /// When it reached this state.
+        public var at: UInt64
+
+        public init(state: RunnerUpdateState, target: String? = nil, from: String? = nil, message: String? = nil, at: UInt64) {
+            self.state = state
+            self.target = target
+            self.from = from
+            self.message = message
+            self.at = at
+        }
+    }
+
+    /// One runner release in the feed's changelog (maple-runner/changes.json).
+    public struct RunnerRelease: Codable, Hashable, Sendable {
+        public var version: String
+        /// ISO 8601.
+        public var publishedAt: String?
+        /// What changed, from runner/CHANGELOG.md.
+        public var notes: String?
+
+        public init(version: String, publishedAt: String? = nil, notes: String? = nil) {
+            self.version = version
+            self.publishedAt = publishedAt
+            self.notes = notes
         }
     }
 
@@ -2776,6 +2877,126 @@ public enum Wire {
         }
     }
 
+    public struct StatsFindingCell: Codable, Hashable, Sendable {
+        public var kind: FindingKind
+        public var severity: Severity
+        public var count: UInt32
+
+        public init(kind: FindingKind, severity: Severity, count: UInt32) {
+            self.kind = kind
+            self.severity = severity
+            self.count = count
+        }
+    }
+
+    /// Where findings land: a folder, by the file's first two folders.
+    public struct StatsFindingArea: Codable, Hashable, Sendable {
+        /// "server/src", "(root)" for a file at the top, "(no file)" when the finding names none.
+        public var key: String
+        public var count: UInt32
+        public var tasks: UInt32
+        /// Blockers and majors.
+        public var serious: UInt32
+
+        public init(key: String, count: UInt32, tasks: UInt32, serious: UInt32) {
+            self.key = key
+            self.count = count
+            self.tasks = tasks
+            self.serious = serious
+        }
+    }
+
+    public struct StatsFindingOutcomes: Codable, Hashable, Sendable {
+        public var fixed: UInt32
+        public var disputed: UInt32
+        public var open: UInt32
+        /// Findings of tasks that are gone, whose status wasn't kept.
+        public var unknown: UInt32
+        /// Rounds from the one that raised a finding to the one that saw it fixed.
+        public var roundsToFixMedian: Double?
+
+        public init(fixed: UInt32, disputed: UInt32, open: UInt32, unknown: UInt32, roundsToFixMedian: Double? = nil) {
+            self.fixed = fixed
+            self.disputed = disputed
+            self.open = open
+            self.unknown = unknown
+            self.roundsToFixMedian = roundsToFixMedian
+        }
+    }
+
+    /// Findings raised on one agent's work.
+    public struct StatsFindingAgent: Codable, Hashable, Sendable {
+        public var agent: String
+        public var rounds: UInt32
+        public var findings: UInt32
+        public var serious: UInt32
+        public var perRound: Double?
+
+        public init(agent: String, rounds: UInt32, findings: UInt32, serious: UInt32, perRound: Double? = nil) {
+            self.agent = agent
+            self.rounds = rounds
+            self.findings = findings
+            self.serious = serious
+            self.perRound = perRound
+        }
+    }
+
+    public struct StatsFindingRow: Codable, Hashable, Sendable {
+        public var task: String
+        public var title: String
+        public var kind: FindingKind
+        public var severity: Severity
+        public var text: String
+        public var file: String?
+        public var area: String
+        /// None for a task that's gone.
+        public var status: FindingStatus?
+        public var raisedIn: UInt32
+        /// When its round came in.
+        public var at: UInt64
+
+        public init(task: String, title: String, kind: FindingKind, severity: Severity, text: String, file: String? = nil, area: String, status: FindingStatus? = nil, raisedIn: UInt32, at: UInt64) {
+            self.task = task
+            self.title = title
+            self.kind = kind
+            self.severity = severity
+            self.text = text
+            self.file = file
+            self.area = area
+            self.status = status
+            self.raisedIn = raisedIn
+            self.at = at
+        }
+    }
+
+    /// The window's review findings, from their text, file and status.
+    public struct StatsFindings: Codable, Hashable, Sendable {
+        public var matrix: [StatsFindingCell]
+        /// Most findings first, up to 12.
+        public var areas: [StatsFindingArea]
+        public var outcomes: StatsFindingOutcomes
+        public var byAgent: [StatsFindingAgent]
+        /// Newest first, up to 60.
+        public var recent: [StatsFindingRow]
+
+        public init(matrix: [StatsFindingCell] = [], areas: [StatsFindingArea] = [], outcomes: StatsFindingOutcomes, byAgent: [StatsFindingAgent] = [], recent: [StatsFindingRow] = []) {
+            self.matrix = matrix
+            self.areas = areas
+            self.outcomes = outcomes
+            self.byAgent = byAgent
+            self.recent = recent
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            matrix = try c.decodeIfPresent([StatsFindingCell].self, forKey: .matrix) ?? []
+            areas = try c.decodeIfPresent([StatsFindingArea].self, forKey: .areas) ?? []
+            outcomes = try c.decode(StatsFindingOutcomes.self, forKey: .outcomes)
+            byAgent = try c.decodeIfPresent([StatsFindingAgent].self, forKey: .byAgent) ?? []
+            recent = try c.decodeIfPresent([StatsFindingRow].self, forKey: .recent) ?? []
+        }
+    }
+
     /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
     public struct StatsSummary: Codable, Hashable, Sendable {
         public var days: UInt32
@@ -2802,8 +3023,10 @@ public enum Wire {
         public var costByRole: [StatsCostRow]
         /// Keyed "agent · model".
         public var costByAgent: [StatsCostRow]
+        /// The findings breakdown; none from a server older than it.
+        public var findings: StatsFindings?
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = []) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -2823,6 +3046,7 @@ public enum Wire {
             self.costTotal = costTotal
             self.costByRole = costByRole
             self.costByAgent = costByAgent
+            self.findings = findings
         }
 
         public init(from decoder: Decoder) throws {
@@ -2846,6 +3070,7 @@ public enum Wire {
             costTotal = try c.decodeIfPresent(StatsCostRow.self, forKey: .costTotal)
             costByRole = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByRole) ?? []
             costByAgent = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByAgent) ?? []
+            findings = try c.decodeIfPresent(StatsFindings.self, forKey: .findings)
         }
     }
 
@@ -4008,8 +4233,17 @@ public enum Wire {
         }
     }
 
-    /// Send a draft to planning.
+    /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     public struct ClientMessageTaskPlan: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.
+    public struct ClientMessageTaskBacklog: Codable, Hashable, Sendable {
         public var id: String
 
         public init(id: String) {
@@ -4042,6 +4276,7 @@ public enum Wire {
         }
     }
 
+    /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
         public var id: String
 
@@ -4237,6 +4472,7 @@ public enum Wire {
         case taskEdit(ClientMessageTaskEdit)
         case taskAssign(ClientMessageTaskAssign)
         case taskPlan(ClientMessageTaskPlan)
+        case taskBacklog(ClientMessageTaskBacklog)
         case taskComment(ClientMessageTaskComment)
         case taskSteer(ClientMessageTaskSteer)
         case taskApprovePlan(ClientMessageTaskApprovePlan)
@@ -4295,6 +4531,7 @@ public enum Wire {
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
             case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
+            case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
             case "task.approvePlan": self = .taskApprovePlan(try ClientMessageTaskApprovePlan(from: decoder))
@@ -4416,6 +4653,9 @@ public enum Wire {
             case .taskPlan(let body):
                 try c.encode("task.plan", forKey: .type)
                 try body.encode(to: encoder)
+            case .taskBacklog(let body):
+                try c.encode("task.backlog", forKey: .type)
+                try body.encode(to: encoder)
             case .taskComment(let body):
                 try c.encode("task.comment", forKey: .type)
                 try body.encode(to: encoder)
@@ -4495,13 +4735,15 @@ public enum Wire {
         public var secrets: [RepoSecret]
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
+        /// Runner releases, newest first, with their notes (What's new). None: an older server.
+        public var runnerReleases: [RunnerRelease]?
         /// This factory's maple-server version.
         public var serverVersion: String?
         /// A newer maple-server, when there is one (told to admins only).
         public var serverUpdate: ServerUpdate?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], runnerLatest: String? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -4519,6 +4761,7 @@ public enum Wire {
             self.repos = repos
             self.secrets = secrets
             self.runnerLatest = runnerLatest
+            self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
             self.serverUpdate = serverUpdate
             self.protocolVersion = protocolVersion
@@ -4543,6 +4786,7 @@ public enum Wire {
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
+            runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
             serverUpdate = try c.decodeIfPresent(ServerUpdate.self, forKey: .serverUpdate)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
@@ -4701,6 +4945,25 @@ public enum Wire {
         }
     }
 
+    /// A runner release came out (or the feed changed) since the snapshot.
+    public struct ServerToClientRunnerReleased: Codable, Hashable, Sendable {
+        /// The newest released runner version.
+        public var runnerLatest: String?
+        /// Runner releases, newest first, with their notes.
+        public var runnerReleases: [RunnerRelease]
+
+        public init(runnerLatest: String? = nil, runnerReleases: [RunnerRelease] = []) {
+            self.runnerLatest = runnerLatest
+            self.runnerReleases = runnerReleases
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
+            runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases) ?? []
+        }
+    }
+
     /// Something worth a passing line in the app.
     public struct ServerToClientToast: Codable, Hashable, Sendable {
         public var text: String
@@ -4759,6 +5022,7 @@ public enum Wire {
         case promptsUpdated(ServerToClientPromptsUpdated)
         case reposUpdated(ServerToClientReposUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
+        case runnerReleased(ServerToClientRunnerReleased)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
@@ -4787,6 +5051,7 @@ public enum Wire {
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
+            case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
@@ -4845,6 +5110,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .secretsUpdated(let body):
                 try c.encode("secrets.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .runnerReleased(let body):
+                try c.encode("runner.released", forKey: .type)
                 try body.encode(to: encoder)
             case .toast(let body):
                 try c.encode("toast", forKey: .type)

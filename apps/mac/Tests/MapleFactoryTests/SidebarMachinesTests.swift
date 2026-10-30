@@ -51,4 +51,44 @@ import Testing
         #expect(LivePips.sharedCount(machine("sam-air", owner: "sam", teamSlots: 1, lendIdle: true), tasks: []) == 4)
         #expect(LivePips.sharedCount(machine("sam-air", owner: "sam"), tasks: []) == 0)
     }
+
+    // MARK: The update badge
+
+    private func runner(_ version: String, online: Bool = true, update: Wire.RunnerUpdateState? = nil) -> Wire.Machine {
+        Wire.Machine(id: "studio", name: "studio", owner: "andrea", online: online, version: version,
+                     update: update.map { Wire.MachineUpdate(state: $0, target: "0.41.0", from: version, at: 0) })
+    }
+
+    @Test func outdatedShowsTheBadge() {
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.40.0"), latest: "0.41.0") == .available("0.41.0"))
+        #expect(SidebarUpdateBadge.available("0.41.0").helpLine == "Runner update available: 0.41.0")
+    }
+
+    @Test func currentShowsNoBadge() {
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.41.0"), latest: "0.41.0") == nil)
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.41.0", update: .upToDate), latest: "0.41.0") == nil)
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.41.0", update: .updated), latest: "0.41.0") == nil)
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.40.0"), latest: nil) == nil)
+    }
+
+    @Test func busyShowsTheSpinner() {
+        for state in [Wire.RunnerUpdateState.checking, .installing, .restarting] {
+            #expect(FactoryClient.sidebarUpdateBadge(runner("0.40.0", update: state), latest: "0.41.0") == .updating)
+        }
+    }
+
+    @Test func offlineShowsNoBadge() {
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.40.0", online: false), latest: "0.41.0") == nil)
+        #expect(FactoryClient.sidebarUpdateBadge(runner("0.40.0", online: false, update: .restarting), latest: "0.41.0") == nil)
+    }
+
+    @Test func runnerReleasedUpdatesTheLatest() throws {
+        let client = FactoryClient()
+        let json = #"{"type":"runner.released","runnerLatest":"0.42.0","runnerReleases":[{"version":"0.42.0","notes":"- Faster."},{"version":"0.41.0"}]}"#
+        client.apply(try JSONDecoder().decode(Wire.ServerToClient.self, from: Data(json.utf8)))
+        #expect(client.runnerLatest == "0.42.0")
+        #expect(client.runnerReleases.map(\.version) == ["0.42.0", "0.41.0"])
+        #expect(client.runnerOutdated(runner("0.41.0")))
+        #expect(client.updatePhase(runner("0.41.0")) == .outdated("0.42.0"))
+    }
 }

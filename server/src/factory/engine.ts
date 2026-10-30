@@ -18,7 +18,7 @@ import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
-import type { StatKind } from "./stats.ts";
+import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
@@ -110,6 +110,9 @@ export class Engine {
         const goal = { ...msg.goal, prefix: msg.goal.prefix.trim().toUpperCase() };
         if (!/^[A-Z][A-Z0-9]{0,9}$/.test(goal.prefix)) fail("A goal's prefix is 1–10 letters or digits, starting with a letter.");
         if (!goal.name.trim()) fail("A goal needs a name.");
+        // Epoch ms, or none: an empty due means no due date.
+        goal.due ??= null;
+        if (goal.due !== null && !(Number.isSafeInteger(goal.due) && goal.due > 0)) fail("A goal's due date is a time in epoch milliseconds, or none.");
         if (!goal.id) goal.id = crypto.randomUUID();
         // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.
         if (!goal.lead?.trim()) goal.lead = who;
@@ -290,12 +293,14 @@ export class Engine {
     const task = this.store.task(msg.type === "subscribe" ? "" : (msg as { id: string }).id) ?? fail("That task isn't there any more.");
     switch (msg.type) {
       case "task.edit": {
-        if (task.state !== "drafting" && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
+        // A backlog task without a plan is still a draft, just parked.
+        const unplanned = task.state === "drafting" || (task.state === "backlog" && !task.plan.length);
+        if (!unplanned && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
         if (msg.title != null && msg.title.trim()) task.title = msg.title.trim();
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
         if (msg.repo != null && msg.repo !== task.repo) {
-          if (task.state !== "drafting") fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
+          if (!unplanned) fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
         }
@@ -330,8 +335,20 @@ export class Engine {
         return;
       }
       case "task.plan":
-        if (task.state !== "drafting") fail("It's already past drafting.");
-        return this.startPlanning(task, who);
+        if (task.state !== "drafting" && task.state !== "backlog") fail("It's already past drafting.");
+        // Picked up from the backlog with a plan: the planner revises the plan it has.
+        return this.startPlanning(task, who, task.state === "backlog" && task.plan.length > 0);
+      case "task.backlog": {
+        if (task.state !== "drafting" && task.state !== "awaitingApproval") fail("Only a draft or a plan waiting for approval can go to the backlog.");
+        this.closeWorker(task, "done");
+        task.state = "backlog";
+        task.approvals = [];
+        task.waiting = null;
+        task.startAt = null;
+        this.event(task, who, "sent it to the backlog");
+        this.save(task);
+        return;
+      }
       case "task.comment": {
         const text = msg.text.trim() || fail("Say something.");
         task.comments.push(await this.comment(who, text, { anchor: msg.anchor ?? null }));
@@ -340,14 +357,15 @@ export class Engine {
       }
       case "task.steer": {
         const text = msg.text.trim() || fail("Say what to change.");
-        if (!["planning", "awaitingApproval", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
+        if (task.state === "backlog" && !task.plan.length) fail("It isn't planned yet; edit its brief or send it to planning.");
+        if (!["planning", "awaitingApproval", "backlog", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
         if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
         const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: msg.anchor ?? null, status: "queued", timing: null };
         task.changes.push(change);
         this.event(task, who, `asked for a change: ${text}`);
         this.stat(task, "steer", { state: task.state }, who);
-        if (task.state === "awaitingApproval") {
-          // The plan isn't approved yet: the planner revises it.
+        if (task.state === "awaitingApproval" || task.state === "backlog") {
+          // The plan isn't approved yet: the planner revises it (picking it up from the backlog).
           task.approvals = [];
           this.save(task);
           return this.startPlanning(task, who, true);
@@ -366,6 +384,12 @@ export class Engine {
         return;
       }
       case "task.approvePlan": {
+        if (task.state === "backlog") {
+          if (!task.plan.length) fail("It isn't planned yet; send it to planning first.");
+          // Picked up from the backlog: it waits for the rest of its approvals, if it needs more.
+          task.state = "awaitingApproval";
+          this.event(task, who, "picked it up from the backlog");
+        }
         if (task.state !== "awaitingApproval") fail("There's no plan waiting for approval.");
         if (task.approvals.includes(who)) fail("You've already approved it.");
         task.approvals.push(who);
@@ -452,6 +476,7 @@ export class Engine {
       }
       case "task.queue": {
         if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (task.state === "backlog") fail("It's in the backlog. Pick it up first: send it to planning, or approve its plan.");
         if (msg.force) {
           if (task.worker || task.hand || task.question) fail("It's already running.");
           if (task.state !== "drafting" && !this.roleFor(task)) fail("It isn't waiting for a session.");
@@ -493,6 +518,7 @@ export class Engine {
       case "task.retry": {
         if (task.state === "merged") fail("It's already merged.");
         if (task.state === "drafting") fail("It hasn't started yet; send it to planning.");
+        if (task.state === "backlog") fail("Nothing runs on it in the backlog; send it to planning or approve its plan.");
         const goal = this.store.goal(task.goal);
         if (goal?.archived) fail(`${goal.name} is archived; unarchive it to pick this back up.`);
         const priv = this.store.private(task.id);
@@ -536,7 +562,7 @@ export class Engine {
         return;
       }
       case "task.move": {
-        if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting") fail("There's nothing running to move.");
+        if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting" || task.state === "backlog") fail("There's nothing running to move.");
         if (!task.machine) fail("It hasn't started on a machine yet.");
         if (this.store.private(task.id).handingOff) fail("It's already being handed off.");
         const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
@@ -1608,7 +1634,7 @@ export class Engine {
         round.found = found.length;
         round.at = now();
         const fixed = arr(a.fixed).length;
-        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map((f) => ({ kind: f.kind, severity: f.severity })) }, null, s.role);
+        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map(findingDetail) }, null, s.role);
         this.closeWorker(task, "done");
         if (round.verdict === "passed") {
           this.event(task, "reviewer", `passed round ${round.number}`);

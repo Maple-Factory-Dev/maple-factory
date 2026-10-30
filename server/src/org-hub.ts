@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type Member, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { toMember, type MemberRow } from "./auth.ts";
@@ -15,8 +15,12 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
+import { fromNotice, onReport, shown } from "./runner-update.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
+
+/** How often the hub reads the runner releases again while apps are connected. */
+const RUNNER_CHECK_EVERY = 3_600_000;
 
 interface Client {
   member: Member;
@@ -31,9 +35,14 @@ export class OrgHub extends DurableObject<Env> {
   private engine: Engine;
   private intake: Intake;
   private secrets: Secrets;
+  /** Each machine's runner update (storage `u:<id>`), loaded before anything else runs. */
+  private updates = new Map<string, MachineUpdate>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    ctx.blockConcurrencyWhile(async () => {
+      for (const [key, update] of await ctx.storage.list<MachineUpdate>({ prefix: "u:" })) this.updates.set(key.slice(2), update);
+    });
     this.store = new Store(ctx.storage.sql);
     this.secrets = new Secrets(ctx.storage.sql, env);
     this.intake = new Intake(this.store, {
@@ -51,12 +60,14 @@ export class OrgHub extends DurableObject<Env> {
         if (machine) this.broadcast({ type: "machine.updated", machine });
       },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
-      wakeIn: (ms) => ctx.waitUntil((async () => {
-        const at = Date.now() + ms;
-        const set = await ctx.storage.getAlarm();
-        if (set == null || set > at) await ctx.storage.setAlarm(at);
-      })()),
+      wakeIn: (ms) => ctx.waitUntil(this.wakeAt(Date.now() + ms)),
     }, this.intake, this.secrets);
+  }
+
+  /** Sets the alarm for `at` unless it's already due sooner: the earliest wake wins. */
+  private async wakeAt(at: number) {
+    const set = await this.ctx.storage.getAlarm();
+    if (set == null || set > at) await this.ctx.storage.setAlarm(at);
   }
 
   /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again;
@@ -65,6 +76,33 @@ export class OrgHub extends DurableObject<Env> {
     await applySettings(this.env);
     await this.engine.pollCI();
     await this.engine.pump();
+    await this.checkRunnerRelease();
+  }
+
+  /** While apps are connected, reads the runner releases again hourly and tells the apps when they
+   *  changed, so a new runner shows without reconnecting. An idle org isn't woken for it. */
+  private async checkRunnerRelease() {
+    if (!this.ctx.getWebSockets("client").length) return;
+    let checked = (await this.ctx.storage.get<number>("runner:checkedAt")) ?? 0;
+    if (Date.now() - checked >= RUNNER_CHECK_EVERY) {
+      const runnerLatest = await this.runnerLatest(true);
+      const runnerReleases = await this.runnerReleases(true);
+      const seen = JSON.stringify({ runnerLatest, runnerReleases });
+      if (seen !== (await this.ctx.storage.get<string>("runner:seen"))) {
+        await this.ctx.storage.put("runner:seen", seen);
+        this.broadcast({ type: "runner.released", runnerLatest, runnerReleases });
+      }
+      checked = Date.now();
+      await this.ctx.storage.put("runner:checkedAt", checked);
+    }
+    await this.armRunnerCheck(checked);
+  }
+
+  /** The next runner release check: an hour after the last one, never later than an hour from now. */
+  private async armRunnerCheck(checked?: number) {
+    checked ??= (await this.ctx.storage.get<number>("runner:checkedAt")) ?? Date.now();
+    const now = Date.now();
+    await this.wakeAt(Math.min(Math.max(checked + RUNNER_CHECK_EVERY, now + 1000), now + RUNNER_CHECK_EVERY));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -76,12 +114,15 @@ export class OrgHub extends DurableObject<Env> {
         const pair = new WebSocketPair();
         this.ctx.acceptWebSocket(pair[1], ["client"]);
         pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
+        await this.armRunnerCheck();
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
       case "/machine": {
         const machine = (await request.json()) as Machine;
         const before = await this.ctx.storage.get<Machine>(`m:${machine.id}`);
         await this.ctx.storage.put(`m:${machine.id}`, machine);
+        const updated = onReport(this.updates.get(machine.id), machine);
+        if (updated) await this.setUpdate(machine.id, updated);
         this.broadcast({ type: "machine.updated", machine: this.withSettings(machine) });
         // Coming online, or a session ending, can free a slot for waiting tasks.
         // So can a pause running out, so health reports retry whatever's waiting.
@@ -104,24 +145,31 @@ export class OrgHub extends DurableObject<Env> {
         const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null; state?: string; version?: string | null } };
         if (msg.type === "session.error" && msg.message) this.broadcast({ type: "error", message: `${machine}: ${msg.message}`, requestId: null });
         if (msg.type === "update.status") {
-          const { state = "", version } = msg;
-          const name = (await this.machines()).find((m) => m.id === machine)?.name ?? machine;
-          const text = {
-            up_to_date: `${name}'s runner is up to date${version ? ` (${version})` : ""}.`,
-            updating: `${name} is restarting into runner ${version ?? "the latest release"}.`,
-            failed: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`,
-          }[state];
-          if (text) this.broadcast({ type: "toast", text, taskId: null });
+          // The machine's card shows where it is; a toast only for a failure, which is worth noticing elsewhere.
+          const known = (await this.machines()).find((m) => m.id === machine);
+          const update = fromNotice(this.updates.get(machine), msg, known?.version ?? null);
+          if (update) await this.setUpdate(machine, update, true);
+          if (update?.state === "failed") {
+            const name = known?.name ?? machine;
+            this.broadcast({ type: "toast", text: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`, taskId: null });
+          }
         }
         return new Response(null, { status: 204 });
       }
       case "/removed": {
         const id = await request.text();
-        await this.ctx.storage.delete(`m:${id}`);
+        await this.ctx.storage.delete([`m:${id}`, `u:${id}`]);
+        this.updates.delete(id);
         this.broadcast({ type: "machine.removed", id });
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
+      case "/dev/alarm": {
+        // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
+        if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete("runner:checkedAt");
+        await this.alarm();
+        return Response.json({ alarm: await this.ctx.storage.getAlarm(), now: Date.now() });
+      }
       case "/intake": {
         // A new request from an integration or the API (the Worker checked who's asking).
         const input = (await request.json()) as NewRequest;
@@ -181,12 +229,12 @@ export class OrgHub extends DurableObject<Env> {
     return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs });
   }
 
-  /** Every enrolled machine, live where its hub has reported. */
   private latest: { version: string | null; at: number } | null = null;
+  private changes: { releases: RunnerRelease[]; at: number } | null = null;
 
-  /** The newest released runner, from the releases manifest (the org's bucket, else the feed); read again every ten minutes. */
-  private async runnerLatest(): Promise<string | null> {
-    if (this.latest && Date.now() - this.latest.at < 600_000) return this.latest.version;
+  /** The newest released runner, from the releases manifest (the org's bucket, else the feed); read again every ten minutes, or now when `force`. */
+  private async runnerLatest(force = false): Promise<string | null> {
+    if (!force && this.latest && Date.now() - this.latest.at < 600_000) return this.latest.version;
     let version: string | null = null;
     try {
       const manifest = await release(this.env, "maple-runner/latest.json");
@@ -196,6 +244,32 @@ export class OrgHub extends DurableObject<Env> {
     return version;
   }
 
+  /** The runner releases' notes, newest first (maple-runner/changes.json); read again every ten minutes, or now when `force`. */
+  private async runnerReleases(force = false): Promise<RunnerRelease[]> {
+    if (!force && this.changes && Date.now() - this.changes.at < 600_000) return this.changes.releases;
+    let releases: RunnerRelease[] = [];
+    try {
+      const file = await release(this.env, "maple-runner/changes.json");
+      const list = file ? ((await file.json()) as { releases?: unknown }).releases : null;
+      if (Array.isArray(list)) {
+        releases = list.filter((r): r is RunnerRelease => typeof r?.version === "string")
+          .map((r) => ({ version: r.version, publishedAt: r.publishedAt ?? null, notes: r.notes ?? null }));
+      }
+    } catch {}
+    this.changes = { releases, at: Date.now() };
+    return releases;
+  }
+
+  /** Moves a machine's runner update along, and tells the apps when `broadcast` (else the caller does). */
+  private async setUpdate(id: string, update: MachineUpdate, broadcast = false) {
+    this.updates.set(id, update);
+    await this.ctx.storage.put(`u:${id}`, update);
+    if (!broadcast) return;
+    const machine = (await this.machines()).find((m) => m.id === id);
+    if (machine) this.broadcast({ type: "machine.updated", machine });
+  }
+
+  /** Every enrolled machine, live where its hub has reported. */
   private async machines(): Promise<Machine[]> {
     const live = await this.ctx.storage.list<Machine>({ prefix: "m:" });
     const rows = await machineRows(this.env);
@@ -209,7 +283,7 @@ export class OrgHub extends DurableObject<Env> {
   /** A machine with the factory's settings for it, and the capacity they come to. */
   private withSettings(machine: Machine): Machine {
     const settings = this.store.settings(machine.id);
-    return { ...machine, settings, capacity: this.engine.capacity({ ...machine, settings }) };
+    return { ...machine, settings, capacity: this.engine.capacity({ ...machine, settings }), update: shown(this.updates.get(machine.id)) };
   }
 
   private async members(): Promise<Member[]> {
@@ -304,6 +378,7 @@ export class OrgHub extends DurableObject<Env> {
           secrets: this.secrets.list(),
           repos: this.store.repos(),
           runnerLatest: await this.runnerLatest(),
+          runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
           serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
           protocolVersion: PROTOCOL_VERSION,
@@ -363,6 +438,7 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), from: machine.version ?? null, message: null, at: Date.now() }, true);
         await audit(this.env, client.member.login, "runner.update", msg.machine);
         return;
       }

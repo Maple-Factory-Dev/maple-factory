@@ -235,6 +235,10 @@ struct FactorySidebar: View {
     private func liveMachineRow(_ machine: Wire.Machine) -> some View {
         let mine = machine.owner == client.me?.login
         let owner = LiveAdapter.person(machine.owner, members: client.members)
+        let badge = FactoryClient.sidebarUpdateBadge(machine, latest: client.runnerLatest)
+        let tooltip = (mine ? "Yours · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")"
+            : "Shared by \(owner.firstName) · \(machine.online ? "\(LivePips.sharedCount(machine, tasks: client.tasks)) team slots" : "offline")")
+            + (badge.map { "\n\($0.helpLine)" } ?? "")
         return row(selected: state.destination == .machines && state.focusedTask == nil) {
             Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                 .font(.system(size: 12))
@@ -250,11 +254,19 @@ struct FactorySidebar: View {
             if !machine.online {
                 Image(systemName: "wifi.slash").font(.system(size: 10)).foregroundStyle(Theme.State.cancelled)
             }
+            switch badge {
+            case .available:
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.accent)
+            case .updating:
+                Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+                    .symbolEffect(.rotate, options: .repeat(.continuous))
+            case nil:
+                EmptyView()
+            }
             LivePips(machine: machine, size: 6, sharedOnly: !mine)
         }
         .onTapGesture { state.closeFocus(); state.destination = .machines }
-        .help(mine ? "Yours · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")"
-              : "Shared by \(owner.firstName) · \(machine.online ? "\(LivePips.sharedCount(machine, tasks: client.tasks)) team slots" : "offline")")
+        .help(tooltip)
     }
 
     private func agentRow(_ agent: Agent, state taskState: TaskState, task: String) -> some View {

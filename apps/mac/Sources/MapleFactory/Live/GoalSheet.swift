@@ -17,6 +17,8 @@ struct GoalSheet: View {
     @State private var prefixEdited = false
     @State private var repoFilter = ""
     @State private var team = ""
+    /// The day it's due, or none.
+    @State private var due: Date?
     /// Fields you've typed in, and whether Create was clicked: problems show for those.
     @State private var touched: Set<Field> = []
     @State private var attempted = false
@@ -56,6 +58,7 @@ struct GoalSheet: View {
         _repo = State(initialValue: (goal.repos.isEmpty ? [goal.repo].compactMap { $0 } : goal.repos).joined(separator: ", "))
         _base = State(initialValue: goal.base ?? "")
         _team = State(initialValue: goal.team ?? "")
+        _due = State(initialValue: goal.due.map { Date(timeIntervalSince1970: Double($0) / 1000) })
         _prompts = State(initialValue: goal.prompts ?? LiveAdapter.noPrompts)
         _showPrompts = State(initialValue: goal.prompts.flatMap(LiveAdapter.prompts) != nil)
         _color = State(initialValue: Self.colors.firstIndex { $0.hex.caseInsensitiveCompare(goal.color) == .orderedSame } ?? 0)
@@ -188,6 +191,31 @@ struct GoalSheet: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Due date").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+                HStack(spacing: 10) {
+                    Menu {
+                        if due == nil {
+                            Button("Set a due date") { due = Calendar.current.date(byAdding: .day, value: 14, to: Date()) }
+                        } else {
+                            Button("Remove due date") { due = nil }
+                        }
+                    } label: {
+                        Text(due.map { $0.formatted(.dateTime.month(.abbreviated).day().year()) } ?? "No due date")
+                    }
+                    .fixedSize()
+                    if let day = due {
+                        DatePicker("", selection: Binding(get: { day }, set: { due = $0 }), displayedComponents: .date)
+                            .datePickerStyle(.compact)
+                            .labelsHidden()
+                            .fixedSize()
+                    }
+                    Text(due == nil ? "Optional. Shows on the goal and its timeline." : "Move it later to extend it.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Code").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
                 Picker("", selection: $source) {
@@ -310,6 +338,8 @@ struct GoalSheet: View {
             case "prefix": prefix = value.uppercased(); prefixEdited = true; touched.insert(.prefix)
             case "folder": source = .folder; folder = value
             case "repo": source = .repo; repo = value
+            // `goalfill:due:2026-11-19`, or `goalfill:due:` for none.
+            case "due": due = Self.dayFormat.date(from: value)
             case "create": save()
             default: break
             }
@@ -337,7 +367,7 @@ struct GoalSheet: View {
             color: Self.colors[color].hex,
             summary: summary.trimmed,
             lead: editing?.lead ?? client.me?.login ?? "",
-            due: editing?.due,
+            due: due.map(Self.noonMillis),
             repo: source == .repo ? repos.first : nil,
             repos: source == .repo ? repos : [],
             folder: source == .folder ? folder.trimmed : nil,
@@ -351,6 +381,18 @@ struct GoalSheet: View {
         saving = true
         client.savingGoal = true
         client.send(.goalSave(.init(goal: goal)))
+    }
+
+    private static let dayFormat: DateFormatter = {
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd"
+        return format
+    }()
+
+    /// The picked day at local noon, so it's still that day wherever it's read.
+    private static func noonMillis(_ day: Date) -> UInt64 {
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+        return UInt64(noon.timeIntervalSince1970 * 1000)
     }
 
     /// "Auth overhaul" → "AO"; one word → its first three letters.

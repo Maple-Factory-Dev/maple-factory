@@ -393,6 +393,8 @@ pub enum FolderReply {
 #[serde(rename_all = "snake_case")]
 pub enum UpdateState {
     Checking,
+    /// Downloading and checking the new build (hub-requested runs only).
+    Installing,
     UpToDate,
     Updating,
     Failed,
@@ -727,6 +729,7 @@ mod tests {
         );
         assert_eq!(out(UpdateState::Checking, None, None), serde_json::json!({"type":"update.status","state":"checking","version":null,"message":null}));
         assert_eq!(out(UpdateState::UpToDate, Some("0.1.0"), None)["state"], "up_to_date");
+        assert_eq!(out(UpdateState::Installing, Some("0.2.0"), None)["state"], "installing");
         assert_eq!(out(UpdateState::Failed, None, Some("x"))["state"], "failed");
     }
 

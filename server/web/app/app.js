@@ -6,7 +6,7 @@
 // Every string from the factory goes in with textContent; agents' screen mockups render in an iframe
 // with an empty sandbox (no scripts, no same-origin).
 
-import { markdown } from "./markdown.js";
+import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [] };
@@ -29,7 +29,10 @@ function h(tag, attrs = {}, ...children) {
 const $ = (id) => document.getElementById(id);
 
 const STATES = ["drafting", "planning", "awaitingApproval", "building", "reviewing", "merged"];
-const STATE_TITLE = { drafting: "Drafting", planning: "Planning", awaitingApproval: "Awaiting approval", building: "Building", reviewing: "Reviewing", merged: "Merged", cancelled: "Cancelled" };
+const allTasks = () => [...state.tasks.values()];
+/** Links the factory's task IDs (`MF-12`) in rendered Markdown. */
+const knownTasks = () => taskResolver(state.tasks.values());
+const STATE_TITLE = { drafting: "Drafting", planning: "Planning", awaitingApproval: "Awaiting approval", backlog: "Backlog", building: "Building", reviewing: "Reviewing", merged: "Merged", cancelled: "Cancelled" };
 const name = (login) => {
   if (["planner", "builder", "reviewer", "factory"].includes(login)) return login[0].toUpperCase() + login.slice(1);
   if (login === state.me?.login) return "You";
@@ -264,12 +267,14 @@ const queueLine = (t) => scheduled(t) ? `Starts ${new Date(t.startAt).toLocaleSt
 function tasksView() {
   const drafts = [...state.tasks.values()].filter((t) => t.state === "drafting").sort((a, b) => b.updatedAt - a.updatedAt);
   const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
-  const active = [...state.tasks.values()].filter((t) => !["drafting", "merged", "cancelled"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
+  const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
+  const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
     drafts.length > 0 && [h("h2", {}, `Drafts · ${drafts.length}`), h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))],
     queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
+    backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
     h("h2", {}, `In flight · ${active.length}`),
     active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || STATE_TITLE[t.state]))) : h("div", { class: "card empty" }, "Nothing in flight."),
     done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
@@ -300,7 +305,7 @@ function newTaskView(r) {
 
   // Only the text boxes are kept across re-renders; the selects, checkbox and buttons rebuild from `composer`.
   const title = h("input", { type: "text", "data-keep": "new:title", placeholder: "What should change?", value: composer.title, oninput: (e) => (composer.title = e.target.value) });
-  const brief = markdownEditor({ members: () => state.members, value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
+  const brief = markdownEditor({ members: () => state.members, tasks: allTasks, value: composer.brief, rows: 10, keep: "new:brief", placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => (composer.brief = e.target.value) }, h);
   const goalSelect = h("select", { onchange: (e) => { composer.goal = e.target.value; composer.repo = null; render(); } },
     goals.map((g) => h("option", { value: g.id, selected: g.id === composer.goal }, g.name)));
   const repoSelect = repos.length > 1 && h("select", { onchange: (e) => (composer.repo = e.target.value) },
@@ -427,7 +432,7 @@ function noteView(id) {
     $("note-status").textContent = "Saving…";
   };
   const title = h("input", { type: "text", class: "note-title", placeholder: "Untitled note", value: text.title, oninput: edit("title") });
-  const body = markdownEditor({ members: () => state.members, value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
+  const body = markdownEditor({ members: () => state.members, tasks: allTasks, value: text.body, placeholder: "Jot it down…", minHeight: "50vh", oninput: edit("body"), onblur: () => noteSaves.has(id) && saveNote(id, true) }, h);
   const turn = () => {
     if (!text.title.trim() && !text.body.trim()) return toast("Write something first.");
     if (noteSaves.has(id)) saveNote(id, true);
@@ -496,7 +501,8 @@ function taskView(id) {
   if (!t) return h("div", { class: "card empty" }, state.live ? `There's no task ${id}.` : "Loading…");
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
-  const reached = t.state === "cancelled" ? -1 : STATES.indexOf(t.state);
+  // Parked in the backlog: as far as its plan got.
+  const reached = t.state === "cancelled" ? -1 : t.state === "backlog" ? (t.plan.length ? 2 : 0) : STATES.indexOf(t.state);
   return h("div", {},
     h("div", { class: "row muted" }, h("a", { href: "#/" }, "← Inbox"), h("span", { class: "spacer" }), h("span", { class: "mono" }, t.id)),
     h("h1", {}, t.title),
@@ -513,7 +519,8 @@ function taskView(id) {
     promptCard(t),
     t.hand && handCard(t),
     t.question && !t.hand && questionCard(t),
-    t.state === "drafting" && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
+    // A backlog task that was never planned is still a draft to refine.
+    (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
     t.effort && effortCard(t),
     h("div", { class: "tabs", style: "margin-top:22px" },
       h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, "Overview"),
@@ -651,6 +658,15 @@ function decisions(t) {
       t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
+  if (t.state === "awaitingApproval" || t.state === "drafting") {
+    buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.backlog", id: t.id }) }, "Send to backlog"));
+  }
+  if (t.state === "backlog") {
+    // Nothing runs on it until it's picked up: its plan approved, or planned (again).
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => send({ type: "task.approvePlan", id: t.id }) }, "Approve & build"));
+    buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
+    buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
+  }
   if (t.state === "reviewing") {
     const passed = t.autoReview?.rounds.at(-1)?.verdict === "passed";
     const failing = t.pr?.checks?.some((c) => c.status === "failed");
@@ -673,13 +689,14 @@ function decisions(t) {
     if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, "Start now"));
   }
   if (t.state !== "merged") {
-    // Waiting on its plan's approval, nothing is running to retry; requesting a change plans again.
-    if (t.state !== "drafting" && t.state !== "awaitingApproval") buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
+    // Waiting on its plan's approval or in the backlog, nothing is running to retry; requesting a change plans again.
+    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
     if (t.state !== "cancelled") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
   }
-  const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
+  const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state) || (t.state === "backlog" && t.plan.length > 0);
   const [placeholder, label] = {
     awaitingApproval: ["Ask for a change to the plan…", "Request change"],
+    backlog: ["Ask for a change to the plan; it's planned again…", "Request change"],
     reviewing: ["What should change before it merges? The builder picks it up.", "Request changes"],
   }[t.state] ?? ["Steer it: what should change?", "Request change"];
   return h("div", {},
@@ -717,7 +734,7 @@ function compose(t, key, placeholder, label, submit) {
     submit(text);
     editor.clear();
   };
-  const editor = markdownEditor({ members: () => state.members, placeholder, rows: 2, onsubmit: go }, h);
+  const editor = markdownEditor({ members: () => state.members, tasks: allTasks, placeholder, rows: 2, onsubmit: go }, h);
   return h("div", { class: "compose", "data-keep": `${t.id}:${key}` }, editor, h("div", {}, h("button", { class: "btn small", onclick: go }, label)));
 }
 
@@ -729,7 +746,7 @@ function draftEditor(t) {
   draftEdits.set(t.id, edits);
   const dirty = () => edits.title.trim() !== t.title || edits.brief !== t.brief;
   const title = h("input", { type: "text", placeholder: "Title", value: edits.title, oninput: (e) => { edits.title = e.target.value; mark(); } });
-  const brief = markdownEditor({ members: () => state.members, value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
+  const brief = markdownEditor({ members: () => state.members, tasks: allTasks, value: edits.brief, rows: 8, placeholder: "The brief: what you want and why, what done looks like.", oninput: (e) => { edits.brief = e.target.value; mark(); } }, h);
   const status = h("span", { class: "muted", style: "font-size:13px" });
   const mark = () => (status.textContent = dirty() ? "Unsaved changes" : "");
   mark();
@@ -763,13 +780,14 @@ function draftEditor(t) {
       status,
       h("span", { class: "spacer" }),
       h("button", { class: "btn", onclick: save }, "Save"),
+      t.state === "drafting" && h("button", { class: "btn", onclick: () => save() && send({ type: "task.backlog", id: t.id }) }, "Send to backlog"),
       h("button", { class: "btn plan", onclick: plan }, "Send to planning")));
 }
 
 function overview(t) {
-  const editing = t.state === "drafting" && t.owner === state.me?.login;
+  const editing = (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login;
   return h("div", {},
-    t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h))],
+    t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
     t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map(mockup)],
@@ -780,7 +798,7 @@ function overview(t) {
       t.followUps.map((f) => h("div", { class: "check" }, h("div", {},
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
         f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
-    t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map(doneItem))],
+    t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))],
     timeline(t));
 }
 
@@ -824,14 +842,40 @@ function mockup(m) {
     m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
 }
 
-function doneItem(d) {
+const attesting = new Map(); // task id → { item, note }: the Done when item being attested and the reason typed so far
+
+function doneItem(t, d, i) {
   const ok = d.status === "proven";
+  // The same rule as the server and the Mac app: a person can attest while it's building or in review.
+  const canAttest = !ok && (t.state === "building" || t.state === "reviewing");
+  const open = canAttest && attesting.get(t.id)?.item === i;
   return h("div", { class: "check" },
     h("span", { class: `mark ${ok ? "ok" : d.status === "failed" ? "bad" : "wait"}` }, ok ? "✓" : d.status === "failed" ? "✕" : "○"),
-    h("div", { style: "flex:1;min-width:0" }, d.text,
+    h("div", { style: "flex:1;min-width:0" },
+      h("div", { class: "check-head" }, h("span", { class: "check-text" }, d.text),
+        ok && h("span", { class: "pill" }, d.evidence?.attested ? "Attested" : "Proven"),
+        canAttest && !open && h("button", { class: "btn small", onclick: () => { attesting.set(t.id, { item: i, note: "" }); render(); document.querySelector(`[data-keep="${t.id}:attest"]`)?.focus(); } }, "Attest")),
+      open && attestForm(t, i),
       d.evidence && h("div", { class: "muted", style: "font-size:13.5px" }, d.evidence.attested ? `Attested by @${d.evidence.by}${d.evidence.reason ? ` — ${d.evidence.reason}` : ""}` : d.evidence.summary),
       d.evidence?.output?.length > 0 && h("pre", { class: "out" }, [d.evidence.command && `$ ${d.evidence.command}`, ...d.evidence.output].filter(Boolean).join("\n")),
       d.evidence?.file && proofFile(d.evidence)));
+}
+
+/** Attest to a Done when item yourself, with an optional reason. */
+function attestForm(t, i) {
+  const close = () => { attesting.delete(t.id); render(); };
+  const go = () => {
+    const note = (attesting.get(t.id)?.note ?? "").trim();
+    if (!send({ type: "task.checkedIt", id: t.id, item: i, note: note || null })) return;
+    close();
+  };
+  return h("form", { class: "attest", onsubmit: (e) => { e.preventDefault(); go(); } },
+    h("b", {}, "Attest to this yourself"),
+    h("input", { type: "text", "data-keep": `${t.id}:attest`, placeholder: "Reason (optional)", value: attesting.get(t.id)?.note ?? "",
+      oninput: (e) => { const a = attesting.get(t.id); if (a) a.note = e.target.value; }, onkeydown: (e) => { if (e.key === "Escape") close(); } }),
+    h("div", { class: "row", style: "gap:6px;justify-content:flex-end" },
+      h("button", { class: "btn small", type: "button", onclick: close }, "Cancel"),
+      h("button", { class: "btn small primary", type: "submit" }, "Attest")));
 }
 
 /** `/attachments/<uuid>/<name>`, the shape the server keeps a proof's file under (attachments.ts). */
@@ -853,10 +897,11 @@ function proofFile(e) {
 }
 
 function timeline(t) {
+  const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h)) })),
-    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h)) })),
+    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
     compose(t, "comment", "Comment…", "Comment", (text) => send({ type: "task.comment", id: t.id, text })),

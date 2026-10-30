@@ -21,8 +21,8 @@ use crate::service;
 use crate::sessions::Sessions;
 use crate::update::{self, Check, EXIT_UPDATED, Releases};
 
-/// How often the service looks for a new release.
-const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// How often the service looks for a new release: hourly, like the hub's check that tells the apps.
+const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
 
 pub struct AutoUpdate {
     exe: PathBuf,
@@ -117,7 +117,7 @@ impl AutoUpdate {
             return report(UpdateState::Failed, None, Some("an update is already in progress".into()));
         }
         report(UpdateState::Checking, None, None);
-        let outcome = self.attempt().await;
+        let outcome = self.attempt(|version| report(UpdateState::Installing, Some(version.to_string()), None)).await;
         self.busy.store(false, Ordering::SeqCst);
         match outcome {
             Outcome::UpToDate(latest) => {
@@ -139,7 +139,8 @@ impl AutoUpdate {
         }
     }
 
-    async fn attempt(&self) -> Outcome {
+    /// `installing` hears the version before it's downloaded, so the app can say what's coming.
+    async fn attempt(&self, installing: impl Fn(&str)) -> Outcome {
         let releases = match self.releases.clone().and_then(|url| Releases::new(url).map_err(|e| format!("{e:#}"))) {
             Ok(releases) => releases,
             Err(e) => return Outcome::Failed(None, e),
@@ -150,6 +151,7 @@ impl AutoUpdate {
             Ok(Check::NoBuild(m, target)) => Outcome::Failed(Some(m.version.to_string()), format!("release {} has no build for {target}", m.version)),
             Ok(Check::Available(m, asset)) => {
                 info!("installing maple-runner {} over {}", m.version, self.exe.display());
+                installing(&m.version.to_string());
                 match releases.install(&m, &asset, &self.exe).await {
                     Ok(()) => Outcome::Installed(m.version.to_string()),
                     Err(e) => Outcome::Failed(Some(m.version.to_string()), format!("installing {}: {e:#}", m.version)),
