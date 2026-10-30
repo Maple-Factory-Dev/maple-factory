@@ -236,13 +236,9 @@ struct FactorySidebar: View {
         let mine = machine.owner == client.me?.login
         let owner = LiveAdapter.person(machine.owner, members: client.members)
         let badge = FactoryClient.sidebarUpdateBadge(machine, latest: client.runnerLatest)
-        var tooltip = mine ? "Yours · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")"
-            : "Shared by \(owner.firstName) · \(machine.online ? "\(LivePips.sharedCount(machine, tasks: client.tasks)) team slots" : "offline")"
-        switch badge {
-        case .available(let version): tooltip += "\nRunner update available: \(version)"
-        case .updating: tooltip += "\nUpdating its runner…"
-        case nil: break
-        }
+        let tooltip = (mine ? "Yours · \(machine.online ? "\(machine.sessions.count) sessions" : "offline")"
+            : "Shared by \(owner.firstName) · \(machine.online ? "\(LivePips.sharedCount(machine, tasks: client.tasks)) team slots" : "offline")")
+            + (badge.map { "\n\($0.helpLine)" } ?? "")
         return row(selected: state.destination == .machines && state.focusedTask == nil) {
             Image(systemName: machine.health?.battery != nil ? "laptopcomputer" : "desktopcomputer")
                 .font(.system(size: 12))

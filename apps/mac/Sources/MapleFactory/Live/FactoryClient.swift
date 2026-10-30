@@ -1079,6 +1079,14 @@ enum SidebarUpdateBadge: Equatable {
     case available(String)
     /// Checking, installing or restarting.
     case updating
+
+    /// The line it adds to the row's tooltip.
+    var helpLine: String {
+        switch self {
+        case .available(let version): "Runner update available: \(version)"
+        case .updating: "Updating its runner…"
+        }
+    }
 }
 
 /// A machine's runner, as far as updating it goes.

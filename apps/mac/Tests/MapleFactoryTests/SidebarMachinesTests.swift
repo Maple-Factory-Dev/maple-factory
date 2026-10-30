@@ -61,6 +61,7 @@ import Testing
 
     @Test func outdatedShowsTheBadge() {
         #expect(FactoryClient.sidebarUpdateBadge(runner("0.40.0"), latest: "0.41.0") == .available("0.41.0"))
+        #expect(SidebarUpdateBadge.available("0.41.0").helpLine == "Runner update available: 0.41.0")
     }
 
     @Test func currentShowsNoBadge() {
