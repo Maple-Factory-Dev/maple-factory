@@ -6,6 +6,9 @@ struct OrgSettingsView: View {
     @Environment(FactoryClient.self) private var client
     @AppStorage("settingsTab") private var tab = "repos"
 
+    /// The Settings window's size, here and headless.
+    static let size = CGSize(width: 860, height: 620)
+
     enum Pane: String, CaseIterable {
         case general, account, appearance, repos, secrets, people, prompts, merging, runner, notifications, updates
 
@@ -40,55 +43,169 @@ struct OrgSettingsView: View {
             case .updates: "arrow.down.circle"
             }
         }
+
+        /// The sidebar tile's color behind the icon.
+        var color: Color {
+            switch self {
+            case .general: .gray
+            case .account: .blue
+            case .appearance: .pink
+            case .repos: .brown
+            case .secrets: .yellow
+            case .people: .blue
+            case .prompts: .purple
+            case .merging: .green
+            case .runner: .gray
+            case .notifications: .red
+            case .updates: .blue
+            }
+        }
     }
 
-    private var pane: Binding<Pane?> {
-        Binding(get: { Pane(rawValue: tab) ?? .repos }, set: { tab = ($0 ?? .repos).rawValue })
+    struct SidebarGroup: Equatable {
+        let title: String?
+        let panes: [Pane]
     }
+
+    /// Account is the header at the top of the sidebar; Updates is pinned to its foot.
+    static let headerPane = Pane.account
+    static let sidebarGroups = [
+        SidebarGroup(title: nil, panes: [.general]),
+        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .merging]),
+        SidebarGroup(title: "This Mac", panes: [.runner, .notifications]),
+    ]
+    static let footerPane = Pane.updates
+    /// Every pane the sidebar shows, top to bottom.
+    static var sidebarPanes: [Pane] { [headerPane] + sidebarGroups.flatMap(\.panes) + [footerPane] }
+
+    private var current: Pane { Pane(rawValue: tab) ?? .repos }
 
     var body: some View {
         HStack(spacing: 0) {
-            List(selection: pane) {
-                row(.general)
-                Section("Factory") {
-                    ForEach([Pane.account, .appearance, .repos, .secrets, .people, .prompts, .merging], id: \.self) { row($0) }
-                }
-                Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
-            }
-            .listStyle(.sidebar)
-            .frame(width: 190)
-            Divider()
+            sidebar
+            Rectangle().fill(Theme.stroke).frame(width: 1)
             Group {
-                // Repositories, Secrets and People are lists, which scroll themselves.
-                switch Pane(rawValue: tab) ?? .repos {
-                case .general: ScrollView { GeneralSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
-                case .account: ScrollView { AccountSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
-                case .appearance: ScrollView { AppearanceSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                switch current {
+                case .general: GeneralSettings()
+                case .account: AccountSettings()
+                case .appearance: AppearanceSettings()
                 case .repos: RepositoriesSettings()
                 case .secrets: SecretsSettings()
                 case .people: PeopleSettings()
-                case .prompts: ScrollView { PromptSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
-                case .merging: ScrollView { MergingSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
-                case .runner: ScrollView { RunnerSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
-                case .notifications: ScrollView { NotificationSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
-                case .updates: ScrollView { UpdateSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                case .prompts: PromptSettings()
+                case .merging: MergingSettings()
+                case .runner: RunnerSettings()
+                case .notifications: NotificationSettings()
+                case .updates: UpdateSettings()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(SettingsKit.paneBG)
         }
-        .navigationTitle((Pane(rawValue: tab) ?? .repos).title)
-        .frame(width: 780, height: 560)
+        .ignoresSafeArea()
+        .background(HiddenTitleBar())
+        .navigationTitle(current.title)
+        .frame(width: Self.size.width, height: Self.size.height)
     }
 
-    private func row(_ pane: Pane) -> some View {
-        HStack {
-            Label(pane.title, systemImage: pane.icon)
-            Spacer()
-            if pane == .runner, let machine = client.thisMac {
-                Circle().fill(machine.online ? Theme.State.merged : Theme.textFaint).frame(width: 6, height: 6)
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Room for the traffic lights.
+            Color.clear.frame(height: 40)
+            accountHeader.padding(.horizontal, 10)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(Self.sidebarGroups.enumerated()), id: \.offset) { _, group in
+                        if let title = group.title {
+                            Text(title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.textFaint)
+                                .padding(.leading, 8)
+                                .padding(.top, 12)
+                                .padding(.bottom, 3)
+                        }
+                        ForEach(group.panes, id: \.self) { row($0) }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
             }
+            .scrollIndicators(.never)
+            Hairline().padding(.horizontal, 14)
+            row(Self.footerPane).padding(10)
         }
-        .tag(pane)
+        .frame(width: 220)
+        .background(SettingsKit.sidebarBG)
+    }
+
+    /// Who's signed in and to which factory; a click opens Account.
+    private var accountHeader: some View {
+        Button { tab = Self.headerPane.rawValue } label: {
+            HStack(spacing: 10) {
+                if let me = client.me {
+                    AgentAvatar(agent: LiveAdapter.person(me.login, members: client.members), size: 34)
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.gray.gradient))
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(client.me.map { $0.name ?? "@\($0.login)" } ?? "Not signed in")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text(client.workspaceName)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 9).fill(current == Self.headerPane ? Self.selection : .clear))
+        }
+        .buttonStyle(.plain)
+        .help(client.me.map { "@\($0.login) · \(client.workspaceName)" } ?? "Account")
+    }
+
+    private static let selection = Color(light: .black.opacity(0.08), dark: .white.opacity(0.1))
+
+    private func row(_ pane: Pane) -> some View {
+        Button { tab = pane.rawValue } label: {
+            HStack(spacing: 9) {
+                SettingsTile(icon: pane.icon, color: pane.color)
+                Text(pane.title).font(.system(size: 13)).foregroundStyle(Theme.text)
+                Spacer(minLength: 0)
+                if pane == .runner, let machine = client.thisMac {
+                    Circle().fill(machine.online ? Theme.State.merged : Theme.textFaint).frame(width: 6, height: 6)
+                        .help(machine.online ? "Online" : "Offline")
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 8).fill(current == pane ? Self.selection : .clear))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The Settings window without a title bar: the sidebar runs up under the traffic lights.
+private struct HiddenTitleBar: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { View() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class View: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.styleMask.insert(.fullSizeContentView)
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.toolbar = nil
+        }
     }
 }
 
