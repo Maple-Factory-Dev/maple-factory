@@ -8,7 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { maySignIn, toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, revokeMember, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
@@ -175,6 +175,11 @@ export class OrgHub extends DurableObject<Env> {
         await this.ctx.storage.delete([`m:${id}`, `u:${id}`]);
         this.updates.delete(id);
         this.broadcast({ type: "machine.removed", id });
+        return new Response(null, { status: 204 });
+      }
+      case "/revoked": {
+        // auth.ts revoked someone (they left the org): their apps and terminals close now.
+        await this.cutOff(await request.text());
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
@@ -370,6 +375,29 @@ export class OrgHub extends DurableObject<Env> {
     }
     this.broadcast({ type: "members.updated", members });
     return null;
+  }
+
+  /** An admin's "Revoke access": signs someone out everywhere now. The reason it's refused, if it is. */
+  private async revokeAccess(by: Member, login: string): Promise<string | null> {
+    if (by.role !== "admin") return "Only admins can revoke someone's access.";
+    const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ? COLLATE NOCASE").bind(login).first<MemberRow>();
+    if (!row) return `${login} hasn't signed in to this factory.`;
+    const target = toMember(row);
+    if (target.login === by.login) return "You can't revoke your own access.";
+    if (target.adminSource === "github") return `${target.login} owns the GitHub organization; remove them on GitHub.`;
+    await revokeMember(this.env, row.login, by.login, false);
+    await this.cutOff(row.login);
+    return null;
+  }
+
+  /** Closes a revoked person's feed sockets and terminals, and tells everyone the members changed. */
+  private async cutOff(login: string) {
+    for (const ws of this.ctx.getWebSockets("client")) {
+      if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
+    }
+    await Promise.all((await machineRows(this.env)).map((m) =>
+      machineHub(this.env, m.id).fetch(`https://hub/drop-viewers?login=${encodeURIComponent(login)}`, { method: "POST" })));
+    this.broadcast({ type: "members.updated", members: await this.members() });
   }
 
   private async recentEnds(): Promise<EndedSession[]> {
@@ -594,6 +622,11 @@ export class OrgHub extends DurableObject<Env> {
           if (!(e instanceof FactoryError)) console.error("factory:", e);
           this.send(ws, { type: "error", message: e instanceof FactoryError ? e.message : "Something went wrong reading that log.", requestId: `checkLog:${msg.id}/${msg.check}` });
         }
+        return;
+      }
+      case "members.revoke": {
+        const error = await this.revokeAccess(client.member, msg.login);
+        if (error) this.send(ws, { type: "error", message: error, requestId: null });
         return;
       }
       case "admins.grant":

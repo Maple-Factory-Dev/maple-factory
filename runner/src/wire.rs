@@ -2437,6 +2437,11 @@ pub enum ClientMessage {
     AdminsRevoke {
         login: String,
     },
+    /// Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).
+    #[serde(rename = "members.revoke")]
+    MembersRevoke {
+        login: String,
+    },
     /// Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.
     #[serde(rename = "connectors.save")]
     ConnectorsSave {
