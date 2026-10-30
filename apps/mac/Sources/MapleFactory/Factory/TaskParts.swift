@@ -129,6 +129,10 @@ struct TaskActionButtons: View {
             }
             Divider()
         } else if task.state == .drafting {
+            // Its place among the goal's drafts; it stays a draft.
+            Button { appState.moveDraftToTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
+            Button { appState.moveDraftToBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
+            Divider()
             Button { appState.queue(task.id, before: nil) } label: { Label("Queue", systemImage: "list.number") }
             if let schedule {
                 Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
