@@ -44,7 +44,7 @@ function factory(state: string, worker: Record<string, unknown> | null = null) {
   const engine = new Engine({ MACHINE } as never, store, hooks as never, { forTask: () => {} } as never, {} as never);
   store.saveTask({
     id: "MF-1", goal: "g", title: "Fix it", state, owner: "me", brief: "", createdAt: 1, updatedAt: 1, plan: [], planVersion: 1, doneWhen: [],
-    approvals: [{ who: "boss", at: 1 }], approvalsNeeded: 1, reviews: [], reviewsNeeded: 1, comments: [], changes: [], events: [], tickets: [],
+    approvals: ["boss"], approvalsNeeded: 1, reviews: [], reviewsNeeded: 1, comments: [], changes: [], events: [], tickets: [],
     mockups: [{ id: "m1", title: "Merge banner", kind: "screen", url: null, html: "<p>hi</p>", lines: [], notes: [], status: "proposed", version: 1, differences: [] }],
     shareable: false, agent: "claude", machine: null, worker,
   } as never);
