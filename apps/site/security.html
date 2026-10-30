@@ -78,7 +78,7 @@
             <li>GitHub organization owners are admins. An admin can make another member an admin in the factory. That changes their role, but doesn’t let in anyone who couldn’t already sign in.</li>
             <li>Only admins can add or remove repos, set or delete repo secrets, change worktree scripts, the risk policy, prompts and MCP connectors, or see usage statistics.</li>
             <li>Only a machine’s owner or an admin can start or end sessions on that machine, change its settings, or remove it.</li>
-            <li>Only a machine’s owner or an admin can open, type into or resize the live terminal of a session on that machine. Taking back someone’s admin grant closes the terminals they opened as an admin.</li>
+            <li>Only a machine’s owner or an admin can open, type into or resize the live terminal of a session on that machine, unless they share that one session with chosen teammates, to watch or to type too. A watch-only teammate’s keystrokes and resizes are dropped. Sharing and unsharing are recorded in the audit log, unsharing closes the teammate’s terminal, and a share ends with the session or when that teammate’s access is revoked. Taking back someone’s admin grant closes the terminals they opened as an admin.</li>
           </ul>
 
           <h3>How the Mac app and runners authenticate</h3>
