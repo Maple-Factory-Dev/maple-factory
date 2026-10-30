@@ -107,6 +107,11 @@ struct FactorySidebar: View {
             }
             .scrollIndicators(.never)
 
+            // Settings, a click away from anywhere; its menu jumps straight to a pane.
+            Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, -12)
+            SidebarSettingsFooter()
+                .padding(.vertical, 6)
+
             // Pinned under the scroll area, so it's always at the very bottom while an update is in play.
             UpdateFooter()
                 .animation(.easeOut(duration: 0.2), value: Updater.shared.phase.showsInFooter)
@@ -291,6 +296,81 @@ struct FactorySidebar: View {
             .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.fillSelected : .clear))
             .contentShape(Rectangle())
     }
+}
+
+/// The cog at the foot of the sidebar: a click opens Settings, a right-click picks the pane.
+struct SidebarSettingsFooter: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "gearshape").font(.system(size: 12)).frame(width: 16)
+            Text("Settings")
+            Spacer()
+            Text("⌘,")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textFaint)
+        }
+        .font(Theme.uiFont)
+        .foregroundStyle(Theme.text.opacity(0.8))
+        .padding(.horizontal, 9)
+        .frame(height: 30)
+        .contentShape(Rectangle())
+        .opensSettings()
+    }
+}
+
+/// Which Settings panes the sidebar's cog offers: the factory's own panes for admins, then everyone's.
+enum SidebarSettings {
+    typealias Pane = OrgSettingsView.Pane
+
+    static let factoryPanes: [Pane] = [.repos, .secrets, .people, .prompts, .merging]
+    static let personalPanes: [Pane] = [.account, .runner, .notifications]
+
+    static func panes(admin: Bool) -> [Pane] {
+        (admin ? factoryPanes : []) + personalPanes
+    }
+
+    /// The tab a plain click opens: admins land on their last factory pane (Repositories at first),
+    /// everyone else on wherever they last were.
+    static func clickTab(current: String, admin: Bool) -> String {
+        guard admin else { return current }
+        return Pane(rawValue: current).map(factoryPanes.contains) == true ? current : Pane.repos.rawValue
+    }
+}
+
+/// A click opens Settings and a right-click jumps to a pane, shared by the sidebar footer and the rail.
+private struct OpensSettings: ViewModifier {
+    @Environment(FactoryClient.self) private var client
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "repos"
+
+    /// Signed out is the demo, which shows everything (as Statistics does).
+    private var admin: Bool { !client.isSignedIn || client.isAdmin }
+
+    func body(content: Content) -> some View {
+        content
+            .onTapGesture { open(SidebarSettings.clickTab(current: settingsTab, admin: admin)) }
+            .contextMenu {
+                if admin {
+                    Section("Factory") { buttons(SidebarSettings.factoryPanes) }
+                }
+                Section("You") { buttons(SidebarSettings.personalPanes) }
+            }
+    }
+
+    private func buttons(_ panes: [SidebarSettings.Pane]) -> some View {
+        ForEach(panes, id: \.self) { pane in
+            Button { open(pane.rawValue) } label: { Label(pane.title, systemImage: pane.icon) }
+        }
+    }
+
+    private func open(_ tab: String) {
+        settingsTab = tab
+        openSettings()
+    }
+}
+
+extension View {
+    func opensSettings() -> some View { modifier(OpensSettings()) }
 }
 
 /// Where an app update is, at the foot of the sidebar: checking, on offer, downloading, ready to relaunch.

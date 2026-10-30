@@ -119,6 +119,13 @@ struct SidebarRail: View {
 
             updateItem
 
+            item("Settings", detail: "⌘,") {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.text.opacity(0.75))
+            }
+            .opensSettings()
+
             item("Expand sidebar", detail: "⌃⌘S") {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13))

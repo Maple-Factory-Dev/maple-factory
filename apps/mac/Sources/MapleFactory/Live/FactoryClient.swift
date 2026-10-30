@@ -67,8 +67,9 @@ import Security
     private(set) var serverUpdate: Wire.ServerUpdate?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
+    var isAdmin: Bool { me?.role == "admin" }
     /// Admins see Statistics; signed out, the mockup shows it.
-    var canSeeStats: Bool { !isSignedIn || me?.role == "admin" }
+    var canSeeStats: Bool { !isSignedIn || isAdmin }
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
