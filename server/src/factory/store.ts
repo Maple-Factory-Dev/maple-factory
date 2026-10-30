@@ -27,6 +27,11 @@ export interface TaskPrivate {
   mergeHead?: string | null;
   /** Times the factory sent it back to fix a merge on its own (autoFixMerges). */
   mergeFixes?: number;
+  /** A dry-run merge (`task.merge_check`) waiting for its answer: the head it checks, the task whose
+   *  merge prompted it (none: the check before its own auto-merge), and when it was sent. */
+  mergeCheck?: { head: string | null; since: string | null; at: number } | null;
+  /** The head the last pre-merge check answered for, so its auto-merge goes ahead. */
+  mergeChecked?: string | null;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.
   restarts: number;
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
