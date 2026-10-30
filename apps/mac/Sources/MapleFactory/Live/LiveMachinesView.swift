@@ -452,21 +452,134 @@ struct LiveMachineCard: View {
     }
 
     private func agents(_ health: Wire.Health) -> some View {
-        HStack(spacing: 6) {
-            ForEach(health.agents, id: \.name) { agent in
-                HStack(spacing: 4) {
-                    Image(systemName: agent.loggedIn ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .foregroundStyle(agent.loggedIn ? Theme.State.merged : Theme.State.awaitingApproval)
-                    Text(agentTitle(agent.name))
-                    if let version = agent.version { Text(version).foregroundStyle(Theme.textFaint) }
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textMuted)
-                .padding(.horizontal, 8)
-                .frame(height: 22)
-                .background(Capsule().fill(Theme.fill))
-                .help(agent.loggedIn ? "\(agentTitle(agent.name)) is signed in" : "\(agentTitle(agent.name)) isn't signed in on this machine")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(health.agents, id: \.name) { agent in agentPill(agent) }
             }
+            ForEach(health.agents, id: \.name) { agent in
+                if isMine, let login = client.agentLogin(machine: machine.id, agent: agent.name) {
+                    AgentLoginPanel(machine: machine.id, status: login)
+                }
+            }
+        }
+    }
+
+    private func agentPill(_ agent: Wire.AgentInstall) -> some View {
+        // Its owner can sign Codex in from here; anyone else's device code would sign the machine into their account.
+        let canSignIn = isMine && agent.name == "codex" && !agent.loggedIn && client.agentLogin(machine: machine.id, agent: agent.name) == nil
+        return HStack(spacing: 4) {
+            Image(systemName: agent.loggedIn ? "checkmark.circle.fill" : "exclamationmark.circle")
+                .foregroundStyle(agent.loggedIn ? Theme.State.merged : Theme.State.awaitingApproval)
+            Text(agentTitle(agent.name))
+            if let version = agent.version { Text(version).foregroundStyle(Theme.textFaint) }
+            if canSignIn {
+                Button("Sign in") { client.signIn(machine: machine.id, agent: agent.name) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.leading, 2)
+            }
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(Theme.textMuted)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(Theme.fill))
+        .help(agent.loggedIn ? "\(agentTitle(agent.name)) is signed in" : canSignIn ? "Sign \(agentTitle(agent.name)) in on this machine with a one-time code" : "\(agentTitle(agent.name)) isn't signed in on this machine")
+    }
+}
+
+/// An agent sign-in on your machine: the link and one-time code `codex login --device-auth` printed,
+/// while it waits for you to finish in the browser, then how it went.
+struct AgentLoginPanel: View {
+    @Environment(FactoryClient.self) private var client
+    let machine: String
+    let status: Wire.AgentLoginStatus
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("Sign in to \(agentTitle(status.agent))").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+                Spacer()
+                if status.state == .starting || status.state == .waiting {
+                    Button("Cancel") { client.cancelSignIn(machine: machine, agent: status.agent) }
+                        .controlSize(.small)
+                } else {
+                    Button { client.dismissSignIn(machine: machine, agent: status.agent) } label: {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close")
+                }
+            }
+            content
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill))
+        .task(id: status.state) {
+            // Success needs only a moment: the pill turning green says the rest.
+            guard status.state == .done else { return }
+            try? await Task.sleep(for: .seconds(4))
+            client.dismissSignIn(machine: machine, agent: status.agent)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch status.state {
+        case .waiting:
+            if let link = status.url, let url = URL(string: link) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("1. Open this link and sign in to your account").foregroundStyle(Theme.textMuted)
+                    Link(link, destination: url).foregroundStyle(Theme.accent)
+                }
+                .font(.system(size: 11.5))
+            }
+            if let code = status.code {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("2. Enter this one-time code").font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                    HStack(spacing: 10) {
+                        Text(code)
+                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                        Button(copied ? "Copied" : "Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(code, forType: .string)
+                            copied = true
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                Text("Waiting for you to finish in the browser…")
+                if let expires = status.expiresAt {
+                    Text("· expires \(Date(timeIntervalSince1970: Double(expires) / 1000).formatted(date: .omitted, time: .shortened))").foregroundStyle(Theme.textFaint)
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.textMuted)
+            Text("Only use this code if you started this sign-in. Anyone who enters it signs this machine into their account.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textFaint)
+        case .done:
+            Label("Signed in", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.State.merged)
+        case .failed, .cancelled:
+            Label(status.message ?? (status.state == .failed ? "Sign-in didn't finish." : "Sign-in was cancelled."), systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(status.state == .failed ? Theme.State.cancelled : Theme.textMuted)
+                .textSelection(.enabled)
+        default:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                Text("Asking the machine for a code…")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.textMuted)
         }
     }
 }
