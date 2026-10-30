@@ -270,12 +270,20 @@ impl Sessions {
         }
         // A task's repo secrets: in a one-shot file outside its worktree that the pane's shell reads
         // and removes, so they're only ever in the pane's processes, not tmux's session environment.
+        // Codex's connector secrets go the same way (`agents::connector_args` only names them).
         let secrets = secrets.filter(|(_, env)| !env.is_empty());
-        if let Some((repo, env)) = secrets {
-            let file = crate::secrets::env_file(id, env).inspect_err(|_| {
+        let mut env: Vec<(String, String)> = secrets.map(|(_, env)| env.to_vec()).unwrap_or_default();
+        if agent_name == "codex" && agent.hooks {
+            env.extend(agents::codex_connector_env(connectors));
+        }
+        let sourced = !env.is_empty();
+        if sourced {
+            let file = crate::secrets::env_file(id, &env).inspect_err(|_| {
                 self.ports.lock().unwrap().remove(&id);
             })?;
             args.extend(["-e".into(), format!("{}={}", crate::secrets::FILE_ENV, file.display())]);
+        }
+        if let Some((repo, env)) = secrets {
             meta.push((crate::secrets::OPTION, env.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" ")));
             meta.push((crate::secrets::REPO_OPTION, repo.to_string()));
         }
@@ -304,7 +312,7 @@ impl Sessions {
         } else {
             agents::argv(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images, prompt)
         };
-        args.extend(if secrets.is_some() { crate::secrets::source_first(argv) } else { argv });
+        args.extend(if sourced { crate::secrets::source_first(argv) } else { argv });
         // The browser decides the size; an SSH client attaching later doesn't resize it.
         // (Set per window: `window-size manual` in the startup config crashes tmux 3.6a.)
         args.extend([";".into(), "set-option".into(), "-w".into(), "-t".into(), name.clone(), "window-size".into(), "manual".into()]);

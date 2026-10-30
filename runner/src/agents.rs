@@ -210,28 +210,43 @@ impl Unattended {
 
 /// The factory's MCP connectors for a session, beside the runner's own `maple` server (`Hooks::agent_args`):
 /// - Claude Code: a second `--mcp-config=<file>`, the session's own file (`Hooks::write_session_mcp_config`).
-/// - Codex: `-c mcp_servers.<name>.…` overrides, TOML values (JSON's string quoting is valid TOML):
-///   `command`, `args` and `env` for stdio, `url` and `http_headers` for http.
+/// - Codex: `-c mcp_servers.<name>.…` overrides, TOML values (JSON's string quoting is valid TOML), that
+///   only name the secrets: their values reach the pane through its one-shot env file (`codex_connector_env`,
+///   `secrets::env_file`), never the command line, where any local user could read them with `ps`.
+///   Stdio: `/bin/sh -c 'exec env -u MAPLE_MCP_… "JIRA_API_TOKEN=$MAPLE_MCP_…" "$0" "$@"' <command> <args…>`
+///   hands each secret to the server under its own key, with `env_vars` letting those variables through
+///   Codex (whose MCP servers otherwise get only a minimal environment). Http: `url` and `env_http_headers`.
 pub fn connector_args(agent: &str, session_config: Option<&std::path::Path>, connectors: &[McpConnector]) -> Vec<String> {
     match agent {
         "claude" => session_config.map(|p| format!("--mcp-config={}", p.to_string_lossy())).into_iter().collect(),
         "codex" => {
             let toml = |v: &str| serde_json::Value::String(v.into()).to_string();
-            let table = |m: &std::collections::BTreeMap<String, String>| {
-                format!("{{{}}}", m.iter().map(|(k, v)| format!("{}={}", toml(k), toml(v))).collect::<Vec<_>>().join(","))
-            };
+            let list = |items: &mut dyn Iterator<Item = String>| format!("[{}]", items.map(|a| toml(&a)).collect::<Vec<_>>().join(","));
             let mut args = vec![];
             for c in connectors {
                 let key = |field: &str| format!("mcp_servers.{}.{field}", c.name);
                 let set = match c.transport {
                     McpTransport::Stdio => {
                         let Some(command) = &c.command else { continue };
-                        let list = format!("[{}]", c.args.iter().map(|a| toml(a)).collect::<Vec<_>>().join(","));
-                        vec![format!("{}={}", key("command"), toml(command)), format!("{}={list}", key("args")), format!("{}={}", key("env"), table(&c.env))]
+                        if c.env.is_empty() {
+                            vec![format!("{}={}", key("command"), toml(command)), format!("{}={}", key("args"), list(&mut c.args.iter().cloned()))]
+                        } else {
+                            // sh -c 'exec env -u V1 "K1=$V1" … "$0" "$@"' <command> <args…>: keys are [A-Za-z0-9_-], safe in quotes.
+                            let renames: Vec<String> = c.env.keys().map(|k| (k, connector_env_name(&c.name, k))).flat_map(|(k, v)| [format!("-u {v}"), format!("\"{k}=${v}\"")]).collect();
+                            let script = format!(r#"exec env {} "$0" "$@""#, renames.join(" "));
+                            let argv = ["-c".to_string(), script, command.clone()].into_iter().chain(c.args.iter().cloned());
+                            let vars = c.env.keys().map(|k| connector_env_name(&c.name, k));
+                            vec![
+                                format!("{}={}", key("command"), toml("/bin/sh")),
+                                format!("{}={}", key("args"), list(&mut argv.into_iter())),
+                                format!("{}={}", key("env_vars"), list(&mut vars.into_iter())),
+                            ]
+                        }
                     }
                     McpTransport::Http => {
                         let Some(url) = &c.url else { continue };
-                        vec![format!("{}={}", key("url"), toml(url)), format!("{}={}", key("http_headers"), table(&c.headers))]
+                        let headers = c.headers.keys().map(|h| format!("{}={}", toml(h), toml(&connector_env_name(&c.name, h)))).collect::<Vec<_>>().join(",");
+                        vec![format!("{}={}", key("url"), toml(url)), format!("{}={{{headers}}}", key("env_http_headers"))]
                     }
                     McpTransport::Other => continue,
                 };
@@ -243,6 +258,28 @@ pub fn connector_args(agent: &str, session_config: Option<&std::path::Path>, con
         }
         _ => vec![],
     }
+}
+
+/// The variable a connector's secret waits in for Codex: `MAPLE_MCP_<NAME>__<KEY>`, uppercase, anything
+/// but letters and digits as `_`.
+pub fn connector_env_name(connector: &str, key: &str) -> String {
+    let clean = |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect::<String>();
+    format!("MAPLE_MCP_{}__{}", clean(connector), clean(key))
+}
+
+/// The connectors' secrets as the variables `connector_args` names for Codex, for the pane's env file.
+pub fn codex_connector_env(connectors: &[McpConnector]) -> Vec<(String, String)> {
+    connectors
+        .iter()
+        .flat_map(|c| {
+            let secrets = match c.transport {
+                McpTransport::Stdio => &c.env,
+                McpTransport::Http => &c.headers,
+                McpTransport::Other => return vec![],
+            };
+            secrets.iter().map(|(k, v)| (connector_env_name(&c.name, k), v.clone())).collect()
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -587,22 +624,37 @@ mod tests {
         assert_eq!(claude.iter().filter(|a| a.starts_with("--mcp-config=")).count(), 2);
         // No connectors, no file: nothing more.
         assert!(connector_args("claude", None, &[]).is_empty());
-        // Codex: -c overrides per connector, TOML-quoted.
+        // Codex: -c overrides per connector, TOML-quoted, that name the secrets but never hold them.
+        let codex = connector_args("codex", None, &connectors);
         assert_eq!(
-            connector_args("codex", None, &connectors),
+            codex,
             [
                 "-c",
-                "mcp_servers.jira.command=\"npx\"",
+                "mcp_servers.jira.command=\"/bin/sh\"",
                 "-c",
-                "mcp_servers.jira.args=[\"-y\",\"mcp-atlassian\"]",
+                r#"mcp_servers.jira.args=["-c","exec env -u MAPLE_MCP_JIRA__JIRA_API_TOKEN \"JIRA_API_TOKEN=$MAPLE_MCP_JIRA__JIRA_API_TOKEN\" \"$0\" \"$@\"","npx","-y","mcp-atlassian"]"#,
                 "-c",
-                "mcp_servers.jira.env={\"JIRA_API_TOKEN\"=\"t\\\"ok\\\"en\"}",
+                r#"mcp_servers.jira.env_vars=["MAPLE_MCP_JIRA__JIRA_API_TOKEN"]"#,
                 "-c",
                 "mcp_servers.docs.url=\"https://mcp.example.com/mcp\"",
                 "-c",
-                "mcp_servers.docs.http_headers={\"Authorization\"=\"Bearer abc\"}",
+                r#"mcp_servers.docs.env_http_headers={"Authorization"="MAPLE_MCP_DOCS__AUTHORIZATION"}"#,
             ]
         );
+        assert!(!codex.iter().any(|a| a.contains("ok\\\"en") || a.contains("Bearer abc")), "no secret on the command line: {codex:?}");
+        // Their values go to the pane's env file under those names.
+        assert_eq!(
+            codex_connector_env(&connectors),
+            [
+                ("MAPLE_MCP_JIRA__JIRA_API_TOKEN".to_string(), "t\"ok\"en".to_string()),
+                ("MAPLE_MCP_DOCS__AUTHORIZATION".to_string(), "Bearer abc".to_string()),
+            ]
+        );
+        // A stdio connector without secrets runs its command directly.
+        let mut plain = connector("plain", McpTransport::Stdio, false);
+        plain.env.clear();
+        assert_eq!(connector_args("codex", None, &[plain])[1], "mcp_servers.plain.command=\"npx\"");
+        assert_eq!(connector_env_name("my-docs", "X-Api-Key"), "MAPLE_MCP_MY_DOCS__X_API_KEY");
         // Other agents get nothing.
         assert!(connector_args("aider", Some(file), &connectors).is_empty());
     }
