@@ -39,6 +39,13 @@ button, textarea, input, select { font: inherit; color: inherit; }
 main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
 h1 { font-size: 26px; line-height: 1.2; margin: 6px 0 8px; letter-spacing: -0.01em; }
 h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+/* A collapsible section's heading: the h2 as-is, clickable, with a chevron that turns when it's closed. */
+.section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; margin: 0; border: 0; background: none; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: 4px; }
+.section-head:hover { color: var(--text); }
+.section-head:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+.section-head .chevron { display: inline-block; width: 1em; text-align: center; transition: transform 0.15s; }
+.section.closed .chevron { transform: rotate(-90deg); }
+.section.closed h2 { margin-bottom: 4px; }
 .muted { color: var(--muted); }
 .agent-icon { width: 1em; height: 1em; vertical-align: -0.125em; margin-right: 0.3em; flex: none; }
 .faint { color: var(--faint); }
