@@ -179,8 +179,19 @@ export async function installedRepos(app: GitHubApp, allowed: (login: string) =>
     for (let page = 1; ; page++) {
       const list = await call(app, "GET", `/installation/repositories?per_page=100&page=${page}`, `token ${token}`);
       if (!list.ok) throw await failure(list, "listing an installation's repos");
-      const { repositories } = (await list.json()) as { repositories: { full_name: string; default_branch?: string; private?: boolean }[] };
-      for (const r of repositories) repos.push({ name: r.full_name, defaultBranch: r.default_branch ?? null, isPrivate: r.private ?? false, source: "github" });
+      const { repositories } = (await list.json()) as {
+        repositories: { full_name: string; default_branch?: string; private?: boolean; description?: string | null; owner?: { avatar_url?: string } | null }[];
+      };
+      for (const r of repositories) {
+        repos.push({
+          name: r.full_name,
+          defaultBranch: r.default_branch ?? null,
+          isPrivate: r.private ?? false,
+          source: "github",
+          description: r.description || null,
+          ownerAvatarUrl: r.owner?.avatar_url ?? null,
+        });
+      }
       if (repositories.length < 100) break;
     }
   }

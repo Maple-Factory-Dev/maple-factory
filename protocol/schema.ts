@@ -451,8 +451,13 @@ export const structs: Record<string, Struct> = {
   Footprint: { fields: { files: "u32", lines: "u32", estimated: "bool" } },
   OrgRepo: {
     doc: "A repository the org's goals can work in.",
-    fields: { name: "string", defaultBranch: "string?", isPrivate: "bool", source: "RepoSource" },
-    fieldDocs: { name: "GitHub owner/name.", source: "Granted to the GitHub App, or added by hand (no app, or not yet granted)." },
+    fields: { name: "string", defaultBranch: "string?", isPrivate: "bool", source: "RepoSource", description: "string?", ownerAvatarUrl: "string?" },
+    fieldDocs: {
+      name: "GitHub owner/name.",
+      source: "Granted to the GitHub App, or added by hand (no app, or not yet granted).",
+      description: "GitHub's description of the repo. None: added by hand, it has none, or an older server.",
+      ownerAvatarUrl: "The owner's GitHub avatar. None: added by hand, or an older server.",
+    },
   },
   GitHubAppInfo: {
     doc: "The factory's GitHub App, for installing it on another GitHub account.",

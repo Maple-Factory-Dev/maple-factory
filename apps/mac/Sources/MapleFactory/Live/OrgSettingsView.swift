@@ -919,11 +919,17 @@ struct RepositoriesSettings: View {
                 SettingsUnavailable(detail: "Connect to a factory to see its repositories.")
             } else {
                 SettingsSection(client.repos.isEmpty ? "Repositories" : "\(client.repos.count) repositories",
-                                accessory: client.repos.count > 8 ? AnyView(TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 180)) : nil) {
+                                accessory: client.repos.isEmpty ? nil : AnyView(RepoList.SearchField(query: $filter, count: client.repos.count).frame(width: 240))) {
                     if client.repos.isEmpty {
                         SettingsRow("No repositories yet", detail: isAdmin ? "Install the GitHub App on your org, or add one below." : "An admin installs the GitHub App on the org, or adds them here.")
                     }
-                    ForEach(shown, id: \.name) { repo in row(repo) }
+                    ForEach(RepoList.entries(client.repos, query: filter), id: \.self) { entry in
+                        switch entry {
+                        case .owner(let owner): RepoList.OwnerHeader(owner: owner).padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
+                        case .noMatches(let query): RepoList.NoMatches(query: query).settingsRowPadding()
+                        case .repo(let repo): row(repo)
+                        }
+                    }
                     if isAdmin {
                         SettingsRow("Add a repository") {
                             TextField("owner/name, or its GitHub URL", text: $adding)
@@ -942,11 +948,6 @@ struct RepositoriesSettings: View {
         }
     }
 
-    private var shown: [Wire.OrgRepo] {
-        let query = filter.trimmingCharacters(in: .whitespaces)
-        return client.repos.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
-    }
-
     private var refresh: some View {
         Button {
             refreshing = true
@@ -959,18 +960,9 @@ struct RepositoriesSettings: View {
     }
 
     private func row(_ repo: Wire.OrgRepo) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: repo.isPrivate ? "lock" : "globe")
-                .foregroundStyle(Theme.textMuted)
-                .frame(width: 16)
-            Text(repo.name)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundStyle(Theme.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let branch = repo.defaultBranch {
-                Text(branch).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
-            }
+        RepoList.Row(repo: repo) {
+            EmptyView()
+        } trailing: {
             if client.scripts(for: repo.name) != nil {
                 Text("scripts")
                     .font(.system(size: 10.5, weight: .medium))
@@ -979,10 +971,10 @@ struct RepositoriesSettings: View {
                     .background(Capsule().fill(Theme.fill))
                     .help("Has worktree scripts")
             }
-            Spacer(minLength: 8)
             Text(repo.source == .github ? "GitHub App" : "Added by hand")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textMuted)
+                .fixedSize()
             if repo.source == .manual && isAdmin {
                 Button {
                     client.send(.reposRemove(.init(name: repo.name)))

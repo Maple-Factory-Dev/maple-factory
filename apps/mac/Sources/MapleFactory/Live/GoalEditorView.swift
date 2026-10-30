@@ -203,6 +203,7 @@ struct GoalEditorView: View {
             case "summary": summary = value
             case "folder": source = .folder; folder = value
             case "repo": source = .repo; repo = value
+            case "repofilter": repoFilter = value
             // `goalfill:due:2026-11-19`, or `goalfill:due:` for none.
             case "due": due = Self.dayFormat.date(from: value)
             // `goalfill:color:Indigo`, or any hex for a custom one: `goalfill:color:#123456`.
@@ -391,44 +392,49 @@ struct GoalEditorView: View {
 
     /// The org's repos (Settings → Repositories), ticked for this goal; the first ticked is the default.
     private var repoPicker: some View {
-        // Picked ones first, then whatever matches the filter: an org can have hundreds.
-        let query = repoFilter.trimmingCharacters(in: .whitespaces).lowercased()
-        let picked = client.repos.filter { r in repos.contains { $0.caseInsensitiveCompare(r.name) == .orderedSame } }
-        let rest = client.repos.filter { r in !picked.contains { $0.name == r.name } && (query.isEmpty || r.name.lowercased().contains(query)) }
-        let shown = picked + rest
+        // Picked ones first whatever the search, then whatever matches it: an org can have hundreds.
+        let isPicked = { (r: Wire.OrgRepo) in repos.contains { $0.caseInsensitiveCompare(r.name) == .orderedSame } }
+        let entries = RepoList.entries(client.repos, query: repoFilter, pinned: isPicked)
+        let height = entries.reduce(CGFloat(0)) { sum, entry in
+            if case .repo = entry { sum + 44 } else { sum + 26 }
+        }
         return VStack(spacing: 6) {
-        TextField("Filter \(client.repos.count) repositories", text: $repoFilter)
-            .textFieldStyle(.roundedBorder)
+        RepoList.SearchField(query: $repoFilter, count: client.repos.count)
         ScrollView {
             VStack(spacing: 0) {
-                ForEach(shown, id: \.name) { org in
-                    let picked = repos.contains { $0.caseInsensitiveCompare(org.name) == .orderedSame }
-                    HStack(spacing: 8) {
-                        Image(systemName: picked ? "checkmark.square.fill" : "square")
-                            .foregroundStyle(picked ? Theme.accent : Theme.textFaint)
-                        Text(org.name)
-                            .font(.system(size: 12.5, design: .monospaced))
-                            .foregroundStyle(Theme.text)
-                        Spacer()
-                        if picked && repos.first?.caseInsensitiveCompare(org.name) == .orderedSame {
-                            Text("Default").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textMuted)
-                        } else if picked {
-                            Text("Make default")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Theme.accent)
-                                .onTapGesture { repo = ([org.name] + repos.filter { $0.caseInsensitiveCompare(org.name) != .orderedSame }).joined(separator: ", ") }
+                ForEach(entries, id: \.self) { entry in
+                    switch entry {
+                    case .owner(let owner):
+                        RepoList.OwnerHeader(owner: owner).padding(.horizontal, 10).frame(height: 26)
+                    case .noMatches(let query):
+                        RepoList.NoMatches(query: query).padding(.horizontal, 10).frame(height: 26)
+                    case .repo(let org):
+                        let picked = isPicked(org)
+                        RepoList.Row(repo: org) {
+                            Image(systemName: picked ? "checkmark.square.fill" : "square")
+                                .foregroundStyle(picked ? Theme.accent : Theme.textFaint)
+                        } trailing: {
+                            if picked && repos.first?.caseInsensitiveCompare(org.name) == .orderedSame {
+                                Text("Default").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textMuted)
+                            } else if picked {
+                                Text("Make default")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.accent)
+                                    .onTapGesture { repo = ([org.name] + repos.filter { $0.caseInsensitiveCompare(org.name) != .orderedSame }).joined(separator: ", ") }
+                            }
                         }
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 28)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        repo = (picked ? repos.filter { $0.caseInsensitiveCompare(org.name) != .orderedSame } : repos + [org.name]).joined(separator: ", ")
+                        .padding(.horizontal, 10)
+                        .frame(height: 44)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            repo = (picked ? repos.filter { $0.caseInsensitiveCompare(org.name) != .orderedSame } : repos + [org.name]).joined(separator: ", ")
+                        }
                     }
                 }
             }
         }
-        .frame(height: min(CGFloat(max(shown.count, 1)) * 28, 196))
+        // About six rows, then it scrolls.
+        .frame(height: min(max(height, 26), 6 * 44 + 26))
         .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
         }
     }
