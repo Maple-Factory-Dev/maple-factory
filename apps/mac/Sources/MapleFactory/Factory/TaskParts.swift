@@ -712,7 +712,7 @@ struct ReviewActions: View {
             }
 
             if let mergeAt = countdown(gate) {
-                TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                TimelineView(.everySecond(until: mergeAt)) { context in
                     let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
                     statusRow("bolt.fill", left > 0 ? "Auto-merging in \(left)s — Hold to merge it yourself." : "Auto-merging now.", Theme.State.merged)
                 }
@@ -841,7 +841,9 @@ struct CountdownMergeButton: View {
     var mergeNow: () -> Void
 
     var body: some View {
-        TimelineView(.animation) { context in
+        // Once a second for the number, and at 0s for the lock; Core Animation drains the bar (CountdownDrain),
+        // not a redraw every frame.
+        TimelineView(.everySecond(until: mergeAt)) { context in
             let left = max(0, mergeAt.timeIntervalSince(context.date))
             if left > 0 {
                 counting(left)
@@ -856,7 +858,6 @@ struct CountdownMergeButton: View {
         VStack(spacing: 8) {
             Group {
                 let total = max(mergeAt.timeIntervalSince(from ?? mergeAt.addingTimeInterval(-10)), 0.001)
-                let fraction = min(1, left / total)
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold))
                     Text("Merging #\(number) in \(Int(left.rounded(.up)))s")
@@ -869,11 +870,9 @@ struct CountdownMergeButton: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(Theme.approve.opacity(0.4))
-                            Rectangle().fill(Theme.approve).frame(width: geo.size.width * fraction)
-                        }
+                    ZStack {
+                        Rectangle().fill(Theme.approve.opacity(0.4))
+                        CountdownDrain(mergeAt: mergeAt, total: total, color: Theme.approve)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
