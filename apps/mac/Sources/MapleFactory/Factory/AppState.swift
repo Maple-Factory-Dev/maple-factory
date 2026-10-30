@@ -366,6 +366,17 @@ final class AppState {
         set { if !isLive { mockTasks = newValue } }
     }
 
+    /// What's worked out from `tasks` (a task by id, the inbox, raised hands), once per change to them.
+    @ObservationIgnored private var taskCache = TaskCache()
+    /// Counts changes to the mockup's tasks, as the client's tasksRevision does the factory's.
+    private var mockRevision = 0
+
+    /// The cache, emptied if the tasks changed since it was filled. Reading the revision is what
+    /// redraws a view that only read the cache.
+    private func syncTaskCache() {
+        taskCache.sync(revision: isLive ? client?.tasksRevision ?? 0 : mockRevision, live: isLive)
+    }
+
     private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed
         // The mockup's drafts keep the order they're seeded in.
@@ -389,6 +400,8 @@ final class AppState {
             task.queueRank = Double(at)
         }
         return task
+    } {
+        didSet { mockRevision &+= 1 }
     }
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
@@ -517,7 +530,10 @@ final class AppState {
     // MARK: Queries
 
     func task(_ id: String) -> FactoryTask {
-        tasks.first { $0.id == id } ?? tasks.first ?? FactoryTask.none
+        let tasks = tasks
+        syncTaskCache()
+        if let index = taskCache.index(of: id, in: tasks) { return tasks[index] }
+        return tasks.first ?? FactoryTask.none
     }
 
     func tasks(for goal: Goal) -> [FactoryTask] {
@@ -651,7 +667,12 @@ final class AppState {
     /// What needs people, from the factory's tasks: plans to approve, agents' questions, changes to
     /// review, failing checks and @mentions of you.
     private var liveInbox: [InboxItem] {
-        let me = FactoryData.me
+        let tasks = tasks, me = FactoryData.me, dismissed = dismissedMentions
+        syncTaskCache()
+        return taskCache.inbox(dismissed: dismissed, me: me.id) { Self.liveInbox(tasks, me: me, dismissed: dismissed) }
+    }
+
+    static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>) -> [InboxItem] {
         var items: [InboxItem] = []
         for task in tasks {
             let mine = task.owner.id == me.id
@@ -681,7 +702,11 @@ final class AppState {
     }
 
     /// Tasks whose agent has stopped and asked for a human, longest-waiting first.
-    var allHandRaises: [FactoryTask] { tasks.filter { $0.hand != nil } }
+    var allHandRaises: [FactoryTask] {
+        let tasks = tasks
+        syncTaskCache()
+        return taskCache.handRaises(in: tasks)
+    }
     /// Scoped like the inbox; a hand raised to you always shows.
     var handRaises: [FactoryTask] {
         allHandRaises.filter { inScope($0) || $0.hand?.assignee.id == FactoryData.me.id }
