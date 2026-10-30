@@ -144,13 +144,15 @@ async function failure(res: Response, what: string): Promise<GitHubError> {
 const seg = (s: string) => encodeURIComponent(s);
 
 /** The app's installation on owner/repo. A 404 means the app isn't installed there. */
-/** Every repo the app is installed on, across its installations. */
-export async function installedRepos(app: GitHubApp): Promise<OrgRepo[]> {
+/** The repos of the app's installations on the accounts `allowed` says yes to. A public app can be
+ *  installed by anyone, so the others are skipped without a token being made for them. */
+export async function installedRepos(app: GitHubApp, allowed: (login: string) => boolean): Promise<OrgRepo[]> {
   const jwt = `Bearer ${await appJwt(app)}`;
   const res = await call(app, "GET", "/app/installations?per_page=100", jwt);
   if (!res.ok) throw await failure(res, "listing the app's installations");
   const repos: OrgRepo[] = [];
-  for (const installation of (await res.json()) as { id: number }[]) {
+  for (const installation of (await res.json()) as { id: number; account?: { login?: string } | null }[]) {
+    if (!allowed(installation.account?.login ?? "")) continue;
     const tokenRes = await call(app, "POST", `/app/installations/${installation.id}/access_tokens`, jwt, { permissions: { metadata: "read" } });
     if (!tokenRes.ok) throw await failure(tokenRes, "reading an installation's repos");
     const { token } = (await tokenRes.json()) as { token: string };
