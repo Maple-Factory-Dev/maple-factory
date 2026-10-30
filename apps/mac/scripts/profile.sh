@@ -8,7 +8,7 @@
 #   idle      the goal's page open, nothing happening: CPU over 20s
 #   updates   a task edit every 100ms and a teammate moving every 250ms: CPU over 20s
 #   browse    each proven task's Overview, its screenshot and video large, Diff, Statistics, twice over:
-#             footprint right after, and again 30s later (steady), with the run's peak
+#             footprint after each round (it shouldn't grow), right after, 30s later (steady), and the run's peak
 #   countdown the demo factory with an auto-merge counting down on screen: CPU over 6s of it
 # Each phase also leaves a `sample` of the process (<phase>.sample.txt) in <out-dir>.
 set -eu
@@ -82,11 +82,12 @@ run() {
 
   # The browse: each proven task opened, its proofs shown large, its Diff, then Statistics and back.
   browse=""
-  for _ in 1 2; do
+  for round in 1 2; do
     for id in $PROOFS; do
       browse="$browse dblclick:$id; wait:1.5; lightbox:image; wait:1; lightbox:zoom:3; wait:0.5; lightbox:close; lightbox:video; wait:1.5; lightbox:close;"
       browse="$browse tab:diff; wait:1; tab:overview; unfocus; wait:0.5; go:statistics; wait:1; go:$GOAL; wait:0.5;"
     done
+    browse="$browse shot:p-round$round; wait:3;"
   done
 
   echo "profile: idle, updates and browse against $BASE" >&2
@@ -110,6 +111,12 @@ run() {
   record "updates_footprint_mb" "$(footprint "$PID" now)"
   record "updates_sent" "$(cat "$OUT/load.log")"
 
+  until_marker p-round1
+  sleep 2
+  record "round1_footprint_mb" "$(footprint "$PID" now)"
+  until_marker p-round2
+  sleep 2
+  record "round2_footprint_mb" "$(footprint "$PID" now)"
   until_marker p-browsed
   record "browse_footprint_mb" "$(footprint "$PID" now)"
   sleep 30
@@ -140,6 +147,8 @@ LABELS='idle_cpu_pct|Idle CPU (%)
 updates_cpu_pct|CPU during live updates (%)
 idle_footprint_mb|Footprint idle (MB)
 updates_footprint_mb|Footprint after updates (MB)
+round1_footprint_mb|Footprint after browse round 1 (MB)
+round2_footprint_mb|Footprint after browse round 2 (MB)
 browse_footprint_mb|Footprint right after browsing (MB)
 steady_footprint_mb|Footprint 30s later, steady (MB)
 peak_footprint_mb|Peak footprint (MB)
