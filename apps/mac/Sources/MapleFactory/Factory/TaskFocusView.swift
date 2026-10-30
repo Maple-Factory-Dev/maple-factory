@@ -37,7 +37,13 @@ struct TaskFocusView: View {
 
     var body: some View {
         Group {
-            if tab == .session, hasSession { sessionLayout } else { documentLayout }
+            if tab == .session, hasSession {
+                sessionLayout
+            } else if tab == .diff, !compact {
+                diffLayout
+            } else {
+                documentLayout
+            }
         }
         .task(id: task.diffKey) {
             if let key = task.diffKey { await client.loadDiff(task: task.id, key: key) }
@@ -50,19 +56,7 @@ struct TaskFocusView: View {
 
     /// The live session gets the whole page: slim header, tabs, then the terminal down to the bottom.
     private var sessionLayout: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 10) {
-                Text(task.id)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .foregroundStyle(Theme.textMuted)
-                Text(task.title)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                StateBadge(state: task.state)
-                Spacer()
-            }
-            tabBar
+        pageLayout {
             Group {
                 if appState.isLive, let worker = task.worker {
                     TaskLiveTerminal(task: task, worker: worker)
@@ -79,13 +73,39 @@ struct TaskFocusView: View {
                     SessionTerminal(task: task)
                 }
             }
-            .frame(maxHeight: .infinity)
+        }
+        .frame(maxWidth: mainWidth + railWidth + 120)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Reviewing the diff takes the whole window, however wide: no rail, no cap on the width.
+    private var diffLayout: some View {
+        pageLayout {
+            DiffView(task: task, files: diffFiles)
+        }
+    }
+
+    /// A slim header and the tabs, then `content` down to the bottom of the window.
+    private func pageLayout<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                Text(task.id)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Theme.textMuted)
+                Text(task.title)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                StateBadge(state: task.state)
+                Spacer()
+            }
+            tabBar
+            content()
+                .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, compact ? 24 : 40)
         .padding(.top, 22)
         .padding(.bottom, 20)
-        .frame(maxWidth: mainWidth + railWidth + 120)
-        .frame(maxWidth: .infinity)
         .onDisappear { appState.markSeen(task.id) }
     }
 
@@ -105,17 +125,15 @@ struct TaskFocusView: View {
                                 decisionCards
                                 switch tab {
                                 case .overview, .session: mainColumn
-                                case .diff: DiffView(task: task, files: diffFiles)
+                                case .diff: DiffView(task: task, files: diffFiles).frame(height: 720)
                                 }
                                 infoCards
                             }
                             .frame(maxWidth: mainWidth, alignment: .leading)
                         } else {
+                            // A wide window's diff has a layout of its own (diffLayout).
                             HStack(alignment: .top, spacing: 40) {
-                                switch tab {
-                                case .overview, .session: mainColumn.frame(maxWidth: mainWidth, alignment: .leading)
-                                case .diff: DiffView(task: task, files: diffFiles).frame(maxWidth: .infinity, alignment: .leading)
-                                }
+                                mainColumn.frame(maxWidth: mainWidth, alignment: .leading)
                                 rail.frame(width: railWidth)
                             }
                         }
