@@ -710,6 +710,9 @@ private struct ZoomableProofImage: View {
             .onDisappear {
                 if let monitor { NSEvent.removeMonitor(monitor) }
                 monitor = nil
+                // The handler holds this view, image and all, and the view holds the relay: a cycle that
+                // kept every screenshot shown large alive.
+                relay.handle = nil
             }
     }
 
