@@ -9,6 +9,7 @@
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
 import { loadCollapsed, toggleCollapsed } from "./sections.js";
+import { bundleStale } from "./update.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -117,6 +118,9 @@ function receive(m) {
       $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
+      // The first version seen is the bundle this tab loaded; a reconnect after a deploy reports the new one.
+      state.loadedVersion ??= m.serverVersion || null;
+      if (bundleStale(state.loadedVersion, m.serverVersion)) $("update").hidden = false;
       break;
     case "icon.updated": showIcon(m.icon); return;
     case "name.updated": $("org").textContent = m.name || state.org || "Maple Factory"; return;
@@ -1174,4 +1178,5 @@ window.addEventListener("hashchange", () => {
   window.scrollTo(0, 0);
   render();
 });
+$("update-refresh").addEventListener("click", () => location.reload());
 connect();
