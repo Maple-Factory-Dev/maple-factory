@@ -32,6 +32,7 @@ struct FactoryTopBar: View {
             Spacer()
 
             if !state.isCompact {
+                searchHint
                 Facepile(people: FactoryData.presence.map(\.person), size: 26)
                     .help("\(FactoryData.presence.count) people online")
             }
@@ -91,6 +92,38 @@ struct FactoryTopBar: View {
         .overlay(alignment: .bottom) { Hairline() }
     }
 
+    /// Where ⌘K is, for anyone who hasn't found it.
+    private var searchHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium))
+            Text("Search")
+            Text("⌘K")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+                .padding(.horizontal, 5)
+                .frame(height: 18)
+                .background(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.stroke))
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(Theme.textMuted)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Theme.fill)
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { state.togglePalette() }
+        .help("Jump to a task, goal or page (⌘K)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Command menu")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { state.togglePalette() }
+        .padding(.trailing, 6)
+    }
+
     private func focusBreadcrumb(_ task: FactoryTask) -> some View {
         HStack(spacing: 8) {
             Button {
@@ -108,8 +141,8 @@ struct FactoryTopBar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            // The proof lightbox owns Esc while it's up.
-            .keyboardShortcut(state.lightbox == nil ? .cancelAction : nil)
+            // The proof lightbox and the ⌘K palette own Esc while they're up.
+            .keyboardShortcut(state.lightbox == nil && !state.showPalette ? .cancelAction : nil)
             .help("Back (Esc)")
 
             Image(systemName: "chevron.right")
@@ -158,7 +191,7 @@ struct FactoryTopBar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(state.lightbox == nil ? .cancelAction : nil)
+            .keyboardShortcut(state.lightbox == nil && !state.showPalette ? .cancelAction : nil)
 
             Text("Composing in")
                 .font(.system(size: 13))
