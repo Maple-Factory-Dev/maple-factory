@@ -606,15 +606,17 @@ pub async fn open(
         let worktree = existing(cwd, req).await?;
         crate::trust::trust_worktree(&expand_home(&worktree));
         let p = crate::factory::prepare(&expand_home(&worktree), prompt, &task.projects).await;
-        let env = crate::secrets::for_task(&emit, &task.id, task.repo.as_deref().or(p.repo.as_deref())).await;
+        let repo = task.repo.clone().or(p.repo.clone());
+        let env = crate::secrets::for_task(&emit, &task.id, repo.as_deref()).await;
         let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
-        return Ok(Opened { worktree, prompt, images, env });
+        return Ok(Opened { worktree, prompt, images, secrets: repo.map(|r| (r, env)) });
     }
     let started = start(&emit, &task.id, cwd, task.repo.as_deref(), req, &Places::here()).await?;
     // A worktree the runner just made: Claude Code shouldn't stop to ask whether to trust it.
     crate::trust::trust_worktree(&expand_home(&started.worktree));
     let p = crate::factory::prepare(&expand_home(&started.worktree), prompt, &task.projects).await;
-    let env = crate::secrets::for_task(&emit, &task.id, task.repo.as_deref().or(p.repo.as_deref())).await;
+    let repo = task.repo.clone().or(p.repo.clone());
+    let env = crate::secrets::for_task(&emit, &task.id, repo.as_deref()).await;
     sessions.emit(Outbound::TaskStarted {
         task_id: task.id.clone(),
         repo: p.repo,
@@ -625,7 +627,7 @@ pub async fn open(
         rules: p.rules,
     });
     let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
-    Ok(Opened { worktree: started.worktree, prompt, images, env })
+    Ok(Opened { worktree: started.worktree, prompt, images, secrets: repo.map(|r| (r, env)) })
 }
 
 /// What a task's session opens with.
@@ -634,8 +636,8 @@ pub struct Opened {
     pub worktree: String,
     pub prompt: Option<String>,
     pub images: Vec<String>,
-    /// Its repo's secrets, for the session's environment only.
-    pub env: Vec<(String, String)>,
+    /// Its repo and that repo's secrets, for the session's pane only.
+    pub secrets: Option<(String, Vec<(String, String)>)>,
 }
 
 /// A task's worktree that's already there (`cwd`), for a new session in it: nothing is fetched or
