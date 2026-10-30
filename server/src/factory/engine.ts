@@ -1014,7 +1014,8 @@ export class Engine {
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others) : role === "builder" ? builderPrompt(task, goal, resumed, org, others) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
+    const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
