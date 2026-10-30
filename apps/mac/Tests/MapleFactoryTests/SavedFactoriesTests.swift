@@ -67,4 +67,17 @@ struct SavedFactoriesTests {
         SavedFactories.store(list, defaults)
         #expect(SavedFactories.load(defaults) == list)
     }
+
+    @Test func aListSavedBeforeIconsStillLoads() throws {
+        let old = #"[{"server":"https://a.dev","org":"acme","name":"acme","lastUsed":0}]"#
+        let list = try JSONDecoder().decode([SavedFactory].self, from: Data(old.utf8))
+        #expect(list.count == 1)
+        #expect(list[0].icon == nil)
+    }
+
+    @Test func onlyAnIconLinkGivesAnIconID() {
+        #expect(FactoryIcons.id("/icon/2a6b3f0f-690d-43e0-b7b2-a6c2a738394e") == "2a6b3f0f-690d-43e0-b7b2-a6c2a738394e")
+        #expect(FactoryIcons.id("/icon/../secrets") == nil)
+        #expect(FactoryIcons.id("/attachments/2a6b3f0f-690d-43e0-b7b2-a6c2a738394e/x.png") == nil)
+    }
 }

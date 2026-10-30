@@ -1072,6 +1072,7 @@ export const unions: Record<string, Union> = {
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
           serverUpdate: "ServerUpdate?",
+          icon: "string?",
           protocolVersion: "u32",
         },
         fieldDocs: {
@@ -1083,6 +1084,7 @@ export const unions: Record<string, Union> = {
           runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
           serverUpdate: "A newer maple-server, when there is one (told to admins only).",
+          icon: "The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.",
         },
       },
       "machine.updated": { fields: { machine: "Machine" } },
@@ -1098,6 +1100,11 @@ export const unions: Record<string, Union> = {
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
+      "icon.updated": {
+        doc: "An admin set or removed the factory's icon (PUT or DELETE /api/icon).",
+        fields: { icon: "string?" },
+        fieldDocs: { icon: "Its new path (`/icon/<id>`); none: removed." },
+      },
       "repos.updated": {
         fields: { repos: "OrgRepo[]", scripts: "RepoWorktreeScripts[]?" },
         fieldDocs: { scripts: "The repos that have worktree scripts. None: an older server." },

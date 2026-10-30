@@ -390,6 +390,17 @@ export class Store {
     this.set("prompts", JSON.stringify(prompts));
   }
 
+  /** The factory's icon: its id in the bucket (icon/<id>), if it has one. */
+  icon(): string | null {
+    return this.get("icon");
+  }
+
+  /** None removes it. */
+  saveIcon(id: string | null) {
+    if (id) this.set("icon", id);
+    else this.sql.exec("DELETE FROM kv WHERE key = 'icon'");
+  }
+
   /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */
   repos(): OrgRepo[] {
     return (JSON.parse(this.get("repos") ?? "[]") as (OrgRepo & { private?: boolean })[]).map(({ private: hidden, ...r }) => ({ ...r, isPrivate: r.isPrivate ?? hidden ?? false }));

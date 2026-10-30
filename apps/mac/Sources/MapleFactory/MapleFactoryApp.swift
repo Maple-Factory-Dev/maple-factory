@@ -34,6 +34,8 @@ struct MapleFactoryApp: App {
     var body: some Scene {
         WindowGroup("Maple Factory") {
             ContentView()
+                // Inside the environment it reads the client from.
+                .modifier(DockIconFollower())
                 .environment(state)
                 .environment(client)
                 // A maplefactory:// link opens in the window that's there rather than a new one.

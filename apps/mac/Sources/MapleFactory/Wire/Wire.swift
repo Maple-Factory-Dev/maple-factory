@@ -4855,9 +4855,11 @@ public enum Wire {
         public var serverVersion: String?
         /// A newer maple-server, when there is one (told to admins only).
         public var serverUpdate: ServerUpdate?
+        /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
+        public var icon: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -4879,6 +4881,7 @@ public enum Wire {
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
             self.serverUpdate = serverUpdate
+            self.icon = icon
             self.protocolVersion = protocolVersion
         }
 
@@ -4905,6 +4908,7 @@ public enum Wire {
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
             serverUpdate = try c.decodeIfPresent(ServerUpdate.self, forKey: .serverUpdate)
+            icon = try c.decodeIfPresent(String.self, forKey: .icon)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -5034,6 +5038,16 @@ public enum Wire {
         }
     }
 
+    /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
+    public struct ServerToClientIconUpdated: Codable, Hashable, Sendable {
+        /// Its new path (`/icon/<id>`); none: removed.
+        public var icon: String?
+
+        public init(icon: String? = nil) {
+            self.icon = icon
+        }
+    }
+
     public struct ServerToClientReposUpdated: Codable, Hashable, Sendable {
         public var repos: [OrgRepo]
         /// The repos that have worktree scripts. None: an older server.
@@ -5140,6 +5154,7 @@ public enum Wire {
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case promptsUpdated(ServerToClientPromptsUpdated)
+        case iconUpdated(ServerToClientIconUpdated)
         case reposUpdated(ServerToClientReposUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
@@ -5169,6 +5184,7 @@ public enum Wire {
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
+            case "icon.updated": self = .iconUpdated(try ServerToClientIconUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
@@ -5224,6 +5240,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .promptsUpdated(let body):
                 try c.encode("prompts.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .iconUpdated(let body):
+                try c.encode("icon.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .reposUpdated(let body):
                 try c.encode("repos.updated", forKey: .type)
