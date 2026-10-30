@@ -74,7 +74,7 @@ struct MapleFactoryApp: App {
                 .keyboardShortcut(.return, modifiers: .command)
 
                 Button(state.sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { state.toggleSidebar() }
-                    .keyboardShortcut("s", modifiers: [.command, .control])
+                    .keyboardShortcut("b", modifiers: .command)
 
                 Button("Add New Factory…") { state.startOnboarding() }
                 if client.isSignedIn {
@@ -243,6 +243,13 @@ struct ContentView: View {
             }
         }
         .background(VisualEffect(material: .sidebar))
+        // ⌃⌘S was the sidebar chord before ⌘B; it still works, but only ⌘B shows in the View menu.
+        .background {
+            Button("Toggle Sidebar") { state.toggleSidebar() }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
         .ignoresSafeArea()
         .onAppear { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }

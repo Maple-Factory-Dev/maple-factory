@@ -2020,7 +2020,7 @@ final class AppState {
             // for the first of that kind), and put away (`lightbox:close`).
             case "lightbox":
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
-            // A key pressed in the window, headless: `key:esc`.
+            // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
             // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
             // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
