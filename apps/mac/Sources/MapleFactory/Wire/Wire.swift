@@ -3187,7 +3187,7 @@ public enum Wire {
     }
 
     public struct StatsDay: Codable, Hashable, Sendable {
-        /// YYYY-MM-DD (UTC).
+        /// YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC).
         public var day: String
         public var merges: UInt32
         public var hands: UInt32

@@ -1655,7 +1655,7 @@ pub struct StatsCount {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsDay {
-    /// YYYY-MM-DD (UTC).
+    /// YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC).
     pub day: String,
     pub merges: u32,
     pub hands: u32,

@@ -948,7 +948,7 @@ export interface StatsCount {
 }
 
 export interface StatsDay {
-  /** YYYY-MM-DD (UTC). */
+  /** YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC). */
   day: string;
   merges: number;
   hands: number;
