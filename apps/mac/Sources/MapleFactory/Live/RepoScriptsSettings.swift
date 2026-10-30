@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One repo in Settings › Repositories: its worktree scripts, the repo's own commands for making,
-/// setting up, tearing down and archiving a task's worktree, and its prompt additions (after the
+/// preparing the machine for (preflight), setting up, tearing down and archiving a task's worktree, and its prompt additions (after the
 /// org's, before a goal's). Admins edit them; everyone else sees them. The runner runs each script
 /// with `sh -c` in the repo's main checkout, with the MAPLE_* variables and the repo's secrets (see
 /// runner/src/worktree_scripts.rs). Set up with AI has an agent on the admin's machine suggest them.
@@ -24,14 +24,17 @@ struct RepoScriptsDetail: View {
         return run.suggestion
     }
 
-    /// The fields as typed: commands as text, the timeout as digits (blank: the default), and the prompts.
+    /// The fields as typed: commands as text, preflight's watched files one per line, the timeout as
+    /// digits (blank: the default), and the prompts.
     struct Draft: Equatable {
-        var create = "", setup = "", teardown = "", archive = "", timeout = ""
+        var create = "", preflight = "", watch = "", setup = "", teardown = "", archive = "", timeout = ""
         var prompts = Wire.PromptAdditions(planner: "", builder: "", reviewer: "")
 
         init() {}
         init(_ s: Wire.WorktreeScripts?, prompts p: Wire.PromptAdditions? = nil) {
             create = s?.create ?? ""
+            preflight = s?.preflight ?? ""
+            watch = s?.preflightWatch ?? ""
             setup = s?.setup ?? ""
             teardown = s?.teardown ?? ""
             archive = s?.archive ?? ""
@@ -47,22 +50,23 @@ struct RepoScriptsDetail: View {
             return nil
         }
         var tooLong: String? {
-            [("create", create), ("setup", setup), ("teardown", teardown), ("archive", archive)].first { $0.1.utf8.count > 4096 }.map { "The \($0.0) script is over 4 KB." }
+            [("create", create), ("preflight", preflight), ("setup", setup), ("teardown", teardown), ("archive", archive)].first { $0.1.utf8.count > 4096 }.map { "The \($0.0) script is over 4 KB." }
         }
         var wire: Wire.WorktreeScripts {
             let clean = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : s.trimmingCharacters(in: .whitespacesAndNewlines) }
-            return .init(create: clean(create), setup: clean(setup), teardown: clean(teardown), archive: clean(archive), timeoutSecs: timeoutSecs)
+            let watched = watch.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            return .init(create: clean(create), preflight: clean(preflight), preflightWatch: watched.isEmpty ? nil : watched.joined(separator: "\n"), setup: clean(setup), teardown: clean(teardown), archive: clean(archive), timeoutSecs: timeoutSecs)
         }
     }
 
     static let variables: [(String, String)] = [
         ("MAPLE_REPO", "owner/name"),
-        ("MAPLE_REPO_ROOT", "the repo's main checkout (where the script runs)"),
+        ("MAPLE_REPO_ROOT", "the repo's main checkout (where the script runs, except preflight)"),
         ("MAPLE_WORKTREE", "the task's worktree folder"),
         ("MAPLE_BRANCH", "the task's branch, agent/<task>"),
-        ("MAPLE_BASE", "the branch it starts from (create and setup)"),
+        ("MAPLE_BASE", "the branch it starts from (create, preflight and setup)"),
         ("MAPLE_TASK_ID", "the task, like MF-74"),
-        ("MAPLE_PHASE", "create, setup, teardown or archive"),
+        ("MAPLE_PHASE", "create, preflight, setup, teardown or archive"),
     ]
 
     var body: some View {
@@ -94,13 +98,15 @@ struct RepoScriptsDetail: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsTitle(title: "Worktree scripts",
-                          subtitle: "Your own commands for a task's worktree, in place of or around what the runner does. Each runs with sh -c in the repo's main checkout, with the variables below and the repo's secrets. One that fails stops the task, with its output.",
+                          subtitle: "Your own commands for a task's worktree, in place of or around what the runner does. Each runs with sh -c in the repo's main checkout (preflight in the new worktree), with the variables below and the repo's secrets. One that fails stops the task, with its output.",
                           accessory: isAdmin ? AnyView(setupButton) : nil)
             if let run, run.state != .done || suggestion != nil {
                 setupStatus(run)
             }
             SettingsSection("Scripts") {
                 field("Create", "Makes the worktree instead of git worktree add. It must leave a git worktree on $MAPLE_BRANCH at $MAPLE_WORKTREE.", "bin/worktree-create", $draft.create)
+                field("Preflight", "Sets the machine up for this repo: runtimes, brew bundle, services. Runs in the new worktree before setup, the first time this machine's checkout is used and again when the command or a watched file changes.", "mise install && brew bundle", $draft.preflight)
+                field("Watch", "Re-run preflight when these change: paths from the repo's root, one per line (at most 20). Blank watches the usual pins.", ".ruby-version\n.tool-versions\n.node-version\n.nvmrc\n.python-version\nBrewfile\nmise.toml", $draft.watch, lines: 2...7)
                 field("Setup", "Runs once the worktree exists, before the agent starts: install, seed, copy config.", "bin/worktree-setup", $draft.setup)
                 field("Teardown", "Runs before a finished task's worktree is removed: stop services, drop databases.", "bin/worktree-teardown", $draft.teardown)
                 field("Archive", "Runs instead of the removal when a finished task is cleaned up. It owns the folder and the branch.", "bin/worktree-archive", $draft.archive)
@@ -237,13 +243,13 @@ struct RepoScriptsDetail: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill))
     }
 
-    private func field(_ label: String, _ hint: String, _ placeholder: String, _ text: Binding<String>) -> some View {
+    private func field(_ label: String, _ hint: String, _ placeholder: String, _ text: Binding<String>, lines: ClosedRange<Int> = 1...4) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(label).font(.system(size: 13)).foregroundStyle(Theme.text).frame(width: 70, alignment: .leading)
                 if isAdmin {
                     TextField(placeholder, text: text, axis: .vertical)
-                        .lineLimit(1...4)
+                        .lineLimit(lines)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12.5, design: .monospaced))
                 } else {
