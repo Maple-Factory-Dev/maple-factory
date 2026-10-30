@@ -81,8 +81,10 @@ struct MapleFactoryApp: App {
                     }
                 }
 
+                // In the goal on screen (or the open task's), else the goal you last made a task in.
                 Button("New Task") { state.startCompose() }
                     .keyboardShortcut("n", modifiers: .command)
+                    .help("New task in the goal you're in, or the one you last made a task in")
                 Button("New Goal…") { state.goalSheet = .new }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(!client.isSignedIn)

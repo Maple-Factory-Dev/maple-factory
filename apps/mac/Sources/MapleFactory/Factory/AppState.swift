@@ -53,6 +53,21 @@ enum LastPage {
     }
 }
 
+/// The goal each saved factory last had a task made in, under `lastTaskGoal.<host>`, for New Task
+/// opened away from a goal. The mockup keeps its own under `lastTaskGoal.mockup`.
+enum LastTaskGoal {
+    static func key(_ factory: URL?) -> String { "lastTaskGoal.\(factory.map(SavedFactory.key) ?? "mockup")" }
+
+    /// Nil once that goal is archived or gone, so New Task falls back to the usual one.
+    @MainActor static func load(factory: URL?, defaults: UserDefaults = AppDefaults) -> String? {
+        defaults.string(forKey: key(factory)).flatMap { name in FactoryData.activeGoals.contains { $0.name == name } ? name : nil }
+    }
+
+    static func store(_ goal: String, factory: URL?, defaults: UserDefaults = AppDefaults) {
+        defaults.set(goal, forKey: key(factory))
+    }
+}
+
 @MainActor @Observable
 final class AppState {
     // MARK: Navigation
@@ -709,13 +724,27 @@ final class AppState {
 
     // MARK: Composer actions
 
+    /// Where the last task was made from, per factory; tests swap in their own suite.
+    var taskGoalDefaults = AppDefaults
+    private var taskGoalFactory: URL? { isLive ? client?.server : nil }
+
+    /// The goal New Task starts on, and whether that's the goal you're in (so it counts as chosen):
+    /// the goal page on screen, else the goal of the task open in full view or the panel, else the
+    /// goal you last made a task in, else the first goal you follow (or the first goal).
+    var newTaskGoal: (name: String, inGoal: Bool) {
+        let active = FactoryData.activeGoals
+        func isActive(_ name: String) -> Bool { active.contains { $0.name == name } }
+        if case let .goal(name) = destination, isActive(name) { return (name, true) }
+        if let id = focusedTask ?? openedTask, let task = tasks.first(where: { $0.id == id }), isActive(task.goal) {
+            return (task.goal, true)
+        }
+        if let last = LastTaskGoal.load(factory: taskGoalFactory, defaults: taskGoalDefaults) { return (last, false) }
+        return ((active.first(where: isFollowing) ?? active.first)?.name ?? "", false)
+    }
+
     func startCompose(goal: String? = nil, title: String = "", body: String = "", fromNote: UUID? = nil) {
-        let currentGoal: String = {
-            if case let .goal(name) = destination, FactoryData.activeGoals.contains(where: { $0.name == name }) { return name }
-            return (FactoryData.activeGoals.first(where: isFollowing) ?? FactoryData.activeGoals.first)?.name ?? ""
-        }()
-        var chosen = false
-        if goal != nil { chosen = true } else if case .goal = destination { chosen = true }
+        let (currentGoal, inGoal) = newTaskGoal
+        let chosen = goal != nil || inGoal
         // A Draft with AI left running (or finished, not yet in the composer) carries on: a plain
         // New Task comes back to it as it was left. A composer opened for something else (a request,
         // a note, a goal) isn't that draft's, so it's stopped rather than left to fill this one in.
@@ -841,6 +870,7 @@ final class AppState {
             client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
                                           plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID,
                                           repo: draft.repo.flatMap { goal.repos.contains($0) ? $0 : nil })))
+            LastTaskGoal.store(draft.goal, factory: taskGoalFactory, defaults: taskGoalDefaults)
             // The task's sent: a draft still running (or failed, or waiting on a goal) is done with.
             cancelAIDraft()
             withAnimation(.snappy(duration: 0.3)) {
@@ -885,6 +915,7 @@ final class AppState {
 
         tasks.append(task)
         seenActivityCount[id] = task.activity.count
+        LastTaskGoal.store(draft.goal, factory: taskGoalFactory, defaults: taskGoalDefaults)
         if let noteID = draft.fromNote, let index = notes.firstIndex(where: { $0.id == noteID }) {
             notes[index].taskID = id
         }
