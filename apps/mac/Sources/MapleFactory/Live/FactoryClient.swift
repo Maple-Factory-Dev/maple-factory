@@ -32,6 +32,9 @@ import Security
     }
     private(set) var me: Wire.Member?
     private(set) var machines: [Wire.Machine] = []
+    /// Agent sign-ins on your machines (`codex login --device-auth`), by `machine:agent`, while they run
+    /// and until their card has shown how they ended.
+    private(set) var agentLogins: [String: Wire.AgentLoginStatus] = [:]
     private(set) var ends: [EndRecord] = []
     private(set) var members: [Wire.Member] = []
     private(set) var goals: [Wire.Goal] = []
@@ -421,6 +424,15 @@ import Security
             } else {
                 machines.append(update.machine)
             }
+            // Once health says it's signed in, a sign-in still showing a code or an error is over.
+            for agent in update.machine.health?.agents ?? [] where agent.loggedIn {
+                let key = Self.loginKey(update.machine.id, agent.name)
+                if let login = agentLogins[key], login.state != .done { agentLogins[key] = nil }
+            }
+        case .machineAgentLogin(let update):
+            let key = Self.loginKey(update.machine, update.status.agent)
+            // A cancel without a reason is one asked for here: its panel already closed.
+            agentLogins[key] = update.status.state == .cancelled && update.status.message == nil ? nil : update.status
         case .machineRemoved(let removed):
             machines.removeAll { $0.id == removed.id }
         case .sessionEnded(let ended):
@@ -1241,6 +1253,37 @@ extension FactoryClient {
     /// The release a machine runs, when the changelog has it.
     func release(_ version: String?) -> Wire.RunnerRelease? {
         version.flatMap { v in runnerReleases.first { $0.version == v } }
+    }
+
+    static func loginKey(_ machine: String, _ agent: String) -> String { "\(machine):\(agent)" }
+
+    func agentLogin(machine: String, agent: String) -> Wire.AgentLoginStatus? {
+        agentLogins[Self.loginKey(machine, agent)]
+    }
+
+    /// Signs one of your machine's agents in: its card shows the link and code the machine sends back.
+    func signIn(machine: String, agent: String) {
+        let key = Self.loginKey(machine, agent)
+        agentLogins[key] = .init(agent: agent, state: .starting)
+        send(.machineAgentLogin(.init(machine: machine, agent: agent)))
+        // A machine that never answers (offline, an older runner) mustn't leave it starting forever.
+        Task {
+            try? await Task.sleep(for: .seconds(20))
+            if agentLogins[key]?.state == .starting {
+                agentLogins[key] = .init(agent: agent, state: .failed, message: "The machine didn't answer. Is its runner up to date?")
+            }
+        }
+    }
+
+    func cancelSignIn(machine: String, agent: String) {
+        agentLogins[Self.loginKey(machine, agent)] = nil
+        send(.machineAgentLogin(.init(machine: machine, agent: agent, cancel: true)))
+    }
+
+    /// Closes a finished sign-in's panel.
+    func dismissSignIn(machine: String, agent: String) {
+        let key = Self.loginKey(machine, agent)
+        if let state = agentLogins[key]?.state, state != .starting, state != .waiting { agentLogins[key] = nil }
     }
 
     /// What the runner menu item does: install a newer release the app knows of, or only look for one.

@@ -2183,6 +2183,17 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A machine card's Sign in on an agent pill (`signin:<machine>:codex`) and its panel's Cancel (`cancelsignin:<machine>:codex`);
+            // `waitsignedin:<machine>:codex` waits (up to 15 minutes) for its health to say it's signed in, as someone finishes in the browser.
+            case "signin": client?.signIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "cancelsignin": client?.cancelSignIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "waitsignedin":
+                let agent = parts.count > 2 ? parts[2] : "codex"
+                for _ in 0..<9000 {
+                    let health = client?.machines.first { $0.id == parts[1] }?.health
+                    if health?.agents.contains(where: { $0.name == agent && $0.loggedIn }) == true { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
             case "click": toggleTask(parts[1])
             case "dblclick": openFocus(parts[1])

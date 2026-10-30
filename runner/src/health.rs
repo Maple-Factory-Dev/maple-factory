@@ -61,12 +61,16 @@ impl Health {
     }
 }
 
-/// Sends vitals every 10 seconds. While disconnected they're dropped with other stale output.
-pub async fn report(sessions: crate::sessions::Sessions) {
+/// Sends vitals every 10 seconds, and straight away with the agents checked again when `recheck` is
+/// notified (an agent just signed in). While disconnected they're dropped with other stale output.
+pub async fn report(sessions: crate::sessions::Sessions, recheck: std::sync::Arc<tokio::sync::Notify>) {
     let mut sampler = Sampler::new();
     let mut tick = tokio::time::interval(Duration::from_secs(10));
     loop {
-        tick.tick().await;
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = recheck.notified() => sampler.agents_checked = None,
+        }
         let health = sampler.sample().await;
         sessions.emit(crate::protocol::Outbound::Wire(crate::wire::RunnerMessage::Health { health: health.to_wire() }));
     }
