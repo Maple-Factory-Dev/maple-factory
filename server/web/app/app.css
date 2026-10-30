@@ -167,6 +167,12 @@ select { appearance: none; padding-right: 30px; cursor: pointer;
 
 .check { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--stroke); }
 .check:first-child { border-top: 0; }
+.ci-check .row { flex-wrap: wrap; }
+.check-log { max-height: 360px; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--stroke);
+  background: var(--fill); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.check-log .step { font-weight: 650; }
+.check-log .error { color: var(--cancelled); background: color-mix(in srgb, var(--cancelled) 12%, transparent); font-weight: 600; }
+.bad-text { color: var(--cancelled); }
 .mark { flex: none; width: 18px; text-align: center; }
 .check-head { display: flex; align-items: baseline; gap: 6px 8px; flex-wrap: wrap; }
 .check-head .check-text { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
