@@ -27,14 +27,14 @@ struct SettingsPane<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 28) {
                 SettingsTitle(title: title, subtitle: subtitle, accessory: accessory)
                 content
             }
             .font(.system(size: 13))
-            .padding(.horizontal, 28)
-            .padding(.top, 26)
-            .padding(.bottom, 28)
+            .padding(.horizontal, 36)
+            .padding(.top, 32)
+            .padding(.bottom, 36)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .scrollContentBackground(.hidden)
@@ -49,7 +49,7 @@ struct SettingsTitle: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.system(size: 20, weight: .bold)).foregroundStyle(Theme.text)
                 if let subtitle {
                     Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
@@ -78,19 +78,19 @@ struct SettingsSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 10) {
             if title != nil || accessory != nil {
                 HStack(alignment: .firstTextBaseline) {
                     if let title { Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text) }
                     Spacer(minLength: 8)
                     if let accessory { accessory.controlSize(.small) }
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 6)
             }
             VStack(alignment: .leading, spacing: 0) {
                 Group(subviews: content) { rows in
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Hairline().padding(.horizontal, 12) }
+                        if index > 0 { Hairline().padding(.horizontal, 16) }
                         row
                     }
                 }
@@ -101,7 +101,7 @@ struct SettingsSection<Content: View>: View {
             if let caption {
                 Text(caption).font(SettingsKit.caption).foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 6)
             }
         }
     }
@@ -122,14 +122,14 @@ struct SettingsRow<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(label).font(.system(size: 13)).foregroundStyle(Theme.text)
                 if let detail {
                     Text(detail).font(SettingsKit.caption).foregroundStyle(detailColor).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 12)
+            Spacer(minLength: 16)
             trailing
         }
         .settingsRowPadding()
@@ -289,8 +289,8 @@ struct SettingsTile: View {
 }
 
 extension View {
-    /// A settings row's inset: 12 on the sides, enough above and below for a 40pt row.
+    /// A settings row's inset: 16 on the sides, enough above and below for a 44pt row.
     func settingsRowPadding() -> some View {
-        padding(.horizontal, 12).padding(.vertical, 9).frame(minHeight: 40)
+        padding(.horizontal, 16).padding(.vertical, 11).frame(minHeight: 44)
     }
 }
