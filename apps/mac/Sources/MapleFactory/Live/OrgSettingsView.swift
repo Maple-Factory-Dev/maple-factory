@@ -702,7 +702,7 @@ struct PromptSettings: View {
                 ForEach(PromptFields.roles, id: \.label) { role in
                     SettingsSection(role.label, caption: role.hint) {
                         SettingsBlock {
-                            PromptEditor(hint: role.hint, text: $draft[dynamicMember: role.key], editable: isAdmin, height: 96)
+                            PromptEditor(hint: role.hint, text: $draft[dynamicMember: role.key], editable: isAdmin, height: 96, boxed: false)
                         }
                     }
                 }
@@ -801,20 +801,25 @@ struct PromptEditor: View {
     @Binding var text: String
     var editable = true
     var height: CGFloat = 64
+    /// Its own rounded box; off inside a Settings group, which is the box.
+    var boxed = true
 
     var body: some View {
         TextEditor(text: $text)
             .font(.system(size: 12.5))
             .scrollContentBackground(.hidden)
+            .scrollIndicators(.never)
             .disabled(!editable)
             .opacity(editable ? 1 : 0.75)
-            .padding(6)
+            .padding(boxed ? 6 : 0)
             .frame(height: height)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+            .background {
+                if boxed { RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)) }
+            }
             .overlay(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(editable ? hint : "None").font(.system(size: 12.5)).foregroundStyle(Theme.textFaint)
-                        .padding(.horizontal, 11).padding(.vertical, 6).allowsHitTesting(false)
+                        .padding(.horizontal, boxed ? 11 : 5).padding(.vertical, boxed ? 6 : 0).allowsHitTesting(false)
                 }
             }
             .overlay(alignment: .bottomTrailing) {

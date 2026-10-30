@@ -162,7 +162,7 @@ struct RepoScriptsDetail: View {
     private func field(_ label: String, _ hint: String, _ placeholder: String, _ text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted).frame(width: 70, alignment: .leading)
+                Text(label).font(.system(size: 13)).foregroundStyle(Theme.text).frame(width: 70, alignment: .leading)
                 if isAdmin {
                     TextField(placeholder, text: text, axis: .vertical)
                         .lineLimit(1...4)
