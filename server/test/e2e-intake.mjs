@@ -21,6 +21,13 @@ if (signIn !== "dev") {
   step("a wrong key is refused");
 }
 
+// The factory POSTs its replies to a request's replyUrl, so the API only takes Slack's hooks and INTAKE_REPLY_HOSTS.
+for (const replyUrl of ["https://evil.example/collect", "https://hooks.slack.com.evil.example/x"]) {
+  res = await post("/api/intake", { title: "x", replyUrl }, { authorization: `Bearer ${key}` });
+  if (res.status !== 400) throw new Error(`replyUrl ${replyUrl} was taken (${res.status})`);
+}
+step("a replyUrl outside the allowed hosts is refused");
+
 // 2. Slack's slash command.
 const form = new URLSearchParams({ text: "Dark mode for the greeting page please", user_name: "mei", channel_name: "requests", response_url: "https://example.invalid/slack" }).toString();
 const stamp = String(Math.floor(Date.now() / 1000));

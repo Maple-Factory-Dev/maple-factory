@@ -17,6 +17,7 @@ const cookie = (start.headers.get("set-cookie") ?? "").split(";")[0];
 const action = html.match(/action="([^"]+)"/)?.[1]?.replace(/&amp;/g, "&") ?? "";
 const state = new URL(action || "https://x/").searchParams.get("state");
 const manifest = JSON.parse((html.match(/name="manifest" value="([^"]+)"/)?.[1] ?? "{}").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));
+check(/frame-ancestors 'none'/.test(start.headers.get("content-security-policy") ?? "") && start.headers.get("x-frame-options") === "DENY", "the page can't be framed (clickjacking)");
 check(html.match(/<form /g)?.length === 1, "one form: GitHub said what kind of account it is");
 check(personal ? action.startsWith("https://github.com/settings/apps/new?state=") : action.startsWith(`https://github.com/organizations/${org}/settings/apps/new?state=`),
   `the form posts to the ${personal ? "account's" : "org's"} new-app page`);
