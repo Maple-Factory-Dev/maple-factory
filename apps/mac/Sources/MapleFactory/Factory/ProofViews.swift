@@ -612,11 +612,92 @@ private struct MediaProof: View {
     }
 }
 
+/// The screenshot in the lightbox at `zoom` past fitted, panned by `pan`, in a frame that grows with it up to the
+/// room and clips it. Pinch zooms about the pinch, double-click toggles fitted and 2× at the click, dragging pans
+/// while zoomed; with the scroll monitor, ⌘-scroll zooms about the cursor and a plain scroll pans.
+private struct ZoomableProofImage: View {
+    let image: NSImage
+    let fitted: CGSize
+    let room: CGSize
+    let zoom: CGFloat
+    let pan: CGSize
+    let zoomTo: (CGFloat, CGPoint) -> Void
+    let panTo: (CGSize) -> Void
+    /// Where a pinch started (from the frame's centre) and the zoom it started at.
+    @State private var pinch: (anchor: CGPoint, zoom: CGFloat)?
+    /// The pan a drag started from.
+    @State private var dragFrom: CGSize?
+    /// The frame in window coordinates, for the scroll monitor to find the cursor.
+    @State private var frameInWindow: CGRect = .zero
+    @State private var monitor: Any?
+
+    var body: some View {
+        let content = CGSize(width: fitted.width * zoom, height: fitted.height * zoom)
+        let frame = CGSize(width: min(room.width, content.width), height: min(room.height, content.height))
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: content.width, height: content.height)
+            .offset(pan)
+            .frame(width: frame.width, height: frame.height)
+            .clipped()
+            .contentShape(Rectangle())
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameInWindow = $0 }
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let from = dragFrom ?? pan
+                    dragFrom = from
+                    panTo(CGSize(width: from.width + value.translation.width, height: from.height + value.translation.height))
+                }
+                .onEnded { _ in dragFrom = nil }, isEnabled: zoom > 1)
+            .simultaneousGesture(MagnifyGesture()
+                .onChanged { value in
+                    let start = pinch ?? (CGPoint(x: value.startLocation.x - frame.width / 2, y: value.startLocation.y - frame.height / 2), zoom)
+                    pinch = start
+                    zoomTo(start.zoom * value.magnification, start.anchor)
+                }
+                .onEnded { _ in pinch = nil })
+            .onTapGesture(count: 2) { location in
+                withAnimation(.snappy(duration: 0.25)) {
+                    zoomTo(zoom > 1 ? 1 : 2, CGPoint(x: location.x - frame.width / 2, y: location.y - frame.height / 2))
+                }
+            }
+            .pointerStyle(zoom > 1 ? (dragFrom == nil ? .grabIdle : .grabActive) : nil)
+            .onAppear {
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { scrolled($0) }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+            }
+    }
+
+    /// ⌘-scroll zooms about the cursor (or the centre, off the image); a plain scroll pans a zoomed image.
+    private func scrolled(_ event: NSEvent) -> NSEvent? {
+        guard let view = event.window?.contentView, event.window == NSApp.mainWindow || Headless.isOn else { return event }
+        var point = view.convert(event.locationInWindow, from: nil)
+        if !view.isFlipped { point.y = view.bounds.height - point.y }
+        let precise = event.hasPreciseScrollingDeltas
+        if event.modifierFlags.contains(.command) {
+            let anchor = frameInWindow.contains(point) ? CGPoint(x: point.x - frameInWindow.midX, y: point.y - frameInWindow.midY) : .zero
+            zoomTo(zoom * exp(event.scrollingDeltaY * (precise ? 0.01 : 0.1)), anchor)
+            return nil
+        }
+        guard zoom > 1 else { return event }
+        let step: CGFloat = precise ? 1 : 10
+        panTo(CGSize(width: pan.width + event.scrollingDeltaX * step, height: pan.height + event.scrollingDeltaY * step))
+        return nil
+    }
+}
+
 /// A proof shown as large as the window allows, over a dimmed window. Esc, the close button or a click
 /// on the backdrop puts it away; Open in Preview (or QuickTime) still hands the file to the Mac.
+/// A screenshot opens fitted and zooms (pinch, ⌘-scroll, double-click, − / + and ⌘= / ⌘− / ⌘0) and pans once zoomed.
 struct ProofLightboxView: View {
     /// A demo script's `lightbox:open` (or `:image`, `:video`): the first such proof on screen opens itself here.
     static let demoOpen = Notification.Name("ProofLightboxView.demoOpen")
+    /// A demo script's `lightbox:zoom:<factor>` or `lightbox:pan:<dx>:<dy>`, for the screenshot shown large.
+    static let demoZoom = Notification.Name("ProofLightboxView.demoZoom")
     static let padding: CGFloat = 48
     /// Room under the media for its caption and buttons.
     static let barHeight: CGFloat = 40
@@ -625,6 +706,9 @@ struct ProofLightboxView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client: FactoryClient?
     @State private var player: AVPlayer?
+    /// How far past fitted the screenshot is zoomed (1 is fitted), and how far it's panned from centred.
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
 
     var body: some View {
         GeometryReader { geo in
@@ -639,10 +723,18 @@ struct ProofLightboxView: View {
                     media(in: room)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
-                    bar
+                    bar(room: room)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .onReceive(NotificationCenter.default.publisher(for: Self.demoZoom)) { note in
+                guard let parts = note.object as? [String], let command = parts.first else { return }
+                let numbers = parts.dropFirst().compactMap { Double($0) }.map { CGFloat($0) }
+                withAnimation(.snappy(duration: 0.35)) {
+                    if command == "zoom", let factor = numbers.first { setZoom(factor, at: .zero, room: room) }
+                    if command == "pan", numbers.count == 2 { setPan(CGSize(width: pan.width + numbers[0], height: pan.height + numbers[1]), room: room) }
+                }
+            }
         }
         .onAppear(perform: startVideo)
         .onDisappear { player?.pause() }
@@ -651,14 +743,8 @@ struct ProofLightboxView: View {
     @ViewBuilder private func media(in room: CGSize) -> some View {
         switch lightbox {
         case let .image(image, _, _):
-            let size = Self.fit(image.size, in: room)
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size.width, height: size.height)
-                .contentShape(Rectangle())
-                .onTapGesture {}
+            ZoomableProofImage(image: image, fitted: Self.fit(image.size, in: room), room: room, zoom: zoom, pan: pan,
+                               zoomTo: { setZoom($0, at: $1, room: room) }, panTo: { setPan($0, room: room) })
         case let .video(_, poster, _, _):
             // Recordings are often small: they grow to fill the room, unlike screenshots.
             let size = Self.fit(poster?.size ?? CGSize(width: 16, height: 10), in: room, upscale: true)
@@ -669,11 +755,12 @@ struct ProofLightboxView: View {
         }
     }
 
-    private var bar: some View {
+    private func bar(room: CGSize) -> some View {
         HStack(spacing: 10) {
             Image(systemName: isVideo ? "video" : "photo")
             Text(lightbox.caption).lineLimit(1)
             Spacer(minLength: 16)
+            if !isVideo { zoomControls(room: room) }
             if canOpen {
                 Button(isVideo ? "Open in QuickTime" : "Open in Preview", action: openExternally)
                     .buttonStyle(.borderless)
@@ -696,6 +783,60 @@ struct ProofLightboxView: View {
         // Clicks in the bar's gaps stay in the bar instead of reaching the backdrop.
         .contentShape(Rectangle())
         .onTapGesture {}
+    }
+
+    private func zoomControls(room: CGSize) -> some View {
+        HStack(spacing: 2) {
+            Button { withAnimation(.snappy(duration: 0.2)) { setZoom(Self.zoomStep(from: zoom, up: false, cap: zoomCap(room)), at: .zero, room: room) } } label: {
+                Image(systemName: "minus").frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(zoom <= 1)
+            .help("Zoom Out (⌘−)")
+            Button { withAnimation(.snappy(duration: 0.2)) { setZoom(1, at: .zero, room: room) } } label: {
+                Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42)
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            .help("Fit (⌘0)")
+            Button { withAnimation(.snappy(duration: 0.2)) { setZoom(Self.zoomStep(from: zoom, up: true, cap: zoomCap(room)), at: .zero, room: room) } } label: {
+                Image(systemName: "plus").frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .keyboardShortcut("=", modifiers: .command)
+            .disabled(zoom >= zoomCap(room))
+            .help("Zoom In (⌘=)")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 4)
+        .background(Capsule().fill(.white.opacity(0.1)))
+    }
+
+    /// The screenshot's size fitted into the room, and its own pixels.
+    private func imageSizes(_ room: CGSize) -> (fitted: CGSize, pixels: CGSize)? {
+        guard case let .image(image, _, _) = lightbox else { return nil }
+        let pixels = image.representations.reduce(image.size) { size, rep in
+            CGSize(width: max(size.width, CGFloat(rep.pixelsWide)), height: max(size.height, CGFloat(rep.pixelsHigh)))
+        }
+        return (Self.fit(image.size, in: room), pixels)
+    }
+
+    private func zoomCap(_ room: CGSize) -> CGFloat {
+        guard let sizes = imageSizes(room) else { return 1 }
+        return Self.clampZoom(.infinity, fitted: sizes.fitted, pixels: sizes.pixels)
+    }
+
+    /// Zooms to `target` (clamped) about `anchor`, a point from the image frame's centre, keeping the pan in bounds.
+    private func setZoom(_ target: CGFloat, at anchor: CGPoint, room: CGSize) {
+        guard let sizes = imageSizes(room) else { return }
+        let next = Self.clampZoom(target, fitted: sizes.fitted, pixels: sizes.pixels)
+        let content = CGSize(width: sizes.fitted.width * next, height: sizes.fitted.height * next)
+        pan = Self.clampPan(Self.zoomAnchored(pan, from: zoom, to: next, at: anchor), content: content, room: room)
+        zoom = next
+    }
+
+    private func setPan(_ target: CGSize, room: CGSize) {
+        guard let sizes = imageSizes(room) else { return }
+        pan = Self.clampPan(target, content: CGSize(width: sizes.fitted.width * zoom, height: sizes.fitted.height * zoom), room: room)
     }
 
     private var isVideo: Bool { if case .video = lightbox { true } else { false } }
