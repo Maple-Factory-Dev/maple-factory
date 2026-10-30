@@ -5,9 +5,10 @@
 // shown, and the factory trims them to the policy's scoutItems (2 here), makes them tasks in the goal
 // and sends them to planning, each with `scoutedFrom`, while `scout.updated` goes running → done.
 //   node server/test/e2e-scout.mjs http://localhost:8788
+//   node server/test/e2e-scout.mjs http://localhost:8788 serve 120 ["Goal name"]   # set up, then answer the app's Scout runs (slowly) for 120s
 // Run the server with a short MERGE_GRACE_MS (scripts/dev-stack.sh does, with MERGE_GRACE_MS=1500).
 
-const [base = "http://localhost:8788"] = process.argv.slice(2);
+const [base = "http://localhost:8788", mode = "test", serveSecs = "120", serveName = "Greeting page"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
 const step = (t) => console.log(`✓ ${t}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -100,9 +101,9 @@ runner.onmessage = async (e) => {
   if (m.type === "draft.run") {
     draftRun = m;
     // Every leftover it was shown, and more than the cap.
-    const from = [...m.prompt.matchAll(/^- from (\S+)/gm)].map((x) => x[1]);
-    const items = from.map((f) => ({ from: f, title: `Follow up ${f}`, brief: `${f} is still real: see hello.txt.`, doneWhen: ["A test shows it's fixed"] }));
-    await sleep(500);
+    const shown = [...m.prompt.matchAll(/^- from (\S+) .*\n  (.*)$/gm)].map((x) => ({ from: x[1], text: x[2].replace(/^\w+ \w+ in \S+: /, "") }));
+    const items = shown.map((c) => ({ from: c.from, title: c.from.includes("#") ? `Fix: ${c.text.replace(/\.$/, "")}`.slice(0, 70) : c.text.slice(0, 70), brief: `Still real: ${c.text}`, doneWhen: ["A test shows it's fixed"] }));
+    await sleep(mode === "serve" ? 8_000 : 500);
     toHub({ type: "draft.done", id: m.id, output: `Checked them.\n${JSON.stringify({ items })}`, error: null });
   }
 };
@@ -110,7 +111,7 @@ await sleep(500);
 
 // A goal with a folder, so nothing needs GitHub.
 const prefix = `SC${String(Date.now()).slice(-4)}`;
-send({ type: "goal.save", goal: { id: "", name: `Scout ${prefix}`, prefix, color: "#2EA043", summary: "Leftovers to scout.", lead: "", repos: [], folder: "/tmp/scout-e2e/repo", base: null } });
+send({ type: "goal.save", goal: { id: "", name: mode === "serve" ? serveName : `Scout ${prefix}`, prefix, color: "#2EA043", summary: "A friendly greeting, and the leftovers its reviews left behind.", lead: "", repos: [], folder: "/tmp/scout-e2e/repo", base: null } });
 await until("the goal", () => goals.some((g) => g.prefix === prefix));
 const goal = goals.find((g) => g.prefix === prefix);
 send({ type: "policy.save", policy: { ...policy, scoutItems: 2 } });
@@ -132,6 +133,13 @@ const parked = inGoal().find((t) => t.id !== first).id;
 send({ type: "task.backlog", id: parked });
 await until(`${parked} in the backlog`, () => tasks.get(parked).state === "backlog");
 step(`${parked} parked in the backlog`);
+
+if (mode === "serve") {
+  send({ type: "policy.save", policy: { ...policy, scoutItems: 3 } });
+  step(`serving Scout runs for ${goal.name} (${goal.prefix}) for ${serveSecs}s`);
+  await sleep(Number(serveSecs) * 1000);
+  process.exit(0);
+}
 
 send({ type: "goal.scout", goal: goal.id });
 await until("the Scout run", () => runs.some((r) => r.goal === goal.id && r.state !== "running"), 20_000);

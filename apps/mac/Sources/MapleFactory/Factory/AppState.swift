@@ -2217,6 +2217,19 @@ final class AppState {
                     if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { goalSheet = .edit(goal.id); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // The goal header's Scout button, on a goal by its name or task prefix: `scout:MF`. Signing in, it waits for the goal.
+            case "scout":
+                for _ in 0..<300 {
+                    if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { client?.scout(goal: goal.name); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            // Settings → Scout's Items per Scout run stepper set to a number: `scoutitems:5`.
+            case "scoutitems":
+                for _ in 0..<300 where client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let client, var policy = client.riskPolicy, let n = Int(parts[1]) {
+                    policy.scoutItems = n
+                    client.save(policy: policy)
+                }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.

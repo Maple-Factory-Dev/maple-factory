@@ -135,7 +135,10 @@ struct ScoutButton: View {
         case .done?:
             let n = run?.tasks.count ?? 0
             return n == 0 ? "Nothing left over" : n == 1 ? "1 plan drafted" : "\(n) plans drafted"
-        case .failed?: return run?.error ?? "Scout failed"
+        case .failed?:
+            // The whole error is in the tooltip.
+            let error = run?.error ?? "Scout failed"
+            return error.count > 40 ? error.prefix(39) + "…" : error
         default: return nil
         }
     }
@@ -153,8 +156,6 @@ struct ScoutButton: View {
                         Text(result)
                             .foregroundStyle(run?.state == .failed ? Theme.State.cancelled : Theme.textMuted)
                             .lineLimit(1)
-                            .frame(maxWidth: 220, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -170,6 +171,7 @@ struct ScoutButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .fixedSize()
         .disabled(running)
         .help(run?.state == .failed ? (run?.error ?? "") : "Find this goal's leftovers still worth doing, and draft plans for them")
     }
@@ -686,6 +688,16 @@ struct TaskCard: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let effort = task.effort { EffortChip(effort: effort) }
+
+            if let from = task.scoutedFrom {
+                HStack(spacing: 4) {
+                    Image(systemName: "binoculars").font(.system(size: 9.5))
+                    Text("Scouted from \(from.split(separator: "#").first.map(String.init) ?? from)")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+                .help(from.contains("#") ? "A review finding left open on \(from.replacingOccurrences(of: "#", with: " (")))" : "Scout picked it up from \(from)")
+            }
 
             if task.queued {
                 QueuedFooter(task: task)
