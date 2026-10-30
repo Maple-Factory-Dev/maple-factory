@@ -1,4 +1,5 @@
 mod agent_config;
+mod agent_login;
 mod agents;
 mod autoupdate;
 mod config;
@@ -496,7 +497,9 @@ async fn run(args: Args) -> Result<()> {
     let sessions = Sessions::start(tx, tmux, hooks).await?;
     let updater = AutoUpdate::new(args.token.is_some(), &settings.url);
     updater.start(sessions.clone());
-    tokio::spawn(health::report(sessions.clone()));
+    // Notified when an agent signs in, so health checks the agents again straight away.
+    let recheck = Arc::new(tokio::sync::Notify::new());
+    tokio::spawn(health::report(sessions.clone(), recheck.clone()));
     tokio::spawn(git::report(sessions.clone()));
     tokio::spawn(ports::report(sessions.clone()));
     tokio::spawn(worktrees::report(sessions.clone()));
@@ -524,7 +527,7 @@ async fn run(args: Args) -> Result<()> {
         // exits go in the hello, and reports (ports, git, worktrees, usage) are sent again after it.
         while rx.try_recv().is_ok() {}
         let mut connected = false;
-        let result = connect(&settings, &host, &sessions, &updater, &mut rx, &mut connected).await;
+        let result = connect(&settings, &host, &sessions, &updater, &recheck, &mut rx, &mut connected).await;
         mcp::set_connected(false);
         // A connection that worked and then dropped (a deploy, a network blip) retries quickly;
         // only repeated failures to connect back off.
@@ -560,6 +563,7 @@ async fn connect(
     host: &str,
     sessions: &Sessions,
     updater: &Arc<AutoUpdate>,
+    recheck: &Arc<tokio::sync::Notify>,
     rx: &mut UnboundedReceiver<Event>,
     connected: &mut bool,
 ) -> Result<()> {
@@ -622,7 +626,7 @@ async fn connect(
                 Ok(msg) => match msg {
                     Some(Ok(Message::Text(text))) => {
                         if text.as_str() != "pong" {
-                            handle(sessions, updater, text.as_str());
+                            handle(sessions, updater, recheck, text.as_str());
                         }
                     }
                     Some(Ok(Message::Binary(frame))) => {
@@ -725,7 +729,7 @@ impl std::fmt::Display for Rejected {
 
 impl std::error::Error for Rejected {}
 
-fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
+fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::sync::Notify>, text: &str) {
     let msg: Inbound = match serde_json::from_str(text) {
         Ok(msg) => msg,
         Err(e) => return warn!("bad message from hub: {e}"),
@@ -918,6 +922,14 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
             tokio::spawn(draft::run(sessions.clone(), r));
         }
         Inbound::DraftCancel { id } => draft::cancel(&id),
+        Inbound::AgentLogin { agent, cancel } => {
+            info!("the hub asked to {} {agent}'s sign-in", if cancel { "cancel" } else { "start" });
+            if cancel {
+                agent_login::cancel(&agent);
+            } else {
+                agent_login::start(sessions.clone(), agent, recheck.clone());
+            }
+        }
         Inbound::TaskCleanup(c) => {
             info!("cleaning up task {} in {}", c.task_id, c.cwd);
             tokio::spawn(tasks::run_cleanup(sessions.clone(), c));

@@ -109,6 +109,16 @@ export const enums: Record<string, Enum> = {
       failed: "It couldn't; `message` says why.",
     },
   },
+  AgentLoginState: {
+    doc: "Where an agent sign-in (`codex login --device-auth`) on a machine is.",
+    values: {
+      starting: "Asked the machine; the login is starting.",
+      waiting: "Showing a link and one-time code: waiting for its owner to finish in the browser.",
+      done: "Signed in.",
+      failed: "It couldn't; `message` says why.",
+      cancelled: "Someone cancelled it, or the code expired.",
+    },
+  },
   AgentState: {
     doc: "What a session's agent is doing, from its hooks.",
     values: {
@@ -267,6 +277,11 @@ export const structs: Record<string, Struct> = {
     doc: "A runner update in progress on a machine, or how it just ended.",
     fields: { state: "RunnerUpdateState", target: "string?", from: "string?", message: "string?", at: "u64" },
     fieldDocs: { target: "The version it's updating to, once known.", from: "The version it ran when the update was asked for.", message: "Why it failed.", at: "When it reached this state." },
+  },
+  AgentLoginStatus: {
+    doc: "An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only.",
+    fields: { agent: "string", state: "AgentLoginState", url: "string?", code: "string?", expiresAt: "u64?", message: "string?" },
+    fieldDocs: { url: "The page to enter the code on.", code: "The one-time code.", expiresAt: "When the code expires (ms).", message: "Why it failed." },
   },
   RunnerRelease: {
     doc: "One runner release in the feed's changelog (maple-runner/changes.json).",
@@ -843,6 +858,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: { data: "Base64." },
       },
       "update.status": { fields: { state: "string", version: "string?", message: "string?" } },
+      "agent.login_status": { doc: "How an `agent.login` is going.", fields: { status: "AgentLoginStatus" } },
       usage: { doc: "Plan usage readings that changed (all of them again on reconnect).", fields: { agents: "AgentUsage[]" } },
       "session.cost": { doc: "A session's latest spend reading (again on reconnect, and once more just before it ends).", fields: { cost: "SessionCost" } },
       "mcp.request": {
@@ -926,6 +942,10 @@ export const unions: Record<string, Union> = {
         fieldDocs: { nonce: "Echoed in the reply, so it goes to the viewer that asked." },
       },
       "runner.update": {},
+      "agent.login": {
+        doc: "Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.",
+        fields: { agent: "string", cancel: "bool" },
+      },
       "runner.restart": {},
       "mcp.response": {
         doc: "The answer to `mcp.request`: `result` ({summary, data}) or `error`.",
@@ -1010,6 +1030,10 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", name: "string" },
       },
       "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
+      "machine.agent_login": {
+        doc: "Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.",
+        fields: { machine: "string", agent: "string", cancel: "bool?" },
+      },
       "runner.check": {
         doc: "Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.",
         fields: { machine: "string" },
@@ -1154,6 +1178,7 @@ export const unions: Record<string, Union> = {
       },
       "machine.updated": { fields: { machine: "Machine" } },
       "machine.removed": { fields: { id: "string" } },
+      "machine.agent_login": { doc: "How a sign-in on your machine is going, to its owner's apps only.", fields: { machine: "string", status: "AgentLoginStatus" } },
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
       "goal.updated": { fields: { goal: "Goal" } },
