@@ -263,7 +263,7 @@ const WRAPPERS: &[&str] = &["sudo", "doas", "sh", "bash", "zsh", "fish", "dash",
 /// The flags that keep Claude Code or Codex from stopping at permission prompts, as far as
 /// `unattended` says; none for "ask" or another agent. Checked against `claude --help` (2.1) and
 /// `codex --help` (0.164) and https://learn.chatgpt.com/docs/sandboxing/auto-review:
-/// - Claude Code, "project": `--allowedTools=mcp__agents,Bash(git:*),Bash(npm:*),…` (one argument: the flag takes
+/// - Claude Code, "project": `--allowedTools=mcp__maple,Bash(git:*),Bash(npm:*),…` (one argument: the flag takes
 ///   several values and would swallow a prompt after it) and `--permission-mode auto`: Claude Code's
 ///   classifier approves routine commands (`sed`, `grep`, …) and denies risky ones instead of waiting
 ///   for someone, where `acceptEdits` stopped a builder at its first `sed -i`.
@@ -279,12 +279,12 @@ pub fn permission_args(agent: &str, unattended: &Unattended) -> Vec<String> {
     let args: &[&str] = match (agent, unattended.mode) {
         (_, UnattendedMode::Ask) => &[],
         ("claude", UnattendedMode::Project) => {
-            // The runner's own `agents` MCP server too: planners write their card with it and builders
+            // The runner's own `maple` MCP server too: planners write their card with it and builders
             // prove with it, and the hub already decides what each session may do there (Off/Read/Full,
             // a note or project grant), so asking here would only stop the session at night.
             // And the factory's connectors an admin marked "Allow its tools without asking"; the rest are
             // left to the auto classifier.
-            let rules = std::iter::once("mcp__agents".to_string())
+            let rules = std::iter::once("mcp__maple".to_string())
                 .chain(unattended.allow_mcp.iter().map(|name| format!("mcp__{name}")))
                 .chain(programs(&unattended.commands).iter().map(|p| format!("Bash({p}:*)")))
                 .collect::<Vec<_>>()
@@ -520,7 +520,7 @@ mod tests {
                 "--mcp-config=/m.json",
                 "--model",
                 "claude-opus-5-5",
-                "--allowedTools=mcp__agents,Bash(git:*),Bash(npm:*),Bash(cd:*),Bash(cargo:*),Bash(npx:*)",
+                "--allowedTools=mcp__maple,Bash(git:*),Bash(npm:*),Bash(cd:*),Bash(cargo:*),Bash(npx:*)",
                 "--permission-mode",
                 "auto",
                 "fix it"
@@ -612,11 +612,11 @@ mod tests {
         let connectors = [connector("jira", McpTransport::Stdio, true), connector("docs", McpTransport::Http, false)];
         let project = unattended(UnattendedMode::Project, &["npm test"]).with_connectors(&connectors);
         let args = permission_args("claude", &project);
-        assert_eq!(args[0], "--allowedTools=mcp__agents,mcp__jira,Bash(git:*),Bash(npm:*)");
+        assert_eq!(args[0], "--allowedTools=mcp__maple,mcp__jira,Bash(git:*),Bash(npm:*)");
         assert!(!args[0].contains("mcp__docs"));
         // None auto-allowed: none listed.
         let none = unattended(UnattendedMode::Project, &[]).with_connectors(&[connector("docs", McpTransport::Http, false)]);
-        assert_eq!(permission_args("claude", &none)[0], "--allowedTools=mcp__agents,Bash(git:*)");
+        assert_eq!(permission_args("claude", &none)[0], "--allowedTools=mcp__maple,Bash(git:*)");
         // "ask" and "skip" don't list tools at all.
         let skip = unattended(UnattendedMode::Skip, &[]).with_connectors(&connectors);
         assert_eq!(permission_args("claude", &skip), ["--permission-mode", "bypassPermissions"]);
