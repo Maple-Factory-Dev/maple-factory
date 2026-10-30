@@ -106,7 +106,7 @@ struct RepoScriptsDetail: View {
             SettingsSection("Scripts") {
                 field("Create", "Makes the worktree instead of git worktree add. It must leave a git worktree on $MAPLE_BRANCH at $MAPLE_WORKTREE.", "bin/worktree-create", $draft.create)
                 field("Preflight", "Sets the machine up for this repo: runtimes, brew bundle, services. Runs in the new worktree before setup, the first time this machine's checkout is used and again when the command or a watched file changes.", "mise install && brew bundle", $draft.preflight)
-                field("Watch", "Re-run preflight when these change: paths from the repo's root, one per line (at most 20). Blank watches the usual pins.", ".ruby-version\n.tool-versions\n.node-version\n.nvmrc\n.python-version\nBrewfile\nmise.toml", $draft.watch, lines: 2...7)
+                watchField
                 field("Setup", "Runs once the worktree exists, before the agent starts: install, seed, copy config.", "bin/worktree-setup", $draft.setup)
                 field("Teardown", "Runs before a finished task's worktree is removed: stop services, drop databases.", "bin/worktree-teardown", $draft.teardown)
                 field("Archive", "Runs instead of the removal when a finished task is cleaned up. It owns the folder and the branch.", "bin/worktree-archive", $draft.archive)
@@ -243,13 +243,44 @@ struct RepoScriptsDetail: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill))
     }
 
-    private func field(_ label: String, _ hint: String, _ placeholder: String, _ text: Binding<String>, lines: ClosedRange<Int> = 1...4) -> some View {
+    /// The files that re-run preflight, one per line: a multi-line editor whose placeholder lists the defaults.
+    private var watchField: some View {
+        let defaults = ".ruby-version  .tool-versions  .node-version  .nvmrc\n.python-version  Brewfile  mise.toml"
+        let lines = max(2, min(7, draft.watch.split(whereSeparator: \.isNewline).count + 1))
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Watch").font(.system(size: 13)).foregroundStyle(Theme.text).frame(width: 70, alignment: .leading)
+                if isAdmin {
+                    TextEditor(text: $draft.watch)
+                        .font(.system(size: 12.5, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .scrollIndicators(.never)
+                        .padding(.horizontal, 3).padding(.vertical, 3)
+                        .frame(height: CGFloat(lines) * 16 + 6)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.stroke)))
+                        .overlay(alignment: .topLeading) {
+                            if draft.watch.isEmpty {
+                                Text(defaults).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.textFaint)
+                                    .padding(.horizontal, 8).padding(.vertical, 3).allowsHitTesting(false)
+                            }
+                        }
+                } else {
+                    readOnly(draft.watch.isEmpty ? "" : draft.watch)
+                }
+            }
+            Text("Re-run preflight when these change: paths from the repo's root, one per line (at most 20). Blank watches the files shown.")
+                .font(SettingsKit.caption).foregroundStyle(Theme.textMuted).padding(.leading, 78).fixedSize(horizontal: false, vertical: true)
+        }
+        .settingsRowPadding()
+    }
+
+    private func field(_ label: String, _ hint: String, _ placeholder: String, _ text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(label).font(.system(size: 13)).foregroundStyle(Theme.text).frame(width: 70, alignment: .leading)
                 if isAdmin {
                     TextField(placeholder, text: text, axis: .vertical)
-                        .lineLimit(lines)
+                        .lineLimit(1...4)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12.5, design: .monospaced))
                 } else {
