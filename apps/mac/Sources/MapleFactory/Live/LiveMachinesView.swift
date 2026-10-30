@@ -378,7 +378,7 @@ struct LiveMachineCard: View {
         let choices = ["shell"] + installed
         return Menu {
             ForEach(choices, id: \.self) { agent in
-                Button(agentTitle(agent)) { onNew(agent) }
+                Button { onNew(agent) } label: { Label { Text(agentTitle(agent)) } icon: { AgentMark.image(agent) } }
             }
         } label: {
             HStack(spacing: 5) {
@@ -468,10 +468,13 @@ struct LiveMachineCard: View {
         // Its owner can sign Codex in from here; anyone else's device code would sign the machine into their account.
         let canSignIn = isMine && agent.name == "codex" && !agent.loggedIn && client.agentLogin(machine: machine.id, agent: agent.name) == nil
         return HStack(spacing: 4) {
-            Image(systemName: agent.loggedIn ? "checkmark.circle.fill" : "exclamationmark.circle")
-                .foregroundStyle(agent.loggedIn ? Theme.State.merged : Theme.State.awaitingApproval)
+            AgentIcon(agent: agent.name, size: 12)
+                .foregroundStyle(Theme.text)
             Text(agentTitle(agent.name))
             if let version = agent.version { Text(version).foregroundStyle(Theme.textFaint) }
+            if !agent.loggedIn {
+                Circle().fill(Theme.State.awaitingApproval).frame(width: 6, height: 6)
+            }
             if canSignIn {
                 Button("Sign in") { client.signIn(machine: machine.id, agent: agent.name) }
                     .buttonStyle(.plain)
@@ -603,6 +606,8 @@ struct LiveSessionRow: View {
                             .frame(height: 17)
                             .background(RoundedRectangle(cornerRadius: 4).fill(Theme.State.building.opacity(0.12)))
                     }
+                    AgentIcon(agent: live.session.agent, size: 13)
+                        .foregroundStyle(Theme.textMuted)
                     Text(agentTitle(live.session.agent))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Theme.text)
@@ -868,6 +873,58 @@ func agentTitle(_ name: String) -> String {
     case "codex": "Codex"
     case "shell": "Shell"
     default: name.capitalized
+    }
+}
+
+/// An agent's mark: the bundled Claude and Codex logos as template images, so they take the
+/// foreground style in light and dark mode. Anything else gets an SF Symbol.
+enum AgentMark {
+    /// The bundled mark for an agent, or nil when there isn't one.
+    @MainActor static func bundled(_ agent: String) -> NSImage? {
+        if let image = cache[agent] { return image }
+        guard ["claude", "codex"].contains(agent),
+              let url = Bundle.module.url(forResource: agent, withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = true
+        cache[agent] = image
+        return image
+    }
+
+    /// The SF Symbol an agent without a bundled mark falls back to.
+    static func symbol(_ agent: String) -> String {
+        agent == "shell" ? "terminal" : "cpu"
+    }
+
+    /// The mark as an `Image`, sized for menus and pickers that ignore `.frame`.
+    @MainActor static func image(_ agent: String, size: CGFloat = 14) -> Image {
+        guard let mark = bundled(agent), let sized = mark.copy() as? NSImage else { return Image(systemName: symbol(agent)) }
+        sized.size = NSSize(width: size, height: size)
+        sized.isTemplate = true
+        return Image(nsImage: sized)
+    }
+
+    @MainActor private static var cache: [String: NSImage] = [:]
+}
+
+/// An agent's mark at `size` points, tinted by the foreground style.
+struct AgentIcon: View {
+    let agent: String
+    var size: CGFloat = 14
+
+    var body: some View {
+        if let mark = AgentMark.bundled(agent) {
+            Image(nsImage: mark)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+                .accessibilityLabel(agentTitle(agent))
+        } else {
+            Image(systemName: AgentMark.symbol(agent))
+                .font(.system(size: size * 0.85))
+                .frame(width: size, height: size)
+                .accessibilityLabel(agentTitle(agent))
+        }
     }
 }
 

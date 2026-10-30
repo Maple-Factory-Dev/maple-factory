@@ -237,9 +237,9 @@ struct FactoryReadingPanel: View {
                     if state.isLive {
                         row("Agent") {
                             Picker("", selection: $state.draft.agent) {
-                                Text("Claude Code").tag(String?.none)
+                                Label { Text("Claude Code") } icon: { AgentMark.image("claude") }.tag(String?.none)
                                 ForEach(state.liveAgents.filter { $0 != "claude" }, id: \.self) { id in
-                                    Text(agentTitle(id)).tag(String?.some(id))
+                                    Label { Text(agentTitle(id)) } icon: { AgentMark.image(id) }.tag(String?.some(id))
                                 }
                             }
                             .labelsHidden()

@@ -196,20 +196,13 @@ struct MachineSettingsSheet: View {
         machine.health.map { min(1, $0.load1 / Double(max(1, $0.cores))) }
     }
 
-    private func title(_ agent: String) -> String {
-        switch agent {
-        case "claude": "Claude Code"
-        case "codex": "Codex"
-        default: agent.capitalized
-        }
-    }
-
     /// One agent account's caps, each against what it has used so far.
     private func accountLimits(_ usage: Wire.AgentUsage) -> some View {
         let caps = Binding(get: { agentCaps[usage.agent] ?? Wire.AgentCap(agent: usage.agent) }, set: { agentCaps[usage.agent] = $0 })
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text(title(usage.agent)).font(.system(size: 13, weight: .semibold))
+                AgentIcon(agent: usage.agent, size: 14).foregroundStyle(Theme.text)
+                Text(agentTitle(usage.agent)).font(.system(size: 13, weight: .semibold))
                 if let plan = usage.plan {
                     Text(plan).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.textMuted)
                         .padding(.horizontal, 6).frame(height: 18).background(Capsule().fill(Theme.fill))
@@ -263,7 +256,7 @@ struct MachineSettingsSheet: View {
             if let cap = caps.weekly, let w = usage.windows.first(where: { $0.label == "7d" && $0.name == nil }) {
                 parts.append("the week reaches \(Int(cap * 100))% (now \(Int(w.usedPercent.rounded()))%)")
             }
-            return parts.isEmpty ? nil : "\(title(usage.agent)): when \(parts.joined(separator: " or "))"
+            return parts.isEmpty ? nil : "\(agentTitle(usage.agent)): when \(parts.joined(separator: " or "))"
         }
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle").foregroundStyle(Theme.textMuted)

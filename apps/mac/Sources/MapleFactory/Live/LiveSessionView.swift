@@ -58,6 +58,9 @@ struct LiveSessionView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
+                    if let agent = live?.session.agent {
+                        AgentIcon(agent: agent, size: 14).foregroundStyle(Theme.text)
+                    }
                     Text(agentTitle(live?.session.agent ?? "session"))
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(Theme.text)
