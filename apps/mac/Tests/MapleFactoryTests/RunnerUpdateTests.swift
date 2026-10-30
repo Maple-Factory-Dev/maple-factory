@@ -94,4 +94,12 @@ import Testing
         let release = try JSONDecoder().decode(Wire.RunnerRelease.self, from: Data(json.utf8))
         #expect(release.version == "0.11.0" && release.publishedAt == nil)
     }
+
+    @Test func runnerMenuOnlyChecksUnlessANewerReleaseIsKnown() {
+        #expect(FactoryClient.runnerAction(machine("0.11.0"), latest: "0.11.0") == .check)
+        #expect(FactoryClient.runnerAction(machine("0.12.0"), latest: "0.11.0") == .check)
+        #expect(FactoryClient.runnerAction(machine("0.9.0"), latest: nil) == .check)
+        #expect(FactoryClient.runnerAction(machine(nil), latest: "0.11.0") == .check)
+        #expect(FactoryClient.runnerAction(machine("0.9.0"), latest: "0.11.0") == .update("0.11.0"))
+    }
 }

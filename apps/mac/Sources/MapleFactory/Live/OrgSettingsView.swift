@@ -260,10 +260,11 @@ struct RunnerSettings: View {
                             .foregroundStyle(Theme.textMuted)
                         }
                         Spacer()
-                        Button(client.runnerOutdated(machine) ? "Update" : "Check for Update") {
-                            client.send(.machineUpdate(.init(machine: machine.id)))
+                        let action = client.runnerAction(machine)
+                        Button(action == .check ? "Check for Update" : "Update") {
+                            client.perform(action, on: machine)
                         }
-                        .disabled(!machine.online || client.updatePhase(machine).isBusy)
+                        .disabled((action != .check && !machine.online) || client.updatePhase(machine).isBusy)
                         Button("Show Log") {
                             NSWorkspace.shared.open(LocalRunner.logFile)
                         }

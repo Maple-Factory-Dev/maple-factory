@@ -327,10 +327,14 @@ struct LiveMachineCard: View {
                     client.send(.machineSettings(.init(machine: machine.id, settings: changed)))
                 }
             }
-            Button(client.runnerOutdated(machine) ? "Update Runner to \(client.runnerLatest ?? "")" : "Check for Runner Update") {
-                client.send(.machineUpdate(.init(machine: machine.id)))
+            switch client.runnerAction(machine) {
+            case .update(let latest):
+                Button("Update Runner to \(latest)") { client.perform(.update(latest), on: machine) }
+                    .disabled(!machine.online || client.updatePhase(machine).isBusy)
+            case .check:
+                Button("Check for Runner Update") { client.perform(.check, on: machine) }
+                    .disabled(client.updatePhase(machine).isBusy)
             }
-            .disabled(!machine.online || client.updatePhase(machine).isBusy)
             Button("What's New in the Runner…") { showingChanges = true }
                 .disabled(client.runnerReleases.isEmpty)
             Divider()
