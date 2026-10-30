@@ -558,6 +558,7 @@ struct ReviewActions: View {
                 }
                 gateRow("Reviews", ready: gate.reviewsReady, failed: false,
                         detail: gate.reviewsNeeded == 0 ? "Not required" : "\(task.reviews.count) of \(gate.reviewsNeeded)")
+                mergeRow
             }
 
             if gate.reviewsNeeded > 0 {
@@ -641,6 +642,47 @@ struct ReviewActions: View {
         guard task.state == .reviewing, let mergeAt = task.mergeAt, gate.canMerge, gate.autoMerge,
               task.hand == nil, !state.isInFlight(task.id, .merge) else { return nil }
         return mergeAt
+    }
+
+    /// The merge forecast: conflicts with the base (red), overlaps with other work in flight (amber, each
+    /// one a link to that task), or merges cleanly (green).
+    @ViewBuilder private var mergeRow: some View {
+        let forecast = task.mergeForecast ?? MergeForecast()
+        let base = forecast.base ?? task.pr?.base ?? "main"
+        if !forecast.conflicts.isEmpty {
+            let n = forecast.conflicts.count
+            let files = n == 1 ? "1 file" : "\(n) files"
+            let since = forecast.since.map { " since \($0) merged" } ?? ""
+            let fixing = task.state == .building ? " · builder updating" : ""
+            gateRow("Merge", ready: false, failed: true, detail: "Conflicts in \(files)\(since)\(fixing)")
+                .help(forecast.conflicts.joined(separator: "\n"))
+        } else if !forecast.overlaps.isEmpty {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.State.awaitingApproval)
+                Text("Merge").foregroundStyle(Theme.text)
+                Spacer()
+                Text("Overlaps").foregroundStyle(Theme.State.awaitingApproval)
+                ForEach(Array(forecast.overlaps.prefix(2).enumerated()), id: \.element) { i, o in
+                    Button {
+                        state.openTask(o.task)
+                    } label: {
+                        Text("\(o.task) (\(o.files.count == 1 ? "1 file" : "\(o.files.count) files"))\(i < min(forecast.overlaps.count, 2) - 1 ? "," : "")")
+                            .underline()
+                            .foregroundStyle(Theme.State.awaitingApproval)
+                    }
+                    .buttonStyle(.plain)
+                    .help(o.files.joined(separator: "\n"))
+                }
+                if forecast.overlaps.count > 2 {
+                    Text("+\(forecast.overlaps.count - 2)").foregroundStyle(Theme.State.awaitingApproval)
+                }
+            }
+            .font(.system(size: 12))
+        } else {
+            gateRow("Merge", ready: true, failed: false, detail: "Merges cleanly into \(base)")
+        }
     }
 
     private func gateRow(_ label: String, ready: Bool, failed: Bool, detail: String) -> some View {

@@ -2319,6 +2319,17 @@ final class AppState {
             // `dock:off` / `dock:on` is Settings › General's "Show the factory's icon in the Dock".
             case "dock": AppDefaults.set(["yes", "on", "true"].contains(parts[1].lowercased()), forKey: DockIcon.settingKey)
             case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
+            // A task's merge forecast, for the review panel's Merge row: `forecast:ATL-141:clean`,
+            // `forecast:ATL-141:overlap:ATL-150` or `forecast:ATL-141:conflict:ATL-150`.
+            case "forecast" where parts.count > 2:
+                let other = parts.count > 3 ? parts[3] : "ATL-150"
+                update(parts[1]) { t in
+                    t.mergeForecast = switch parts[2] {
+                    case "overlap": MergeForecast(overlaps: [.init(task: other, files: ["src/auth/session.ts", "src/auth/tokens.ts"])], base: "main")
+                    case "conflict": MergeForecast(conflicts: ["src/auth/session.ts", "src/auth/tokens.ts"], since: other, checkedAt: .now, base: "main")
+                    default: MergeForecast(checkedAt: .now, base: "main")
+                    }
+                }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":
