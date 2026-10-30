@@ -73,6 +73,15 @@ const now = () => Date.now();
 const branchName = (task: Task) => task.id.toLowerCase();
 /** A task's id releases its repo's secrets to its machine only in these states. */
 const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
+/** Where a review note sits: `path:L12` or `path:L12–18`. */
+const lineAnchor = (n: { path: string; start: number; end: number }) => `${n.path}:L${n.start}${n.end > n.start ? `–${n.end}` : ""}`;
+
+/** Code as a fenced block, with a fence longer than any backtick run inside it. */
+const fence = (code: string) => {
+  const ticks = "`".repeat(Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+  return `${ticks}diff\n${code.replace(/\n+$/, "")}\n${ticks}`;
+};
+
 const fail = (message: string): never => {
   throw new FactoryError(message);
 };
@@ -372,31 +381,20 @@ export class Engine {
       }
       case "task.steer": {
         const text = msg.text.trim() || fail("Say what to change.");
-        if (task.state === "backlog" && !task.plan.length) fail("It isn't planned yet; edit its brief or send it to planning.");
-        if (!["planning", "awaitingApproval", "backlog", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
-        if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
-        const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: msg.anchor ?? null, status: "queued", timing: null };
-        task.changes.push(change);
-        this.event(task, who, `asked for a change: ${text}`);
-        this.stat(task, "steer", { state: task.state }, who);
-        if (task.state === "awaitingApproval" || task.state === "backlog") {
-          // The plan isn't approved yet: the planner revises it (picking it up from the backlog).
-          task.approvals = [];
-          this.save(task);
-          return this.startPlanning(task, who, true);
-        }
-        if (task.state === "reviewing") {
-          // A person's request for changes: the builder takes it, and review starts over on what it pushes.
-          await this.backToBuilding(task);
-          this.save(task);
-          await this.pump();
-          return;
-        }
-        if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) {
-          change.status = "applying";
-        }
-        this.save(task);
-        return;
+        return this.steer(task, who, text, msg.anchor ?? null, `asked for a change: ${text}`);
+      }
+      case "task.review": {
+        const notes = msg.notes.map((n) => ({ ...n, text: n.text.trim() })).filter((n) => n.text);
+        if (!notes.length) fail("Add a comment to a line first.");
+        this.steerable(task);
+        const summary = msg.summary?.trim() || null;
+        // Each note on its own in the comment log, anchored to its lines, with the code it's about.
+        for (const n of notes) task.comments.push(await this.comment(who, `${fence(n.snippet)}\n${n.text}`, { anchor: lineAnchor(n) }));
+        if (summary) task.comments.push(await this.comment(who, summary, { anchor: "Review" }));
+        // The builder (or planner) gets the batch as one change request.
+        const text = [summary, ...notes.map((n, i) => `${i + 1}. ${lineAnchor(n)}${n.side === "old" ? " (removed lines)" : ""}: ${n.text}`)].filter(Boolean).join("\n");
+        const count = `${notes.length} comment${notes.length === 1 ? "" : "s"}`;
+        return this.steer(task, who, text, `Review · ${count}`, `reviewed the diff: ${count}`);
       }
       case "task.approvePlan": {
         if (task.state === "backlog") {
@@ -1847,6 +1845,40 @@ export class Engine {
     if (!task) return;
     this.event(task, "factory", text);
     this.save(task, false);
+  }
+
+  /** Fails unless something is working on the task that a change request can steer. */
+  private steerable(task: Task) {
+    if (task.state === "backlog" && !task.plan.length) fail("It isn't planned yet; edit its brief or send it to planning.");
+    if (!["planning", "awaitingApproval", "backlog", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
+    if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
+  }
+
+  /** A change request from a person: the planner revises an unapproved plan, a reviewing task goes
+   *  back to its builder, and a live session has it typed in. */
+  private async steer(task: Task, who: string, text: string, anchor: string | null, said: string) {
+    this.steerable(task);
+    const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor, status: "queued", timing: null };
+    task.changes.push(change);
+    this.event(task, who, said);
+    this.stat(task, "steer", { state: task.state }, who);
+    if (task.state === "awaitingApproval" || task.state === "backlog") {
+      // The plan isn't approved yet: the planner revises it (picking it up from the backlog).
+      task.approvals = [];
+      this.save(task);
+      return this.startPlanning(task, who, true);
+    }
+    if (task.state === "reviewing") {
+      // A person's request for changes: the builder takes it, and review starts over on what it pushes.
+      await this.backToBuilding(task);
+      this.save(task);
+      await this.pump();
+      return;
+    }
+    if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) {
+      change.status = "applying";
+    }
+    this.save(task);
   }
 
   /** A person's comment, with the members it @mentions. */
