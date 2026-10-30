@@ -59,7 +59,8 @@ export function linesLabel(note) {
  *  else the first rows that do, or null when its code is gone and the note should be dropped. */
 export function relocate(rows, note, lines) {
   const count = rows.last - rows.first;
-  const at = (first) => snippet(lines.slice(first, first + count + 1)) === note.snippet && lines.slice(first, first + count + 1).every(pickable);
+  // Hunk headers aren't in a snippet, so a note across two hunks still finds its rows.
+  const at = (first) => pickable(lines[first]) && snippet(lines.slice(first, first + count + 1)) === note.snippet;
   if (rows.first + count < lines.length && at(rows.first)) return rows;
   for (let first = 0; first + count < lines.length; first++) if (at(first)) return { first, last: first + count };
   return null;

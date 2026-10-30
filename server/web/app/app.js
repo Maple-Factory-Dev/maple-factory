@@ -9,6 +9,7 @@
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
 import { loadCollapsed, toggleCollapsed } from "./sections.js";
+import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -881,7 +882,7 @@ function compose(t, key, placeholder, label, submit) {
   const go = () => {
     const text = editor.textarea.value.trim();
     if (!text) return;
-    submit(text);
+    if (submit(text) === false) return;
     editor.clear();
   };
   const editor = markdownEditor({ members: () => state.members, tasks: allTasks, placeholder, rows: 2, onsubmit: go }, h);
@@ -940,7 +941,7 @@ function overview(t) {
     t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
-    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map(mockup)],
+    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
     t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
       h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
         h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
@@ -1032,7 +1033,9 @@ function checkLogPanel(log) {
     pre);
 }
 
-function mockup(m) {
+const mockupAsking = new Set(); // "<task>:<mockup>" whose Request a change box is open
+
+function mockup(t, m) {
   const body = m.kind === "terminal"
     ? h("div", { class: "terminal" }, m.lines.map((l) => h("div", { class: l.style }, l.text || " ", l.callout && h("span", { class: "callout-n" }, l.callout))))
     : h("div", { class: "browser" }, h("div", { class: "url" }, m.url ?? m.title),
@@ -1040,7 +1043,27 @@ function mockup(m) {
   return h("div", { style: "margin-bottom:14px" },
     h("div", { class: "row", style: "margin-bottom:6px" }, h("b", {}, m.title), h("span", { class: "muted" }, m.status === "approved" ? "· approved" : m.status === "changesRequested" ? "· changes asked" : "")),
     body,
-    m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
+    m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))),
+    mockupChange(t, m));
+}
+
+/** Ask for a change to a mockup, as the Mac app does: awaiting approval, the planner revises the plan. */
+function mockupChange(t, m) {
+  if (t.state === "merged" || t.state === "cancelled") return null;
+  const key = `${t.id}:${m.id}`;
+  if (!mockupAsking.has(key)) {
+    return h("div", { style: "margin-top:8px" },
+      h("button", { class: "btn small", onclick: () => { mockupAsking.add(key); render(); document.querySelector(`[data-keep="${t.id}:mockup:${m.id}"] textarea`)?.focus(); } }, "Request a change"));
+  }
+  const box = compose(t, `mockup:${m.id}`, `What should change in "${m.title}"?`, "Request change", (text) => {
+    if (!send({ type: "task.mockupChange", id: t.id, mockup: m.id, text })) return false;
+    mockupAsking.delete(key);
+    render();
+  });
+  // Cancel goes next to compose's own button.
+  box.lastChild.classList.add("row");
+  box.lastChild.prepend(h("button", { class: "btn small", onclick: () => { mockupAsking.delete(key); render(); } }, "Cancel"));
+  return box;
 }
 
 /** On a phone a mockup renders 800px wide and scales down by --fit to its box (app.css). */
@@ -1118,23 +1141,154 @@ function timeline(t) {
 
 // ---- the diff ----
 
+// A review in progress on a task's diff, kept in memory like draftEdits: the lines picked, the comment
+// being typed on them, the comments waiting to be sent, and the summary.
+const reviewPicks = new Map(); // task id → { path, anchor, head }
+const reviewNotes = new Map(); // task id → [{ id, rows: { first, last }, note }]
+const reviewText = new Map(); // task id → the comment being typed on the picked lines
+const reviewSummary = new Map(); // task id → the review's summary
+let noteIds = 0;
+
+/** The same states as decisions()'s Request change: something's working on it to send the review to. */
+const reviewable = (t) => ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
+const touch = matchMedia("(pointer: coarse)");
+
 function diffView(t) {
   const key = `${t.pr?.head ?? ""}+${t.diff?.added}-${t.diff?.removed}`;
   const cached = state.diffs.get(t.id);
   if (!cached || cached.key !== key) {
-    state.diffs.set(t.id, { key, files: null });
-    fetch(`/api/tasks/${t.id}/diff`).then((r) => (r.ok ? r.text() : "")).then((text) => {
-      state.diffs.set(t.id, { key, files: parseDiff(text) });
+    // The diff that was showing stays up until the new one is in, and the review moves onto it.
+    state.diffs.set(t.id, { key, files: cached?.files ?? null });
+    fetch(`/api/tasks/${t.id}/diff`).then((r) => (r.ok ? r.text() : null)).then((text) => {
+      const files = text == null ? cached?.files ?? [] : parseDiff(text);
+      if (text != null && cached?.files) carryReview(t.id, cached.files, files);
+      state.diffs.set(t.id, { key, files });
       render();
     });
   }
   const files = state.diffs.get(t.id).files;
   if (!files) return h("div", { class: "card empty" }, "Loading the diff…");
   if (!files.length) return h("div", { class: "card empty" }, "No diff yet.");
-  return h("div", { style: "margin-top:12px" }, files.map((f) => h("div", { class: "diff" },
-    h("div", { class: "file" }, h("span", {}, f.path), h("span", { class: "spacer" }), h("span", { class: "ok" }, `+${f.added}`), h("span", { class: "bad" }, `−${f.removed}`)),
-    h("div", { class: "scroll" }, h("table", {}, f.lines.map((l) => h("tr", { class: l.kind },
-      h("td", { class: "n" }, l.old ?? ""), h("td", { class: "n" }, l.new ?? ""), h("td", { class: "c" }, l.text))))))));
+  const can = reviewable(t);
+  const notes = reviewNotes.get(t.id) ?? [];
+  return h("div", { style: "margin-top:12px" },
+    can && notes.length > 0 && reviewBar(t, notes),
+    can && !notes.length && h("p", { class: "muted", style: "font-size:13px;margin:0 0 10px" },
+      touch.matches ? "Tap a line number to comment on it; tap another to take in the lines between." : "Click a line number to comment on it; shift-click to take in more lines."),
+    files.map((f) => diffFile(t, f, can, notes.filter((n) => n.note.path === f.path))));
+}
+
+function diffFile(t, f, can, notes) {
+  const sel = reviewPicks.get(t.id);
+  const mine = sel?.path === f.path;
+  const click = (row, e) => {
+    const extending = mine && (e.shiftKey || (touch.matches && !(reviewText.get(t.id) ?? "").trim()));
+    reviewPicks.set(t.id, extending ? extend(sel, f.path, row) : pick(f.path, row));
+    render();
+    // On a phone the keyboard would cover the lines still being picked.
+    if (!touch.matches) document.querySelector(`[data-keep="${t.id}:review-comment"]`)?.focus({ preventScroll: true });
+  };
+  const rows = [];
+  f.lines.forEach((l, row) => {
+    const on = can && picked(sel, f.path, row) && pickable(l);
+    const num = (n) => can && pickable(l)
+      ? h("td", { class: "n pick", title: "Comment on this line", onclick: (e) => click(row, e) }, n ?? "")
+      : h("td", { class: "n" }, n ?? "");
+    rows.push(h("tr", { class: `${l.kind}${on ? " picked" : ""}${notes.some((n) => row >= n.rows.first && row <= n.rows.last) ? " noted" : ""}` },
+      num(l.old), num(l.new), h("td", { class: "c" }, l.text)));
+    for (const n of notes) if (n.rows.last === row) rows.push(h("tr", { class: "inline" }, h("td", { colspan: 3 }, pendingNote(t, n))));
+    if (can && mine && rowsOf(sel).last === row) rows.push(h("tr", { class: "inline" }, h("td", { colspan: 3 }, commentBox(t, f))));
+  });
+  return h("div", { class: "diff" },
+    h("div", { class: "file" }, h("span", {}, f.path), h("span", { class: "spacer" }),
+      notes.length > 0 && h("span", { class: "muted" }, `${notes.length} comment${notes.length === 1 ? "" : "s"}`),
+      h("span", { class: "ok" }, `+${f.added}`), h("span", { class: "bad" }, `−${f.removed}`)),
+    h("div", { class: "scroll" }, h("table", {}, rows)));
+}
+
+/** The box under the picked lines: what to say about them. */
+function commentBox(t, f) {
+  const sel = reviewPicks.get(t.id);
+  const lines = selected(sel, f.lines);
+  const draft = toNote(f.path, lines, "");
+  const close = () => { reviewPicks.delete(t.id); reviewText.delete(t.id); render(); };
+  const add = () => {
+    const text = (reviewText.get(t.id) ?? "").trim();
+    const note = toNote(f.path, lines, text);
+    if (!text || !note) return;
+    const r = rowsOf(sel);
+    reviewNotes.set(t.id, [...(reviewNotes.get(t.id) ?? []), { id: ++noteIds, rows: { first: r.first, last: r.last }, note }]);
+    close();
+  };
+  return h("div", { class: "review-box" },
+    h("b", {}, draft ? `Comment on ${linesLabel(draft)}` : "Pick a line to comment on"),
+    h("textarea", { "data-keep": `${t.id}:review-comment`, rows: 3, placeholder: "What should change here?",
+      oninput: (e) => reviewText.set(t.id, e.target.value),
+      onkeydown: (e) => {
+        if (e.key === "Escape") close();
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); }
+      } }, reviewText.get(t.id) ?? ""),
+    h("div", { class: "row", style: "gap:6px;justify-content:flex-end" },
+      h("button", { class: "btn small", onclick: close }, "Cancel"),
+      h("button", { class: "btn small primary", disabled: !draft, onclick: add }, "Add comment")));
+}
+
+/** A comment waiting to go with the review. */
+function pendingNote(t, n) {
+  const remove = () => { reviewNotes.set(t.id, (reviewNotes.get(t.id) ?? []).filter((x) => x.id !== n.id)); render(); };
+  return h("div", { class: "review-note" },
+    h("div", { class: "row", style: "gap:8px" },
+      h("span", { class: "pill" }, "Pending"), h("span", { class: "muted" }, linesLabel(n.note)), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: remove }, "Remove")),
+    h("div", { class: "review-note-text" }, n.note.text));
+}
+
+/** At the top of the Diff tab while comments wait: a summary and Submit review, sent as one change request. */
+function reviewBar(t, notes) {
+  const submit = () => {
+    const summary = (reviewSummary.get(t.id) ?? "").trim();
+    if (!send({ type: "task.review", id: t.id, notes: notes.map((n) => n.note), summary: summary || null })) return;
+    reviewNotes.delete(t.id);
+    reviewSummary.delete(t.id);
+    reviewPicks.delete(t.id);
+    reviewText.delete(t.id);
+    toast(`Review sent: ${notes.length} comment${notes.length === 1 ? "" : "s"}`);
+    render();
+  };
+  const discard = () => { reviewNotes.delete(t.id); reviewSummary.delete(t.id); render(); };
+  return h("div", { class: "review-bar" },
+    h("div", { class: "row", style: "gap:8px" },
+      h("b", {}, `Review · ${notes.length} comment${notes.length === 1 ? "" : "s"}`), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: discard }, "Discard"),
+      h("button", { class: "btn small primary", onclick: submit }, "Submit review")),
+    h("textarea", { "data-keep": `${t.id}:review-summary`, rows: 1, placeholder: "Summary (optional)",
+      oninput: (e) => reviewSummary.set(t.id, e.target.value),
+      onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } } }, reviewSummary.get(t.id) ?? ""));
+}
+
+/** A reloaded diff keeps the pending comments and the picked lines whose code is still there, renumbered;
+ *  comments on lines that are gone are dropped. */
+function carryReview(id, before, files) {
+  const moved = (path, rows, note) => {
+    const f = files.find((x) => x.path === path);
+    const at = f && relocate(rows, note, f.lines);
+    return at && { at, note: toNote(path, f.lines.slice(at.first, at.last + 1), note.text) };
+  };
+  const notes = reviewNotes.get(id);
+  if (notes?.length) {
+    const kept = notes.flatMap((n) => {
+      const m = moved(n.note.path, n.rows, n.note);
+      return m?.note ? [{ ...n, rows: m.at, note: m.note }] : [];
+    });
+    if (kept.length < notes.length) toast(`${notes.length - kept.length} pending comment${notes.length - kept.length === 1 ? " is" : "s are"} gone: those lines changed.`);
+    reviewNotes.set(id, kept);
+  }
+  const sel = reviewPicks.get(id);
+  const was = sel && before.find((x) => x.path === sel.path);
+  const note = was && toNote(sel.path, selected(sel, was.lines), "");
+  const m = note && moved(sel.path, rowsOf(sel), note);
+  if (!m) reviewPicks.delete(id);
+  else reviewPicks.set(id, { path: sel.path, anchor: sel.anchor <= sel.head ? m.at.first : m.at.last, head: sel.anchor <= sel.head ? m.at.last : m.at.first });
 }
 
 function parseDiff(text) {
