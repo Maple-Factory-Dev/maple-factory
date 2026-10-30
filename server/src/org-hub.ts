@@ -14,7 +14,7 @@ import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
-import { summarize } from "./factory/stats.ts";
+import { statsWindow, summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
 import { githubAppInfo } from "./github.ts";
@@ -258,9 +258,9 @@ export class OrgHub extends DurableObject<Env> {
     return id ? `/icon/${id}` : null;
   }
 
-  /** The statistics over the last `days` (7, 30 or 90; anything else reads as 30). */
+  /** The statistics over the last `days` (1, 3, 7, 30 or 90; anything else reads as 30). */
   private stats(days: number, goal?: string | null) {
-    const window = [7, 30, 90].includes(days) ? days : 30;
+    const window = statsWindow(days);
     const at = Date.now();
     const since = at - window * 86_400_000;
     // The window's rows, and the earlier review rounds of the tasks it merged (rounds per merge counts them all).

@@ -102,6 +102,13 @@ function handReason(task: Task, e: { who: string; text: string; at: number }): s
   return "unknown";
 }
 
+/** The windows the Statistics page offers, in days; anything else reads as 30. */
+export const STATS_WINDOWS = [1, 3, 7, 30, 90];
+
+export function statsWindow(days: number): number {
+  return STATS_WINDOWS.includes(days) ? days : 30;
+}
+
 export interface SummarizeOptions {
   days: number;
   goal?: string | null;
