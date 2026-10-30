@@ -1,5 +1,6 @@
-// The `maple` MCP tools each factory session gets, by role. The runner asks for the list per
-// session and forwards calls here; the engine runs them (engine.ts `tool`).
+// The `maple` MCP tools each factory session gets, by role, and the ones every other session on a
+// member's machine gets (PERSONAL_TOOLS). The runner asks for the list per session and forwards
+// calls here; the engine runs them (engine.ts `tool`).
 
 import type { Role } from "../wire.ts";
 
@@ -166,6 +167,41 @@ const TOOLS: Tool[] = [
     roles: ["reviewer"],
   },
 ];
+
+const scriptsSchema = obj({
+  create: str("Makes the worktree in place of `git worktree add`; it must leave a git worktree on $MAPLE_BRANCH at $MAPLE_WORKTREE. Usually left out."),
+  setup: str("Runs once the worktree exists, before the agent starts: install dependencies, copy .env files, and so on."),
+  teardown: str("Runs before the worktree is removed when a finished task is cleaned up."),
+  archive: str("Runs in place of the runner's own removal at cleanup. Usually left out."),
+  timeoutSecs: { type: "integer", minimum: 1, maximum: 3600, description: "How long each may run (default 600)." },
+});
+const promptsSchema = obj({
+  planner: str("Markdown added to the planner's prompt for this repo's tasks."),
+  builder: str("Markdown added to the builder's prompt: how to run, test and prove changes here."),
+  reviewer: str("Markdown added to the reviewer's prompt: what to check."),
+});
+
+/** The tools of a session that isn't working on a factory task: your own Claude Code or Codex on a member's machine. */
+const PERSONAL_TOOLS: Omit<Tool, "roles">[] = [
+  {
+    name: "get_repo_setup",
+    description: "One of the factory's repos' setup: its worktree scripts (run by the runner with /bin/sh -c in the repo's main checkout), its prompt additions per role (added after the org's and before a goal's), the MAPLE_* variables the scripts get, and who changed them last.",
+    inputSchema: obj({ repo: str("The repo, GitHub owner/name.") }, ["repo"]),
+  },
+  {
+    name: "save_repo_setup",
+    description: "Save a repo's worktree scripts and prompt additions, straight away (admins' machines only; audited). Only the fields you pass change: an empty string clears one, a field left out keeps what's stored. Call get_repo_setup first.",
+    inputSchema: obj({ repo: str("The repo, GitHub owner/name."), scripts: scriptsSchema, prompts: promptsSchema }, ["repo"]),
+  },
+];
+
+export function personalTools() {
+  return PERSONAL_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+}
+
+export function isPersonalTool(tool: string) {
+  return PERSONAL_TOOLS.some((t) => t.name === tool);
+}
 
 export function toolsFor(role: Role) {
   return TOOLS.filter((t) => t.roles.includes(role)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

@@ -16,7 +16,7 @@ import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
-import { allowed, toolsFor } from "./tools.ts";
+import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
@@ -1128,7 +1128,7 @@ export class Engine {
   /** What a runner said that's about the factory. `mcp.request` gets an answer for the runner. */
   async fromRunner(machine: string, msg: RunnerMessage): Promise<Reply | null> {
     switch (msg.type) {
-      case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
+      case "mcp.request": return this.tool(machine, msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
       case "draft.progress":
         // A Scout run only reports what it picked, at the end; a setup run shows what it's reading.
         if (msg.id.startsWith(SETUP_PREFIX)) this.setup.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
@@ -1708,10 +1708,22 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // Agents' tools
 
-  private async tool(sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
+  private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
-    if (name === "tools/list") return { result: { summary: "", data: { tools: s ? toolsFor(s.role) : [] } } };
-    if (!s) return { error: "This session isn't working on a factory task." };
+    if (!s) {
+      // Not one the factory started for a task: your own session on a member's machine.
+      const known = (await this.hooks.machines()).find((m) => m.id === machine);
+      const live = known?.sessions.find((x) => x.session.id === sessionId);
+      const personal = Boolean(known && !live?.session.taskId);
+      if (name === "tools/list") return { result: { summary: "", data: { tools: personal ? personalTools() : [] } } };
+      if (!personal || !isPersonalTool(name)) return { error: "This session isn't working on a factory task." };
+      try {
+        return { result: await this.personalTool(known!, name, args) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    if (name === "tools/list") return { result: { summary: "", data: { tools: toolsFor(s.role) } } };
     if (!allowed(s.role, name)) return { error: `${name} isn't one of the ${s.role}'s tools.` };
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
@@ -1725,6 +1737,49 @@ export class Engine {
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  /** A repo's setup as get_repo_setup shows it. */
+  private repoSetupView(repo: string) {
+    const row = this.store.repoSetup(repo);
+    return {
+      repo,
+      scripts: this.store.scriptsFor(repo) ?? {},
+      prompts: row?.prompts ?? { planner: "", builder: "", reviewer: "" },
+      variables: SCRIPT_VARIABLES,
+      updatedBy: row?.updatedBy ?? null,
+      updatedAt: row?.updatedAt ?? null,
+    };
+  }
+
+  /** get_repo_setup and save_repo_setup, from a session on `machine` that isn't a factory task's. */
+  private async personalTool(machine: Machine, name: string, a: Record<string, unknown>): Promise<{ summary: string; data?: unknown }> {
+    const asked = str(a.repo, "repo");
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === asked.trim().toLowerCase())?.name
+      ?? fail(`${asked} isn't one of the org's repos.`);
+    if (name === "get_repo_setup") {
+      const view = this.repoSetupView(repo);
+      return { summary: view.updatedBy ? `${repo}'s setup, last changed by ${view.updatedBy}.` : `${repo} has no setup yet.`, data: view };
+    }
+    if (!(await this.isAdmin(machine.owner))) fail("Only admins' sessions can save a repo's setup.");
+    // Only what's passed changes; the rest stays as stored.
+    const scripts: WorktreeScripts = { ...(this.store.scriptsFor(repo) ?? {}) };
+    if (a.scripts != null) {
+      const given = obj(a.scripts);
+      for (const f of ["create", "setup", "teardown", "archive"] as const) {
+        if (given[f] !== undefined) scripts[f] = given[f] == null ? null : typeof given[f] === "string" ? given[f] : fail(`scripts.${f} is a command (a string).`);
+      }
+      if (given.timeoutSecs !== undefined) scripts.timeoutSecs = given.timeoutSecs == null ? null : (given.timeoutSecs as number);
+    }
+    const prompts: PromptAdditions = { planner: "", builder: "", reviewer: "", ...(this.store.repoPrompts(repo) ?? {}) };
+    if (a.prompts != null) {
+      const given = obj(a.prompts);
+      for (const role of ["planner", "builder", "reviewer"] as const) {
+        if (given[role] != null) prompts[role] = typeof given[role] === "string" ? given[role] : fail(`prompts.${role} is Markdown (a string).`);
+      }
+    }
+    await this.saveRepoSetup(machine.owner, repo, scripts, prompts, `via MCP from ${machine.name}`);
+    return { summary: `Saved ${repo}'s setup.`, data: this.repoSetupView(repo) };
   }
 
   private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>): { summary: string; data?: unknown } {
