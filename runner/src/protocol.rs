@@ -240,9 +240,9 @@ pub enum Outbound {
     /// Scrollback for one attaching browser, routed by `nonce`.
     #[serde(rename = "session.replay")]
     SessionReplay { id: Uuid, nonce: String, data: String },
-    /// How `task.merge` went.
+    /// How `task.merge` went, and what became of the branch on origin (`tasks::BranchDeletion::note`).
     #[serde(rename = "task.merged")]
-    TaskMerged { task_id: String, ok: bool, commit: Option<String>, message: Option<String> },
+    TaskMerged { task_id: String, ok: bool, commit: Option<String>, message: Option<String>, branch: Option<String> },
     /// How an update the hub asked for (`runner.update`) is going. `version` is the latest
     /// release's, once known. `updating` is sent just before the runner exits to restart
     /// into the new build.

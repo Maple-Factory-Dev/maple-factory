@@ -164,13 +164,13 @@ pub struct Merge {
 pub async fn run_merge(sessions: Sessions, m: Merge) {
     let merged = merge_and_switch_back(&expand_home(&m.cwd), &m).await;
     sessions.emit(match merged {
-        Ok(commit) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None },
-        Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) },
+        Ok((commit, branch)) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None, branch: Some(branch.note()) },
+        Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")), branch: None },
     });
 }
 
 /// `merge`, then the worktree back on the task's branch, so a Retry doesn't find it detached.
-async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<String> {
+async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<(String, BranchDeletion)> {
     let merged = merge(dir, m).await;
     // A conflicted merge blocks the checkout until it's aborted.
     if merged.is_err() {
@@ -186,7 +186,7 @@ async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<String> {
     merged
 }
 
-async fn merge(dir: &Path, m: &Merge) -> Result<String> {
+async fn merge(dir: &Path, m: &Merge) -> Result<(String, BranchDeletion)> {
     if !m.branch.starts_with(BRANCH_PREFIX) {
         bail!("{} isn't a task branch.", m.branch);
     }
@@ -198,22 +198,60 @@ async fn merge(dir: &Path, m: &Merge) -> Result<String> {
     git(dir, &["merge", "--no-ff", "--quiet", "-m", &m.title, &m.branch], None).await.map_err(|e| anyhow!("It doesn't merge cleanly into {}: {e}", m.base))?;
     git(dir, &["push", "--quiet", "origin", &format!("HEAD:refs/heads/{}", m.base)], None).await?;
     let commit = git(dir, &["rev-parse", "HEAD"], None).await?.trim().to_string();
-    delete_merged_branch(dir, m).await;
-    Ok(commit)
+    let branch = delete_merged_branch(dir, m).await;
+    Ok((commit, branch))
+}
+
+/// What became of a merged task's branch on origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchDeletion {
+    Deleted,
+    /// It wasn't on origin any more.
+    Gone,
+    /// It has commits that didn't merge, so it was kept.
+    Moved,
+    Failed(String),
+}
+
+impl BranchDeletion {
+    /// For `task.merged`'s `branch`: `deleted`, `gone`, `moved`, or `failed: <why>`.
+    pub fn note(&self) -> String {
+        match self {
+            Self::Deleted => "deleted".into(),
+            Self::Gone => "gone".into(),
+            Self::Moved => "moved".into(),
+            Self::Failed(why) => format!("failed: {why}"),
+        }
+    }
 }
 
 /// The merged branch off origin, but only while it's still the tip that merged: one that moved is kept.
 /// Best-effort: the merge stands whatever happens here.
-async fn delete_merged_branch(dir: &Path, m: &Merge) {
+async fn delete_merged_branch(dir: &Path, m: &Merge) -> BranchDeletion {
     let deleted = async {
         let tip = git(dir, &["rev-parse", "--verify", &format!("refs/heads/{}", m.branch)], None).await?;
-        let lease = format!("--force-with-lease=refs/heads/{}:{}", m.branch, tip.trim());
-        git(dir, &["push", "--quiet", &lease, "origin", "--delete", &m.branch], None).await
+        let tip = tip.trim();
+        let on_origin = git(dir, &["ls-remote", "origin", &format!("refs/heads/{}", m.branch)], None).await?;
+        let Some(theirs) = on_origin.split_whitespace().next() else { return Ok(BranchDeletion::Gone) };
+        if theirs != tip {
+            return Ok(BranchDeletion::Moved);
+        }
+        let lease = format!("--force-with-lease=refs/heads/{}:{tip}", m.branch);
+        match git(dir, &["push", "--quiet", &lease, "origin", "--delete", &m.branch], None).await {
+            Ok(_) => Ok(BranchDeletion::Deleted),
+            // It moved between the look and the push.
+            Err(e) if format!("{e:#}").contains("stale info") => Ok(BranchDeletion::Moved),
+            Err(e) => Err(e),
+        }
     };
-    match deleted.await {
-        Ok(_) => tracing::info!("task {}: deleted branch {} on origin", m.task_id, m.branch),
-        Err(e) => tracing::warn!("task {}: kept branch {} on origin: {e:#}", m.task_id, m.branch),
+    let outcome = deleted.await.unwrap_or_else(|e: anyhow::Error| BranchDeletion::Failed(format!("{e:#}")));
+    match &outcome {
+        BranchDeletion::Deleted => tracing::info!("task {}: deleted branch {} on origin", m.task_id, m.branch),
+        BranchDeletion::Gone => tracing::info!("task {}: branch {} was already gone on origin", m.task_id, m.branch),
+        BranchDeletion::Moved => tracing::warn!("task {}: kept branch {} on origin: it moved after the merge", m.task_id, m.branch),
+        BranchDeletion::Failed(e) => tracing::warn!("task {}: couldn't delete branch {} on origin: {e}", m.task_id, m.branch),
     }
+    outcome
 }
 
 /// Runs a cleanup and answers with `task.cleaned`.
@@ -1235,9 +1273,11 @@ mod tests {
         let (cwd, wt) = worktree(&root, &bare).await;
         sh(&wt, &["push", "--quiet", "origin", "agent/fix-1a2b"]);
         let m = Merge { task_id: "t1".into(), cwd: cwd.clone(), branch: "agent/fix-1a2b".into(), base: "main".into(), title: "Fix it".into() };
-        let merged = merge_and_switch_back(&wt, &m).await.unwrap();
+        let (merged, branch) = merge_and_switch_back(&wt, &m).await.unwrap();
         assert_eq!(sh(&bare, &["rev-parse", "main"]), merged);
         assert_eq!(sh(&bare, &["branch", "--list", "agent/*"]), "");
+        assert_eq!(branch, BranchDeletion::Deleted);
+        assert_eq!(branch.note(), "deleted");
 
         // Someone pushes to the branch after the runner last saw it: the merge stands, the branch stays.
         sh(&wt, &["push", "--quiet", "origin", "agent/fix-1a2b"]);
@@ -1245,9 +1285,16 @@ mod tests {
         let moved = sh(&bare, &["rev-parse", "agent/fix-1a2b"]);
         commit(&wt, "c.txt", "more\n", "more of the builder's work");
         let m = Merge { title: "Fix it again".into(), ..m };
-        let merged = merge_and_switch_back(&wt, &m).await.unwrap();
+        let (merged, branch) = merge_and_switch_back(&wt, &m).await.unwrap();
         assert_eq!(sh(&bare, &["rev-parse", "main"]), merged);
         assert_eq!(sh(&bare, &["rev-parse", "agent/fix-1a2b"]), moved);
+        assert_eq!(branch.note(), "moved");
+
+        // Never pushed: nothing to delete.
+        commit(&wt, "d.txt", "local\n", "work that never went to origin");
+        sh(&bare, &["update-ref", "-d", "refs/heads/agent/fix-1a2b"]);
+        let (_, branch) = merge_and_switch_back(&wt, &Merge { title: "Fix it once more".into(), ..m }).await.unwrap();
+        assert_eq!(branch, BranchDeletion::Gone);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
