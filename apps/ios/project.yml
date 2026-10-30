@@ -1,0 +1,61 @@
+# The iPhone app. `xcodegen generate` writes MapleFactory.xcodeproj from this (it isn't checked in);
+# scripts/run-ios.sh does that, builds, and boots it in the simulator.
+name: MapleFactory
+options:
+  bundleIdPrefix: dev.maplefactory
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Simulator builds need no signing; a device build picks its team in Xcode.
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: "NO"
+packages:
+  # The wire protocol, factory API and sign-in storage, shared with the Mac app.
+  MapleKit:
+    path: ../mac
+targets:
+  Maple Factory:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - Resources
+    dependencies:
+      - package: MapleKit
+        product: MapleKit
+      - sdk: AVKit.framework
+      - sdk: WebKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.maplefactory.ios
+        PRODUCT_NAME: Maple Factory
+        PRODUCT_MODULE_NAME: MapleFactoryiOS
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Maple Factory
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # A local dev factory is plain http (localhost:8788).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.maplefactory.ios
+            CFBundleURLSchemes: [maplefactory]
+schemes:
+  Maple Factory:
+    build:
+      targets:
+        Maple Factory: all
