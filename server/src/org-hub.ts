@@ -171,6 +171,14 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
+      case "/icon": {
+        // The Worker stored (or is removing) the image and checked it's an admin; this keeps the id and tells the apps.
+        const { id } = (await request.json()) as { id: string | null };
+        const previous = this.store.icon();
+        this.store.saveIcon(id);
+        this.broadcast({ type: "icon.updated", icon: id ? `/icon/${id}` : null });
+        return Response.json({ previous });
+      }
       case "/dev/alarm": {
         // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
         if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete("runner:checkedAt");
@@ -221,6 +229,12 @@ export class OrgHub extends DurableObject<Env> {
       }
     }
     return new Response("Not found.", { status: 404 });
+  }
+
+  /** The factory icon's link, if it has one. */
+  private iconPath(): string | null {
+    const id = this.store.icon();
+    return id ? `/icon/${id}` : null;
   }
 
   /** The statistics over the last `days` (7, 30 or 90; anything else reads as 30). */
@@ -389,6 +403,7 @@ export class OrgHub extends DurableObject<Env> {
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
           serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
+          icon: this.iconPath(),
           protocolVersion: PROTOCOL_VERSION,
         });
         // The app's repos change on GitHub's side; read them again when they're an hour old.

@@ -4,6 +4,7 @@ import type { Env } from "./env.ts";
 import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
+import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
@@ -55,6 +56,7 @@ export default {
     const proof = /^\/runner\/proof\/([^/]+)$/.exec(path);
     if (proof && request.method === "PUT") return uploadProof(request, env, proof[1]);
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
+    if (path.startsWith("/icon/") && request.method === "GET") return serveIcon(env, path.slice("/icon/".length));
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 
     const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,9}-\d+)$/);
@@ -108,6 +110,10 @@ export default {
     // Files pasted or dropped into briefs and notes (src/attachments.ts).
     if (path === "/api/attachments" && request.method === "POST") return uploadAttachment(request, env, me);
     if (path.startsWith("/attachments/") && request.method === "GET") return serveAttachment(env, path.slice("/attachments/".length));
+
+    // The factory's icon (src/icon.ts).
+    if (path === "/api/icon" && request.method === "PUT") return uploadIcon(request, env, me);
+    if (path === "/api/icon" && request.method === "DELETE") return removeIcon(env, me);
 
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;
