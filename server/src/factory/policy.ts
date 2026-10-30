@@ -17,6 +17,7 @@ export const DEFAULT_POLICY: RiskPolicy = {
   autoMerge: { low: true, medium: false, high: false },
   autoFixMerges: true,
   autoMerges: true,
+  scoutItems: 3,
 };
 
 const ORDER: RiskLevel[] = ["low", "medium", "high"];
@@ -54,6 +55,7 @@ export function assess(task: Task, policy: RiskPolicy, acceptance: RiskAcceptanc
 
 export function validPolicy(p: RiskPolicy): string | null {
   if (!(p.maxFiles >= 1 && p.maxLines >= 1)) return "The PR budget needs at least one file and one line.";
+  if (p.scoutItems != null && !(Number.isInteger(p.scoutItems) && p.scoutItems >= 1 && p.scoutItems <= 10)) return "A Scout run picks 1 to 10 items.";
   for (const level of ORDER) {
     if (!(p.planApprovals[level] >= 0) || !(p.finalReviews[level] >= 0)) return `Say how many approvals and reviews ${level} risk needs.`;
   }

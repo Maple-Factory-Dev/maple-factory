@@ -12,7 +12,7 @@ struct OrgSettingsView: View {
     static let demoPick = Notification.Name("OrgSettingsView.demoPick")
 
     enum Pane: String, CaseIterable {
-        case general, account, appearance, repos, secrets, people, prompts, connectors, merging, runner, notifications, updates
+        case general, account, appearance, repos, secrets, people, prompts, connectors, merging, scout, runner, notifications, updates
 
         var title: String {
             switch self {
@@ -25,6 +25,7 @@ struct OrgSettingsView: View {
             case .prompts: "Prompts"
             case .connectors: "Connectors"
             case .merging: "Merging"
+            case .scout: "Scout"
             case .runner: "Runner"
             case .notifications: "Notifications"
             case .updates: "Updates"
@@ -42,6 +43,7 @@ struct OrgSettingsView: View {
             case .prompts: "text.bubble"
             case .connectors: "puzzlepiece.extension"
             case .merging: "arrow.triangle.merge"
+            case .scout: "binoculars"
             case .runner: "laptopcomputer"
             case .notifications: "bell"
             case .updates: "arrow.down.circle"
@@ -60,6 +62,7 @@ struct OrgSettingsView: View {
             case .prompts: .purple
             case .connectors: .indigo
             case .merging: .green
+            case .scout: .teal
             case .runner: .gray
             case .notifications: .red
             case .updates: .blue
@@ -76,7 +79,7 @@ struct OrgSettingsView: View {
     static let headerPane = Pane.account
     static let sidebarGroups = [
         SidebarGroup(title: nil, panes: [.general]),
-        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .connectors, .merging]),
+        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .connectors, .merging, .scout]),
         SidebarGroup(title: "This Mac", panes: [.runner, .notifications]),
     ]
     static let footerPane = Pane.updates
@@ -100,6 +103,7 @@ struct OrgSettingsView: View {
                 case .prompts: PromptSettings()
                 case .connectors: ConnectorSettings()
                 case .merging: MergingSettings()
+                case .scout: ScoutSettings()
                 case .runner: RunnerSettings()
                 case .notifications: NotificationSettings()
                 case .updates: UpdateSettings()
@@ -777,6 +781,45 @@ struct MergingSettings: View {
                 client.save(policy: policy)
             }
         )
+    }
+}
+
+/// How much one Scout run picks up from a goal's leftovers. Org-wide, on the risk policy; admins change it.
+struct ScoutSettings: View {
+    @Environment(FactoryClient.self) private var client
+
+    private var isAdmin: Bool { client.me?.role == "admin" }
+
+    private var items: Binding<Int> {
+        Binding(
+            get: { client.riskPolicy?.scoutItems ?? 3 },
+            set: { n in
+                guard var policy = client.riskPolicy else { return }
+                policy.scoutItems = n
+                client.save(policy: policy)
+            }
+        )
+    }
+
+    var body: some View {
+        SettingsPane("Scout", subtitle: "Scout, on a goal's header, looks over the goal's leftovers (backlog tasks and review findings its merged tasks left open) and drafts plans for the ones still worth doing.") {
+            if !client.isSignedIn || client.riskPolicy == nil {
+                SettingsUnavailable(detail: "Connect to a factory to see its Scout settings.")
+            } else {
+                SettingsSection("Scout runs") {
+                    SettingsRow("Items per Scout run", detail: "The most leftovers one run turns into drafted plans waiting for approval.") {
+                        Stepper(value: items, in: 1...10) {
+                            Text("\(items.wrappedValue)").monospacedDigit()
+                        }
+                        .fixedSize()
+                    }
+                    if !isAdmin {
+                        SettingsNote("Only admins can change this.")
+                    }
+                }
+                .disabled(!isAdmin)
+            }
+        }
     }
 }
 

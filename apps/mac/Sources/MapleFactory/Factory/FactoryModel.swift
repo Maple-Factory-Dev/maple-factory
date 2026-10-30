@@ -245,6 +245,8 @@ struct FactoryTask: Identifiable {
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
+    /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
+    var scoutedFrom: String? = nil
     /// The planner's proposed title, taken when the plan is approved (unless an approver keeps the current one).
     var suggestedTitle: String? = nil
     /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.

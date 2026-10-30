@@ -82,6 +82,10 @@ struct GoalView: View {
                 Spacer()
                 FollowButton(following: state.isFollowing(goal)) { state.setFollowing(goal, !state.isFollowing(goal)) }
                     .padding(.trailing, 6)
+                if state.isLive, let live = client.goal(named: goal.name) {
+                    ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
+                        .padding(.trailing, 6)
+                }
                 RiskPolicyButton()
                     .padding(.trailing, 10)
                 if state.isLive, let live = client.goal(named: goal.name) {
@@ -115,6 +119,61 @@ struct GoalView: View {
             FlowBar(tasks: tasks)
                 .padding(.top, 8)
         }
+    }
+}
+
+/// Scout: an agent picks the goal's leftovers still worth doing (backlog tasks, review findings left
+/// open) and they come back as drafted plans. Shows the latest run's state beside it.
+struct ScoutButton: View {
+    let run: Wire.ScoutRun?
+    let action: () -> Void
+
+    private var running: Bool { run?.state == .running }
+
+    private var result: String? {
+        switch run?.state {
+        case .done?:
+            let n = run?.tasks.count ?? 0
+            return n == 0 ? "Nothing left over" : n == 1 ? "1 plan drafted" : "\(n) plans drafted"
+        case .failed?:
+            // The whole error is in the tooltip.
+            let error = run?.error ?? "Scout failed"
+            return error.count > 40 ? error.prefix(39) + "…" : error
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if running {
+                    ProgressView().controlSize(.mini)
+                    Text("Scouting…")
+                } else {
+                    Image(systemName: "binoculars").font(.system(size: 11))
+                    Text("Scout")
+                    if let result {
+                        Text(result)
+                            .foregroundStyle(run?.state == .failed ? Theme.State.cancelled : Theme.textMuted)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(running)
+        .help(run?.state == .failed ? (run?.error ?? "") : "Find this goal's leftovers still worth doing, and draft plans for them")
     }
 }
 
@@ -629,6 +688,16 @@ struct TaskCard: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let effort = task.effort { EffortChip(effort: effort) }
+
+            if let from = task.scoutedFrom {
+                HStack(spacing: 4) {
+                    Image(systemName: "binoculars").font(.system(size: 9.5))
+                    Text("Scouted from \(from.split(separator: "#").first.map(String.init) ?? from)")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+                .help(from.contains("#") ? "A review finding left open on \(from.replacingOccurrences(of: "#", with: " (")))" : "Scout picked it up from \(from)")
+            }
 
             if task.queued {
                 QueuedFooter(task: task)

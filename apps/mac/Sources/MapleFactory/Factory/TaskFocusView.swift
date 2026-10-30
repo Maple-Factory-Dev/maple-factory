@@ -230,6 +230,7 @@ struct TaskFocusView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
             }
+            TaskOrigin(task: task)
         }
     }
 

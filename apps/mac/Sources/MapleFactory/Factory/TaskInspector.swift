@@ -60,6 +60,7 @@ struct TaskInspector: View {
                             .foregroundStyle(Theme.text)
                             .fixedSize(horizontal: false, vertical: true)
                         TaskOwnership(task: task)
+                        TaskOrigin(task: task)
                     }
                     SinceLastViewedBanner(task: task, compact: true)
                     PipelineStepper(state: task.state)

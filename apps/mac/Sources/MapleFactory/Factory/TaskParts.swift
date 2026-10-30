@@ -72,6 +72,41 @@ struct TaskOwnership: View {
     }
 }
 
+/// Where a task came from, when it didn't start as someone's idea: split off an over-budget task, or
+/// a leftover a Scout run picked up. Each names the task, linked.
+struct TaskOrigin: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+
+    var body: some View {
+        if task.splitFrom != nil || task.scoutedFrom != nil {
+            HStack(spacing: 12) {
+                if let id = task.splitFrom { line("arrow.triangle.branch", "Split from", id, nil) }
+                if let from = task.scoutedFrom {
+                    let parts = from.split(separator: "#", maxSplits: 1).map(String.init)
+                    line("binoculars", "Scouted from", parts[0], parts.count > 1 ? "a review finding" : nil)
+                }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    private func line(_ icon: String, _ label: String, _ id: String, _ detail: String?) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10.5))
+            Text(label)
+            Text(id)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.accent)
+                .onTapGesture { appState.openReference(id) }
+                .pointerStyle(.link)
+                .help("Open \(id)")
+            if let detail { Text("· \(detail)") }
+        }
+    }
+}
+
 /// The ⋯ menu on a task: what to do next, editing it, and getting at it, with Cancel's confirmation
 /// and the Rename alert.
 struct TaskActionsMenu<Label: View>: View {
