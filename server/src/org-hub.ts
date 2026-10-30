@@ -319,6 +319,32 @@ export class OrgHub extends DurableObject<Env> {
     return results.map(toMember);
   }
 
+  /** Grants or takes back an admin grant; GitHub's owners stay admins whatever happens here. The reason it's refused, if it is. */
+  private async setAdmin(by: Member, login: string, grant: boolean): Promise<string | null> {
+    if (by.role !== "admin") return "Only admins can change who's an admin.";
+    const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ? COLLATE NOCASE").bind(login).first<MemberRow>();
+    if (!row) return `${login} hasn't signed in to this factory yet.`;
+    const target = toMember(row);
+    if (grant && target.role === "admin") return `${target.login} is already an admin.`;
+    if (!grant) {
+      if (target.adminSource === "github") return `${target.login} owns the GitHub organization, so they're an admin there; change it on GitHub.`;
+      if (target.role !== "admin") return `${target.login} isn't an admin.`;
+      if (target.login === by.login) return "You can't take back your own admin; ask another admin.";
+    }
+    await this.env.DB.prepare("UPDATE members SET admin_granted_by = ?, admin_granted_at = ? WHERE login = ?")
+      .bind(grant ? by.login : null, grant ? Date.now() : null, row.login).run();
+    await audit(this.env, by.login, grant ? "admin.granted" : "admin.revoked", row.login);
+    const members = await this.members();
+    const updated = members.find((m) => m.login === row.login)!;
+    // Their open apps act with the new role straight away, without reconnecting.
+    for (const ws of this.ctx.getWebSockets("client")) {
+      const c = ws.deserializeAttachment() as Client;
+      if (c.member.login === row.login) ws.serializeAttachment({ ...c, member: updated });
+    }
+    this.broadcast({ type: "members.updated", members });
+    return null;
+  }
+
   private async recentEnds(): Promise<EndedSession[]> {
     const since = Date.now() - 7 * 24 * 3600 * 1000;
     const { results } = await this.env.DB.prepare("SELECT * FROM session_ends WHERE at > ? AND ended_by IS NOT 'factory' ORDER BY at DESC LIMIT 20").bind(since).all<{
@@ -510,6 +536,12 @@ export class OrgHub extends DurableObject<Env> {
       case "stats.get": {
         if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
         this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
+        return;
+      }
+      case "admins.grant":
+      case "admins.revoke": {
+        const error = await this.setAdmin(client.member, msg.login, msg.type === "admins.grant");
+        if (error) this.send(ws, { type: "error", message: error, requestId: null });
         return;
       }
       case "session.attach":
