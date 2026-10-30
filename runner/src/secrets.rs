@@ -670,7 +670,7 @@ mod tests {
         // Sourced by the shell, so quotes, `$`, `\` and newlines must survive.
         let tricky = "it's \"p$w\\d\"\nline 2 #{x};";
         let env = vec![("API_KEY".to_string(), value.clone()), ("DB_URL".to_string(), tricky.to_string())];
-        let info = sessions.open(id, "shell", wt.to_str().unwrap(), None, None, &[], None, false, 120, 30, None, Some(("acme/web", &env))).await.unwrap();
+        let info = sessions.open(id, "shell", wt.to_str().unwrap(), None, None, &[], &[], None, false, 120, 30, None, Some(("acme/web", &env))).await.unwrap();
 
         let tmux = crate::tmux::Tmux::new(&format!("t{tag}"), &home).unwrap();
         let name = format!("maple-{id}");

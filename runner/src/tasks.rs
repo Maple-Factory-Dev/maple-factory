@@ -85,6 +85,9 @@ pub struct Cleanup {
     /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
     #[serde(default)]
     pub scripts: Option<crate::worktree_scripts::WorktreeScripts>,
+    /// Merged, and its branch may still be on origin: delete it there too, when that's safe.
+    #[serde(default)]
+    pub delete_remote: bool,
 }
 
 /// `task.diff` from the hub: what a task's branch changes against its base, for the apps' Diff tab.
@@ -146,6 +149,54 @@ pub async fn run_diff(sessions: Sessions, d: DiffRequest) {
     });
 }
 
+/// `task.merge_check` from the hub: would the task's branch still merge into its base, now that
+/// something else merged there?
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeCheck {
+    pub task_id: String,
+    /// The worktree, `~`-abbreviated.
+    pub cwd: String,
+    pub base: String,
+}
+
+/// Answers with `task.merge_check`: clean, or the paths that conflict.
+pub async fn run_merge_check(sessions: Sessions, c: MergeCheck) {
+    let checked = merge_check(&expand_home(&c.cwd), &c.base).await;
+    sessions.emit(Outbound::Wire(match checked {
+        Ok(conflicts) => crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: true, clean: conflicts.is_empty(), conflicts, message: None },
+        Err(e) => crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: false, clean: false, conflicts: vec![], message: Some(format!("{e:#}")) },
+    }));
+}
+
+/// Fetches `origin/<base>` and dry-runs merging HEAD into it with `git merge-tree`, which writes
+/// only objects: the index, the checkout and HEAD are left as they are. The conflicting paths, or none.
+async fn merge_check(dir: &Path, base: &str) -> Result<Vec<String>> {
+    if base.starts_with('-') || valid_name(base).is_err() {
+        bail!("{base} isn't a branch name.");
+    }
+    git(dir, &["fetch", "--quiet", "origin", base], None).await?;
+    let theirs = format!("origin/{base}");
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(dir).args(["merge-tree", "--write-tree", "--name-only", "--no-messages", &theirs, "HEAD"]);
+    cmd.env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null()).kill_on_drop(true);
+    let out = tokio::time::timeout(GIT_TIMEOUT, cmd.output()).await.map_err(|_| anyhow!("git merge-tree timed out"))??;
+    match out.status.code() {
+        Some(0) => Ok(vec![]),
+        // The tree's id, then each conflicted path.
+        Some(1) => {
+            let mut paths: Vec<String> = Vec::new();
+            for l in String::from_utf8_lossy(&out.stdout).lines().skip(1).map(str::trim).filter(|l| !l.is_empty()) {
+                if !paths.iter().any(|p| p == l) {
+                    paths.push(l.to_string());
+                }
+            }
+            Ok(paths)
+        }
+        _ => bail!("git merge-tree failed: {}", String::from_utf8_lossy(&out.stderr).trim().trim_start_matches("fatal: ")),
+    }
+}
+
 /// `task.merge` from the hub, for a repo with no GitHub App to merge its pull request: merge the
 /// task's branch into its base on origin, with the machine's own credentials, as a merge commit.
 #[derive(Debug, Clone, Deserialize)]
@@ -164,13 +215,13 @@ pub struct Merge {
 pub async fn run_merge(sessions: Sessions, m: Merge) {
     let merged = merge_and_switch_back(&expand_home(&m.cwd), &m).await;
     sessions.emit(match merged {
-        Ok(commit) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None },
-        Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")) },
+        Ok((commit, branch)) => Outbound::TaskMerged { task_id: m.task_id, ok: true, commit: Some(commit), message: None, branch: Some(branch.note()) },
+        Err(e) => Outbound::TaskMerged { task_id: m.task_id, ok: false, commit: None, message: Some(format!("{e:#}")), branch: None },
     });
 }
 
 /// `merge`, then the worktree back on the task's branch, so a Retry doesn't find it detached.
-async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<String> {
+async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<(String, BranchDeletion)> {
     let merged = merge(dir, m).await;
     // A conflicted merge blocks the checkout until it's aborted.
     if merged.is_err() {
@@ -186,7 +237,7 @@ async fn merge_and_switch_back(dir: &Path, m: &Merge) -> Result<String> {
     merged
 }
 
-async fn merge(dir: &Path, m: &Merge) -> Result<String> {
+async fn merge(dir: &Path, m: &Merge) -> Result<(String, BranchDeletion)> {
     if !m.branch.starts_with(BRANCH_PREFIX) {
         bail!("{} isn't a task branch.", m.branch);
     }
@@ -198,22 +249,60 @@ async fn merge(dir: &Path, m: &Merge) -> Result<String> {
     git(dir, &["merge", "--no-ff", "--quiet", "-m", &m.title, &m.branch], None).await.map_err(|e| anyhow!("It doesn't merge cleanly into {}: {e}", m.base))?;
     git(dir, &["push", "--quiet", "origin", &format!("HEAD:refs/heads/{}", m.base)], None).await?;
     let commit = git(dir, &["rev-parse", "HEAD"], None).await?.trim().to_string();
-    delete_merged_branch(dir, m).await;
-    Ok(commit)
+    let branch = delete_merged_branch(dir, m).await;
+    Ok((commit, branch))
+}
+
+/// What became of a merged task's branch on origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchDeletion {
+    Deleted,
+    /// It wasn't on origin any more.
+    Gone,
+    /// It has commits that didn't merge, so it was kept.
+    Moved,
+    Failed(String),
+}
+
+impl BranchDeletion {
+    /// For `task.merged`'s `branch`: `deleted`, `gone`, `moved`, or `failed: <why>`.
+    pub fn note(&self) -> String {
+        match self {
+            Self::Deleted => "deleted".into(),
+            Self::Gone => "gone".into(),
+            Self::Moved => "moved".into(),
+            Self::Failed(why) => format!("failed: {why}"),
+        }
+    }
 }
 
 /// The merged branch off origin, but only while it's still the tip that merged: one that moved is kept.
 /// Best-effort: the merge stands whatever happens here.
-async fn delete_merged_branch(dir: &Path, m: &Merge) {
+async fn delete_merged_branch(dir: &Path, m: &Merge) -> BranchDeletion {
     let deleted = async {
         let tip = git(dir, &["rev-parse", "--verify", &format!("refs/heads/{}", m.branch)], None).await?;
-        let lease = format!("--force-with-lease=refs/heads/{}:{}", m.branch, tip.trim());
-        git(dir, &["push", "--quiet", &lease, "origin", "--delete", &m.branch], None).await
+        let tip = tip.trim();
+        let on_origin = git(dir, &["ls-remote", "origin", &format!("refs/heads/{}", m.branch)], None).await?;
+        let Some(theirs) = on_origin.split_whitespace().next() else { return Ok(BranchDeletion::Gone) };
+        if theirs != tip {
+            return Ok(BranchDeletion::Moved);
+        }
+        let lease = format!("--force-with-lease=refs/heads/{}:{tip}", m.branch);
+        match git(dir, &["push", "--quiet", &lease, "origin", "--delete", &m.branch], None).await {
+            Ok(_) => Ok(BranchDeletion::Deleted),
+            // It moved between the look and the push.
+            Err(e) if format!("{e:#}").contains("stale info") => Ok(BranchDeletion::Moved),
+            Err(e) => Err(e),
+        }
     };
-    match deleted.await {
-        Ok(_) => tracing::info!("task {}: deleted branch {} on origin", m.task_id, m.branch),
-        Err(e) => tracing::warn!("task {}: kept branch {} on origin: {e:#}", m.task_id, m.branch),
+    let outcome = deleted.await.unwrap_or_else(|e: anyhow::Error| BranchDeletion::Failed(format!("{e:#}")));
+    match &outcome {
+        BranchDeletion::Deleted => tracing::info!("task {}: deleted branch {} on origin", m.task_id, m.branch),
+        BranchDeletion::Gone => tracing::info!("task {}: branch {} was already gone on origin", m.task_id, m.branch),
+        BranchDeletion::Moved => tracing::warn!("task {}: kept branch {} on origin: it moved after the merge", m.task_id, m.branch),
+        BranchDeletion::Failed(e) => tracing::warn!("task {}: couldn't delete branch {} on origin: {e}", m.task_id, m.branch),
     }
+    outcome
 }
 
 /// Runs a cleanup and answers with `task.cleaned`.
@@ -255,7 +344,7 @@ async fn cleanup(emit: Emit<'_>, cwds: &[String], c: &Cleanup, path: Option<&str
             }
         }
     }
-    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads };
+    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads, delete_remote: c.delete_remote };
     match crate::worktrees::remove_task(cwds, work).await {
         Ok(removed) => {
             tracing::info!("task {}: {}", c.task_id, removed.message);
@@ -1235,9 +1324,11 @@ mod tests {
         let (cwd, wt) = worktree(&root, &bare).await;
         sh(&wt, &["push", "--quiet", "origin", "agent/fix-1a2b"]);
         let m = Merge { task_id: "t1".into(), cwd: cwd.clone(), branch: "agent/fix-1a2b".into(), base: "main".into(), title: "Fix it".into() };
-        let merged = merge_and_switch_back(&wt, &m).await.unwrap();
+        let (merged, branch) = merge_and_switch_back(&wt, &m).await.unwrap();
         assert_eq!(sh(&bare, &["rev-parse", "main"]), merged);
         assert_eq!(sh(&bare, &["branch", "--list", "agent/*"]), "");
+        assert_eq!(branch, BranchDeletion::Deleted);
+        assert_eq!(branch.note(), "deleted");
 
         // Someone pushes to the branch after the runner last saw it: the merge stands, the branch stays.
         sh(&wt, &["push", "--quiet", "origin", "agent/fix-1a2b"]);
@@ -1245,9 +1336,44 @@ mod tests {
         let moved = sh(&bare, &["rev-parse", "agent/fix-1a2b"]);
         commit(&wt, "c.txt", "more\n", "more of the builder's work");
         let m = Merge { title: "Fix it again".into(), ..m };
-        let merged = merge_and_switch_back(&wt, &m).await.unwrap();
+        let (merged, branch) = merge_and_switch_back(&wt, &m).await.unwrap();
         assert_eq!(sh(&bare, &["rev-parse", "main"]), merged);
         assert_eq!(sh(&bare, &["rev-parse", "agent/fix-1a2b"]), moved);
+        assert_eq!(branch.note(), "moved");
+
+        // Never pushed: nothing to delete.
+        commit(&wt, "d.txt", "local\n", "work that never went to origin");
+        sh(&bare, &["update-ref", "-d", "refs/heads/agent/fix-1a2b"]);
+        let (_, branch) = merge_and_switch_back(&wt, &Merge { title: "Fix it once more".into(), ..m }).await.unwrap();
+        assert_eq!(branch, BranchDeletion::Gone);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The dry-run merge: clean while main hasn't touched the task's files, the conflicting path once
+    /// it has, and the worktree (HEAD, index, files) exactly as it was both times.
+    #[tokio::test]
+    async fn a_merge_check_reports_conflicts_and_touches_nothing() {
+        let root = tmp("merge-check");
+        let bare = root.join("remotes/widgets.git");
+        let (_cwd, wt) = worktree(&root, &bare).await;
+        commit(&wt, "a.txt", "the task's line\n", "the builder changes a.txt");
+        let head = sh(&wt, &["rev-parse", "HEAD"]);
+
+        // main moves on elsewhere, in a file the task didn't touch.
+        let other = root.join("other");
+        sh(&root, &["clone", "--quiet", bare.to_str().unwrap(), other.to_str().unwrap()]);
+        commit(&other, "c.txt", "unrelated\n", "another task merges");
+        sh(&other, &["push", "--quiet", "origin", "main"]);
+        assert_eq!(merge_check(&wt, "main").await.unwrap(), Vec::<String>::new());
+        assert_eq!((sh(&wt, &["rev-parse", "HEAD"]), sh(&wt, &["status", "--porcelain"])), (head.clone(), String::new()));
+
+        // Then in the same line of a.txt.
+        commit(&other, "a.txt", "main's line\n", "another task changes a.txt");
+        sh(&other, &["push", "--quiet", "origin", "main"]);
+        assert_eq!(merge_check(&wt, "main").await.unwrap(), vec!["a.txt".to_string()]);
+        assert_eq!((sh(&wt, &["rev-parse", "HEAD"]), sh(&wt, &["status", "--porcelain"])), (head, String::new()));
+        assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "the task's line\n");
+        assert!(merge_check(&wt, "--upload-pack=x").await.is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1494,6 +1620,7 @@ mod tests {
             merged: false,
             heads: vec![head.to_string()],
             repo: None,
+            delete_remote: false,
             scripts: Some(crate::worktree_scripts::WorktreeScripts {
                 create: None,
                 setup: None,

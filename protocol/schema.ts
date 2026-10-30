@@ -64,6 +64,14 @@ export const enums: Record<string, Enum> = {
       failed: "It couldn't; `error` says why.",
     },
   },
+  ScoutState: {
+    doc: "Where a goal's Scout run is.",
+    values: { running: "Its agent is looking over the goal's leftovers.", done: "Finished: `tasks` went to planning.", failed: "It couldn't; `error` says why." },
+  },
+  RepoSetupState: {
+    doc: "Where a repo's Set up with AI run is.",
+    values: { running: "Its agent is reading the repo.", done: "Finished: `suggestion` is filled in.", failed: "It couldn't; `error` says why." },
+  },
   DraftLineKind: {
     doc: "A line of a draft's transcript.",
     values: { text: "Something the agent said or thought.", tool: "Something it did: \"Reading lib/session.ts\"." },
@@ -96,6 +104,7 @@ export const enums: Record<string, Enum> = {
   PRState: { values: { draft: "Draft.", open: "Open.", merged: "Merged.", closed: "Closed without merging." } },
   CheckStatus: { values: { queued: "Queued.", running: "Running.", passed: "Passed.", failed: "Failed." } },
   RiskLevel: { values: { low: "Low.", medium: "Medium.", high: "High." } },
+  McpTransport: { values: { stdio: "A local command the runner starts.", http: "A server reached by URL (streamable HTTP)." } },
   PromptChoice: { values: { yes: "Allow it once (the menu's 1).", no: "Deny it (Esc: the menu's No isn't always 2)." } },
   RepoSource: { values: { github: "Granted to the GitHub App.", manual: "Added by an admin." } },
   RunnerUpdateState: {
@@ -107,6 +116,16 @@ export const enums: Record<string, Enum> = {
       updated: "Back online on the new version.",
       upToDate: "It already runs the latest release.",
       failed: "It couldn't; `message` says why.",
+    },
+  },
+  AgentLoginState: {
+    doc: "Where an agent sign-in (`codex login --device-auth`) on a machine is.",
+    values: {
+      starting: "Asked the machine; the login is starting.",
+      waiting: "Showing a link and one-time code: waiting for its owner to finish in the browser.",
+      done: "Signed in.",
+      failed: "It couldn't; `message` says why.",
+      cancelled: "Someone cancelled it, or the code expired.",
     },
   },
   AgentState: {
@@ -268,6 +287,11 @@ export const structs: Record<string, Struct> = {
     fields: { state: "RunnerUpdateState", target: "string?", from: "string?", message: "string?", at: "u64" },
     fieldDocs: { target: "The version it's updating to, once known.", from: "The version it ran when the update was asked for.", message: "Why it failed.", at: "When it reached this state." },
   },
+  AgentLoginStatus: {
+    doc: "An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only.",
+    fields: { agent: "string", state: "AgentLoginState", url: "string?", code: "string?", expiresAt: "u64?", message: "string?" },
+    fieldDocs: { url: "The page to enter the code on.", code: "The one-time code.", expiresAt: "When the code expires (ms).", message: "Why it failed." },
+  },
   RunnerRelease: {
     doc: "One runner release in the feed's changelog (maple-runner/changes.json).",
     fields: { version: "string", publishedAt: "string?", notes: "string?" },
@@ -382,7 +406,10 @@ export const structs: Record<string, Struct> = {
       findings: "Finding[]",
     },
   },
-  CICheck: { fields: { name: "string", status: "CheckStatus", duration: "string?", required: "bool" } },
+  CICheck: {
+    fields: { name: "string", status: "CheckStatus", duration: "string?", required: "bool", url: "string?" },
+    fieldDocs: { url: "Its run on GitHub (the job's page for GitHub Actions). None: an older server." },
+  },
   PullRequest: {
     fields: { number: "u32", url: "string?", state: "PRState", head: "string?", branch: "string", base: "string", checks: "CICheck[]" },
     fieldDocs: { url: "On GitHub; none for a local repo." },
@@ -445,8 +472,8 @@ export const structs: Record<string, Struct> = {
   },
   RepoWorktreeScripts: {
     doc: "One repo's worktree scripts, and who last changed them.",
-    fields: { repo: "string", scripts: "WorktreeScripts", updatedBy: "string", updatedAt: "u64" },
-    fieldDocs: { repo: "GitHub owner/name." },
+    fields: { repo: "string", scripts: "WorktreeScripts", prompts: "PromptAdditions?", updatedBy: "string", updatedAt: "u64" },
+    fieldDocs: { repo: "GitHub owner/name.", prompts: "The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server." },
   },
   ServerUpdate: {
     doc: "A newer maple-server than the factory runs, and how this factory gets it.",
@@ -464,6 +491,20 @@ export const structs: Record<string, Struct> = {
     fields: { role: "Role", agent: "string", machine: "string", session: "uuid", startedAt: "u64" },
   },
   Diff: { fields: { added: "u32", removed: "u32", files: "string[]" } },
+  MergeOverlap: {
+    doc: "Another in-flight task (building or in review) whose changes touch some of the same files.",
+    fields: { task: "string", files: "string[]" },
+  },
+  MergeForecast: {
+    doc: "How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base.",
+    fields: { overlaps: "MergeOverlap[]", conflicts: "string[]", since: "string?", checkedAt: "u64?", base: "string?" },
+    fieldDocs: {
+      conflicts: "Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet).",
+      since: "The task whose merge brought the conflicts in.",
+      checkedAt: "When the last dry-run merge ran (ms); none: never.",
+      base: "The branch it was checked against.",
+    },
+  },
   Task: {
     fields: {
       id: "string",
@@ -477,6 +518,7 @@ export const structs: Record<string, Struct> = {
       plan: "PlanStep[]",
       planVersion: "u32",
       planSummary: "string?",
+      suggestedTitle: "string?",
       doneWhen: "DoneItem[]",
       approvals: "string[]",
       approvalsNeeded: "u32",
@@ -504,6 +546,7 @@ export const structs: Record<string, Struct> = {
       branch: "string?",
       machine: "string?",
       splitFrom: "string?",
+      scoutedFrom: "string?",
       repo: "string?",
       after: "string[]",
       followUps: "FollowUp[]",
@@ -513,8 +556,11 @@ export const structs: Record<string, Struct> = {
       force: "bool?",
       effort: "string?",
       mergeAt: "u64?",
+      mergeForecast: "MergeForecast?",
     },
     fieldDocs: {
+      mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
+      suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
       effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
@@ -524,6 +570,7 @@ export const structs: Record<string, Struct> = {
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
       after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
       splitFrom: "The task it was split off from to stay inside the PR budget.",
+      scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
@@ -547,12 +594,36 @@ export const structs: Record<string, Struct> = {
       autoMerge: "map<bool>",
       autoFixMerges: "bool?",
       autoMerges: "bool?",
+      scoutItems: "u32?",
     },
     fieldDocs: {
       autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
+      scoutItems: "The most leftovers one Scout run turns into drafted plans (1–10). None: 3.",
       maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
       planApprovals: "By risk level (low, medium, high).",
+    },
+  },
+  McpConnector: {
+    doc: "An MCP server the factory adds to every session, alongside its own `maple` server.",
+    fields: {
+      name: "string",
+      transport: "McpTransport",
+      command: "string?",
+      args: "string[]",
+      url: "string?",
+      env: "map<string>",
+      headers: "map<string>",
+      enabled: "bool",
+      autoAllow: "bool",
+    },
+    fieldDocs: {
+      name: "Lowercase letters, digits and dashes; its tools are mcp__<name>__*. Not `maple`.",
+      command: "stdio: the program to run, e.g. npx.",
+      url: "http: the server's URL.",
+      env: "stdio: its environment. Secret: apps get each key with an empty value (blank on save keeps the stored one).",
+      headers: "http: request headers, e.g. Authorization. Secret, like `env`.",
+      autoAllow: "Unattended project sessions may use its tools without asking.",
     },
   },
   PromptAdditions: {
@@ -633,6 +704,21 @@ export const structs: Record<string, Struct> = {
   DraftLine: {
     doc: "One line of what a draft's agent said or did.",
     fields: { kind: "DraftLineKind", text: "string" },
+  },
+  RepoSetupSuggestion: {
+    doc: "What a Set up with AI run suggests for a repo, for an admin to review and save.",
+    fields: { scripts: "WorktreeScripts", prompts: "PromptAdditions", notes: "string[]" },
+    fieldDocs: { notes: "Short notes from the agent: what it found and why it suggests these." },
+  },
+  RepoSetupRun: {
+    doc: "Set up with AI for one repo: an agent that can't change anything reads the repo and suggests its worktree scripts and prompt additions.",
+    fields: { repo: "string", by: "string", state: "RepoSetupState", startedAt: "u64", progress: "string?", suggestion: "RepoSetupSuggestion?", error: "string?" },
+    fieldDocs: { by: "Who started it (an admin); it runs on their machine.", progress: "What the agent is doing now, one line." },
+  },
+  ScoutRun: {
+    doc: "A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.",
+    fields: { goal: "string", by: "string", state: "ScoutState", startedAt: "u64", tasks: "string[]", error: "string?" },
+    fieldDocs: { by: "Who started it; it runs on their machine.", tasks: "The tasks it sent to planning." },
   },
   Draft: {
     doc: "Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.",
@@ -718,7 +804,7 @@ export const structs: Record<string, Struct> = {
     },
   },
   StatsCount: { fields: { key: "string", count: "u32", medianMs: "u64?" } },
-  StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD (UTC)." } },
+  StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC)." } },
   StatsGoalRow: {
     fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?" },
   },
@@ -843,6 +929,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: { data: "Base64." },
       },
       "update.status": { fields: { state: "string", version: "string?", message: "string?" } },
+      "agent.login_status": { doc: "How an `agent.login` is going.", fields: { status: "AgentLoginStatus" } },
       usage: { doc: "Plan usage readings that changed (all of them again on reconnect).", fields: { agents: "AgentUsage[]" } },
       "session.cost": { doc: "A session's latest spend reading (again on reconnect, and once more just before it ends).", fields: { cost: "SessionCost" } },
       "mcp.request": {
@@ -872,7 +959,15 @@ export const unions: Record<string, Union> = {
         doc: "What a task's branch changes against its base: line counts per file and the unified patch.",
         fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?" },
       },
-      "task.merged": { fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?" } },
+      "task.merged": {
+        fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?", branch: "string?" },
+        fieldDocs: { branch: "What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`." },
+      },
+      "task.merge_check": {
+        doc: "How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed.",
+        fields: { taskId: "string", ok: "bool", clean: "bool", conflicts: "string[]", message: "string?" },
+        fieldDocs: { ok: "The check ran; false: `message` says why not." },
+      },
       "task.handed_off": {
         doc: "How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.",
         fields: { taskId: "string", ok: "bool", pushed: "string?", commit: "string?", message: "string?" },
@@ -915,8 +1010,9 @@ export const unions: Record<string, Union> = {
           task: "TaskStart?",
           unattended: "Unattended?",
           model: "string?",
+          connectors: "McpConnector[]?",
         },
-        fieldDocs: { resume: "Continue the agent's last conversation in `cwd` (claude --resume / codex resume)." },
+        fieldDocs: { connectors: "The factory's enabled MCP connectors, secrets included.", resume: "Continue the agent's last conversation in `cwd` (claude --resume / codex resume)." },
       },
       "session.resize": { fields: { id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { id: "uuid" } },
@@ -926,6 +1022,10 @@ export const unions: Record<string, Union> = {
         fieldDocs: { nonce: "Echoed in the reply, so it goes to the viewer that asked." },
       },
       "runner.update": {},
+      "agent.login": {
+        doc: "Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.",
+        fields: { agent: "string", cancel: "bool" },
+      },
       "runner.restart": {},
       "mcp.response": {
         doc: "The answer to `mcp.request`: `result` ({summary, data}) or `error`.",
@@ -938,6 +1038,10 @@ export const unions: Record<string, Union> = {
       },
       "task.diff": {
         doc: "Report a task's diff against its base (answered with `task.diff`).",
+        fields: { taskId: "string", cwd: "string", base: "string" },
+      },
+      "task.merge_check": {
+        doc: "Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`).",
         fields: { taskId: "string", cwd: "string", base: "string" },
       },
       "task.merge": {
@@ -955,8 +1059,11 @@ export const unions: Record<string, Union> = {
       "draft.cancel": { fields: { id: "string" } },
       "task.cleanup": {
         doc: "Remove a finished task's worktree and local branch if nothing would be lost.",
-        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]", repo: "string?", scripts: "WorktreeScripts?" },
-        fieldDocs: { scripts: "The repo's worktree scripts: teardown runs first, and archive replaces the removal." },
+        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]", repo: "string?", scripts: "WorktreeScripts?", deleteRemote: "bool?" },
+        fieldDocs: {
+          scripts: "The repo's worktree scripts: teardown runs first, and archive replaces the removal.",
+          deleteRemote: "Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch.",
+        },
       },
       "task.token": {
         doc: "The answer to `task.token_request`.",
@@ -995,6 +1102,13 @@ export const unions: Record<string, Union> = {
       },
       "draft.goal": { doc: "Carry on a draft with this goal (one it suggested making, or another).", fields: { id: "string", goal: "string" } },
       "draft.cancel": { fields: { id: "string" } },
+      "goal.scout": { doc: "Run Scout on a goal: its leftovers still worth doing come back as drafted plans.", fields: { goal: "string" } },
+      "repo.setup.start": {
+        doc: "Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.",
+        fields: { repo: "string", agent: "string?" },
+        fieldDocs: { agent: "claude or codex; none: whichever the machine has." },
+      },
+      "repo.setup.cancel": { doc: "Stop a repo's Set up with AI run.", fields: { repo: "string" } },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -1010,6 +1124,10 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", name: "string" },
       },
       "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
+      "machine.agent_login": {
+        doc: "Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.",
+        fields: { machine: "string", agent: "string", cancel: "bool?" },
+      },
       "runner.check": {
         doc: "Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.",
         fields: { machine: "string" },
@@ -1018,6 +1136,11 @@ export const unions: Record<string, Union> = {
       "prompts.save": { doc: "Admins only: the org's prompt additions.", fields: { prompts: "PromptAdditions" } },
       "admins.grant": { doc: "Admins only: make someone who has signed in an admin of this factory.", fields: { login: "string" } },
       "admins.revoke": { doc: "Admins only: take back an admin grant (not a GitHub owner's, nor your own).", fields: { login: "string" } },
+      "members.revoke": { doc: "Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).", fields: { login: "string" } },
+      "connectors.save": {
+        doc: "Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.",
+        fields: { connectors: "McpConnector[]" },
+      },
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
       "repos.add": { doc: "Admins only: a repo the GitHub App doesn't list (or there's no app).", fields: { name: "string" } },
       "repos.remove": { doc: "Admins only: one added by hand.", fields: { name: "string" } },
@@ -1032,8 +1155,9 @@ export const unions: Record<string, Union> = {
       },
       "secrets.delete": { doc: "Admins only.", fields: { repo: "string", name: "string" } },
       "repos.scripts.set": {
-        doc: "Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.",
-        fields: { repo: "string", scripts: "WorktreeScripts" },
+        doc: "Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.",
+        fields: { repo: "string", scripts: "WorktreeScripts", prompts: "PromptAdditions?" },
+        fieldDocs: { prompts: "The repo's prompt additions; none (an older app) keeps the stored ones." },
       },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",
@@ -1064,7 +1188,11 @@ export const unions: Record<string, Union> = {
         doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",
         fields: { id: "string", notes: "ReviewNote[]", summary: "string?" },
       },
-      "task.approvePlan": { doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.", fields: { id: "string" } },
+      "task.approvePlan": {
+        doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.",
+        fields: { id: "string", keepTitle: "bool?" },
+        fieldDocs: { keepTitle: "Turn down the plan's suggested title and keep the current one." },
+      },
       "task.answer": { doc: "Answer the agent's question.", fields: { id: "string", text: "string" } },
       "task.answerPrompt": {
         doc: "Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.",
@@ -1092,6 +1220,11 @@ export const unions: Record<string, Union> = {
         fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
+      "task.rerunCheck": { doc: "Run one of the pull request's CI checks again, by name.", fields: { id: "string", check: "string" } },
+      "task.checkLog": {
+        doc: "The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.",
+        fields: { id: "string", check: "string" },
+      },
       "task.split": {
         doc: "Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.",
         fields: { id: "string", parts: "u32" },
@@ -1120,6 +1253,7 @@ export const unions: Record<string, Union> = {
           policy: "RiskPolicy",
           acceptances: "RiskAcceptance[]",
           prompts: "PromptAdditions?",
+          connectors: "McpConnector[]?",
           online: "Presence[]",
           notes: "Note[]",
           follows: "GoalFollow[]",
@@ -1129,6 +1263,7 @@ export const unions: Record<string, Union> = {
           githubApp: "GitHubAppInfo?",
           secrets: "RepoSecret[]",
           scripts: "RepoWorktreeScripts[]?",
+          setupRuns: "RepoSetupRun[]?",
           runnerLatest: "string?",
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
@@ -1142,8 +1277,10 @@ export const unions: Record<string, Union> = {
           prompts: "The org's prompt additions. None: an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",
+          setupRuns: "Each repo's latest Set up with AI run. None: an older server.",
           repoOwners: "Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.",
           githubApp: "The factory's GitHub App. None: no app, or an older server.",
+          connectors: "The factory's MCP connectors, secret values blank. None: an older server.",
           runnerLatest: "The newest released runner version, when there's a release.",
           runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
@@ -1154,6 +1291,7 @@ export const unions: Record<string, Union> = {
       },
       "machine.updated": { fields: { machine: "Machine" } },
       "machine.removed": { fields: { id: "string" } },
+      "machine.agent_login": { doc: "How a sign-in on your machine is going, to its owner's apps only.", fields: { machine: "string", status: "AgentLoginStatus" } },
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
       "goal.updated": { fields: { goal: "Goal" } },
@@ -1161,6 +1299,8 @@ export const unions: Record<string, Union> = {
       "intake.updated": { fields: { request: "IntakeRequest" } },
       "note.removed": { fields: { id: "uuid" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
+      "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
+      "repo.setup.updated": { doc: "How a repo's Set up with AI run is going.", fields: { run: "RepoSetupRun" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
@@ -1186,9 +1326,21 @@ export const unions: Record<string, Union> = {
         fields: { runnerLatest: "string?", runnerReleases: "RunnerRelease[]" },
         fieldDocs: { runnerLatest: "The newest released runner version.", runnerReleases: "Runner releases, newest first, with their notes." },
       },
+      "connectors.updated": { doc: "Secret values blank.", fields: { connectors: "McpConnector[]" } },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
+      checkLog: {
+        doc: "The CI check log `task.checkLog` asked for, to that connection only.",
+        fields: { id: "string", check: "string", url: "string?", text: "string", truncated: "bool", failedStep: "string?" },
+        fieldDocs: {
+          id: "The task.",
+          url: "The check's run on GitHub.",
+          text: "The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.",
+          truncated: "Only the log's end is kept.",
+          failedStep: "The first line GitHub marked as an error, when there is one.",
+        },
+      },
       error: { fields: { message: "string", requestId: "string?" } },
     },
   },

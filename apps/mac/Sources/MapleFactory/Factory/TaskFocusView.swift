@@ -230,6 +230,7 @@ struct TaskFocusView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
             }
+            TaskOrigin(task: task)
         }
     }
 
@@ -560,17 +561,20 @@ struct TaskFocusView: View {
         let presets = AppState.models(for: task.builder)
         detailRow("Agent") {
             Menu {
-                ForEach(agents.contains(task.builder) ? agents : [task.builder] + agents, id: \.self) { agent in
-                    Button {
-                        // A model the old agent knew means nothing to the new one.
-                        let keep = task.model.flatMap { AppState.models(for: agent).contains($0) ? $0 : nil }
-                        appState.setAgent(task.id, agent: agent, model: keep)
-                    } label: {
-                        if agent == task.builder { Label(agentTitle(agent), systemImage: "checkmark") } else { Text(agentTitle(agent)) }
+                Picker("", selection: Binding(get: { task.builder }, set: { agent in
+                    guard agent != task.builder else { return }
+                    // A model the old agent knew means nothing to the new one.
+                    let keep = task.model.flatMap { AppState.models(for: agent).contains($0) ? $0 : nil }
+                    appState.setAgent(task.id, agent: agent, model: keep)
+                })) {
+                    ForEach(agents.contains(task.builder) ? agents : [task.builder] + agents, id: \.self) { agent in
+                        Label { Text(agentTitle(agent)) } icon: { AgentMark.image(agent) }.tag(agent)
                     }
                 }
+                .pickerStyle(.inline)
+                .labelsHidden()
             } label: {
-                Text(agentTitle(task.builder))
+                Label { Text(agentTitle(task.builder)) } icon: { AgentMark.image(task.builder) }
             }
             .menuStyle(.borderlessButton)
             .fixedSize()

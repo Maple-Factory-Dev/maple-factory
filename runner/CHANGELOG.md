@@ -5,6 +5,38 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.60.0 — 2026-10-30
+
+The runner is built with the latest protocol, which adds Set up with AI for repos; it runs through the same read-only draft sessions as before.
+
+## 0.59.0 — 2026-10-30
+
+The runner is built with the latest protocol, which adds revoking a member's access; nothing else changes on the runner.
+
+## 0.58.0 — 2026-10-30
+
+After the factory merges a task, the runner deletes its leftover branch on origin when nothing unmerged would be lost, and says what became of it.
+
+## 0.57.0 — 2026-10-29
+
+The runner can dry-run merge a task's branch into its base, so the factory finds a conflict before it merges instead of after.
+
+## 0.56.0 — 2026-10-29
+
+The protocol carries a plan's suggested title for its task.
+
+## 0.55.0 — 2026-10-29
+
+The protocol carries each check's link, its log and re-running one check.
+
+## 0.54.0 — 2026-10-29
+
+MCP connectors: sessions get the factory's connectors (Claude through a per-session 0600 config, Codex through -c overrides, with secrets in the pane's one-shot env file, never argv), and only the runner's own Maple server is pre-allowed.
+
+## 0.53.0 — 2026-10-29
+
+Sign a machine's Codex in from the app: the runner runs `codex login --device-auth` and reports its link and one-time code to the machine's owner, then checks its agents again as soon as it's signed in. From this release there's no Intel Mac build.
+
 ## 0.52.0 — 2026-10-29
 
 The protocol carries code review notes and GitHub review threads.

@@ -31,12 +31,19 @@ import Foundation
     }
     private(set) var me: Wire.Member?
     private(set) var machines: [Wire.Machine] = []
+    /// Agent sign-ins on your machines (`codex login --device-auth`), by `machine:agent`, while they run
+    /// and until their card has shown how they ended.
+    private(set) var agentLogins: [String: Wire.AgentLoginStatus] = [:]
     private(set) var ends: [EndRecord] = []
     private(set) var members: [Wire.Member] = []
     private(set) var goals: [Wire.Goal] = []
     private(set) var tasks: [Wire.Task] = []
     /// The tasks and goals as the views' models, rebuilt when they change.
-    private(set) var factoryTasks: [FactoryTask] = []
+    private(set) var factoryTasks: [FactoryTask] = [] {
+        didSet { tasksRevision &+= 1 }
+    }
+    /// Counts changes to `factoryTasks`: what's worked out from the tasks is cached against it.
+    private(set) var tasksRevision = 0
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -48,11 +55,17 @@ import Foundation
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
+    /// Each goal's latest Scout run since this app connected, by goal id.
+    private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
+    /// Each repo's latest Set up with AI run, by lowercased repo name.
+    private(set) var setupRuns: [String: Wire.RepoSetupRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
     /// The org's additions to every session's prompt, by role; nil from an older server.
     private(set) var prompts: Wire.PromptAdditions?
+    /// The factory's MCP connectors, secret values blank (only which keys are set). None: an older server.
+    private(set) var connectors: [Wire.McpConnector]?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
     /// Every repo's secrets: names and who changed them when, never a value.
@@ -81,6 +94,8 @@ import Foundation
     private(set) var displayName: String?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
+    /// CI check logs asked for (`task.checkLog`), by CheckLogRequest.id. Logs are never broadcast or kept by the server.
+    private(set) var checkLogs: [String: CheckLogLoad] = [:]
     var isAdmin: Bool { me?.role == "admin" }
     /// Admins see Statistics; signed out, the mockup shows it.
     var canSeeStats: Bool { !isSignedIn || isAdmin }
@@ -139,9 +154,9 @@ import Foundation
     private(set) var hasSnapshot = false
     /// The last thing the server refused, shown as a toast-like line.
     var notice: String?
-    /// A goal sheet is waiting on goal.save: it shows refusals itself, so they don't toast behind it.
+    /// The goal editor is waiting on goal.save: it shows refusals itself, so they don't toast behind it.
     var savingGoal = false
-    /// Bumped on every goal.updated, so a saving goal sheet hears an update even when nothing changed.
+    /// Bumped on every goal.updated, so a saving goal editor hears an update even when nothing changed.
     private(set) var goalUpdates = 0
 
     private var token: String?
@@ -273,8 +288,11 @@ import Foundation
         notes = []
         drafts = [:]
         follows = [:]
+        scoutRuns = [:]
+        setupRuns = [:]
         policy = nil
         prompts = nil
+        connectors = nil
         acceptances = []
         repos = []
         secrets = []
@@ -321,13 +339,16 @@ import Foundation
         socket = nil
     }
 
+    /// One for every message from the feed, not one each.
+    private let decoder = JSONDecoder()
+
     private func receive(_ socket: URLSessionWebSocketTask, gen: Int) async {
         while gen == generation {
             do {
                 let message = try await socket.receive()
                 lastHeard = Date()
                 guard case .string(let text) = message, let data = text.data(using: .utf8) else { continue }
-                apply(try JSONDecoder().decode(Wire.ServerToClient.self, from: data))
+                apply(try decoder.decode(Wire.ServerToClient.self, from: data))
             } catch {
                 guard gen == generation else { return }
                 if error is DecodingError {
@@ -395,6 +416,7 @@ import Foundation
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             prompts = snapshot.prompts
+            connectors = snapshot.connectors
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
@@ -402,6 +424,7 @@ import Foundation
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
+            setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
@@ -420,6 +443,15 @@ import Foundation
             } else {
                 machines.append(update.machine)
             }
+            // Once health says it's signed in, a sign-in still showing a code or an error is over.
+            for agent in update.machine.health?.agents ?? [] where agent.loggedIn {
+                let key = Self.loginKey(update.machine.id, agent.name)
+                if let login = agentLogins[key], login.state != .done { agentLogins[key] = nil }
+            }
+        case .machineAgentLogin(let update):
+            let key = Self.loginKey(update.machine, update.status.agent)
+            // A cancel without a reason is one asked for here: its panel already closed.
+            agentLogins[key] = update.status.state == .cancelled && update.status.message == nil ? nil : update.status
         case .machineRemoved(let removed):
             machines.removeAll { $0.id == removed.id }
         case .sessionEnded(let ended):
@@ -463,6 +495,10 @@ import Foundation
             if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
         case .draftUpdated(let update):
             drafts[update.draft.id] = update.draft
+        case .scoutUpdated(let update):
+            scoutRuns[update.run.goal] = update.run
+        case .repoSetupUpdated(let update):
+            setupRuns[update.run.repo.lowercased()] = update.run
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
@@ -494,16 +530,30 @@ import Foundation
             // Every app shows the new name at once, and the factory switcher keeps it.
             displayName = update.name
             remember()
+        case .connectorsUpdated(let update):
+            connectors = update.connectors
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
             rebuild()
         case .stats(let reply):
             stats = reply.summary
+        case .checkLog(let reply):
+            let key = CheckLogRequest(taskID: reply.id, check: reply.check).id
+            // Only into a sheet still waiting for it: a log forgotten since (the check re-run) stays forgotten.
+            if checkLogs[key] == .loading {
+                checkLogs[key] = .loaded(CheckLog(text: reply.text, truncated: reply.truncated, failedStep: reply.failedStep, url: reply.url.flatMap(URL.init(string:))))
+            }
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
-            notice = error.message
+            // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
+            if let id = error.requestId, id.hasPrefix("checkLog:") {
+                let key = String(id.dropFirst("checkLog:".count))
+                if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
+            } else {
+                notice = error.message
+            }
         case .unknown:
             break
         }
@@ -546,10 +596,28 @@ import Foundation
         }.map { .mention(author: LiveAdapter.person($0.author, members: members).firstName, text: $0.text) }
     }
 
-    private func adapt(_ task: Wire.Task) -> FactoryTask {
+    private func adapt(_ task: Wire.Task, viewers: [String: [Person]]? = nil) -> FactoryTask {
         var adapted = LiveAdapter.task(task, goals: goals, members: members, me: me?.login)
-        adapted.viewers = online.filter { $0.viewing == task.id && $0.login != me?.login }.map { LiveAdapter.person($0.login, members: members) }
+        adapted.viewers = (viewers ?? Self.viewers(online, me: me?.login, members: members))[task.id] ?? []
         return adapted
+    }
+
+    /// Who's looking at each task, by its id, besides you.
+    static func viewers(_ online: [Wire.Presence], me: String?, members: [Wire.Member]) -> [String: [Person]] {
+        var viewers: [String: [Person]] = [:]
+        for presence in online where presence.login != me {
+            guard let id = presence.viewing else { continue }
+            viewers[id, default: []].append(LiveAdapter.person(presence.login, members: members))
+        }
+        return viewers
+    }
+
+    /// The tasks whose viewers aren't `viewers`', by index, with the viewers they now have.
+    static func viewerChanges(_ tasks: [FactoryTask], viewers: [String: [Person]]) -> [(index: Int, viewers: [Person])] {
+        tasks.indices.compactMap { index in
+            let now = viewers[tasks[index].id] ?? []
+            return now.map(\.id) == tasks[index].viewers.map(\.id) ? nil : (index, now)
+        }
     }
 
     /// Whether a goal is in your sidebar: what you chose, else whether you lead it, are on its team,
@@ -569,6 +637,12 @@ import Foundation
         send(.goalFollow(.init(id: goal.id, following: following)))
     }
 
+    /// Run Scout on a goal: its leftovers come back as drafted plans, and `scoutRuns` says how it went.
+    func scout(goal name: String) {
+        guard let goal = goal(named: name) else { return }
+        send(.goalScout(.init(goal: goal.id)))
+    }
+
     /// Every GitHub team someone in the org is on, for a goal's team.
     var teams: [String] { Array(Set(members.flatMap(\.teams) + (me?.teams ?? []))).sorted() }
 
@@ -582,7 +656,8 @@ import Foundation
     private func rebuild() {
         rebuildGoals()
         FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) }
-        factoryTasks = tasks.map(adapt)
+        let viewers = Self.viewers(online, me: me?.login, members: members)
+        factoryTasks = tasks.map { adapt($0, viewers: viewers) }
         applyPresence()
         intake = intakeRequests.map { LiveAdapter.request($0, goals: goals, members: members) }
         riskPolicy = policy.map(LiveAdapter.policy)
@@ -612,6 +687,11 @@ import Foundation
     /// Admins only: takes back a grant (not a GitHub owner's, nor my own).
     func revokeAdmin(_ login: String) {
         send(.adminsRevoke(.init(login: login)))
+    }
+
+    /// Admins only: signs someone out everywhere now (not a GitHub owner, nor me); members.updated says it took.
+    func revokeAccess(_ login: String) {
+        send(.membersRevoke(.init(login: login)))
     }
 
     // MARK: Icon
@@ -698,9 +778,24 @@ import Foundation
         let _: Empty = try await api("/api/name", method: "DELETE")
     }
 
-    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
-    func save(scripts: Wire.WorktreeScripts, for repo: String) {
-        send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared) and its prompt additions; repos.updated says how they were saved.
+    func save(scripts: Wire.WorktreeScripts, prompts: Wire.PromptAdditions? = nil, for repo: String) {
+        send(.reposScriptsSet(.init(repo: repo, scripts: scripts, prompts: prompts)))
+    }
+
+    /// Admins only: Set up with AI on `repo`. An agent on one of your machines reads it and suggests
+    /// scripts and prompts; `setupRun(for:)` says how it's going, and nothing is saved until you do.
+    func startSetup(for repo: String) {
+        send(.repoSetupStart(.init(repo: repo)))
+    }
+
+    func cancelSetup(for repo: String) {
+        send(.repoSetupCancel(.init(repo: repo)))
+    }
+
+    /// `repo`'s latest Set up with AI run, if there's been one.
+    func setupRun(for repo: String) -> Wire.RepoSetupRun? {
+        setupRuns[repo.lowercased()]
     }
 
     /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.
@@ -711,6 +806,11 @@ import Foundation
     /// `repo`'s worktree scripts, if it has any.
     func scripts(for repo: String) -> Wire.RepoWorktreeScripts? {
         repoScripts.first { $0.repo.lowercased() == repo.lowercased() }
+    }
+
+    /// Admins only: the whole list. A secret left blank keeps the stored value; connectors.updated echoes it.
+    func save(connectors: [Wire.McpConnector]) {
+        send(.connectorsSave(.init(connectors: connectors)))
     }
 
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
@@ -751,10 +851,12 @@ import Foundation
     private func applyPresence() {
         let people = online.map { (person: LiveAdapter.person($0.login, members: members), viewing: $0.viewing) }
         FactoryData.livePresence = server == nil ? nil : people
-        for index in factoryTasks.indices {
-            let id = factoryTasks[index].id
-            factoryTasks[index].viewers = people.filter { $0.viewing == id && $0.person.github != me?.login }.map(\.person)
-        }
+        // Only the tasks someone came to or left change, in one write: a ping that moves no one redraws nothing.
+        let changes = Self.viewerChanges(factoryTasks, viewers: Self.viewers(online, me: me?.login, members: members))
+        guard !changes.isEmpty else { return }
+        var tasks = factoryTasks
+        for change in changes { tasks[change.index].viewers = change.viewers }
+        factoryTasks = tasks
     }
 
     /// The goal a view knows by name.
@@ -804,9 +906,35 @@ import Foundation
         return request
     }
 
+    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
+    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
+    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    nonisolated static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
+        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
+        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
+              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        request.url = components.url
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 403,
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
+        return text
+    }
+
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
         send(.statsGet(.init(days: UInt32(days), goal: goal)))
+    }
+
+    /// Reads a CI check's log from GitHub again; the answer (or a refusal) lands in `checkLogs`.
+    func loadCheckLog(_ request: CheckLogRequest) {
+        checkLogs[request.id] = .loading
+        send(.taskCheckLog(.init(id: request.taskID, check: request.check)))
+    }
+
+    /// Drops a check's log once it's run again: the one held is the old run's.
+    func forgetCheckLog(_ request: CheckLogRequest) {
+        checkLogs[request.id] = nil
     }
 
     /// Each task's diff as last fetched, and the change it was fetched for.
@@ -832,7 +960,9 @@ import Foundation
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+        // A big patch takes a moment to parse; keep it off the main thread.
+        let files = await Task.detached { DiffFile.parse(String(decoding: data, as: UTF8.self)) }.value
+        diffs[id] = (key, files)
     }
 
     /// Each task's GitHub review threads as last fetched, and the change they were fetched for.
@@ -872,8 +1002,14 @@ import Foundation
         return try await Self.load(request)
     }
 
-    /// Attachments fetched this run, by path; they never change once stored.
-    private static let attachmentCache = NSCache<NSString, NSData>()
+    /// Attachments fetched this run, by path; they never change once stored. Screenshots and recordings
+    /// add up, so it keeps at most 64 MB of them, each costing its size.
+    private static let attachmentCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = attachmentCacheLimit
+        return cache
+    }()
+    nonisolated static let attachmentCacheLimit = 64 * 1024 * 1024
 
     /// An attachment's bytes (`/attachments/…`), with this app's token: AsyncImage can't send one.
     func attachment(_ path: String) async throws -> Data {
@@ -887,7 +1023,7 @@ import Foundation
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw ClientError.message(status == 404 ? "It isn't there anymore." : "The server answered \(status).") }
-        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString)
+        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString, cost: data.count)
         return data
     }
 
@@ -1046,6 +1182,37 @@ extension FactoryClient {
     /// The release a machine runs, when the changelog has it.
     func release(_ version: String?) -> Wire.RunnerRelease? {
         version.flatMap { v in runnerReleases.first { $0.version == v } }
+    }
+
+    static func loginKey(_ machine: String, _ agent: String) -> String { "\(machine):\(agent)" }
+
+    func agentLogin(machine: String, agent: String) -> Wire.AgentLoginStatus? {
+        agentLogins[Self.loginKey(machine, agent)]
+    }
+
+    /// Signs one of your machine's agents in: its card shows the link and code the machine sends back.
+    func signIn(machine: String, agent: String) {
+        let key = Self.loginKey(machine, agent)
+        agentLogins[key] = .init(agent: agent, state: .starting)
+        send(.machineAgentLogin(.init(machine: machine, agent: agent)))
+        // A machine that never answers (offline, an older runner) mustn't leave it starting forever.
+        Task {
+            try? await Task.sleep(for: .seconds(20))
+            if agentLogins[key]?.state == .starting {
+                agentLogins[key] = .init(agent: agent, state: .failed, message: "The machine didn't answer. Is its runner up to date?")
+            }
+        }
+    }
+
+    func cancelSignIn(machine: String, agent: String) {
+        agentLogins[Self.loginKey(machine, agent)] = nil
+        send(.machineAgentLogin(.init(machine: machine, agent: agent, cancel: true)))
+    }
+
+    /// Closes a finished sign-in's panel.
+    func dismissSignIn(machine: String, agent: String) {
+        let key = Self.loginKey(machine, agent)
+        if let state = agentLogins[key]?.state, state != .starting, state != .waiting { agentLogins[key] = nil }
     }
 
     /// What the runner menu item does: install a newer release the app knows of, or only look for one.

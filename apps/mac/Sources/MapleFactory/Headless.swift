@@ -78,7 +78,7 @@ enum Headless {
         else { return }
         if window.performKeyEquivalent(with: event) { return }
         if !modifiers.isEmpty, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
-        window.sendEvent(event)
+        NSApp.postEvent(event, atStart: false)
     }
 
     /// A left click at `point` (window points, from the top left) as far as focus goes (`click:<x>:<y>`): the view
@@ -90,6 +90,51 @@ enum Headless {
         if let view { window.makeFirstResponder(view) }
         print("headless: click at \(point) focused \(view.map { String(describing: type(of: $0)) } ?? "nothing")")
     }
+
+    /// A trackpad scroll at a point in the main window (`scroll:<x>:<y>:<dx>:<dy>`, points from the top left; `:cmd` holds ⌘),
+    /// queued like a real one so local event monitors see it.
+    @MainActor static func scroll(at point: CGPoint, by delta: CGPoint, command: Bool) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView,
+              let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                    wheel1: Int32(delta.y), wheel2: Int32(delta.x), wheel3: 0)
+        else { return }
+        // CG's screen points run from the top left of the main screen; the window's frame from the bottom left.
+        let inWindow = CGPoint(x: point.x, y: content.frame.height - point.y)
+        let onScreen = window.convertPoint(toScreen: inWindow)
+        let screenHeight = NSScreen.screens.first?.frame.maxY ?? 0
+        cgEvent.location = CGPoint(x: onScreen.x, y: screenHeight - onScreen.y)
+        cgEvent.flags = command ? .maskCommand : []
+        cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+        guard let event = NSEvent(cgEvent: cgEvent) else { return }
+        // Off screen, the event comes without a window or the point it was meant for: whoever handles it asks here.
+        scrollPoint = inWindow
+        print("headless: scroll at \(point) by \(delta)\(command ? " with ⌘" : "")")
+        NSApp.postEvent(event, atStart: false)
+    }
+
+    /// A double-click in the main window (`doubleclick:<x>:<y>`, points from the top left).
+    @MainActor static func doubleClick(at point: CGPoint) async {
+        for clicks in 1...2 {
+            sendMouse(.leftMouseDown, at: point, clicks: clicks)
+            sendMouse(.leftMouseUp, at: point, clicks: clicks)
+            try? await Task.sleep(for: .milliseconds(60))
+        }
+        print("headless: double-click at \(point)")
+    }
+
+    @MainActor private static func sendMouse(_ type: NSEvent.EventType, at point: CGPoint, clicks: Int) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView,
+              let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: point.x, y: content.frame.height - point.y), modifierFlags: [],
+                                             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                                             eventNumber: 0, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1)
+        else { return }
+        NSApp.postEvent(event, atStart: false)
+    }
+
+    /// Where the last `scroll:` was, in the main window's coordinates (from the bottom left).
+    @MainActor static var scrollPoint: CGPoint?
 
     /// `key:` as characters, key code and modifiers: `cmd+b` → ("b", 11, .command). Modifiers are cmd, ctrl, opt
     /// (or alt) and shift, joined by `+`; the last part is the key.
@@ -149,6 +194,9 @@ enum Headless {
     }
 
     @MainActor static var shownMenu: (menu: NSMenu, at: CGPoint)?
+    /// What a shown popover points at, in the window's points from the top left (TaskRefHover sets it):
+    /// off screen, AppKit moves the popover's own window onto a screen, so the shot places it from this.
+    @MainActor static var popoverAnchor: CGRect?
 
     /// Waits until `busy` is false (polling every 50ms), or `timeout` passes; false on timeout.
     @MainActor static func untilIdle(timeout: Duration, _ busy: () -> Bool) async -> Bool {
@@ -226,7 +274,7 @@ enum Headless {
         }
         Task { @MainActor in
             await self.waitUntilReady()
-            // Made now, so the script's actions (`secret:add`) reach its views before the shot.
+            // Made now, so the script's actions (`secret:add`, `connector:jira`) reach its views before the shot.
             if AppDefaults.string(forKey: "window")?.hasPrefix("settings") == true {
                 self.settingsWindow.orderBack(nil)
             }
@@ -331,7 +379,9 @@ enum Headless {
     private lazy var settingsWindow: NSWindow = {
         let settings = NSWindow(contentViewController: NSHostingController(rootView: OrgSettingsView()
             .environment(state).environment(client).defaultAppStorage(AppDefaults)))
-        settings.setContentSize(CGSize(width: 780, height: 560))
+        // `-height` makes it taller, to show a long pane whole.
+        let height = AppDefaults.double(forKey: "height")
+        settings.setContentSize(CGSize(width: OrgSettingsView.size.width, height: max(OrgSettingsView.size.height, height)))
         settings.isExcludedFromWindowsMenu = true
         settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
         return settings
@@ -339,10 +389,12 @@ enum Headless {
 
     /// The window's content as a bitmap: at the screen's scale, or `scale` (1 for video frames).
     private func render(scale: CGFloat? = nil) -> NSBitmapImageRep? {
-        if let window, window.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) { Headless.hide(window) }
+        // Moving the window closes an open popover (a task reference's hovercard), so it stays put while one shows.
+        let moves = Headless.popoverAnchor == nil
+        if moves, let window, window.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) { Headless.hide(window) }
         guard let target, let view = target.contentView else { return nil }
         // A sheet moves with the main window; Settings keeps its own size, just off screen.
-        if target.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) {
+        if moves, target.frame.minX < (NSScreen.screens.map(\.frame.maxX).max() ?? 0) {
             target.setFrameOrigin(Headless.offscreenFrame(size: target.frame.size, screens: NSScreen.screens.map(\.frame)).origin)
         }
         view.layoutSubtreeIfNeeded()
@@ -374,6 +426,18 @@ enum Headless {
             if sheet.appearance != window.appearance { sheet.appearance = window.appearance }
             (window.appearance ?? NSApp.effectiveAppearance).performAsCurrentDrawingAppearance {
                 drawSheet(content, over: rep, in: view.bounds)
+            }
+        }
+        if let window, target === window {
+            // A popover (a task reference's hovercard) is its own window: drawn hanging under what it points at.
+            if let anchor = Headless.popoverAnchor,
+               let popover = NSApp.windows.first(where: { $0.isVisible && $0.className.contains("Popover") }),
+               let card = popover.contentView {
+                // Points from the bottom left, as the bitmap's context draws.
+                let origin = CGPoint(x: anchor.midX - card.bounds.width / 2, y: view.bounds.height - anchor.maxY - card.bounds.height - 10)
+                (window.appearance ?? NSApp.effectiveAppearance).performAsCurrentDrawingAppearance {
+                    drawPopover(card, at: origin, over: rep)
+                }
             }
         }
         if target === window, let (menu, point) = Headless.shownMenu {
@@ -464,6 +528,35 @@ enum Headless {
         NSShadow().set()
         shape.addClip()
         sheetRep.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// A popover's content in a rounded card, its arrow pointing up at what it's attached to.
+    private func drawPopover(_ view: NSView, at origin: CGPoint, over rep: NSBitmapImageRep) {
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        guard let popoverRep = view.bitmapImageRepForCachingDisplay(in: view.bounds), let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+        view.cacheDisplay(in: view.bounds, to: popoverRep)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let frame = CGRect(origin: origin, size: view.bounds.size)
+        let shape = NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10)
+        shape.move(to: CGPoint(x: frame.midX - 9, y: frame.maxY))
+        shape.line(to: CGPoint(x: frame.midX, y: frame.maxY + 9))
+        shape.line(to: CGPoint(x: frame.midX + 9, y: frame.maxY))
+        shape.close()
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 16
+        shadow.shadowOffset = NSSize(width: 0, height: -4)
+        shadow.shadowColor = .black.withAlphaComponent(0.3)
+        shadow.set()
+        NSColor(Theme.cardBG).setFill()
+        shape.fill()
+        NSShadow().set()
+        NSColor(Theme.stroke).setStroke()
+        shape.stroke()
+        NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10).addClip()
+        popoverRep.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         NSGraphicsContext.restoreGraphicsState()
     }
 

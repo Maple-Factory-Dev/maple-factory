@@ -153,6 +153,65 @@ import Testing
         #expect(DiffReview.row(side: .old, line: 11, in: lines) == 1)
     }
 
+    // MARK: Large diffs (MF-120)
+
+    @Test func runsAreCappedAndStillSplitAtBreaks() {
+        #expect(DiffReview.runs(0..<10, breaks: []) == [0..<10])
+        #expect(DiffReview.runs(0..<250, breaks: []) == [0..<100, 100..<200, 200..<250])
+        #expect(DiffReview.runs(0..<250, breaks: [149]) == [0..<100, 100..<150, 150..<250])
+        #expect(DiffReview.runs(10..<30, breaks: [12, 29], limit: 8) == [10..<13, 13..<21, 21..<29, 29..<30])
+        #expect(DiffReview.runs(5..<5, breaks: [5]) == [])
+        // Every row is in exactly one run, in order, and no run is longer than the limit.
+        let runs = DiffReview.runs(3..<1_003, breaks: [3, 400, 401, 999], limit: 64)
+        #expect(runs.flatMap { Array($0) } == Array(3..<1_003))
+        #expect(runs.allSatisfy { $0.count <= 64 })
+        #expect([3, 400, 401, 999].allSatisfy { row in runs.contains { $0.upperBound - 1 == row } })
+    }
+
+    /// A 20,000-line patch: per hunk, 1 context line, 1 removed, 2 added, 1 context.
+    private func bigPatch(hunks: Int) -> String {
+        var out = ["diff --git a/big.ts b/big.ts", "--- a/big.ts", "+++ b/big.ts"]
+        for index in 0..<hunks {
+            let old = 1 + index * 10, new = 1 + index * 11
+            out.append("@@ -\(old),3 +\(new),4 @@ block\(index)")
+            out += [" keep\(index)a", "-old\(index)", "+new\(index)a", "+new\(index)b", " keep\(index)b"]
+        }
+        return out.joined(separator: "\n")
+    }
+
+    @Test func aLargePatchParsesWithRightCountsAndNumbers() throws {
+        let patch = bigPatch(hunks: 4_000)
+        var files: [DiffFile] = []
+        let clock = ContinuousClock()
+        let took = clock.measure { files = DiffFile.parse(patch) }
+        print("Parsed a 20,000-line patch in \(took)")
+
+        let file = try #require(files.first)
+        #expect(files.count == 1)
+        #expect(file.path == "big.ts")
+        #expect(file.added == 8_000)
+        #expect(file.removed == 4_000)
+        #expect(file.hunks.count == 4_000)
+        let lines = DiffReview.rows(file.hunks)
+        #expect(lines.count == 20_000)
+
+        let last = file.hunks[3_999]
+        #expect(last.header == "@@ -39991,3 +43990,4 @@ block3999")
+        #expect(last.lines.map(\.kind) == [.context, .removed, .added, .added, .context])
+        #expect(last.lines.map(\.old) == [39_991, 39_992, nil, nil, 39_993])
+        #expect(last.lines.map(\.new) == [43_990, nil, 43_991, 43_992, 43_993])
+        #expect(last.lines[2].text == "new3999a")
+        #expect(took < .seconds(2))
+    }
+
+    @Test func theDemoHasALongFile() throws {
+        let file = try #require(FactoryData.diff(for: "ATL-144").first { $0.path == "lib/generated/routes.ts" })
+        let lines = DiffReview.rows(file.hunks)
+        #expect(lines.count >= 5_000)
+        #expect(lines.filter { $0.kind == .added }.count == file.added)
+        #expect(lines.filter { $0.kind == .removed }.count == file.removed)
+    }
+
     // MARK: Draft
 
     @Test func theDraftKeepsNotesUntilCleared() {

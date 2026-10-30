@@ -100,4 +100,33 @@ struct AutoMergesTests {
         state.merge("ONB-19")
         #expect(state.task("ONB-19").state == .merged)
     }
+
+    /// Its countdown ran out: the factory has it, before the server says Merging….
+    @Test func aPastDueCountdownIsMerging() {
+        let state = ready()
+        let now = Date()
+        state.update("ONB-19") { $0.mergeAt = now.addingTimeInterval(-0.1) }
+        #expect(state.isMerging(state.task("ONB-19"), now: now))
+        // Still counting down: Hold and Merge now stay live.
+        state.update("ONB-19") { $0.mergeAt = now.addingTimeInterval(2) }
+        #expect(!state.isMerging(state.task("ONB-19"), now: now))
+    }
+
+    @Test func sayingMergingIsMerging() {
+        let state = ready()
+        state.update("ONB-19") { $0.liveLog = FactoryTask.mergingLog }
+        #expect(state.isMerging(state.task("ONB-19")))
+    }
+
+    @Test func aMergeInFlightIsMerging() {
+        let state = ready()
+        state.inFlight["ONB-19"] = .init(kind: .merge, startedAt: Date())
+        #expect(state.isMerging(state.task("ONB-19")))
+    }
+
+    @Test func aReadyTaskIsntMerging() {
+        let state = ready()
+        state.update("ONB-19") { $0.liveLog = nil }
+        #expect(!state.isMerging(state.task("ONB-19")))
+    }
 }

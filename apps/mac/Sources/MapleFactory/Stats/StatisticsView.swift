@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The factory's statistics, for admins: merges, raised hands, questions, steers, review rounds and the
-/// other touchpoints, over the last 7, 30 or 90 days (`stats.get`). Signed out it shows a sample.
+/// other touchpoints, over the last 24 hours, 3, 7, 30 or 90 days (`stats.get`). Signed out it shows a sample.
 struct StatisticsView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
@@ -13,7 +13,7 @@ struct StatisticsView: View {
 
     private var narrow: Bool { state.contentWidth < 920 }
     private var isAdmin: Bool { !state.isLive || client.me?.role == "admin" }
-    private var summary: Wire.StatsSummary? { state.isLive ? client.stats.flatMap { $0.days == UInt32(days) ? $0 : nil } : .sample }
+    private var summary: Wire.StatsSummary? { state.isLive ? client.stats.flatMap { $0.days == UInt32(days) ? $0 : nil } : .sample(days: days) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -40,7 +40,7 @@ struct StatisticsView: View {
                 .frame(maxWidth: .infinity)
                 .id("top")
             }
-            .defaultScrollAnchor(.top)
+            .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
             .safeAreaInset(edge: .bottom) {
                 if section == "findings", !pickedFindings.isEmpty, let findings = summary?.findings {
                     FindingsPickBar(findings: findings, picked: $pickedFindings)
@@ -88,6 +88,8 @@ struct StatisticsView: View {
             Spacer()
             if isAdmin {
                 Picker("Range", selection: $days) {
+                    Text("24 hours").tag(1)
+                    Text("3 days").tag(3)
                     Text("7 days").tag(7)
                     Text("30 days").tag(30)
                     Text("90 days").tag(90)
@@ -111,8 +113,8 @@ struct StatisticsView: View {
         }
 
         twoUp {
-            DailyBars(title: "Merges", days: s.daily, value: \.merges, color: Theme.State.merged)
-            DailyBars(title: "Hands raised", days: s.daily, value: \.hands, color: Theme.State.cancelled)
+            DailyBars(title: "Merges", window: Int(s.days), days: s.daily, value: \.merges, color: Theme.State.merged)
+            DailyBars(title: "Hands raised", window: Int(s.days), days: s.daily, value: \.hands, color: Theme.State.cancelled)
         }
 
         twoUp {
@@ -225,16 +227,17 @@ struct StatisticsView: View {
                 tableRow(["Agent", "Tasks", "Merged", "Hands", "Steers", "Rounds", "First-try"], header: true)
                 ForEach(rows, id: \.agent) { r in
                     Hairline()
-                    tableRow([r.agent.capitalized, "\(r.tasks)", "\(r.merged)", "\(r.hands)", "\(r.steers)", "\(r.reviewRounds)", percent(r.firstTryApproval)])
+                    tableRow([agentTitle(r.agent), "\(r.tasks)", "\(r.merged)", "\(r.hands)", "\(r.steers)", "\(r.reviewRounds)", percent(r.firstTryApproval)], agent: r.agent)
                 }
             }
         }
     }
 
-    private func tableRow(_ cells: [String], header: Bool = false, dot: Color? = nil) -> some View {
+    private func tableRow(_ cells: [String], header: Bool = false, dot: Color? = nil, agent: String? = nil) -> some View {
         HStack(spacing: 8) {
             HStack(spacing: 7) {
                 if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
+                if let agent { AgentIcon(agent: agent, size: 13) }
                 Text(cells[0]).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -445,8 +448,11 @@ private struct StatTile: View {
 }
 
 /// A day-by-day bar sparkline of one series, its total as the title's figure; hover a bar for its day.
+/// Windows of 3 days or less come by the hour ("YYYY-MM-DDTHH:00", UTC), shown in local time.
 private struct DailyBars: View {
     let title: String
+    /// The summary's window, in days.
+    let window: Int
     let days: [Wire.StatsDay]
     let value: KeyPath<Wire.StatsDay, UInt32>
     let color: Color
@@ -456,7 +462,7 @@ private struct DailyBars: View {
         let total = days.reduce(0) { $0 + Int($1[keyPath: value]) }
         StatsCard {
             VStack(alignment: .leading, spacing: 12) {
-                cardTitle(title, note: "\(total) in \(days.count) days")
+                cardTitle(title, note: "\(total) in \(window == 1 ? "24 hours" : "\(window) days")")
                 GeometryReader { geo in
                     let gap: CGFloat = days.count > 40 ? 1 : 2
                     let width = max(1, (geo.size.width - gap * CGFloat(days.count - 1)) / CGFloat(max(1, days.count)))
@@ -471,21 +477,31 @@ private struct DailyBars: View {
                             }
                             .frame(width: width)
                             .contentShape(Rectangle())
-                            .help("\(d.day): \(n)")
+                            .help("\(label(d.day)): \(n)")
                         }
                     }
                 }
                 .frame(height: 64)
                 HStack {
-                    Text(days.first?.day ?? "")
+                    Text(days.first.map { label($0.day) } ?? "")
                     Spacer()
-                    Text("today")
+                    Text(hourly ? "now" : "today")
                 }
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.textFaint)
             }
         }
     }
+
+    private var hourly: Bool { days.first?.day.contains("T") ?? false }
+
+    /// A day as the server sent it; an hour as its local weekday and time ("Wed 2 PM").
+    private func label(_ day: String) -> String {
+        guard day.contains("T"), let date = Self.hourParser.date(from: day + ":00Z") else { return day }
+        return date.formatted(.dateTime.weekday(.abbreviated).hour())
+    }
+
+    private static let hourParser = ISO8601DateFormatter()
 }
 
 /// Counts as horizontal bars, largest first, each labelled in text ink.
@@ -588,16 +604,24 @@ private struct CostBars: View {
 // MARK: Sample (signed out)
 
 extension Wire.StatsSummary {
-    /// What the page looks like with a month of work behind it, for the design mockup.
-    static var sample: Wire.StatsSummary {
+    /// What the page looks like with a month of work behind it, for the design mockup; the bars follow
+    /// the picked range (by the hour for 3 days or less, as the server sends them).
+    static func sample(days: Int = 30) -> Wire.StatsSummary {
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
-        let daily = (0..<30).map { i in
-            Wire.StatsDay(day: String(ISO8601DateFormatter.string(from: Date().addingTimeInterval(Double(i - 29) * 86_400), timeZone: .gmt, formatOptions: [.withFullDate])),
-                          merges: UInt32([0, 1, 2, 1, 3, 0, 0, 2, 4, 1, 2, 3, 1, 0, 0, 2, 3, 2, 1, 4, 0, 0, 3, 2, 2, 1, 3, 0, 1, 2][i]),
-                          hands: UInt32([1, 0, 0, 2, 1, 0, 0, 0, 1, 1, 0, 2, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 2, 0, 1, 0, 0, 0, 1][i]))
+        let merges = [0, 1, 2, 1, 3, 0, 0, 2, 4, 1, 2, 3, 1, 0, 0, 2, 3, 2, 1, 4, 0, 0, 3, 2, 2, 1, 3, 0, 1, 2]
+        let hands = [1, 0, 0, 2, 1, 0, 0, 0, 1, 1, 0, 2, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 2, 0, 1, 0, 0, 0, 1]
+        let hourly = days <= 3
+        let step: Double = hourly ? 3_600 : 86_400
+        let count = hourly ? days * 24 : days
+        let last = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 / step).rounded(.down) * step)
+        let daily = (0..<count).map { i in
+            let iso = ISO8601DateFormatter.string(from: last.addingTimeInterval(Double(i - count + 1) * step), timeZone: .gmt,
+                                                  formatOptions: hourly ? [.withFullDate, .withTime, .withColonSeparatorInTime, .withDashSeparatorInDate] : [.withFullDate])
+            return Wire.StatsDay(day: hourly ? String(iso.prefix(13)) + ":00" : iso,
+                                 merges: UInt32(hourly ? merges[(i * 7) % 30] / 2 : merges[i % 30]), hands: UInt32(hourly ? hands[(i * 7) % 30] : hands[i % 30]))
         }
         return .init(
-            days: 30, goal: nil, since: now - 30 * 86_400_000, generatedAt: now, inferred: 0,
+            days: UInt32(days), goal: nil, since: now - UInt64(days) * 86_400_000, generatedAt: now, inferred: 0,
             totals: .init(merged: 47, autoMerged: 12, cancelled: 3, created: 58, tasksTouched: 61, handsRaised: 16, handsOpen: 2, questions: 9, steers: 34,
                           prompts: 11, restarts: 4, reviewRounds: 83, findings: 112, planVersions: 74, approvals: 52,
                           cycleMedianMs: 5 * 3_600_000, handOpenMedianMs: 42 * 60_000, answerMedianMs: 18 * 60_000,

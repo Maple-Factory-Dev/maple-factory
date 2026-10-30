@@ -237,9 +237,9 @@ struct FactoryReadingPanel: View {
                     if state.isLive {
                         row("Agent") {
                             Picker("", selection: $state.draft.agent) {
-                                Text("Claude Code").tag(String?.none)
+                                Label { Text("Claude Code") } icon: { AgentMark.image("claude") }.tag(String?.none)
                                 ForEach(state.liveAgents.filter { $0 != "claude" }, id: \.self) { id in
-                                    Text(agentTitle(id)).tag(String?.some(id))
+                                    Label { Text(agentTitle(id)) } icon: { AgentMark.image(id) }.tag(String?.some(id))
                                 }
                             }
                             .labelsHidden()
@@ -448,7 +448,7 @@ struct AIDraftCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.planning.opacity(0.25)))
         )
         .onChange(of: "\(draft?.state.rawValue ?? "")|\(draft?.goal ?? "")", initial: true) { state.applyAIDraft() }
-        // A goal it suggested, once made in the goal sheet: carry on with it.
+        // A goal it suggested, once made in the goal editor: carry on with it.
         .onChange(of: client.goals.map(\.name)) {
             guard let idea = draft?.newGoal, draft?.state == .needsGoal,
                   let made = client.goals.first(where: { $0.name.caseInsensitiveCompare(idea.name) == .orderedSame }) else { return }

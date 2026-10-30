@@ -261,8 +261,8 @@ Set `PUBLIC_URL=http://localhost:8788` in `.dev.vars` locally: `wrangler dev` hi
 ## GitHub App
 
 With an app, runners fetch and push tasks' branches with short-lived, single-repo installation tokens,
-and the factory opens each task's pull request, waits for its CI (failed checks can be run again from
-the app), squash-merges it, and closes it if the task is cancelled. Without one, tasks push with the
+and the factory opens each task's pull request, waits for its CI (each check's log can be read, and any
+finished check run again, from the apps), squash-merges it, and closes it if the task is cancelled. Without one, tasks push with the
 machine's own credentials and merge locally. Set on the server:
 
 ```sh

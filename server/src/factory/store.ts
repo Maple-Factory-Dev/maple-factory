@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
 
@@ -27,11 +27,18 @@ export interface TaskPrivate {
   mergeHead?: string | null;
   /** Times the factory sent it back to fix a merge on its own (autoFixMerges). */
   mergeFixes?: number;
+  /** A dry-run merge (`task.merge_check`) waiting for its answer: the head it checks, the task whose
+   *  merge prompted it (none: the check before its own auto-merge), and when it was sent. */
+  mergeCheck?: { head: string | null; since: string | null; at: number } | null;
+  /** The head the last pre-merge check answered for, so its auto-merge goes ahead. */
+  mergeChecked?: string | null;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.
   restarts: number;
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
   mergedAs?: string | null;
   cleaned?: boolean;
+  /** What became of its branch on origin after the factory merged it: unknown (unset) or failed gets a retry at cleanup. */
+  remoteBranch?: "deleted" | "kept" | "failed" | null;
   /// A hand-off (`task.handoff`) was sent and hasn't been answered; who asked for it.
   handingOff?: string | null;
   /// Where it was moved from, and the commit it carries on from, until its next session starts.
@@ -110,6 +117,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS session_costs_updated ON session_costs (updated);
       CREATE TABLE IF NOT EXISTS repo_scripts (repo TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL);
     `);
+    // A repo's prompt additions came later: added once, to a table made before them.
+    if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
+      this.sql.exec("ALTER TABLE repo_scripts ADD COLUMN prompts TEXT");
+    }
     this.backfillStats();
   }
 
@@ -437,6 +448,15 @@ export class Store {
     this.set("repoOwners", JSON.stringify(owners));
   }
 
+  /** The factory's MCP connectors, secrets included: only for runners (apps get `redacted`). */
+  connectors(): McpConnector[] {
+    return JSON.parse(this.get("connectors") ?? "[]");
+  }
+
+  saveConnectors(connectors: McpConnector[]) {
+    this.set("connectors", JSON.stringify(connectors));
+  }
+
   /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */
   repos(): OrgRepo[] {
     return (JSON.parse(this.get("repos") ?? "[]") as (OrgRepo & { private?: boolean })[]).map(({ private: hidden, ...r }) => ({ ...r, isPrivate: r.isPrivate ?? hidden ?? false }));
@@ -447,23 +467,38 @@ export class Store {
     this.set("reposAt", String(Date.now()));
   }
 
-  /** Every repo's worktree scripts, by repo name. */
+  /** Every repo's worktree scripts and prompt additions, by repo name. */
   repoScripts(): RepoWorktreeScripts[] {
-    return this.sql.exec<{ repo: string; doc: string; updated_by: string; updated_at: number }>("SELECT * FROM repo_scripts ORDER BY repo")
-      .toArray().map((r) => ({ repo: r.repo, scripts: JSON.parse(r.doc), updatedBy: r.updated_by, updatedAt: r.updated_at }));
+    return this.sql.exec<{ repo: string; doc: string; prompts: string | null; updated_by: string; updated_at: number }>("SELECT * FROM repo_scripts ORDER BY repo")
+      .toArray().map((r) => ({ repo: r.repo, scripts: JSON.parse(r.doc), prompts: r.prompts ? JSON.parse(r.prompts) : null, updatedBy: r.updated_by, updatedAt: r.updated_at }));
+  }
+
+  /** One repo's row (its name in any case), if it has scripts or prompts. */
+  repoSetup(repo: string | null | undefined): RepoWorktreeScripts | null {
+    return repo ? this.repoScripts().find((r) => r.repo.toLowerCase() === repo.toLowerCase()) ?? null : null;
+  }
+
+  /** One repo's prompt additions, if it has any. */
+  repoPrompts(repo: string | null | undefined): PromptAdditions | null {
+    if (!repo) return null;
+    const row = this.sql.exec<{ prompts: string | null }>("SELECT prompts FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo).toArray()[0];
+    return row?.prompts ? JSON.parse(row.prompts) : null;
   }
 
   /** One repo's worktree scripts (its name in any case), if it has any. */
   scriptsFor(repo: string | null | undefined): WorktreeScripts | null {
     if (!repo) return null;
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo).toArray()[0];
-    return row ? JSON.parse(row.doc) : null;
+    // A row with only prompt additions has no scripts.
+    return row && row.doc !== "{}" ? JSON.parse(row.doc) : null;
   }
 
-  /** None removes them. */
-  saveRepoScripts(repo: string, scripts: WorktreeScripts | null, by: string) {
+  /** Both none removes the row. */
+  saveRepoScripts(repo: string, scripts: WorktreeScripts | null, by: string, prompts: PromptAdditions | null = null) {
     this.sql.exec("DELETE FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo);
-    if (scripts) this.sql.exec("INSERT INTO repo_scripts (repo, doc, updated_by, updated_at) VALUES (?, ?, ?, ?)", repo, JSON.stringify(scripts), by, Date.now());
+    if (scripts || prompts) {
+      this.sql.exec("INSERT INTO repo_scripts (repo, doc, prompts, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)", repo, JSON.stringify(scripts ?? {}), prompts ? JSON.stringify(prompts) : null, by, Date.now());
+    }
   }
 
   reposAt(): number {
@@ -496,7 +531,7 @@ function goalDoc(doc: string): Goal {
 /** A stored task, with fields added since it was saved. Tasks from before the queue keep their order. */
 function taskDoc(doc: string): Task {
   const task = JSON.parse(doc) as Task;
-  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
+  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], suggestedTitle: task.suggestedTitle ?? null, queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
 }
 
 /** Front of the queue first; ties by age. */

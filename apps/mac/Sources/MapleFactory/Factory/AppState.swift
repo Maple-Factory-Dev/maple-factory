@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// What the proof lightbox shows: a screenshot (and its upload, for Open in Preview) or a recording from where it was.
-enum ProofLightbox {
+enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
     case video(URL, poster: NSImage?, caption: String, at: Double = 0)
 
@@ -195,8 +195,12 @@ final class AppState {
     }
     /// The machine being set up or edited in the sheet; "new" for this Mac.
     var machineSheet: MachineSheet? = nil
-    /// The goal being made or edited in the sheet (a live goal's id for .edit).
+    /// The goal being made or edited, full page in place of the content (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
+    /// The CI check whose log is open in the log sheet.
+    var checkLogShown: CheckLogRequest? = nil
+    /// The mockup's check logs, as they load.
+    private var mockCheckLogs: [String: CheckLogLoad] = [:]
     var queue = FactoryData.seedQueue
 
     /// A queued task got a slot: it starts building like a freshly approved plan.
@@ -296,7 +300,7 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -362,6 +366,17 @@ final class AppState {
         set { if !isLive { mockTasks = newValue } }
     }
 
+    /// What's worked out from `tasks` (a task by id, the inbox, raised hands), once per change to them.
+    @ObservationIgnored private var taskCache = TaskCache()
+    /// Counts changes to the mockup's tasks, as the client's tasksRevision does the factory's.
+    private var mockRevision = 0
+
+    /// The cache, emptied if the tasks changed since it was filled. Reading the revision is what
+    /// redraws a view that only read the cache.
+    private func syncTaskCache() {
+        taskCache.sync(revision: isLive ? client?.tasksRevision ?? 0 : mockRevision, live: isLive)
+    }
+
     private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed
         // The mockup's drafts keep the order they're seeded in.
@@ -385,6 +400,8 @@ final class AppState {
             task.queueRank = Double(at)
         }
         return task
+    } {
+        didSet { mockRevision &+= 1 }
     }
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
@@ -513,7 +530,10 @@ final class AppState {
     // MARK: Queries
 
     func task(_ id: String) -> FactoryTask {
-        tasks.first { $0.id == id } ?? tasks.first ?? FactoryTask.none
+        let tasks = tasks
+        syncTaskCache()
+        if let index = taskCache.index(of: id, in: tasks) { return tasks[index] }
+        return tasks.first ?? FactoryTask.none
     }
 
     func tasks(for goal: Goal) -> [FactoryTask] {
@@ -647,7 +667,13 @@ final class AppState {
     /// What needs people, from the factory's tasks: plans to approve, agents' questions, changes to
     /// review, failing checks and @mentions of you.
     private var liveInbox: [InboxItem] {
-        let me = FactoryData.me
+        let tasks = tasks, me = FactoryData.me, dismissed = dismissedMentions
+        syncTaskCache()
+        return taskCache.inbox(tasks, me: me, dismissed: dismissed)
+    }
+
+    static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>,
+                          mentions: (FactoryTask) -> [InboxItem]) -> [InboxItem] {
         var items: [InboxItem] = []
         for task in tasks {
             let mine = task.owner.id == me.id
@@ -663,7 +689,7 @@ final class AppState {
             if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
                 items.append(InboxItem(kind: .failing, taskID: task.id, assignee: task.owner, message: "Checks are failing", when: task.updated))
             }
-            items += Self.mentionItems(task, me: me).filter { !dismissedMentions.contains($0.id) }
+            items += mentions(task).filter { !dismissedMentions.contains($0.id) }
         }
         return items
     }
@@ -677,7 +703,11 @@ final class AppState {
     }
 
     /// Tasks whose agent has stopped and asked for a human, longest-waiting first.
-    var allHandRaises: [FactoryTask] { tasks.filter { $0.hand != nil } }
+    var allHandRaises: [FactoryTask] {
+        let tasks = tasks
+        syncTaskCache()
+        return taskCache.handRaises(in: tasks)
+    }
     /// Scoped like the inbox; a hand raised to you always shows.
     var handRaises: [FactoryTask] {
         allHandRaises.filter { inScope($0) || $0.hand?.assignee.id == FactoryData.me.id }
@@ -789,7 +819,7 @@ final class AppState {
     var aiDraftID: String? = nil
     /// The draft whose result is already in the composer.
     private var appliedAIDraft: String? = nil
-    /// A goal Draft with AI suggested, for the goal sheet to start from.
+    /// A goal Draft with AI suggested, for the goal editor to start from.
     var goalPrefill: Wire.NewGoalIdea? = nil
 
     /// Whether the Draft with AI card shows what the agent has said and done.
@@ -1544,7 +1574,7 @@ final class AppState {
 
     /// An approval or merge sent to the factory that the task doesn't show yet.
     struct InFlight {
-        enum Kind { case approvePlan, approveChanges, merge }
+        enum Kind { case approvePlan, approveChanges, merge, holdMerge }
         let kind: Kind
         let startedAt: Date
     }
@@ -1571,7 +1601,16 @@ final class AppState {
         case .approvePlan: return task.approvals.contains { $0.id == me } || (task.state != .awaitingApproval && task.state != .backlog)
         case .approveChanges: return task.reviews.contains { $0.id == me }
         case .merge: return task.state == .merged || task.pr?.state == .merged
+        case .holdMerge: return task.mergeAt == nil
         }
+    }
+
+    /// The factory has its merge: it says Merging…, a merge was sent, or its auto-merge countdown ran out
+    /// (the server says Merging… a moment later). Merge, Hold and Merge now all lock until it lands.
+    func isMerging(_ task: FactoryTask, now: Date = .now) -> Bool {
+        if task.merging || autoMerging.contains(task.id) || isInFlight(task.id, .merge) { return true }
+        guard task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt else { return false }
+        return mergeAt <= now
     }
 
     /// Records `kind` as sent for the task; false when it's already in flight, so a second click sends nothing.
@@ -1613,17 +1652,18 @@ final class AppState {
         return true
     }
 
-    func approvePlan(_ id: String) {
+    /// `keepTitle` turns down the plan's suggested title.
+    func approvePlan(_ id: String, keepTitle: Bool = false) {
         if let client, isLive {
             guard beginInFlight(id, .approvePlan) else { return }
-            client.send(.taskApprovePlan(.init(id: id)))
+            client.send(.taskApprovePlan(.init(id: id, keepTitle: keepTitle ? true : nil)))
             return
         }
-        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id) }) { return }
-        approvePlanInMockup(id)
+        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id, keepTitle: keepTitle) }) { return }
+        approvePlanInMockup(id, keepTitle: keepTitle)
     }
 
-    private func approvePlanInMockup(_ id: String) {
+    private func approvePlanInMockup(_ id: String, keepTitle: Bool) {
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -1635,9 +1675,15 @@ final class AppState {
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
                 // Picked up from the backlog.
                 if task.state == .backlog { task.state = .awaitingApproval }
+                if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
+                    if let title = task.suggestedTitle {
+                        task.activity.insert(ActivityItem(who: "Factory", text: "Renamed it from \"\(task.title)\"", when: "now"), at: 0)
+                        task.title = title
+                        task.suggestedTitle = nil
+                    }
                     startBuilding(&task, prNumber: prNumber)
                     started = true
                 }
@@ -1798,6 +1844,62 @@ final class AppState {
                   icon: byFactory ? "bolt.fill" : "arrow.triangle.merge", color: Theme.State.merged)
     }
 
+    /// Opens the log sheet on one of a task's CI checks and reads its log.
+    func showCheckLog(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        checkLogShown = request
+        loadCheckLog(request)
+    }
+
+    func loadCheckLog(_ request: CheckLogRequest) {
+        if let client, isLive { return client.loadCheckLog(request) }
+        mockCheckLogs[request.id] = .loading
+        let failed = task(request.taskID).pr?.checks.first { $0.name == request.check }?.status == .failed
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.4))
+            self.mockCheckLogs[request.id] = .loaded(CheckLog.sample(request.check, failed: failed))
+        }
+    }
+
+    func checkLog(_ request: CheckLogRequest) -> CheckLogLoad {
+        if let client, isLive { return client.checkLogs[request.id] ?? .loading }
+        return mockCheckLogs[request.id] ?? .loading
+    }
+
+    /// Runs one of the pull request's checks again (a GitHub Actions job, or the check run).
+    func rerunCheck(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        if let client, isLive {
+            client.send(.taskRerunCheck(.init(id: id, check: check)))
+            client.forgetCheckLog(request)
+            showToast("Running \(check) again", icon: "arrow.clockwise")
+            return
+        }
+        mockCheckLogs[request.id] = nil
+        withAnimation(.snappy(duration: 0.25)) {
+            update(id) { task in
+                guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }) else { return }
+                pr.checks[index].status = .running
+                pr.checks[index].duration = ""
+                task.pr = pr
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Re-ran \(check)", when: "now"), at: 0)
+            }
+        }
+        showToast("Running \(check) again on #\(task(id).pr?.number ?? 0)", icon: "arrow.clockwise", color: Theme.State.building)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }), pr.checks[index].status == .running else { return }
+                    pr.checks[index].status = .passed
+                    pr.checks[index].duration = "2:\(10 + index * 7)"
+                    task.pr = pr
+                    task.checksFailing = pr.checks.contains { $0.status == .failed }
+                }
+            }
+        }
+    }
+
     func rerunFailedChecks(_ id: String) {
         if let client, isLive {
             client.send(.taskRerunChecks(.init(id: id)))
@@ -1913,7 +2015,7 @@ final class AppState {
     /// Stops the auto-merge counting down on a task; a person merges it instead.
     func holdMerge(_ id: String) {
         if let client, isLive {
-            client.send(.taskHoldMerge(.init(id: id)))
+            if beginInFlight(id, .holdMerge) { client.send(.taskHoldMerge(.init(id: id))) }
             return
         }
         withAnimation(.snappy(duration: 0.25)) {
@@ -1960,6 +2062,11 @@ final class AppState {
                     task.mergeFrom = nil
                 }
                 self.autoMerging.insert(id)
+                // A demo script shows the factory's "Merging…" for a moment, as the server's merge does.
+                if AppDefaults.string(forKey: "actions") != nil {
+                    self.update(id) { $0.liveLog = FactoryTask.mergingLog }
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
                 self.merge(id, byFactory: true)
             }
         }
@@ -2106,6 +2213,9 @@ final class AppState {
             case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
+            // A PR card check row's View Log (`checklog:<id>:<check>`) and Re-run (`reruncheck:<id>:<check>`).
+            case "checklog": showCheckLog(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
+            case "reruncheck": rerunCheck(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
@@ -2137,6 +2247,8 @@ final class AppState {
                 // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
                 case "settings-cog": NotificationCenter.default.post(name: SidebarSettings.demo, object: nil)
                 case "settings-pane": NotificationCenter.default.post(name: SidebarSettings.demo, object: parts.count > 2 ? parts[2] : nil)
+                // A row of the Settings window's own sidebar clicked (`ui:settings-row:general`).
+                case "settings-row": NotificationCenter.default.post(name: OrgSettingsView.demoPick, object: parts.count > 2 ? parts[2] : nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -2144,22 +2256,54 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
-            // The goal sheet's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
-            case "goalfill": NotificationCenter.default.post(name: GoalSheet.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
+            // The goal editor's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
+            case "goalfill": NotificationCenter.default.post(name: GoalEditorView.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
             // Edit Goal… on a goal, by its name or task prefix: `editgoal:MF`. Signing in, it waits for the goal to arrive.
             case "editgoal":
                 for _ in 0..<300 {
                     if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { goalSheet = .edit(goal.id); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // The goal header's Scout button, on a goal by its name or task prefix: `scout:MF`. Signing in, it waits for the goal.
+            case "scout":
+                for _ in 0..<300 {
+                    if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { client?.scout(goal: goal.name); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            // Settings → Scout's Items per Scout run stepper set to a number: `scoutitems:5`.
+            case "scoutitems":
+                for _ in 0..<300 where client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let client, var policy = client.riskPolicy, let n = Int(parts[1]) {
+                    policy.scoutItems = n
+                    client.save(policy: policy)
+                }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
+            // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
+            // Signing in, it waits for the connectors to arrive (and Settings to be on screen).
+            case "connector":
+                for _ in 0..<300 where client?.connectors == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .seconds(1))
+                NotificationCenter.default.post(name: ConnectorSettings.demoEdit, object: nil, userInfo: ["name": parts[1]])
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
             // The first screenshot or video proof on screen, shown large (`lightbox:open`, or `lightbox:image` / `lightbox:video`
-            // for the first of that kind), and put away (`lightbox:close`).
+            // for the first of that kind), and put away (`lightbox:close`). A screenshot shown large zooms (`lightbox:zoom:3`,
+            // past fitted) and pans (`lightbox:pan:<dx>:<dy>`, in points).
             case "lightbox":
-                if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
+                switch parts[1] {
+                case "close": closeLightbox()
+                case "zoom", "pan": NotificationCenter.default.post(name: ProofLightboxView.demoZoom, object: Array(parts.dropFirst()))
+                default: NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1])
+                }
+            // A trackpad scroll at a point in the window, headless: `scroll:<x>:<y>:<dx>:<dy>`, with `:cmd` to hold ⌘.
+            case "scroll" where parts.count > 4:
+                let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
+                Headless.scroll(at: CGPoint(x: n[0], y: n[1]), by: CGPoint(x: n[2], y: n[3]), command: parts.count > 5 && parts[5] == "cmd")
+            // A double-click at a point in the window, headless: `doubleclick:<x>:<y>`. (A drag can't be sent: SwiftUI
+            // drops one that isn't from a real mouse.)
+            case "doubleclick" where parts.count > 2:
+                await Headless.doubleClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
             // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
             // A left click at a point in the window (`click:<x>:<y>`, points from the top left), or on a card (`click:<task>`).
@@ -2183,6 +2327,17 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A machine card's Sign in on an agent pill (`signin:<machine>:codex`) and its panel's Cancel (`cancelsignin:<machine>:codex`);
+            // `waitsignedin:<machine>:codex` waits (up to 15 minutes) for its health to say it's signed in, as someone finishes in the browser.
+            case "signin": client?.signIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "cancelsignin": client?.cancelSignIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "waitsignedin":
+                let agent = parts.count > 2 ? parts[2] : "codex"
+                for _ in 0..<9000 {
+                    let health = client?.machines.first { $0.id == parts[1] }?.health
+                    if health?.agents.contains(where: { $0.name == agent && $0.loggedIn }) == true { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
             case "click": toggleTask(parts[1])
             case "dblclick": openFocus(parts[1])
@@ -2200,6 +2355,7 @@ final class AppState {
                 NotificationCenter.default.post(name: MentionKey.demo, object: key)
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
+            case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.
@@ -2237,6 +2393,17 @@ final class AppState {
             // `dock:off` / `dock:on` is Settings › General's "Show the factory's icon in the Dock".
             case "dock": AppDefaults.set(["yes", "on", "true"].contains(parts[1].lowercased()), forKey: DockIcon.settingKey)
             case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
+            // A task's merge forecast, for the review panel's Merge row: `forecast:ATL-141:clean`,
+            // `forecast:ATL-141:overlap:ATL-150` or `forecast:ATL-141:conflict:ATL-150`.
+            case "forecast" where parts.count > 2:
+                let other = parts.count > 3 ? parts[3] : "ATL-150"
+                update(parts[1]) { t in
+                    t.mergeForecast = switch parts[2] {
+                    case "overlap": MergeForecast(overlaps: [.init(task: other, files: ["src/auth/session.ts", "src/auth/tokens.ts"])], base: "main")
+                    case "conflict": MergeForecast(conflicts: ["src/auth/session.ts", "src/auth/tokens.ts"], since: other, checkedAt: .now, base: "main")
+                    default: MergeForecast(checkedAt: .now, base: "main")
+                    }
+                }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":

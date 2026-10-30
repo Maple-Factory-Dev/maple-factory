@@ -20,7 +20,6 @@ struct DiffView: View {
     // Commenting
     @State private var selection: LineSelection?
     @State private var dragging = false
-    @State private var hovered: Int?
     @State private var composing = false
     @State private var composerText = ""
     @State private var editing: UUID?
@@ -35,6 +34,9 @@ struct DiffView: View {
     private let rowHeight: CGFloat = 20
     private let gutterWidth: CGFloat = 98
     @State private var codeWidth: CGFloat = 600
+    @State private var cache = DiffRenderCache()
+    /// Where the file's lines are scrolled to, so the demo script can move through a long file.
+    @State private var scroll = ScrollPosition(edge: .top)
 
     static let demo = Notification.Name("DiffView.demo")
 
@@ -49,7 +51,7 @@ struct DiffView: View {
     /// The picked file, else the tree's first with hunks (files can arrive after the view does).
     private var current: DiffFile? {
         if let picked = files.first(where: { $0.path == selected }) { return picked }
-        let ordered = DiffTreeNode.build(files).flatMap(\.files)
+        let ordered = cache.tree(files).flatMap(\.files)
         return ordered.first { !$0.hunks.isEmpty } ?? ordered.first
     }
 
@@ -65,7 +67,7 @@ struct DiffView: View {
                 if !files.isEmpty {
                     DiffFileTree(
                         task: task,
-                        nodes: DiffTreeNode.build(files),
+                        nodes: cache.tree(files),
                         selected: current?.path,
                         pending: draft.paths,
                         threaded: Set(threads.map(\.path)),
@@ -148,7 +150,7 @@ struct DiffView: View {
 
     private func pick(_ file: DiffFile) {
         selected = file.path
-        hovered = nil
+        scroll = ScrollPosition(edge: .top)
         if file.hunks.isEmpty, loaded[file.path] == nil, !loading.contains(file.path) { load(file) }
     }
 
@@ -158,16 +160,16 @@ struct DiffView: View {
 
     private func fileDiff(_ file: DiffFile) -> some View {
         let hunks = hunks(file)
-        let lines = DiffReview.rows(hunks)
         return VStack(alignment: .leading, spacing: 0) {
             fileHeader(file)
             if hunks.isEmpty {
                 collapsedPlaceholder(file).frame(maxHeight: .infinity)
             } else {
                 ScrollView(.vertical) {
-                    fileBody(file, hunks: hunks, lines: lines)
+                    fileBody(file, hunks: hunks, rendered: rendered(file, hunks: hunks))
                         .padding(.bottom, 24)
                 }
+                .scrollPosition($scroll)
                 .id(file.path)
             }
         }
@@ -204,9 +206,32 @@ struct DiffView: View {
         .overlay(alignment: .bottom) { Hairline() }
     }
 
+    /// The file's rows and highlighted lines, worked out once per version of the file.
+    private func rendered(_ file: DiffFile, hunks: [DiffHunk]) -> DiffRenderCache.Entry {
+        let prose = Self.proseExtensions.contains((file.path as NSString).pathExtension.lowercased())
+        return cache.entry(path: file.path, version: task.diffKey ?? "", hunks: hunks, prose: prose)
+    }
+
+    /// What the file's lazy stack shows, one after another: hunk headers, runs of lines, and the
+    /// cards (threads, pending comments, the composer) under the line a run ends on.
+    private enum Piece: Identifiable {
+        case header(Int)
+        case run(Range<Int>)
+        case cards(Int)
+
+        var id: String {
+            switch self {
+            case .header(let hunk): "h\(hunk)"
+            case .run(let rows): "r\(rows.lowerBound)"
+            case .cards(let row): "c\(row)"
+            }
+        }
+    }
+
     /// The file's hunks, cut into runs of lines wherever something sits under a line: a thread, a
-    /// pending comment or the composer.
-    private func fileBody(_ file: DiffFile, hunks: [DiffHunk], lines: [DiffLine]) -> some View {
+    /// pending comment or the composer. Long runs are cut again so only those on screen get built.
+    private func fileBody(_ file: DiffFile, hunks: [DiffHunk], rendered: DiffRenderCache.Entry) -> some View {
+        let lines = rendered.lines
         let fileThreads = showThreads ? threads.filter { $0.path == file.path } : []
         let placed = DiffReview.place(fileThreads, in: lines)
         var notes: [Int: [DraftNote]] = [:]
@@ -216,16 +241,18 @@ struct DiffView: View {
         }
         let composerRow = composing && selection?.path == file.path ? selection?.rows.upperBound : nil
         let breaks = Set(placed.rows.keys).union(notes.keys).union(composerRow.map { [$0] } ?? [])
-        let prose = Self.proseExtensions.contains((file.path as NSString).pathExtension.lowercased())
 
-        var starts: [Int] = []
-        var at = 0
-        for hunk in hunks {
-            starts.append(at)
-            at += hunk.lines.count
+        var pieces: [Piece] = []
+        for (index, hunk) in hunks.enumerated() {
+            pieces.append(.header(index))
+            let start = rendered.starts[index]
+            for run in DiffReview.runs(start..<start + hunk.lines.count, breaks: breaks) {
+                pieces.append(.run(run))
+                if breaks.contains(run.upperBound - 1) { pieces.append(.cards(run.upperBound - 1)) }
+            }
         }
 
-        return VStack(alignment: .leading, spacing: 0) {
+        return LazyVStack(alignment: .leading, spacing: 0) {
             if !placed.elsewhere.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Not on the lines shown").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textMuted)
@@ -233,37 +260,25 @@ struct DiffView: View {
                 }
                 .padding(12)
             }
-            ForEach(Array(hunks.enumerated()), id: \.offset) { index, hunk in
-                hunkHeader(hunk)
-                ForEach(runs(starts[index]..<starts[index] + hunk.lines.count, breaks: breaks), id: \.lowerBound) { run in
-                    runView(run, path: file.path, lines: lines, prose: prose)
-                    let last = run.upperBound - 1
-                    if breaks.contains(last) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(placed.rows[last] ?? [], id: \.id) { threadCard($0) }
-                            ForEach(notes[last] ?? []) { noteCard($0) }
-                            if composerRow == last { composer(file: file, lines: lines) }
-                        }
-                        .frame(maxWidth: 860, alignment: .leading)
-                        .padding(.leading, gutterWidth)
-                        .padding(.trailing, 16)
-                        .padding(.vertical, 8)
+            ForEach(pieces) { piece in
+                switch piece {
+                case .header(let index):
+                    hunkHeader(hunks[index])
+                case .run(let rows):
+                    runView(rows, path: file.path, rendered: rendered)
+                case .cards(let last):
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(placed.rows[last] ?? [], id: \.id) { threadCard($0) }
+                        ForEach(notes[last] ?? []) { noteCard($0) }
+                        if composerRow == last { composer(file: file, lines: lines) }
                     }
+                    .frame(maxWidth: 860, alignment: .leading)
+                    .padding(.leading, gutterWidth)
+                    .padding(.trailing, 16)
+                    .padding(.vertical, 8)
                 }
             }
         }
-    }
-
-    /// `rows`, split after every row in `breaks`.
-    private func runs(_ rows: Range<Int>, breaks: Set<Int>) -> [Range<Int>] {
-        var out: [Range<Int>] = []
-        var start = rows.lowerBound
-        for row in rows where breaks.contains(row) {
-            out.append(start..<row + 1)
-            start = row + 1
-        }
-        if start < rows.upperBound { out.append(start..<rows.upperBound) }
-        return out
     }
 
     private func hunkHeader(_ hunk: DiffHunk) -> some View {
@@ -289,98 +304,38 @@ struct DiffView: View {
 
     // MARK: Lines
 
-    /// Line numbers that select, beside code that scrolls sideways rather than wrapping.
-    private func runView(_ rows: Range<Int>, path: String, lines: [DiffLine], prose: Bool) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                ForEach(rows, id: \.self) { row in gutterCell(lines[row], row: row, path: path, lines: lines) }
-            }
-            .frame(width: gutterWidth)
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                let row = min(max(rows.lowerBound + Int((value.location.y / rowHeight).rounded(.down)), 0), lines.count - 1)
-                if !dragging {
-                    dragging = true
-                    if NSEvent.modifierFlags.contains(.shift), var extended = selection, extended.path == path {
-                        extended.head = row
-                        selection = extended
-                    } else {
-                        selection = LineSelection(path: path, row: row)
-                        composing = false
-                    }
-                } else if selection?.path == path {
-                    selection?.head = row
-                }
-            }.onEnded { _ in dragging = false })
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(rows, id: \.self) { row in codeCell(lines[row], row: row, path: path, prose: prose) }
-                }
-                .frame(minWidth: codeWidth, alignment: .leading)
-            }
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-        }
-        .font(.system(size: 12, design: .monospaced))
+    private func runView(_ rows: Range<Int>, path: String, rendered: DiffRenderCache.Entry) -> some View {
+        DiffRun(
+            rows: rows,
+            rendered: rendered,
+            path: path,
+            selection: selection,
+            dragging: dragging,
+            composing: composing,
+            codeWidth: codeWidth,
+            rowHeight: rowHeight,
+            gutterWidth: gutterWidth,
+            onDrag: { row in drag(to: row, path: path, count: rendered.lines.count) },
+            onDragEnd: { dragging = false },
+            onComment: { row in startComment(path: path, row: row) }
+        )
     }
 
-    private func tint(_ line: DiffLine) -> Color? {
-        switch line.kind {
-        case .added: Theme.State.merged
-        case .removed: Theme.State.cancelled
-        case .context: nil
-        }
-    }
-
-    private func gutterCell(_ line: DiffLine, row: Int, path: String, lines: [DiffLine]) -> some View {
-        let picked = selection?.contains(path, row) == true
-        let tint = tint(line)
-        let showsPlus = !dragging && (hovered == row || (selection.map { $0.path == path && $0.rows.upperBound == row } ?? false && !composing))
-        return HStack(spacing: 0) {
-            Text(line.old.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
-            Text(line.new.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
-            Text(line.kind == .added ? "+" : line.kind == .removed ? "−" : " ")
-                .foregroundStyle(tint ?? Theme.textFaint)
-                .frame(width: 22)
-        }
-        .foregroundStyle(picked ? Theme.text : Theme.textFaint)
-        .frame(height: rowHeight)
-        .background(picked ? Theme.changeBar.opacity(0.3) : tint.map { $0.opacity(0.13) } ?? .clear)
-        .overlay(alignment: .leading) {
-            if picked { Rectangle().fill(Theme.changeBar).frame(width: 2) } else if let tint { Rectangle().fill(tint.opacity(0.7)).frame(width: 2) }
-        }
-        .overlay(alignment: .trailing) {
-            if showsPlus {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.onAccent)
-                    .frame(width: 18, height: 18)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accent))
-                    .offset(x: 9)
-                    .onTapGesture { startComment(path: path, row: row) }
-                    .help("Comment on \(selection?.contains(path, row) == true ? "these lines" : "this line")")
+    /// A press or drag in the gutter at `row`: starts a selection (or extends one with shift), then
+    /// moves its far end with the drag.
+    private func drag(to row: Int, path: String, count: Int) {
+        let row = min(max(row, 0), count - 1)
+        if !dragging {
+            dragging = true
+            if NSEvent.modifierFlags.contains(.shift), var extended = selection, extended.path == path {
+                extended.head = row
+                selection = extended
+            } else {
+                selection = LineSelection(path: path, row: row)
+                composing = false
             }
-        }
-        .zIndex(showsPlus ? 1 : 0)
-        .onHover { inside in
-            if inside { hovered = row } else if hovered == row { hovered = nil }
-        }
-    }
-
-    private func codeCell(_ line: DiffLine, row: Int, path: String, prose: Bool) -> some View {
-        let picked = selection?.contains(path, row) == true
-        return Group {
-            if prose { Text(line.text).foregroundStyle(Theme.text) } else { Text(SyntaxHighlighter.highlight(line.text)) }
-        }
-        .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
-        .padding(.leading, 12)
-        .padding(.trailing, 24)
-        .frame(height: rowHeight)
-        .frame(minWidth: codeWidth, alignment: .leading)
-        .background(picked ? Theme.changeBar.opacity(0.16) : tint(line).map { $0.opacity(0.09) } ?? .clear)
-        .onHover { inside in
-            if inside { hovered = row } else if hovered == row { hovered = nil }
+        } else if selection?.path == path {
+            selection?.head = row
         }
     }
 
@@ -709,7 +664,8 @@ struct DiffView: View {
 
     /// `diff:file:<path>` picks a file, `diff:select:<from>:<to>` lines by their row in the file,
     /// `diff:comment` opens the composer, `diff:type:<text>` types into it, `diff:add` adds it,
-    /// `diff:summary:<text>` fills the summary and `diff:submit` submits the review.
+    /// `diff:summary:<text>` fills the summary, `diff:submit` submits the review and `diff:scroll:<y>` (or
+    /// `diff:scroll:bottom`) scrolls the file's lines.
     private func playDemo(_ parts: [String]) {
         guard let action = parts.first else { return }
         let argument = parts.dropFirst().joined(separator: ":")
@@ -731,7 +687,223 @@ struct DiffView: View {
         case "summary": draft.summary = argument
         case "submit": submit()
         case "threads": showThreads.toggle()
+        case "scroll":
+            if argument == "bottom" { withAnimation { scroll.scrollTo(edge: .bottom) } } else if let y = Double(argument) { withAnimation { scroll.scrollTo(y: y) } }
         default: break
         }
+    }
+}
+
+/// What the Diff tab works out once rather than on every pass: each file's rows, where its hunks
+/// start and its lines' highlighted text, and the file tree. Not observed, so filling it in while a
+/// view is drawn redraws nothing.
+@MainActor final class DiffRenderCache {
+    @MainActor final class Entry {
+        let lines: [DiffLine]
+        /// The row each hunk starts on.
+        let starts: [Int]
+        /// Prose files show their text plain, without syntax colours.
+        let prose: Bool
+        private var highlighted: [AttributedString?]
+
+        init(hunks: [DiffHunk], prose: Bool) {
+            lines = DiffReview.rows(hunks)
+            var starts: [Int] = []
+            var at = 0
+            for hunk in hunks {
+                starts.append(at)
+                at += hunk.lines.count
+            }
+            self.starts = starts
+            self.prose = prose
+            highlighted = Array(repeating: nil, count: lines.count)
+        }
+
+        /// Row `row`'s highlighted code, highlighted the first time it's asked for.
+        func code(_ row: Int) -> AttributedString {
+            if let done = highlighted[row] { return done }
+            let made = SyntaxHighlighter.highlight(lines[row].text)
+            highlighted[row] = made
+            return made
+        }
+    }
+
+    private var entries: [String: Entry] = [:]
+    private var treeKey: [String] = []
+    private var treeNodes: [DiffTreeNode] = []
+
+    /// The entry for `hunks` of `path` at `version`. Hunks get new ids each time a diff is parsed or
+    /// loaded, so the first one's id tells versions apart even without a diff key.
+    func entry(path: String, version: String, hunks: [DiffHunk], prose: Bool) -> Entry {
+        let key = "\(path)\u{0}\(version)\u{0}\(hunks.first.map { "\($0.id)" } ?? "")\u{0}\(hunks.count)"
+        if let entry = entries[key] { return entry }
+        if entries.count > 32 { entries.removeAll() }
+        let entry = Entry(hunks: hunks, prose: prose)
+        entries[key] = entry
+        return entry
+    }
+
+    /// `DiffTreeNode.build(files)`, built again only when the files change.
+    func tree(_ files: [DiffFile]) -> [DiffTreeNode] {
+        let key = files.map { "\($0.path)\u{0}\($0.hunks.first.map { "\($0.id)" } ?? "")\u{0}\($0.inProgress)" }
+        if key != treeKey {
+            treeKey = key
+            treeNodes = DiffTreeNode.build(files)
+        }
+        return treeNodes
+    }
+}
+
+/// A run of a file's rows: line numbers that select beside code that scrolls sideways rather than
+/// wrapping. It keeps which row the pointer is over itself, so hovering redraws only the rows whose
+/// look changes rather than the whole file.
+private struct DiffRun: View {
+    let rows: Range<Int>
+    let rendered: DiffRenderCache.Entry
+    let path: String
+    let selection: LineSelection?
+    let dragging: Bool
+    let composing: Bool
+    let codeWidth: CGFloat
+    let rowHeight: CGFloat
+    let gutterWidth: CGFloat
+    let onDrag: (Int) -> Void
+    let onDragEnd: () -> Void
+    let onComment: (Int) -> Void
+
+    @State private var hovered: Int?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                ForEach(rows, id: \.self) { row in
+                    let picked = selection?.contains(path, row) == true
+                    let selectionEnd = selection.map { $0.path == path && $0.rows.upperBound == row } ?? false
+                    let showsPlus = !dragging && (hovered == row || (selectionEnd && !composing))
+                    DiffGutterRow(
+                        line: rendered.lines[row],
+                        picked: picked,
+                        showsPlus: showsPlus,
+                        height: rowHeight,
+                        onHover: { hover(row, $0) },
+                        onComment: { onComment(row) }
+                    )
+                    .equatable()
+                    .zIndex(showsPlus ? 1 : 0)
+                }
+            }
+            .frame(width: gutterWidth)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                onDrag(rows.lowerBound + Int((value.location.y / rowHeight).rounded(.down)))
+            }.onEnded { _ in onDragEnd() })
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(rows, id: \.self) { row in
+                        DiffCodeRow(
+                            row: row,
+                            line: rendered.lines[row],
+                            code: rendered.prose ? nil : rendered.code(row),
+                            picked: selection?.contains(path, row) == true,
+                            codeWidth: codeWidth,
+                            height: rowHeight,
+                            onHover: { hover(row, $0) }
+                        )
+                        .equatable()
+                    }
+                }
+                .frame(minWidth: codeWidth, alignment: .leading)
+            }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        }
+        .font(.system(size: 12, design: .monospaced))
+    }
+
+    private func hover(_ row: Int, _ inside: Bool) {
+        if inside { hovered = row } else if hovered == row { hovered = nil }
+    }
+}
+
+private func diffTint(_ line: DiffLine) -> Color? {
+    switch line.kind {
+    case .added: Theme.State.merged
+    case .removed: Theme.State.cancelled
+    case .context: nil
+    }
+}
+
+/// A row's line numbers and sign, with the plus button that starts a comment. Equal inputs skip
+/// redrawing it (the closures don't count).
+private struct DiffGutterRow: View, Equatable {
+    let line: DiffLine
+    let picked: Bool
+    let showsPlus: Bool
+    let height: CGFloat
+    let onHover: (Bool) -> Void
+    let onComment: () -> Void
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.line == b.line && a.picked == b.picked && a.showsPlus == b.showsPlus && a.height == b.height
+    }
+
+    var body: some View {
+        let tint = diffTint(line)
+        HStack(spacing: 0) {
+            Text(line.old.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
+            Text(line.new.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
+            Text(line.kind == .added ? "+" : line.kind == .removed ? "−" : " ")
+                .foregroundStyle(tint ?? Theme.textFaint)
+                .frame(width: 22)
+        }
+        .foregroundStyle(picked ? Theme.text : Theme.textFaint)
+        .frame(height: height)
+        .background(picked ? Theme.changeBar.opacity(0.3) : tint.map { $0.opacity(0.13) } ?? .clear)
+        .overlay(alignment: .leading) {
+            if picked { Rectangle().fill(Theme.changeBar).frame(width: 2) } else if let tint { Rectangle().fill(tint.opacity(0.7)).frame(width: 2) }
+        }
+        .overlay(alignment: .trailing) {
+            if showsPlus {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(width: 18, height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accent))
+                    .offset(x: 9)
+                    .onTapGesture(perform: onComment)
+                    .help("Comment on \(picked ? "these lines" : "this line")")
+            }
+        }
+        .onHover(perform: onHover)
+    }
+}
+
+/// A row's code: highlighted, or plain for prose (`code` nil).
+private struct DiffCodeRow: View, Equatable {
+    let row: Int
+    let line: DiffLine
+    let code: AttributedString?
+    let picked: Bool
+    let codeWidth: CGFloat
+    let height: CGFloat
+    let onHover: (Bool) -> Void
+
+    /// The code comes from the line, so the line stands in for it.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.row == b.row && a.line == b.line && a.picked == b.picked && a.codeWidth == b.codeWidth && a.height == b.height
+    }
+
+    var body: some View {
+        Group {
+            if let code { Text(code) } else { Text(line.text).foregroundStyle(Theme.text) }
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.leading, 12)
+        .padding(.trailing, 24)
+        .frame(height: height)
+        .frame(minWidth: codeWidth, alignment: .leading)
+        .background(picked ? Theme.changeBar.opacity(0.16) : diffTint(line).map { $0.opacity(0.09) } ?? .clear)
+        .onHover(perform: onHover)
     }
 }

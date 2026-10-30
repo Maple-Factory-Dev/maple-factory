@@ -2,7 +2,7 @@ import Foundation
 
 // A unified diff, as the factory serves a task's (`GET /api/tasks/<id>/diff`), parsed into files and hunks.
 
-public struct DiffLine: Sendable {
+public struct DiffLine: Equatable, Sendable {
     public enum Kind: Sendable { case context, added, removed }
 
     public let kind: Kind
@@ -27,9 +27,16 @@ public struct DiffHunk: Identifiable, Sendable {
 
     /// Builds a hunk from unified-diff text: each line prefixed with " ", "+" or "-".
     public init(oldStart: Int, newStart: Int, context: String = "", step: Int?, _ body: String) {
+        self.init(oldStart: oldStart, newStart: newStart, context: context, step: step, lines: body.split(separator: "\n", omittingEmptySubsequences: false))
+    }
+
+    /// Builds a hunk from its lines, each prefixed with " ", "+" or "-", counting each side's lines
+    /// as it goes.
+    public init(oldStart: Int, newStart: Int, context: String = "", step: Int?, lines raws: [Substring]) {
         var old = oldStart, new = newStart
         var parsed: [DiffLine] = []
-        for raw in body.split(separator: "\n", omittingEmptySubsequences: false) {
+        parsed.reserveCapacity(raws.count)
+        for raw in raws {
             let prefix = raw.first ?? " "
             let text = String(raw.dropFirst())
             switch prefix {
@@ -41,9 +48,7 @@ public struct DiffHunk: Identifiable, Sendable {
                 parsed.append(DiffLine(kind: .context, text: text, old: old, new: new)); old += 1; new += 1
             }
         }
-        let oldCount = parsed.filter { $0.kind != .added }.count
-        let newCount = parsed.filter { $0.kind != .removed }.count
-        self.header = "@@ -\(oldStart),\(oldCount) +\(newStart),\(newCount) @@ \(context)"
+        self.header = "@@ -\(oldStart),\(old - oldStart) +\(newStart),\(new - newStart) @@ \(context)"
         self.step = step
         self.lines = parsed
     }
@@ -76,10 +81,10 @@ extension DiffFile {
         var path: String?
         var added = 0, removed = 0
         var hunks: [DiffHunk] = []
-        var hunk: (old: Int, new: Int, context: String, lines: [String])?
+        var hunk: (old: Int, new: Int, context: String, lines: [Substring])?
 
         func closeHunk() {
-            if let h = hunk { hunks.append(DiffHunk(oldStart: h.old, newStart: h.new, context: h.context, step: nil, h.lines.joined(separator: "\n"))) }
+            if let h = hunk { hunks.append(DiffHunk(oldStart: h.old, newStart: h.new, context: h.context, step: nil, lines: h.lines)) }
             hunk = nil
         }
         func closeFile() {
@@ -91,7 +96,7 @@ extension DiffFile {
             hunks = []
         }
 
-        for line in patch.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+        for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
             if line.hasPrefix("diff --git ") {
                 closeFile()
                 // "diff --git a/x b/x": the b side, until +++ says better.

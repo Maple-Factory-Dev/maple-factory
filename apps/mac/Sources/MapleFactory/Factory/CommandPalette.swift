@@ -38,8 +38,23 @@ struct CommandPalette: View {
             .shadow(color: .black.opacity(0.25), radius: 30, y: 12)
             .padding(.top, 72)
             .padding(.horizontal, 16)
+            .defaultFocus($fieldFocused, true)
         }
-        .onAppear { fieldFocused = true }
+        .onAppear(perform: focusField)
+    }
+
+    /// The caret in the search field, so typing starts the search without a click. A runloop late: on appear the
+    /// overlay's transition hasn't put the field in the window yet, and the composer, the session's terminal or the
+    /// diff's composer can still hold focus. If one of them does, it's let go and the field asked for again.
+    private func focusField() {
+        DispatchQueue.main.async {
+            fieldFocused = true
+            DispatchQueue.main.async {
+                guard !fieldFocused else { return }
+                NSApp.keyWindow?.makeFirstResponder(nil)
+                fieldFocused = true
+            }
+        }
     }
 
     private func field(_ query: Binding<String>) -> some View {

@@ -453,6 +453,24 @@ section { position: relative; }
 .access p { margin-top: 18px; max-width: 32em; font-size: 18px; color: var(--ink-2); }
 .access .cta-row { justify-content: center; }
 
+/* Security page */
+.sec-toc { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 32px; font: 500 13px/1.4 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.sec-toc a { color: var(--ink-2); text-decoration: none; }
+.sec-toc a:hover { color: var(--maple); }
+.sec-part { margin-top: 64px; padding-top: 40px; border-top: 1px solid var(--line); }
+.sec-part h2 { font-size: clamp(30px, 4vw, 40px); }
+.sec-part h2 span { font: 500 14px/1 var(--mono); letter-spacing: 0; color: var(--ink-3); margin-left: 10px; vertical-align: middle; }
+.sec-part h3 { margin-top: 36px; font-size: 21px; }
+.sec-part h2 + ul, .sec-part h2 + p { margin-top: 20px; }
+.sec-part p { margin-top: 12px; color: var(--ink-2); }
+.sec-part ul { margin: 12px 0 0; padding-left: 1.2em; color: var(--ink-2); }
+.sec-part li { margin-top: 8px; }
+.sec-part li::marker { color: var(--maple); }
+.sec-part strong { color: var(--ink); font-weight: 600; }
+.sec-part a { text-underline-offset: 3px; }
+.sec-part code { overflow-wrap: anywhere; }
+@media (max-width: 560px) { .sec-part { margin-top: 48px; padding-top: 32px; } }
+
 /* Footer */
 .foot { border-top: 1px solid var(--line); padding: 32px 0 40px; font-size: 14px; color: var(--ink-3); }
 .foot-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; }
