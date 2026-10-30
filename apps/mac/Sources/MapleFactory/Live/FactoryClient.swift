@@ -52,6 +52,8 @@ import Security
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
+    /// Each goal's latest Scout run since this app connected, by goal id.
+    private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
@@ -281,6 +283,7 @@ import Security
         notes = []
         drafts = [:]
         follows = [:]
+        scoutRuns = [:]
         policy = nil
         prompts = nil
         connectors = nil
@@ -482,6 +485,8 @@ import Security
             if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
         case .draftUpdated(let update):
             drafts[update.draft.id] = update.draft
+        case .scoutUpdated(let update):
+            scoutRuns[update.run.goal] = update.run
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
@@ -600,6 +605,12 @@ import Security
         follows[goal.id] = following
         rebuildGoals()
         send(.goalFollow(.init(id: goal.id, following: following)))
+    }
+
+    /// Run Scout on a goal: its leftovers come back as drafted plans, and `scoutRuns` says how it went.
+    func scout(goal name: String) {
+        guard let goal = goal(named: name) else { return }
+        send(.goalScout(.init(goal: goal.id)))
     }
 
     /// Every GitHub team someone in the org is on, for a goal's team.

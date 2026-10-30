@@ -82,6 +82,7 @@ import SwiftUI
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
+        task.scoutedFrom = t.scoutedFrom
         task.effort = t.effort
         let goal = goals.first { $0.id == t.goal }
         if let goal, goal.repos.count > 1 { task.repo = t.repo ?? goal.repo }
@@ -282,6 +283,7 @@ import SwiftUI
         }
         policy.autoFixMerges = p.autoFixMerges ?? true
         policy.autoMerges = p.autoMerges ?? true
+        policy.scoutItems = p.scoutItems.map(Int.init) ?? 3
         return policy
     }
 
@@ -293,7 +295,8 @@ import SwiftUI
             planApprovals: keyed(policy.planApprovals), finalReviews: keyed(policy.finalReviews),
             autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
             autoFixMerges: policy.autoFixMerges,
-            autoMerges: policy.autoMerges
+            autoMerges: policy.autoMerges,
+            scoutItems: UInt32(policy.scoutItems)
         )
     }
 
