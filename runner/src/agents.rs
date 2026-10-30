@@ -165,7 +165,9 @@ pub fn argv_with_prompt_file(
         PromptMode::Positional => String::new(),
         PromptMode::Flag(flag) => format!("'{}' ", flag.replace('\'', r"'\''")),
     };
-    argv[4] = format!(r#"p="$(cat -- "${PROMPT_FILE_ENV}")"; rm -f -- "${PROMPT_FILE_ENV}"; exec "$0" "$@" {flag}"$p""#);
+    // Command substitution strips trailing newlines. A sentinel keeps them part of the
+    // prompt, then parameter expansion removes only that sentinel (without shell evaluation).
+    argv[4] = format!(r#"p="$(cat -- "${PROMPT_FILE_ENV}"; printf .)"; p="${{p%.}}"; rm -f -- "${PROMPT_FILE_ENV}"; exec "$0" "$@" {flag}"$p""#);
     argv
 }
 
@@ -398,6 +400,48 @@ mod tests {
         let flagged = Agent { args: vec!["%s|%s".into()], prompt: PromptMode::Flag("--message".into()), ..printf };
         assert_eq!(run(&flagged), format!("--message|{prompt}"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn codex_prompt_transports_preserve_every_argument_including_on_resume() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("maple-codex-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let capture = dir.join("capture arguments");
+        std::fs::write(&capture, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&capture, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut codex = get("codex");
+        codex.command = capture.to_string_lossy().into_owned();
+        codex.args = vec!["--model=old".into(), "--search".into()];
+        let hooks = vec!["-c".into(), "notify=[\"runner\",\"hook\",\"codex\"]".into(), "-c".into(), "mcp_servers.maple.command=\"runner\"".into()];
+        let project = unattended(UnattendedMode::Project, &[]);
+        let images = vec!["/tmp/image with spaces.png".into()];
+        for resume in [false, true] {
+            for prompt in ["short 'quoted' $HOME `ticks` \\ ".to_string(), format!("multiline\n{}\n'quoted' $HOME `ticks` \\ café\n\n", "x".repeat(1100))] {
+                let mut expected: Vec<String> = if resume { vec!["resume".into(), "--last".into()] } else { vec![] };
+                expected.extend(hooks.clone());
+                expected.extend(["--search".into(), "--model".into(), "test-model".into()]);
+                expected.extend(permission_args("codex", &project));
+                expected.extend(["--image=/tmp/image with spaces.png".into(), prompt.clone()]);
+                for file_backed in [false, true] {
+                    let file = dir.join("prompt.txt");
+                    std::fs::write(&file, &prompt).unwrap();
+                    let args = if file_backed {
+                        argv_with_prompt_file("/bin/sh", &codex, resume, hooks.clone(), Some("test-model"), Some(&project), &images)
+                    } else {
+                        argv("/bin/sh", &codex, resume, hooks.clone(), Some("test-model"), Some(&project), &images, Some(&prompt))
+                    };
+                    let out = std::process::Command::new(&args[0]).args(&args[1..]).env(PROMPT_FILE_ENV, &file).output().unwrap();
+                    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+                    let captured: Vec<_> = out.stdout.strip_suffix(&[0]).unwrap().split(|b| *b == 0).map(|b| String::from_utf8(b.to_vec()).unwrap()).collect();
+                    assert_eq!(captured, expected, "resume={resume}, file_backed={file_backed}");
+                    if file_backed {
+                        assert!(!file.exists());
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
