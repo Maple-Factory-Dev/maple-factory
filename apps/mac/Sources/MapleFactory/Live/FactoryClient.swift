@@ -472,6 +472,11 @@ import Security
             runnerReleases = update.runnerReleases
         case .promptsUpdated(let update):
             prompts = update.prompts
+        case .membersUpdated(let update):
+            // An admin grant changed: every badge follows, and so do this Mac's admin-only controls when it's about me.
+            members = update.members
+            if let mine = members.first(where: { $0.login == me?.login }) { me = mine }
+            rebuild()
         case .iconUpdated(let update):
             showIcon(update.icon)
         case .nameUpdated(let update):
@@ -586,6 +591,16 @@ import Security
     /// Admins only; the server trims them and says so with prompts.updated.
     func save(prompts: Wire.PromptAdditions) {
         send(.promptsSave(.init(prompts: prompts)))
+    }
+
+    /// Admins only: makes someone who has signed in an admin here; members.updated says it took.
+    func grantAdmin(_ login: String) {
+        send(.adminsGrant(.init(login: login)))
+    }
+
+    /// Admins only: takes back a grant (not a GitHub owner's, nor my own).
+    func revokeAdmin(_ login: String) {
+        send(.adminsRevoke(.init(login: login)))
     }
 
     // MARK: Icon

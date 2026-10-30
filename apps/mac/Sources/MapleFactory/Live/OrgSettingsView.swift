@@ -540,6 +540,63 @@ struct RunnerSettings: View {
     }
 }
 
+/// Who's an admin of this factory: GitHub's org owners, and anyone an admin made one here. Admins make
+/// and remove the factory's own; GitHub owners stay admins until GitHub says otherwise.
+struct FactoryAdminsCard: View {
+    @Environment(FactoryClient.self) private var client
+
+    var body: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Factory admins").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Admins change the factory's settings, secrets and prompts. Owners of the GitHub organization always are; an admin can make anyone else who has signed in one too.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(client.members.enumerated()), id: \.element.login) { index, member in
+                    if index > 0 { Hairline() }
+                    row(member)
+                }
+            }
+            if !client.isAdmin {
+                Label("Only admins can change who's an admin.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+        }
+    }
+
+    private func row(_ member: Wire.Member) -> some View {
+        HStack(spacing: 8) {
+            AgentAvatar(agent: LiveAdapter.person(member.login, members: client.members), size: 20)
+            Text(member.name ?? member.login).foregroundStyle(Theme.text).lineLimit(1)
+            Text(member.login == client.me?.login ? "@\(member.login) (you)" : "@\(member.login)").foregroundStyle(Theme.textMuted).lineLimit(1)
+            Spacer(minLength: 8)
+            Text(Self.badge(member))
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(member.role == "admin" ? Theme.text : Theme.textMuted)
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(Capsule().fill(Theme.fill))
+            if client.isAdmin && member.adminSource != "github" && member.login != client.me?.login {
+                if member.role == "admin" {
+                    Button("Remove admin") { client.revokeAdmin(member.login) }.controlSize(.small)
+                } else {
+                    Button("Make admin") { client.grantAdmin(member.login) }.controlSize(.small)
+                }
+            }
+        }
+        .font(.system(size: 12.5))
+        .padding(.vertical, 6)
+    }
+
+    /// GitHub owner, Admin · added by @x, or Member.
+    static func badge(_ member: Wire.Member) -> String {
+        guard member.role == "admin" else { return "Member" }
+        if member.adminSource == "granted" { return member.adminGrantedBy.map { "Admin · added by @\($0)" } ?? "Admin" }
+        // An older server doesn't say why; then GitHub is the only way to be one.
+        return "GitHub owner"
+    }
+}
+
 struct SettingsHeader: View {
     let title: String
     let detail: String
@@ -821,6 +878,7 @@ struct PeopleSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if client.isSignedIn { FactoryAdminsCard() }
             VStack(alignment: .leading, spacing: 4) {
                 Text("People in your sidebar")
                     .font(.system(size: 15, weight: .semibold))
