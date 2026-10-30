@@ -22,12 +22,32 @@ struct GoalView: View {
                 .padding(.bottom, 20)
 
             switch state.layout {
-            case .board: BoardColumns(tasks: tasks)
+            case .board:
+                boardControls
+                BoardColumns(tasks: tasks)
             case .list: TaskListView(tasks: tasks)
             case .timeline: GoalTimeline(goal: goal, tasks: tasks)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var boardControls: some View {
+        @Bindable var state = state
+        return HStack {
+            Spacer()
+            Toggle(isOn: $state.boardHidesEmptyColumns) {
+                Label("Hide empty columns", systemImage: "line.3.horizontal.decrease")
+            }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .tint(Theme.State.building)
+            .accessibilityLabel("Hide empty columns")
+            .accessibilityValue(state.boardHidesEmptyColumns ? "On" : "Off")
+            .help(state.boardHidesEmptyColumns ? "Show empty columns" : "Hide empty columns")
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
     }
 
     private var header: some View {
@@ -145,23 +165,54 @@ struct BoardColumns: View {
     @Environment(AppState.self) private var state
     let tasks: [FactoryTask]
 
+    struct Column: Identifiable {
+        enum ID: Hashable {
+            case task(TaskState), queued, pendingMerge
+
+            static var ordered: [Self] {
+                [.task(.drafting), .queued] + TaskState.allCases.filter { $0 != .drafting }.flatMap {
+                    $0 == .reviewing ? [.task($0), .pendingMerge] : [.task($0)]
+                }
+            }
+        }
+
+        let id: ID
+        let tasks: [FactoryTask]
+    }
+
+    /// Assign each card exactly once before deciding visibility. Queue membership takes precedence
+    /// over merge readiness; only Queued sorts cards by rank, and every column keeps its fixed place.
+    static func columns(tasks: [FactoryTask], hideEmpty: Bool, pendingMerge: (FactoryTask) -> Bool) -> [Column] {
+        var members: [Column.ID: [FactoryTask]] = [:]
+        for task in tasks {
+            let id: Column.ID = task.queued ? .queued : pendingMerge(task) ? .pendingMerge : .task(task.state)
+            members[id, default: []].append(task)
+        }
+        members[.queued]?.sort { $0.queueRank < $1.queueRank }
+        return Column.ID.ordered.compactMap { id in
+            let tasks = members[id] ?? []
+            return hideEmpty && tasks.isEmpty ? nil : Column(id: id, tasks: tasks)
+        }
+    }
+
     /// Whether columns are cut off past the trailing edge, so the board fades there.
     @State private var moreTrailing = false
     /// A card dragged over the Queued column's empty space, to go to the back.
     @State private var queueTargeted = false
 
     var body: some View {
+        let columns = Self.columns(tasks: tasks, hideEmpty: state.boardHidesEmptyColumns, pendingMerge: state.pendingMerge)
         // In a narrow window the columns overflow: a scrollbar shows and the cut-off edge fades.
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                column(.drafting)
-                queueColumn
-                ForEach(TaskState.allCases.filter { $0 != .drafting }) { taskState in
-                    column(taskState)
-                    if taskState == .reviewing { pendingColumn }
+                ForEach(columns) { entry in
+                    switch entry.id {
+                    case .task(let taskState): column(taskState, tasks: entry.tasks)
+                    case .queued: queueColumn(entry.tasks).transition(.opacity)
+                    case .pendingMerge: pendingColumn(entry.tasks)
+                    }
                 }
             }
-            .animation(.snappy, value: populatedStates)
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -180,22 +231,27 @@ struct BoardColumns: View {
                     .frame(width: 24)
             }
         }
+        .overlay(alignment: .topLeading) {
+            if columns.isEmpty {
+                Text("No tasks in this goal")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy, value: state.boardHidesEmptyColumns)
+        .animation(.snappy, value: columns.map { $0.tasks.map(\.id) })
     }
 
     /// An empty column shrinks to a slim rail, so the columns with cards get the room.
     static func isRail(count: Int) -> Bool { count == 0 }
 
-    /// The states with cards in their own column; the board animates when this changes.
-    private var populatedStates: Set<String> {
-        Set(tasks.filter { !$0.queued }.map { state.pendingMerge($0) ? "pendingMerge" : $0.state.title })
-    }
-
     /// Queued tasks wait in Queued until a session picks them up, not in their state's column;
     /// ready reviewing tasks that a person merges wait in Pending merge.
     @ViewBuilder
-    private func column(_ taskState: TaskState) -> some View {
-        let columnTasks = tasks.filter { $0.state == taskState && !$0.queued && !state.pendingMerge($0) }
-
+    private func column(_ taskState: TaskState, tasks columnTasks: [FactoryTask]) -> some View {
         Group {
             if Self.isRail(count: columnTasks.count) {
                 EmptyColumnRail(icon: taskState.icon, title: taskState.title, color: taskState.color, hint: taskState.emptyHint)
@@ -213,8 +269,7 @@ struct BoardColumns: View {
 
     /// Reviewed, proven and green, and waiting for a person: auto-merge is off for its risk level or the factory.
     @ViewBuilder
-    private var pendingColumn: some View {
-        let pending = tasks.filter { !$0.queued && state.pendingMerge($0) }
+    private func pendingColumn(_ pending: [FactoryTask]) -> some View {
         let icon = "arrow.triangle.pull", title = "Pending merge", color = Theme.State.pendingMerge
 
         Group {
@@ -234,8 +289,7 @@ struct BoardColumns: View {
 
     /// Every task waiting for a session, front of the queue first. Drag a card onto another to put
     /// it ahead of that one, or below the cards to send it to the back; a draft dragged in joins.
-    private var queueColumn: some View {
-        let queued = tasks.filter(\.queued).sorted { $0.queueRank < $1.queueRank }
+    private func queueColumn(_ queued: [FactoryTask]) -> some View {
         return shell(icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) {
             ForEach(Array(queued.enumerated()), id: \.element.id) { index, task in
                 BoardCard(task: task, position: index + 1, draggable: true) { dropped in
