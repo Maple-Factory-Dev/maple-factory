@@ -247,6 +247,8 @@ struct FactoryTask: Identifiable {
     var splitFrom: String? = nil
     /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
     var scoutedFrom: String? = nil
+    /// The planner's proposed title, taken when the plan is approved (unless an approver keeps the current one).
+    var suggestedTitle: String? = nil
     /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.
     var effort: String? = nil
     /// The GitHub repo it changes (live goals that span several), and the tasks it builds on.
@@ -279,6 +281,8 @@ struct FactoryTask: Identifiable {
     /// The factory auto-merges it then unless someone holds it; and when that countdown started.
     var mergeAt: Date? = nil
     var mergeFrom: Date? = nil
+    /// The tasks in flight it overlaps, and conflicts a dry-run merge found with its base.
+    var mergeForecast: MergeForecast? = nil
 
     /// What its next session does, while it's queued.
     var nextStep: String {
@@ -296,6 +300,22 @@ struct FactoryTask: Identifiable {
 
     /// Stands in when there are no tasks yet, so views that need one have something to show.
     static let none = FactoryTask(id: "—", goal: "", title: "No tasks yet", state: .drafting, detail: "")
+}
+
+/// How a task's branch should merge, kept current by the factory as other tasks merge.
+struct MergeForecast {
+    struct Overlap: Hashable {
+        var task: String
+        var files: [String]
+    }
+    /// Other tasks building or in review that change some of the same files.
+    var overlaps: [Overlap] = []
+    /// Files a dry-run merge into its base conflicts in; empty: merges cleanly (or not checked yet).
+    var conflicts: [String] = []
+    /// The task whose merge brought the conflicts in.
+    var since: String? = nil
+    var checkedAt: Date? = nil
+    var base: String? = nil
 }
 
 struct PullRequest {

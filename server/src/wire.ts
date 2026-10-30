@@ -598,6 +598,25 @@ export interface Diff {
   files: string[];
 }
 
+/** Another in-flight task (building or in review) whose changes touch some of the same files. */
+export interface MergeOverlap {
+  task: string;
+  files: string[];
+}
+
+/** How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base. */
+export interface MergeForecast {
+  overlaps: MergeOverlap[];
+  /** Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet). */
+  conflicts: string[];
+  /** The task whose merge brought the conflicts in. */
+  since?: string | null;
+  /** When the last dry-run merge ran (ms); none: never. */
+  checkedAt?: number | null;
+  /** The branch it was checked against. */
+  base?: string | null;
+}
+
 export interface Task {
   id: string;
   goal: string;
@@ -612,6 +631,8 @@ export interface Task {
   plan: PlanStep[];
   planVersion: number;
   planSummary?: string | null;
+  /** The planner's proposed title, taken when the plan is approved. */
+  suggestedTitle?: string | null;
   doneWhen: DoneItem[];
   approvals: string[];
   approvalsNeeded: number;
@@ -663,6 +684,8 @@ export interface Task {
   effort?: string | null;
   /** The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down. */
   mergeAt?: number | null;
+  /** Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge. */
+  mergeForecast?: MergeForecast | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -1215,6 +1238,17 @@ export interface RunnerMessage_TaskMerged {
   message?: string | null;
 }
 
+/** How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed. */
+export interface RunnerMessage_TaskMergeCheck {
+  type: "task.merge_check";
+  taskId: string;
+  /** The check ran; false: `message` says why not. */
+  ok: boolean;
+  clean: boolean;
+  conflicts: string[];
+  message?: string | null;
+}
+
 /** How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not. */
 export interface RunnerMessage_TaskHandedOff {
   type: "task.handed_off";
@@ -1276,8 +1310,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -1362,6 +1396,14 @@ export interface ServerToRunner_TaskDiff {
   base: string;
 }
 
+/** Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`). */
+export interface ServerToRunner_TaskMergeCheck {
+  type: "task.merge_check";
+  taskId: string;
+  cwd: string;
+  base: string;
+}
+
 /** Merge a task's branch into its base on origin, for repos with no GitHub App. */
 export interface ServerToRunner_TaskMerge {
   type: "task.merge";
@@ -1433,8 +1475,8 @@ export interface ServerToRunner_SecretsReply {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -1761,6 +1803,8 @@ export interface ClientMessage_TaskReview {
 export interface ClientMessage_TaskApprovePlan {
   type: "task.approvePlan";
   id: string;
+  /** Turn down the plan's suggested title and keep the current one. */
+  keepTitle?: boolean | null;
 }
 
 /** Answer the agent's question. */

@@ -98,7 +98,8 @@ struct ProgressRing: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(Theme.fillSelected, lineWidth: 2)
+            // Tinted, so a goal with nothing merged yet still shows its color.
+            Circle().stroke(color.opacity(0.4), lineWidth: 2)
             Circle()
                 .trim(from: 0, to: progress)
                 .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))

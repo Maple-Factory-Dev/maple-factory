@@ -46,17 +46,38 @@ function changes(task: Task) {
   return "\n\n## Change requests to apply\n" + queued.map((c) => `- (${c.id}) ${c.author}: ${c.text}${c.anchor ? ` [on: ${c.anchor}]` : ""}`).join("\n");
 }
 
+/** Another task building or in review in the same repo and base, and the files its branch changes so far. */
+export interface Moving {
+  id: string;
+  title: string;
+  state: string;
+  files: string[];
+}
+
+/** The longest list of moving tasks, and of each one's files, a prompt carries. */
+const MOVING_MAX = 10;
+const MOVING_FILES_MAX = 15;
+
+function moving(others: Moving[]) {
+  if (!others.length) return "";
+  const line = (m: Moving) => {
+    const files = m.files.length ? m.files.slice(0, MOVING_FILES_MAX).join(", ") + (m.files.length > MOVING_FILES_MAX ? `, and ${m.files.length - MOVING_FILES_MAX} more` : "") : "no files pushed yet";
+    return `- ${m.id} · ${m.title} (${m.state}): ${files}`;
+  };
+  return `\n\n## Work in flight in this repo\nThese tasks are building or in review against the same base and will merge around the same time. Where you can, keep clear of the files they change; where you can't, keep your edits there small so the merge stays easy.\n${others.slice(0, MOVING_MAX).map(line).join("\n")}`;
+}
+
 function comments(task: Task) {
   const recent = task.comments.slice(-10);
   if (!recent.length) return "";
   return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}: ${c.text}`).join("\n");
 }
 
-export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null): string {
+export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = []): string {
   const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
-${brief(task, goal)}${extra("planner", org, goal)}${comments(task)}${changes(task)}${
+${brief(task, goal)}${extra("planner", org, goal)}${moving(inFlight)}${comments(task)}${changes(task)}${
     others.length
       ? `\n\n## The goal's other repos\n${others.map((r) => `- ${r}`).join("\n")}\nThis task changes ${taskRepo(task, goal)} only. If the work also needs changes in one of these, plan just this repo's part and list each other repo's part in \`otherRepos\` (repo, title, brief): it becomes its own task, planned and built there once this one merges.`
       : ""
@@ -64,6 +85,7 @@ ${brief(task, goal)}${extra("planner", org, goal)}${comments(task)}${changes(tas
 
 Read the repository (this worktree) to understand where the change goes. Then call the \`submit_plan\` tool once with:
 - summary: two or three sentences on the approach.
+- title (optional): a clearer title for the task, only when its current one ("${task.title}") is vague or misleading; it's renamed once the plan is approved.
 - steps: 3–8 concrete steps, each with the main file it touches.
 - doneWhen: 2–5 checks that prove it works, each with the proof kind the builder will produce (tests, terminal, screenshot or video).
 - risk: low, medium or high, with reasons (auth, payments, migrations and public APIs are high) and the areas it touches.
@@ -85,7 +107,7 @@ function unmerged(task: Task) {
 The branch already has the reviewed, approved work, but it doesn't merge into ${base}. Only bring it up to date with origin/${base} and resolve the conflicts (${c.id}); don't redo or extend the plan. Re-prove only the Done when items the conflict resolution touched, then call \`finish\`.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null): string {
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = []): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
@@ -98,7 +120,7 @@ ${task.planSummary ?? ""}
 ${steps}
 
 ## Done when
-${done}${comments(task)}${changes(task)}${
+${done}${moving(others)}${comments(task)}${changes(task)}${
     review?.length
       ? `\n\n## Review round ${task.autoReview!.rounds.length} asked for changes\n` + review.map((f) => `- [${f.severity}] (${f.id}) ${f.text}${f.file ? ` (${f.file})` : ""}`).join("\n")
       : ""

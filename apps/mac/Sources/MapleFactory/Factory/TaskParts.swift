@@ -485,10 +485,51 @@ struct SecondaryButton: View {
     }
 }
 
+/// The planner's proposed rename: taken when the plan is approved, unless the approver keeps the current title.
+struct SuggestedTitleRow: View {
+    let task: FactoryTask
+    let suggested: String
+    @Binding var keep: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "character.cursor.ibeam")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Renames to")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textMuted)
+                    Text(suggested)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(keep ? Theme.textFaint : Theme.text)
+                        .strikethrough(keep, color: Theme.textFaint)
+                    Text(task.title)
+                        .font(.system(size: 12))
+                        .foregroundStyle(keep ? Theme.text : Theme.textFaint)
+                        .strikethrough(!keep, color: Theme.textFaint)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Toggle("Keep current title", isOn: $keep)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.leading, 19)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+        .animation(.snappy(duration: 0.2), value: keep)
+    }
+}
+
 struct ApprovalBlock: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var keepTitle = false
 
     var body: some View {
         let needed = state.risk(for: task)?.approvals ?? task.approvalsNeeded
@@ -511,9 +552,12 @@ struct ApprovalBlock: View {
             }
             if !iApproved {
                 let approving = state.isInFlight(task.id, .approvePlan)
+                if let suggested = task.suggestedTitle {
+                    SuggestedTitleRow(task: task, suggested: suggested, keep: $keepTitle)
+                }
                 DecisionButtons {
                     PrimaryButton(title: "Approve plan", icon: "checkmark", busy: approving, busyTitle: "Approving…") {
-                        state.approvePlan(task.id)
+                        state.approvePlan(task.id, keepTitle: keepTitle)
                     }
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
@@ -532,6 +576,7 @@ struct BacklogBlock: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var keepTitle = false
 
     var body: some View {
         let planned = !task.plan.isEmpty
@@ -554,9 +599,12 @@ struct BacklogBlock: View {
                 }
             }
             if planned {
+                if let suggested = task.suggestedTitle {
+                    SuggestedTitleRow(task: task, suggested: suggested, keep: $keepTitle)
+                }
                 DecisionButtons {
                     PrimaryButton(title: "Approve & build", icon: "hammer", busy: approving, busyTitle: "Approving…") {
-                        state.approvePlan(task.id)
+                        state.approvePlan(task.id, keepTitle: keepTitle)
                     }
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
@@ -593,6 +641,7 @@ struct ReviewActions: View {
                 }
                 gateRow("Reviews", ready: gate.reviewsReady, failed: false,
                         detail: gate.reviewsNeeded == 0 ? "Not required" : "\(task.reviews.count) of \(gate.reviewsNeeded)")
+                mergeRow
             }
 
             if gate.reviewsNeeded > 0 {
@@ -676,6 +725,47 @@ struct ReviewActions: View {
         guard task.state == .reviewing, let mergeAt = task.mergeAt, gate.canMerge, gate.autoMerge,
               task.hand == nil, !state.isInFlight(task.id, .merge) else { return nil }
         return mergeAt
+    }
+
+    /// The merge forecast: conflicts with the base (red), overlaps with other work in flight (amber, each
+    /// one a link to that task), or merges cleanly (green).
+    @ViewBuilder private var mergeRow: some View {
+        let forecast = task.mergeForecast ?? MergeForecast()
+        let base = forecast.base ?? task.pr?.base ?? "main"
+        if !forecast.conflicts.isEmpty {
+            let n = forecast.conflicts.count
+            let files = n == 1 ? "1 file" : "\(n) files"
+            let since = forecast.since.map { " since \($0) merged" } ?? ""
+            let fixing = task.state == .building ? " · builder updating" : ""
+            gateRow("Merge", ready: false, failed: true, detail: "Conflicts in \(files)\(since)\(fixing)")
+                .help(forecast.conflicts.joined(separator: "\n"))
+        } else if !forecast.overlaps.isEmpty {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.State.awaitingApproval)
+                Text("Merge").foregroundStyle(Theme.text)
+                Spacer()
+                Text("Overlaps").foregroundStyle(Theme.State.awaitingApproval)
+                ForEach(Array(forecast.overlaps.prefix(2).enumerated()), id: \.element) { i, o in
+                    Button {
+                        state.openTask(o.task)
+                    } label: {
+                        Text("\(o.task) (\(o.files.count == 1 ? "1 file" : "\(o.files.count) files"))\(i < min(forecast.overlaps.count, 2) - 1 ? "," : "")")
+                            .underline()
+                            .foregroundStyle(Theme.State.awaitingApproval)
+                    }
+                    .buttonStyle(.plain)
+                    .help(o.files.joined(separator: "\n"))
+                }
+                if forecast.overlaps.count > 2 {
+                    Text("+\(forecast.overlaps.count - 2)").foregroundStyle(Theme.State.awaitingApproval)
+                }
+            }
+            .font(.system(size: 12))
+        } else {
+            gateRow("Merge", ready: true, failed: false, detail: "Merges cleanly into \(base)")
+        }
     }
 
     private func gateRow(_ label: String, ready: Bool, failed: Bool, detail: String) -> some View {

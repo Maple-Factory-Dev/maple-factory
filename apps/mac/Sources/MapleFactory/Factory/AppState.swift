@@ -195,7 +195,7 @@ final class AppState {
     }
     /// The machine being set up or edited in the sheet; "new" for this Mac.
     var machineSheet: MachineSheet? = nil
-    /// The goal being made or edited in the sheet (a live goal's id for .edit).
+    /// The goal being made or edited, full page in place of the content (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
     /// The CI check whose log is open in the log sheet.
     var checkLogShown: CheckLogRequest? = nil
@@ -300,7 +300,7 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -793,7 +793,7 @@ final class AppState {
     var aiDraftID: String? = nil
     /// The draft whose result is already in the composer.
     private var appliedAIDraft: String? = nil
-    /// A goal Draft with AI suggested, for the goal sheet to start from.
+    /// A goal Draft with AI suggested, for the goal editor to start from.
     var goalPrefill: Wire.NewGoalIdea? = nil
 
     /// Whether the Draft with AI card shows what the agent has said and done.
@@ -1617,17 +1617,18 @@ final class AppState {
         return true
     }
 
-    func approvePlan(_ id: String) {
+    /// `keepTitle` turns down the plan's suggested title.
+    func approvePlan(_ id: String, keepTitle: Bool = false) {
         if let client, isLive {
             guard beginInFlight(id, .approvePlan) else { return }
-            client.send(.taskApprovePlan(.init(id: id)))
+            client.send(.taskApprovePlan(.init(id: id, keepTitle: keepTitle ? true : nil)))
             return
         }
-        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id) }) { return }
-        approvePlanInMockup(id)
+        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id, keepTitle: keepTitle) }) { return }
+        approvePlanInMockup(id, keepTitle: keepTitle)
     }
 
-    private func approvePlanInMockup(_ id: String) {
+    private func approvePlanInMockup(_ id: String, keepTitle: Bool) {
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -1639,9 +1640,15 @@ final class AppState {
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
                 // Picked up from the backlog.
                 if task.state == .backlog { task.state = .awaitingApproval }
+                if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
+                    if let title = task.suggestedTitle {
+                        task.activity.insert(ActivityItem(who: "Factory", text: "Renamed it from \"\(task.title)\"", when: "now"), at: 0)
+                        task.title = title
+                        task.suggestedTitle = nil
+                    }
                     startBuilding(&task, prNumber: prNumber)
                     started = true
                 }
@@ -2209,8 +2216,8 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
-            // The goal sheet's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
-            case "goalfill": NotificationCenter.default.post(name: GoalSheet.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
+            // The goal editor's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
+            case "goalfill": NotificationCenter.default.post(name: GoalEditorView.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
             // Edit Goal… on a goal, by its name or task prefix: `editgoal:MF`. Signing in, it waits for the goal to arrive.
             case "editgoal":
                 for _ in 0..<300 {
@@ -2332,6 +2339,17 @@ final class AppState {
             // `dock:off` / `dock:on` is Settings › General's "Show the factory's icon in the Dock".
             case "dock": AppDefaults.set(["yes", "on", "true"].contains(parts[1].lowercased()), forKey: DockIcon.settingKey)
             case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
+            // A task's merge forecast, for the review panel's Merge row: `forecast:ATL-141:clean`,
+            // `forecast:ATL-141:overlap:ATL-150` or `forecast:ATL-141:conflict:ATL-150`.
+            case "forecast" where parts.count > 2:
+                let other = parts.count > 3 ? parts[3] : "ATL-150"
+                update(parts[1]) { t in
+                    t.mergeForecast = switch parts[2] {
+                    case "overlap": MergeForecast(overlaps: [.init(task: other, files: ["src/auth/session.ts", "src/auth/tokens.ts"])], base: "main")
+                    case "conflict": MergeForecast(conflicts: ["src/auth/session.ts", "src/auth/tokens.ts"], since: other, checkedAt: .now, base: "main")
+                    default: MergeForecast(checkedAt: .now, base: "main")
+                    }
+                }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":

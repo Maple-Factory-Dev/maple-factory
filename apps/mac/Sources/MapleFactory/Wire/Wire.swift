@@ -2431,6 +2431,53 @@ public enum Wire {
         }
     }
 
+    /// Another in-flight task (building or in review) whose changes touch some of the same files.
+    public struct MergeOverlap: Codable, Hashable, Sendable {
+        public var task: String
+        public var files: [String]
+
+        public init(task: String, files: [String] = []) {
+            self.task = task
+            self.files = files
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            task = try c.decode(String.self, forKey: .task)
+            files = try c.decodeIfPresent([String].self, forKey: .files) ?? []
+        }
+    }
+
+    /// How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base.
+    public struct MergeForecast: Codable, Hashable, Sendable {
+        public var overlaps: [MergeOverlap]
+        /// Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet).
+        public var conflicts: [String]
+        /// The task whose merge brought the conflicts in.
+        public var since: String?
+        /// When the last dry-run merge ran (ms); none: never.
+        public var checkedAt: UInt64?
+        /// The branch it was checked against.
+        public var base: String?
+
+        public init(overlaps: [MergeOverlap] = [], conflicts: [String] = [], since: String? = nil, checkedAt: UInt64? = nil, base: String? = nil) {
+            self.overlaps = overlaps
+            self.conflicts = conflicts
+            self.since = since
+            self.checkedAt = checkedAt
+            self.base = base
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            overlaps = try c.decodeIfPresent([MergeOverlap].self, forKey: .overlaps) ?? []
+            conflicts = try c.decodeIfPresent([String].self, forKey: .conflicts) ?? []
+            since = try c.decodeIfPresent(String.self, forKey: .since)
+            checkedAt = try c.decodeIfPresent(UInt64.self, forKey: .checkedAt)
+            base = try c.decodeIfPresent(String.self, forKey: .base)
+        }
+    }
+
     public struct Task: Codable, Hashable, Sendable {
         public var id: String
         public var goal: String
@@ -2445,6 +2492,8 @@ public enum Wire {
         public var plan: [PlanStep]
         public var planVersion: UInt32
         public var planSummary: String?
+        /// The planner's proposed title, taken when the plan is approved.
+        public var suggestedTitle: String?
         public var doneWhen: [DoneItem]
         public var approvals: [String]
         public var approvalsNeeded: UInt32
@@ -2496,8 +2545,10 @@ public enum Wire {
         public var effort: String?
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
+        /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
+        public var mergeForecast: MergeForecast?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2509,6 +2560,7 @@ public enum Wire {
             self.plan = plan
             self.planVersion = planVersion
             self.planSummary = planSummary
+            self.suggestedTitle = suggestedTitle
             self.doneWhen = doneWhen
             self.approvals = approvals
             self.approvalsNeeded = approvalsNeeded
@@ -2546,6 +2598,7 @@ public enum Wire {
             self.force = force
             self.effort = effort
             self.mergeAt = mergeAt
+            self.mergeForecast = mergeForecast
         }
 
         public init(from decoder: Decoder) throws {
@@ -2561,6 +2614,7 @@ public enum Wire {
             plan = try c.decodeIfPresent([PlanStep].self, forKey: .plan) ?? []
             planVersion = try c.decode(UInt32.self, forKey: .planVersion)
             planSummary = try c.decodeIfPresent(String.self, forKey: .planSummary)
+            suggestedTitle = try c.decodeIfPresent(String.self, forKey: .suggestedTitle)
             doneWhen = try c.decodeIfPresent([DoneItem].self, forKey: .doneWhen) ?? []
             approvals = try c.decodeIfPresent([String].self, forKey: .approvals) ?? []
             approvalsNeeded = try c.decode(UInt32.self, forKey: .approvalsNeeded)
@@ -2598,6 +2652,7 @@ public enum Wire {
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
             mergeAt = try c.decodeIfPresent(UInt64.self, forKey: .mergeAt)
+            mergeForecast = try c.decodeIfPresent(MergeForecast.self, forKey: .mergeForecast)
         }
     }
 
@@ -3750,6 +3805,33 @@ public enum Wire {
         }
     }
 
+    /// How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed.
+    public struct RunnerMessageTaskMergeCheck: Codable, Hashable, Sendable {
+        public var taskId: String
+        /// The check ran; false: `message` says why not.
+        public var ok: Bool
+        public var clean: Bool
+        public var conflicts: [String]
+        public var message: String?
+
+        public init(taskId: String, ok: Bool, clean: Bool, conflicts: [String] = [], message: String? = nil) {
+            self.taskId = taskId
+            self.ok = ok
+            self.clean = clean
+            self.conflicts = conflicts
+            self.message = message
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            taskId = try c.decode(String.self, forKey: .taskId)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            clean = try c.decode(Bool.self, forKey: .clean)
+            conflicts = try c.decodeIfPresent([String].self, forKey: .conflicts) ?? []
+            message = try c.decodeIfPresent(String.self, forKey: .message)
+        }
+    }
+
     /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
     public struct RunnerMessageTaskHandedOff: Codable, Hashable, Sendable {
         public var taskId: String
@@ -3867,6 +3949,7 @@ public enum Wire {
         case taskFinished(RunnerMessageTaskFinished)
         case taskDiff(RunnerMessageTaskDiff)
         case taskMerged(RunnerMessageTaskMerged)
+        case taskMergeCheck(RunnerMessageTaskMergeCheck)
         case taskHandedOff(RunnerMessageTaskHandedOff)
         case draftProgress(RunnerMessageDraftProgress)
         case draftDone(RunnerMessageDraftDone)
@@ -3898,6 +3981,7 @@ public enum Wire {
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
             case "task.diff": self = .taskDiff(try RunnerMessageTaskDiff(from: decoder))
             case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
+            case "task.merge_check": self = .taskMergeCheck(try RunnerMessageTaskMergeCheck(from: decoder))
             case "task.handed_off": self = .taskHandedOff(try RunnerMessageTaskHandedOff(from: decoder))
             case "draft.progress": self = .draftProgress(try RunnerMessageDraftProgress(from: decoder))
             case "draft.done": self = .draftDone(try RunnerMessageDraftDone(from: decoder))
@@ -3959,6 +4043,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskMerged(let body):
                 try c.encode("task.merged", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMergeCheck(let body):
+                try c.encode("task.merge_check", forKey: .type)
                 try body.encode(to: encoder)
             case .taskHandedOff(let body):
                 try c.encode("task.handed_off", forKey: .type)
@@ -4101,6 +4188,19 @@ public enum Wire {
 
     /// Report a task's diff against its base (answered with `task.diff`).
     public struct ServerToRunnerTaskDiff: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var cwd: String
+        public var base: String
+
+        public init(taskId: String, cwd: String, base: String) {
+            self.taskId = taskId
+            self.cwd = cwd
+            self.base = base
+        }
+    }
+
+    /// Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`).
+    public struct ServerToRunnerTaskMergeCheck: Codable, Hashable, Sendable {
         public var taskId: String
         public var cwd: String
         public var base: String
@@ -4263,6 +4363,7 @@ public enum Wire {
         case mcpResponse(ServerToRunnerMcpResponse)
         case taskFinish(ServerToRunnerTaskFinish)
         case taskDiff(ServerToRunnerTaskDiff)
+        case taskMergeCheck(ServerToRunnerTaskMergeCheck)
         case taskMerge(ServerToRunnerTaskMerge)
         case taskHandoff(ServerToRunnerTaskHandoff)
         case draftRun(ServerToRunnerDraftRun)
@@ -4288,6 +4389,7 @@ public enum Wire {
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
             case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
             case "task.diff": self = .taskDiff(try ServerToRunnerTaskDiff(from: decoder))
+            case "task.merge_check": self = .taskMergeCheck(try ServerToRunnerTaskMergeCheck(from: decoder))
             case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
             case "task.handoff": self = .taskHandoff(try ServerToRunnerTaskHandoff(from: decoder))
             case "draft.run": self = .draftRun(try ServerToRunnerDraftRun(from: decoder))
@@ -4329,6 +4431,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskDiff(let body):
                 try c.encode("task.diff", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMergeCheck(let body):
+                try c.encode("task.merge_check", forKey: .type)
                 try body.encode(to: encoder)
             case .taskMerge(let body):
                 try c.encode("task.merge", forKey: .type)
@@ -4889,9 +4994,12 @@ public enum Wire {
     /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
         public var id: String
+        /// Turn down the plan's suggested title and keep the current one.
+        public var keepTitle: Bool?
 
-        public init(id: String) {
+        public init(id: String, keepTitle: Bool? = nil) {
             self.id = id
+            self.keepTitle = keepTitle
         }
     }
 
