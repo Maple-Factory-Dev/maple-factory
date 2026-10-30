@@ -268,7 +268,7 @@ struct MachineSettingsSheet: View {
                 ForEach(lines, id: \.self) { Text($0).font(.system(size: 12)).foregroundStyle(Theme.textMuted) }
             }
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.fillSubtle))
         .foregroundStyle(Theme.text)
@@ -292,7 +292,7 @@ struct MachineSettingsSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(title: title)
             VStack(alignment: .leading, spacing: 12) { content() }
-                .padding(14)
+                .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
         }

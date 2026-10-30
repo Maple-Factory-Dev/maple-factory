@@ -7,7 +7,7 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     /// The Settings window's size, here and headless.
-    static let size = CGSize(width: 860, height: 620)
+    static let size = CGSize(width: 900, height: 660)
     /// A demo script's `ui:settings-row:<pane>`, as a click on that sidebar row would.
     static let demoPick = Notification.Name("OrgSettingsView.demoPick")
 

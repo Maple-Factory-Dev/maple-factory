@@ -182,7 +182,7 @@ struct SecretSheet: View {
                     .disabled(!canSave)
             }
         }
-        .padding(20)
+        .padding(24)
         .frame(width: 420)
         .onReceive(NotificationCenter.default.publisher(for: SecretsSettings.demoSave)) { note in
             name = note.userInfo?["name"] as? String ?? name
