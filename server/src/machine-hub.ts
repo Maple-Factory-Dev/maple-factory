@@ -28,6 +28,8 @@ interface Viewer {
 
 const RUNNER = "runner";
 const VIEWER = "viewer";
+/** How long a share holder's revocation check is trusted before publish() asks D1 again. */
+const SHARE_CHECK_MS = 45_000;
 
 function uuidBytes(id: string): Uint8Array {
   const hex = id.replace(/-/g, "");
@@ -40,6 +42,11 @@ function uuidString(bytes: Uint8Array): string {
 }
 
 export class MachineHub extends DurableObject<Env> {
+  /** Share holders' last revocation check: whether they were gone, and when it was asked. */
+  private revokedCache = new Map<string, { gone: boolean; at: number }>();
+  /** The clock for the revocation cache; tests move it. */
+  now = () => Date.now();
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Runners ping every 20s and drop a connection that's quiet for 60s; answer without waking up.
@@ -69,6 +76,8 @@ export class MachineHub extends DurableObject<Env> {
         // taken back, so only the terminals they opened as an admin close, and none on a machine they own.
         const login = url.searchParams.get("login") ?? "";
         const role = url.searchParams.get("role");
+        // The next publish asks D1 about them again rather than trusting a cached "still here".
+        this.revokedCache.delete(login);
         if (role && (await this.machine()).owner === login) return new Response(null, { status: 204 });
         for (const ws of this.ctx.getWebSockets(VIEWER)) {
           const viewer = ws.deserializeAttachment() as Viewer;
@@ -234,7 +243,9 @@ export class MachineHub extends DurableObject<Env> {
   }
 
   /** Saves and reports the machine, with each session's shares: those of sessions gone, and those to people
-   *  since revoked, are dropped here. */
+   *  since revoked, are dropped here. Revocations are checked at most every SHARE_CHECK_MS per login
+   *  (/drop-viewers already cuts someone off at once), and if D1 fails the shares are kept, so the save and
+   *  the report to the org hub still happen. */
   private async publish(machine: Machine) {
     machine = { ...machine, sessions: await this.withShares(machine.sessions) };
     await this.ctx.storage.put("machine", machine);
@@ -245,10 +256,8 @@ export class MachineHub extends DurableObject<Env> {
     const stored = await this.ctx.storage.list<SessionShare[]>({ prefix: "shares:" });
     if (!stored.size) return sessions.map(({ shares: _, ...s }) => s);
     const live = new Set(sessions.map((s) => s.session.id));
-    const logins = [...new Set([...stored.values()].flat().map((s) => s.login))];
-    const { results } = await this.env.DB.prepare(`SELECT login, revoked_at, last_seen FROM members WHERE login IN (${logins.map(() => "?").join(",")})`)
-      .bind(...logins).all<Pick<MemberRow, "login" | "revoked_at" | "last_seen">>();
-    const gone = new Set(logins.filter((login) => { const row = results.find((r) => r.login === login); return !row || revoked(row); }));
+    const held = [...stored].filter(([key]) => live.has(key.slice("shares:".length))).flatMap(([, shares]) => shares);
+    const gone = await this.revokedLogins([...new Set(held.map((s) => s.login))]);
     const kept = new Map<string, SessionShare[]>();
     for (const [key, shares] of stored) {
       const session = key.slice("shares:".length);
@@ -261,6 +270,26 @@ export class MachineHub extends DurableObject<Env> {
       if (!live.has(session)) this.closeShared(session, 1000, "session ended");
     }
     return sessions.map(({ shares: _, ...s }) => (kept.has(s.session.id) ? { ...s, shares: kept.get(s.session.id) } : s));
+  }
+
+  /** Which of `logins` have been revoked (or have no members row). Asks D1 only about logins not checked in
+   *  the last SHARE_CHECK_MS; if D1 fails, those count as still here. */
+  private async revokedLogins(logins: string[]): Promise<Set<string>> {
+    const now = this.now();
+    const stale = logins.filter((login) => { const hit = this.revokedCache.get(login); return !hit || now - hit.at >= SHARE_CHECK_MS; });
+    if (stale.length) {
+      try {
+        const { results } = await this.env.DB.prepare(`SELECT login, revoked_at, last_seen FROM members WHERE login IN (${stale.map(() => "?").join(",")})`)
+          .bind(...stale).all<Pick<MemberRow, "login" | "revoked_at" | "last_seen">>();
+        for (const login of stale) {
+          const row = results.find((r) => r.login === login);
+          this.revokedCache.set(login, { gone: !row || revoked(row), at: now });
+        }
+      } catch (err) {
+        console.warn(`machine hub: couldn't check share holders' access, keeping their shares: ${err}`);
+      }
+    }
+    return new Set(logins.filter((login) => this.revokedCache.get(login)?.gone));
   }
 
   /** Closes the terminals teammates opened on a session by a share. */
