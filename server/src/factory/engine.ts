@@ -13,8 +13,9 @@ import type {
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
+import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { merged, redacted } from "./connectors.ts";
@@ -63,6 +64,8 @@ const MERGE_FIX = "Send it back to fix";
 const MERGE_RETRY = "Try the merge again";
 /** Times the factory sends a task that didn't merge back to fix it before asking a person. */
 const MERGE_FIX_TRIES = 2;
+/** How long an auto-merge waits for its dry-run merge's answer before merging anyway. */
+const MERGE_CHECK_WAIT_MS = 60_000;
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
@@ -972,7 +975,8 @@ export class Engine {
       ? { reason: `This task was moved here from ${priv.movedFrom.machine}${priv.movedFrom.commit ? `; its work so far is on the branch, up to ${priv.movedFrom.commit.slice(0, 7)} (any "WIP" commit is unfinished)` : ""}.` }
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
     const org = this.store.prompts();
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org) : role === "builder" ? builderPrompt(task, goal, resumed, org) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
+    const others = role === "reviewer" ? [] : this.moving(task);
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others) : role === "builder" ? builderPrompt(task, goal, resumed, org, others) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -1160,10 +1164,17 @@ export class Engine {
         // Measured now, not estimated: the size can change its risk.
         this.applyPolicy(task);
         this.save(task, false);
+        this.refreshForecasts(task);
         await this.autoMerge(task);
         return null;
       }
       case "task.merged": return this.merged(msg), null;
+      case "task.merge_check": {
+        const task = this.store.task(msg.taskId);
+        if (!task || task.machine !== machine) return null;
+        await this.mergeChecked(task, msg);
+        return null;
+      }
       case "task.token_request": {
         // A token for the task's repo, only for the machine it's on; without the app the runner
         // fetches and pushes with the machine's own credentials.
@@ -1310,6 +1321,8 @@ export class Engine {
     this.closeWorker(task, "done");
     task.state = "reviewing";
     task.reviews = [];
+    // Conflicts found on the old head: what it pushed is checked again before it merges.
+    if (task.mergeForecast) task.mergeForecast = { ...task.mergeForecast, conflicts: [], since: null, checkedAt: null };
     const review = task.autoReview ?? { maxRounds: MAX_REVIEW_ROUNDS, rounds: [], summary: "", ask: [], proofs: [], findings: [] };
     review.rounds.push({ number: review.rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null });
     task.autoReview = review;
@@ -1501,6 +1514,11 @@ export class Engine {
     this.hooks.broadcast({ type: "toast", text: `${task.id} merged into ${task.pr.base}.`, taskId: task.id });
     this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null, mergeFixes: 0 });
     this.hooks.waitUntil(this.cleanup(task));
+    // What it overlapped may not merge any more: each of those still in review gets a dry-run merge now,
+    // rather than finding out when its own merge fails.
+    const affected = affectedBy(task, this.store.tasks());
+    this.refreshForecasts(task);
+    for (const other of affected) if (other.state === "reviewing") this.hooks.waitUntil(this.checkMerge(other, task.id));
     // Tasks waiting on this one ("after") can build now.
     if (this.store.tasks().some((t) => t.after.includes(task.id))) this.hooks.waitUntil(this.pump());
   }
@@ -1525,6 +1543,7 @@ export class Engine {
     this.lowerHand(task, who);
     this.event(task, who, why);
     this.save(task);
+    this.refreshForecasts(task);
     await audit(this.env, who, "task.cancelled", task.id);
   }
 
@@ -1906,6 +1925,14 @@ export class Engine {
       return;
     }
     if (task.mergeAt > now()) return this.hooks.wakeIn(task.mergeAt - now());
+    // A dry-run merge first, once per head: a conflict goes back to its builder without a failed merge.
+    if (priv.mergeChecked !== head && task.machine && priv.worktree) {
+      const asked = priv.mergeCheck;
+      if (asked?.head !== head) {
+        if (await this.checkMerge(task, null)) return this.hooks.wakeIn(MERGE_CHECK_WAIT_MS);
+      } else if (now() - asked.at < MERGE_CHECK_WAIT_MS) return this.hooks.wakeIn(asked.at + MERGE_CHECK_WAIT_MS - now());
+      // Its machine is offline, or never answered: merge anyway; a conflict still shows up there.
+    }
     task.mergeAt = null;
     await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => this.save(task));
   }
@@ -2068,6 +2095,94 @@ export class Engine {
     this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
     this.save(task);
     await this.pump();
+  }
+
+  /** Where a task merges, for its forecast's overlaps. */
+  private lane(task: Task): Lane | null {
+    const goal = this.store.goal(task.goal);
+    const repo = taskRepo(task, goal) ?? goal?.folder ?? null;
+    if (!repo) return null;
+    return { repo, base: task.pr?.base ?? this.store.private(task.id).base ?? goal?.base ?? "main" };
+  }
+
+  /** The other tasks building or in review where this one merges, for its planner's and builder's prompts:
+   *  the ones it overlaps first. */
+  private moving(task: Task): Moving[] {
+    const mine = this.lane(task);
+    if (!mine) return [];
+    const overlapping = new Set(task.mergeForecast?.overlaps.map((o) => o.task) ?? []);
+    return this.store
+      .tasks()
+      .filter((t) => t.id !== task.id && inFlight(t))
+      .filter((t) => { const l = this.lane(t); return l != null && l.repo.toLowerCase() === mine.repo.toLowerCase() && l.base === mine.base; })
+      .sort((a, b) => Number(overlapping.has(b.id)) - Number(overlapping.has(a.id)) || b.updatedAt - a.updatedAt)
+      .map((t) => ({ id: t.id, title: t.title, state: t.state, files: t.diff?.files ?? [] }));
+  }
+
+  /** Brings every task's overlaps up to date after `current` changed (passed as they are now, since
+   *  the store's copies may be older), saving the ones that changed. */
+  private refreshForecasts(...current: Task[]) {
+    const mine = new Map(current.map((t) => [t.id, t]));
+    const tasks = this.store.tasks().map((t) => mine.get(t.id) ?? t);
+    for (const t of refreshOverlaps(tasks, (t) => this.lane(t))) this.save(t, false);
+  }
+
+  /** Asks its machine for a dry-run merge into its base (`task.merge_check`); false when it can't be asked.
+   *  `since`: the task whose merge prompted it; none for the check before its own auto-merge. */
+  private async checkMerge(task: Task, since: string | null): Promise<boolean> {
+    const priv = this.store.private(task.id);
+    if (!task.machine || !priv.worktree) return false;
+    const base = task.pr?.base ?? priv.base ?? "main";
+    const head = task.pr?.head ?? task.pr?.branch ?? null;
+    this.store.savePrivate(task.id, { ...priv, mergeCheck: { head, since, at: now() } });
+    const sent = await this.toRunner(task.machine, { type: "task.merge_check", taskId: task.id, cwd: priv.worktree, base });
+    if (!sent) this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeCheck: null });
+    return sent;
+  }
+
+  /** A dry-run merge's answer: the forecast records it, and a conflict sends the task back to its
+   *  builder now. One prompted by another task's merge doesn't count as a merge-fix try; the check
+   *  before its own auto-merge does, as the failed merge it stands in for would. */
+  private async mergeChecked(task: Task, msg: Extract<RunnerMessage, { type: "task.merge_check" }>) {
+    const priv = this.store.private(task.id);
+    const asked = priv.mergeCheck ?? { head: null, since: null, at: now() };
+    const head = task.pr?.head ?? task.pr?.branch ?? null;
+    const base = task.pr?.base ?? priv.base ?? "main";
+    // Before its own merge, the answer lets it go ahead whatever it says (a conflict goes back first).
+    this.store.savePrivate(task.id, { ...priv, mergeCheck: null, mergeChecked: asked.since ? priv.mergeChecked : asked.head });
+    if (!msg.ok) {
+      this.event(task, "factory", `couldn't check whether it still merges into ${base}: ${msg.message ?? "no reason given"}`);
+      this.save(task, false);
+      if (!asked.since) await this.autoMerge(task);
+      return;
+    }
+    // Pushed again since it was asked: the answer is about a head that's gone.
+    if (asked.head !== head || task.state !== "reviewing") return;
+    task.mergeForecast = { ...(task.mergeForecast ?? emptyForecast()), conflicts: msg.conflicts, since: msg.clean ? null : asked.since, checkedAt: now(), base };
+    if (msg.clean) {
+      this.save(task, false);
+      if (!asked.since) await this.autoMerge(task);
+      return;
+    }
+    const files = msg.conflicts.length === 1 ? msg.conflicts[0] : `${msg.conflicts.length} files (${msg.conflicts.slice(0, 3).join(", ")}${msg.conflicts.length > 3 ? ", …" : ""})`;
+    const why = asked.since ? `${asked.since} merged into ${base} and now it conflicts in ${files}` : `a dry-run merge into ${base} conflicts in ${files}`;
+    const autoFix = this.store.policy().autoFixMerges !== false;
+    const tries = priv.mergeFixes ?? 0;
+    if (!autoFix || this.store.private(task.id).merging || task.hand || (!asked.since && tries >= MERGE_FIX_TRIES)) {
+      // A person decides (or its merge, already under way, says): the forecast shows the conflict meanwhile.
+      this.event(task, "factory", `${why}`);
+      this.save(task);
+      if (!asked.since) await this.autoMerge(task);
+      return;
+    }
+    let text = `${why}; sent it back to fix the merge`;
+    if (!asked.since) {
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeFixes: tries + 1 });
+      text = `won't merge: ${text} (try ${tries + 1} of ${MERGE_FIX_TRIES})`;
+    }
+    this.event(task, "factory", text);
+    this.hooks.broadcast({ type: "toast", text: `${task.id} ${asked.since ? `conflicts with ${asked.since}` : "won't merge"}; a builder is fixing it.`, taskId: task.id });
+    await this.sendBackToFixMerge(task, "factory", why);
   }
 
   /** A reviewing task goes back to its builder: review and approvals start over on what it pushes. */

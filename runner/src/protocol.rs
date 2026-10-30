@@ -621,6 +621,9 @@ pub enum Inbound {
     /// Report a task's diff against its base (see `tasks::run_diff`).
     #[serde(rename = "task.diff")]
     TaskDiff(crate::tasks::DiffRequest),
+    /// Dry-run merging a task's branch into its base (see `tasks::run_merge_check`).
+    #[serde(rename = "task.merge_check")]
+    TaskMergeCheck(crate::tasks::MergeCheck),
     /// Merge a task's branch into its base on origin (see `tasks::run_merge`).
     #[serde(rename = "task.merge")]
     TaskMerge(crate::tasks::Merge),
