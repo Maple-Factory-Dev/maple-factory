@@ -315,10 +315,11 @@ pub async fn create_from(root: &Path, name: &str, start: &str) -> Result<String>
 
 /// `create_from` with the repo's worktree scripts (see `worktree_scripts`): its `create` script makes
 /// the worktree in place of `git worktree add` (and must leave a git worktree on `agent/<name>` at
-/// the path), and its `setup` script runs once it's there. When either fails, the half-made worktree
+/// the path), its `preflight` script runs in it when this checkout needs it (`worktree_scripts::preflight`),
+/// and its `setup` script runs once it's there. When any fails, the half-made worktree
 /// goes (and the branch, if this made it) and the error has the script's output.
 pub async fn create_with(root: &Path, name: &str, start: &str, scripts: Option<&crate::worktree_scripts::ForTask<'_>>) -> Result<String> {
-    use crate::worktree_scripts::{Phase, command, run};
+    use crate::worktree_scripts::{Phase, command, preflight, run};
     valid_name(name)?;
     if start.starts_with('-') {
         bail!("`{start}` isn't a branch or commit.");
@@ -354,7 +355,12 @@ pub async fn create_with(root: &Path, name: &str, start: &str, scripts: Option<&
     }
     poke(false);
     if let Some(s) = scripts
-        && let Err(e) = run(Some(s.scripts), Phase::Setup, &s.context(root, &path, &branch)).await
+        && let Err(e) = async {
+            let ctx = s.context(root, &path, &branch);
+            preflight(s.scripts, &ctx).await?;
+            run(Some(s.scripts), Phase::Setup, &ctx).await
+        }
+        .await
     {
         undo(root, &path, &branch, had_branch).await;
         poke(false);
