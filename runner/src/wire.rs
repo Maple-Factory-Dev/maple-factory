@@ -351,6 +351,18 @@ pub enum RiskLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum McpTransport {
+    /// A local command the runner starts.
+    Stdio,
+    /// A server reached by URL (streamable HTTP).
+    Http,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PromptChoice {
     /// Allow it once (the menu's 1).
     Yes,
@@ -389,6 +401,25 @@ pub enum RunnerUpdateState {
     UpToDate,
     /// It couldn't; `message` says why.
     Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// Where an agent sign-in (`codex login --device-auth`) on a machine is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentLoginState {
+    /// Asked the machine; the login is starting.
+    Starting,
+    /// Showing a link and one-time code: waiting for its owner to finish in the browser.
+    Waiting,
+    /// Signed in.
+    Done,
+    /// It couldn't; `message` says why.
+    Failed,
+    /// Someone cancelled it, or the code expired.
+    Cancelled,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -659,6 +690,26 @@ pub struct MachineUpdate {
     pub message: Option<String>,
     /// When it reached this state.
     pub at: u64,
+}
+
+/// An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLoginStatus {
+    pub agent: String,
+    pub state: AgentLoginState,
+    /// The page to enter the code on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The one-time code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// When the code expires (ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    /// Why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// One runner release in the feed's changelog (maple-runner/changes.json).
@@ -1235,6 +1286,32 @@ pub struct RiskPolicy {
     pub auto_merges: Option<bool>,
 }
 
+/// An MCP server the factory adds to every session, alongside its own `maple` server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConnector {
+    /// Lowercase letters, digits and dashes; its tools are mcp__<name>__*. Not `maple`.
+    pub name: String,
+    pub transport: McpTransport,
+    /// stdio: the program to run, e.g. npx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// http: the server's URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// stdio: its environment. Secret: apps get each key with an empty value (blank on save keeps the stored one).
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// http: request headers, e.g. Authorization. Secret, like `env`.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    pub enabled: bool,
+    /// Unattended project sessions may use its tools without asking.
+    pub auto_allow: bool,
+}
+
 /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1790,6 +1867,11 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// How an `agent.login` is going.
+    #[serde(rename = "agent.login_status")]
+    AgentLoginStatus {
+        status: AgentLoginStatus,
+    },
     /// Plan usage readings that changed (all of them again on reconnect).
     #[serde(rename = "usage")]
     Usage {
@@ -1951,6 +2033,9 @@ pub enum ServerToRunner {
         unattended: Option<Unattended>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// The factory's enabled MCP connectors, secrets included.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connectors: Option<Vec<McpConnector>>,
     },
     #[serde(rename = "session.resize")]
     SessionResize {
@@ -1971,6 +2056,12 @@ pub enum ServerToRunner {
     },
     #[serde(rename = "runner.update")]
     RunnerUpdate,
+    /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
+    #[serde(rename = "agent.login")]
+    AgentLogin {
+        agent: String,
+        cancel: bool,
+    },
     #[serde(rename = "runner.restart")]
     RunnerRestart,
     /// The answer to `mcp.request`: `result` ({summary, data}) or `error`.
@@ -2211,6 +2302,14 @@ pub enum ClientMessage {
     MachineUpdate {
         machine: String,
     },
+    /// Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.
+    #[serde(rename = "machine.agent_login")]
+    MachineAgentLogin {
+        machine: String,
+        agent: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cancel: Option<bool>,
+    },
     /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
     #[serde(rename = "runner.check")]
     RunnerCheck {
@@ -2235,6 +2334,12 @@ pub enum ClientMessage {
     #[serde(rename = "admins.revoke")]
     AdminsRevoke {
         login: String,
+    },
+    /// Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.
+    #[serde(rename = "connectors.save")]
+    ConnectorsSave {
+        #[serde(default)]
+        connectors: Vec<McpConnector>,
     },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]
@@ -2514,6 +2619,9 @@ pub enum ServerToClient {
         /// The org's prompt additions. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompts: Option<PromptAdditions>,
+        /// The factory's MCP connectors, secret values blank. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connectors: Option<Vec<McpConnector>>,
         #[serde(default)]
         online: Vec<Presence>,
         #[serde(default)]
@@ -2563,6 +2671,12 @@ pub enum ServerToClient {
     #[serde(rename = "machine.removed")]
     MachineRemoved {
         id: String,
+    },
+    /// How a sign-in on your machine is going, to its owner's apps only.
+    #[serde(rename = "machine.agent_login")]
+    MachineAgentLogin {
+        machine: String,
+        status: AgentLoginStatus,
     },
     #[serde(rename = "task.updated")]
     TaskUpdated {
@@ -2661,6 +2775,12 @@ pub enum ServerToClient {
         /// Runner releases, newest first, with their notes.
         #[serde(default)]
         runner_releases: Vec<RunnerRelease>,
+    },
+    /// Secret values blank.
+    #[serde(rename = "connectors.updated")]
+    ConnectorsUpdated {
+        #[serde(default)]
+        connectors: Vec<McpConnector>,
     },
     /// Something worth a passing line in the app.
     #[serde(rename = "toast")]

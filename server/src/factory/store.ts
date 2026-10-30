@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
 
@@ -435,6 +435,15 @@ export class Store {
 
   saveRepoOwners(owners: string[]) {
     this.set("repoOwners", JSON.stringify(owners));
+  }
+
+  /** The factory's MCP connectors, secrets included: only for runners (apps get `redacted`). */
+  connectors(): McpConnector[] {
+    return JSON.parse(this.get("connectors") ?? "[]");
+  }
+
+  saveConnectors(connectors: McpConnector[]) {
+    this.set("connectors", JSON.stringify(connectors));
   }
 
   /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */

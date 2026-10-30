@@ -226,7 +226,7 @@ enum Headless {
         }
         Task { @MainActor in
             await self.waitUntilReady()
-            // Made now, so the script's actions (`secret:add`) reach its views before the shot.
+            // Made now, so the script's actions (`secret:add`, `connector:jira`) reach its views before the shot.
             if AppDefaults.string(forKey: "window")?.hasPrefix("settings") == true {
                 self.settingsWindow.orderBack(nil)
             }
@@ -331,7 +331,7 @@ enum Headless {
     private lazy var settingsWindow: NSWindow = {
         let settings = NSWindow(contentViewController: NSHostingController(rootView: OrgSettingsView()
             .environment(state).environment(client).defaultAppStorage(AppDefaults)))
-        settings.setContentSize(CGSize(width: 780, height: 560))
+        settings.setContentSize(OrgSettingsView.size)
         settings.isExcludedFromWindowsMenu = true
         settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
         return settings

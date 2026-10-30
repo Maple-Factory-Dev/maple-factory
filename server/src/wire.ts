@@ -71,6 +71,9 @@ export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","pa
 export type RiskLevel = "low" | "medium" | "high";
 export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
 
+export type McpTransport = "stdio" | "http";
+export const McpTransportValues: readonly McpTransport[] = ["stdio","http"];
+
 export type PromptChoice = "yes" | "no";
 export const PromptChoiceValues: readonly PromptChoice[] = ["yes","no"];
 
@@ -80,6 +83,10 @@ export const RepoSourceValues: readonly RepoSource[] = ["github","manual"];
 /** Where a runner update someone asked for is. */
 export type RunnerUpdateState = "checking" | "installing" | "restarting" | "updated" | "upToDate" | "failed";
 export const RunnerUpdateStateValues: readonly RunnerUpdateState[] = ["checking","installing","restarting","updated","upToDate","failed"];
+
+/** Where an agent sign-in (`codex login --device-auth`) on a machine is. */
+export type AgentLoginState = "starting" | "waiting" | "done" | "failed" | "cancelled";
+export const AgentLoginStateValues: readonly AgentLoginState[] = ["starting","waiting","done","failed","cancelled"];
 
 /** What a session's agent is doing, from its hooks. */
 export type AgentState = "working" | "waiting" | "done" | "idle";
@@ -256,6 +263,20 @@ export interface MachineUpdate {
   message?: string | null;
   /** When it reached this state. */
   at: number;
+}
+
+/** An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only. */
+export interface AgentLoginStatus {
+  agent: string;
+  state: AgentLoginState;
+  /** The page to enter the code on. */
+  url?: string | null;
+  /** The one-time code. */
+  code?: string | null;
+  /** When the code expires (ms). */
+  expiresAt?: number | null;
+  /** Why it failed. */
+  message?: string | null;
 }
 
 /** One runner release in the feed's changelog (maple-runner/changes.json). */
@@ -660,6 +681,25 @@ export interface RiskPolicy {
   autoFixMerges?: boolean | null;
   /** When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on. */
   autoMerges?: boolean | null;
+}
+
+/** An MCP server the factory adds to every session, alongside its own `maple` server. */
+export interface McpConnector {
+  /** Lowercase letters, digits and dashes; its tools are mcp__<name>__*. Not `maple`. */
+  name: string;
+  transport: McpTransport;
+  /** stdio: the program to run, e.g. npx. */
+  command?: string | null;
+  args: string[];
+  /** http: the server's URL. */
+  url?: string | null;
+  /** stdio: its environment. Secret: apps get each key with an empty value (blank on save keeps the stored one). */
+  env: Record<string, string>;
+  /** http: request headers, e.g. Authorization. Secret, like `env`. */
+  headers: Record<string, string>;
+  enabled: boolean;
+  /** Unattended project sessions may use its tools without asking. */
+  autoAllow: boolean;
 }
 
 /** Text added to every factory session's prompt, by role: the org's, then a goal's after it. */
@@ -1084,6 +1124,12 @@ export interface RunnerMessage_UpdateStatus {
   message?: string | null;
 }
 
+/** How an `agent.login` is going. */
+export interface RunnerMessage_AgentLoginStatus {
+  type: "agent.login_status";
+  status: AgentLoginStatus;
+}
+
 /** Plan usage readings that changed (all of them again on reconnect). */
 export interface RunnerMessage_Usage {
   type: "usage";
@@ -1210,8 +1256,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -1228,6 +1274,8 @@ export interface ServerToRunner_SessionOpen {
   task?: TaskStart | null;
   unattended?: Unattended | null;
   model?: string | null;
+  /** The factory's enabled MCP connectors, secrets included. */
+  connectors?: McpConnector[] | null;
 }
 
 export interface ServerToRunner_SessionResize {
@@ -1252,6 +1300,13 @@ export interface ServerToRunner_SessionReplay {
 
 export interface ServerToRunner_RunnerUpdate {
   type: "runner.update";
+}
+
+/** Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting. */
+export interface ServerToRunner_AgentLogin {
+  type: "agent.login";
+  agent: string;
+  cancel: boolean;
 }
 
 export interface ServerToRunner_RunnerRestart {
@@ -1358,8 +1413,8 @@ export interface ServerToRunner_SecretsReply {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -1503,6 +1558,14 @@ export interface ClientMessage_MachineUpdate {
   machine: string;
 }
 
+/** Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that. */
+export interface ClientMessage_MachineAgentLogin {
+  type: "machine.agent_login";
+  machine: string;
+  agent: string;
+  cancel?: boolean | null;
+}
+
 /** Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine. */
 export interface ClientMessage_RunnerCheck {
   type: "runner.check";
@@ -1531,6 +1594,12 @@ export interface ClientMessage_AdminsGrant {
 export interface ClientMessage_AdminsRevoke {
   type: "admins.revoke";
   login: string;
+}
+
+/** Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one. */
+export interface ClientMessage_ConnectorsSave {
+  type: "connectors.save";
+  connectors: McpConnector[];
 }
 
 /** Read the repos the GitHub App is installed on again. */
@@ -1793,8 +1862,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ConnectorsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","connectors.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1810,6 +1879,8 @@ export interface ServerToClient_Snapshot {
   acceptances: RiskAcceptance[];
   /** The org's prompt additions. None: an older server. */
   prompts?: PromptAdditions | null;
+  /** The factory's MCP connectors, secret values blank. None: an older server. */
+  connectors?: McpConnector[] | null;
   online: Presence[];
   notes: Note[];
   follows: GoalFollow[];
@@ -1846,6 +1917,13 @@ export interface ServerToClient_MachineUpdated {
 export interface ServerToClient_MachineRemoved {
   type: "machine.removed";
   id: string;
+}
+
+/** How a sign-in on your machine is going, to its owner's apps only. */
+export interface ServerToClient_MachineAgentLogin {
+  type: "machine.agent_login";
+  machine: string;
+  status: AgentLoginStatus;
 }
 
 export interface ServerToClient_TaskUpdated {
@@ -1951,6 +2029,12 @@ export interface ServerToClient_RunnerReleased {
   runnerReleases: RunnerRelease[];
 }
 
+/** Secret values blank. */
+export interface ServerToClient_ConnectorsUpdated {
+  type: "connectors.updated";
+  connectors: McpConnector[];
+}
+
 /** Something worth a passing line in the app. */
 export interface ServerToClient_Toast {
   type: "toast";
@@ -1993,5 +2077,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_ConnectorsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","connectors.updated","toast","session.ended","stats","checkLog","error"] as const;

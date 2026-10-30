@@ -2200,6 +2200,8 @@ final class AppState {
                 // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
                 case "settings-cog": NotificationCenter.default.post(name: SidebarSettings.demo, object: nil)
                 case "settings-pane": NotificationCenter.default.post(name: SidebarSettings.demo, object: parts.count > 2 ? parts[2] : nil)
+                // A row of the Settings window's own sidebar clicked (`ui:settings-row:general`).
+                case "settings-row": NotificationCenter.default.post(name: OrgSettingsView.demoPick, object: parts.count > 2 ? parts[2] : nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -2217,6 +2219,12 @@ final class AppState {
                 }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
+            // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
+            // Signing in, it waits for the connectors to arrive (and Settings to be on screen).
+            case "connector":
+                for _ in 0..<300 where client?.connectors == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .seconds(1))
+                NotificationCenter.default.post(name: ConnectorSettings.demoEdit, object: nil, userInfo: ["name": parts[1]])
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
             // The first screenshot or video proof on screen, shown large (`lightbox:open`, or `lightbox:image` / `lightbox:video`
@@ -2246,6 +2254,17 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A machine card's Sign in on an agent pill (`signin:<machine>:codex`) and its panel's Cancel (`cancelsignin:<machine>:codex`);
+            // `waitsignedin:<machine>:codex` waits (up to 15 minutes) for its health to say it's signed in, as someone finishes in the browser.
+            case "signin": client?.signIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "cancelsignin": client?.cancelSignIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "waitsignedin":
+                let agent = parts.count > 2 ? parts[2] : "codex"
+                for _ in 0..<9000 {
+                    let health = client?.machines.first { $0.id == parts[1] }?.health
+                    if health?.agents.contains(where: { $0.name == agent && $0.loggedIn }) == true { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
             case "click": toggleTask(parts[1])
             case "dblclick": openFocus(parts[1])

@@ -434,6 +434,9 @@ pub enum Inbound {
         /// Reopen: continue the agent's last conversation in `cwd` (Claude Code and Codex; others ignore it).
         #[serde(default)]
         resume: bool,
+        /// The factory's MCP connectors, secrets included (Settings → Connectors), beside `maple`.
+        #[serde(default)]
+        connectors: Option<Vec<crate::wire::McpConnector>>,
     },
     #[serde(rename = "session.resize")]
     SessionResize { id: Uuid, cols: u16, rows: u16 },
@@ -594,6 +597,13 @@ pub enum Inbound {
     DraftRun(crate::draft::Run),
     #[serde(rename = "draft.cancel")]
     DraftCancel { id: String },
+    /// Sign an agent in with a device code, or cancel that (see `agent_login`).
+    #[serde(rename = "agent.login")]
+    AgentLogin {
+        agent: String,
+        #[serde(default)]
+        cancel: bool,
+    },
     /// Remove a merged or closed task's worktree and local branch (see `worktrees::remove_task`).
     #[serde(rename = "task.cleanup")]
     TaskCleanup(crate::tasks::Cleanup),

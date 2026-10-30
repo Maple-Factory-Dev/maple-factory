@@ -215,7 +215,8 @@ struct FindingsView: View {
                 ForEach(rows, id: \.agent) { r in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
-                            Text(r.agent.capitalized).foregroundStyle(Theme.text)
+                            AgentIcon(agent: r.agent, size: 13).foregroundStyle(Theme.text)
+                            Text(agentTitle(r.agent)).foregroundStyle(Theme.text)
                             Spacer()
                             Text("\(r.findings) in \(counted(Int(r.rounds), "round")) · \(r.serious) serious").foregroundStyle(Theme.textFaint)
                             Text(r.perRound.map { String(format: "%.1f", $0) } ?? "–")
@@ -225,7 +226,7 @@ struct FindingsView: View {
                         .font(.system(size: 12.5))
                         bar(share: (r.perRound ?? 0) / top, color: Theme.accent)
                     }
-                    .help("\(r.agent.capitalized): \(r.findings) findings over \(r.rounds) review rounds, \(r.serious) blockers or majors")
+                    .help("\(agentTitle(r.agent)): \(r.findings) findings over \(r.rounds) review rounds, \(r.serious) blockers or majors")
                 }
             }
         }

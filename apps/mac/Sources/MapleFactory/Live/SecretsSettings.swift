@@ -27,73 +27,31 @@ struct SecretsSettings: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                SettingsHeader(
-                    title: "Secrets",
-                    detail: "Task sessions on a repo get its secrets as environment variables, and maple-runner secrets pull writes them to a gitignored .env.local in your checkout. Values are encrypted on the factory and never shown again."
-                )
-                Spacer()
-                if isAdmin && client.isSignedIn, let repo {
-                    Button {
-                        editing = .add(repo: repo)
-                    } label: {
-                        Label("Add", systemImage: "plus")
-                    }
-                }
-            }
-
+        SettingsPane("Secrets",
+                     subtitle: "Task sessions on a repo get its secrets as environment variables, and maple-runner secrets pull writes them to a gitignored .env.local in your checkout. Values are encrypted on the factory and never shown again.",
+                     accessory: isAdmin && client.isSignedIn && repo != nil ? AnyView(addButton) : nil) {
             if !client.isSignedIn {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its secrets."))
+                SettingsUnavailable(detail: "Connect to a factory to see its secrets.")
             } else if client.repos.isEmpty {
-                ContentUnavailableView("No repositories yet", systemImage: "shippingbox", description: Text("Secrets belong to a repo. Add one in Repositories first."))
+                SettingsUnavailable(title: "No repositories yet", systemImage: "shippingbox", detail: "Secrets belong to a repo. Add one in Repositories first.")
             } else {
-                Picker("Repository", selection: Binding(get: { repo ?? "" }, set: { picked = $0 })) {
-                    ForEach(client.repos, id: \.name) { r in
-                        let count = client.secrets.filter { $0.repo.lowercased() == r.name.lowercased() }.count
-                        Text(count > 0 ? "\(r.name)  (\(count))" : r.name).tag(r.name)
+                SettingsSection {
+                    SettingsPicker("Repository", selection: Binding(get: { repo ?? "" }, set: { picked = $0 })) {
+                        ForEach(client.repos, id: \.name) { r in
+                            let count = client.secrets.filter { $0.repo.lowercased() == r.name.lowercased() }.count
+                            Text(count > 0 ? "\(r.name)  (\(count))" : r.name).tag(r.name)
+                        }
                     }
                 }
-                .frame(maxWidth: 360)
-
-                if listed.isEmpty {
-                    ContentUnavailableView("No secrets for \(repo ?? "this repo")", systemImage: "key",
-                                           description: Text(isAdmin ? "Add one, like API_KEY or DATABASE_URL." : "An admin adds them."))
-                } else {
-                    Table(listed) {
-                        TableColumn("Name") { s in
-                            Text(s.name).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.text).help(s.name)
-                        }
-                        .width(min: 150, ideal: 230)
-                        TableColumn("Updated by") { s in
-                            Text("@\(s.updatedBy)").foregroundStyle(Theme.textMuted)
-                        }
-                        .width(min: 90, ideal: 110)
-                        TableColumn("Updated") { s in
-                            let at = Date(timeIntervalSince1970: Double(s.updatedAt) / 1000)
-                            Text(at, format: .relative(presentation: .named)).foregroundStyle(Theme.textMuted).help(at.formatted())
-                        }
-                        .width(min: 80, ideal: 120)
-                        TableColumn("") { s in
-                            if isAdmin {
-                                HStack(spacing: 6) {
-                                    Button("Replace") { editing = .replace(repo: s.repo, name: s.name) }
-                                    Button { deleting = s } label: { Image(systemName: "trash") }
-                                        .help("Delete \(s.name)")
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                        .width(isAdmin ? 110 : 0)
+                SettingsSection(listed.isEmpty ? "Secrets" : listed.count == 1 ? "1 secret" : "\(listed.count) secrets",
+                                caption: isAdmin ? nil : "Only admins can add, replace or delete secrets.") {
+                    if listed.isEmpty {
+                        SettingsRow("No secrets for \(repo ?? "this repo")", detail: isAdmin ? "Add one, like API_KEY or DATABASE_URL." : "An admin adds them.")
                     }
-                    .tableStyle(.bordered(alternatesRowBackgrounds: true))
-                }
-                if !isAdmin {
-                    Text("Only admins can add, replace or delete secrets.").font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
+                    ForEach(listed) { s in row(s) }
                 }
             }
         }
-        .padding(20)
         .sheet(item: $editing) { mode in
             SecretSheet(mode: mode, taken: Set(listed.map(\.name))) { name, value in
                 client.send(.secretsSet(.init(repo: mode.repo, name: name, value: value)))
@@ -107,6 +65,35 @@ struct SecretsSettings: View {
         .onReceive(NotificationCenter.default.publisher(for: Self.demoAdd)) { _ in
             if let repo { editing = .add(repo: repo) }
         }
+    }
+
+    private var addButton: some View {
+        Button {
+            if let repo { editing = .add(repo: repo) }
+        } label: {
+            Label("Add", systemImage: "plus")
+        }
+    }
+
+    /// A secret's name, who changed it when, and (for admins) Replace and Delete.
+    private func row(_ s: Wire.RepoSecret) -> some View {
+        let at = Date(timeIntervalSince1970: Double(s.updatedAt) / 1000)
+        return HStack(spacing: 12) {
+            Image(systemName: "key.fill").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.name).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle).help(s.name)
+                (Text("@\(s.updatedBy) · ") + Text(at, format: .relative(presentation: .named)))
+                    .font(SettingsKit.caption).foregroundStyle(Theme.textMuted).help(at.formatted())
+            }
+            Spacer(minLength: 8)
+            if isAdmin {
+                Button("Replace") { editing = .replace(repo: s.repo, name: s.name) }
+                Button { deleting = s } label: { Image(systemName: "trash") }
+                    .buttonStyle(.borderless)
+                    .help("Delete \(s.name)")
+            }
+        }
+        .settingsRowPadding()
     }
 }
 
@@ -155,10 +142,11 @@ struct SecretSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(
-                title: replacing.map { "Replace \($0)" } ?? "Add a secret",
-                detail: "For \(mode.repo). Once saved, nobody sees the value again, here or anywhere else."
-            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(replacing.map { "Replace \($0)" } ?? "Add a secret").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("For \(mode.repo). Once saved, nobody sees the value again, here or anywhere else.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Name").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
                 if let replacing {

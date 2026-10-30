@@ -28,6 +28,14 @@ enum UsageProduct {
         case .codex: "Codex"
         }
     }
+
+    /// The agent id the runner reports for it.
+    var agent: String {
+        switch self {
+        case .claudeCode: "claude"
+        case .codex: "codex"
+        }
+    }
 }
 
 /// A plan account. Machines signed in to the same account share its limits.
@@ -501,18 +509,8 @@ struct ProductMark: View {
     static let claude = Color(hex: 0xD97757)
 
     var body: some View {
-        switch product {
-        case .claudeCode:
-            Image(systemName: "asterisk")
-                .font(.system(size: 19, weight: .bold))
-                .foregroundStyle(Self.claude)
-                .frame(width: 24, height: 24)
-        case .codex:
-            Image(systemName: "chevron.forward.dotted.chevron.forward")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Theme.editorBG)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(Theme.text))
-        }
+        AgentIcon(agent: product.agent, size: 22)
+            .foregroundStyle(product == .claudeCode ? Self.claude : Theme.text)
+            .frame(width: 24, height: 24)
     }
 }

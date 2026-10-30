@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::protocol::AgentState;
 use crate::sessions::Sessions;
+use crate::wire::{McpConnector, McpTransport};
 
 pub const SOCKET_ENV: &str = "MAPLE_HOOK_SOCKET";
 pub const SESSION_ENV: &str = "MAPLE_SESSION_ID";
@@ -28,6 +29,24 @@ pub struct Hooks {
     pub claude_settings: PathBuf,
     /// Claude Code's `--mcp-config` file for the `agents` MCP server (`maple-runner mcp`).
     pub mcp_config: PathBuf,
+    /// Where the files above live, and each session's own MCP config (`session_mcp_config`).
+    pub dir: PathBuf,
+}
+
+/// The factory's MCP connectors in Claude Code's `--mcp-config` format.
+fn connectors_config(connectors: &[McpConnector]) -> Value {
+    let servers: serde_json::Map<String, Value> = connectors
+        .iter()
+        .filter_map(|c| {
+            let server = match c.transport {
+                McpTransport::Stdio => json!({ "type": "stdio", "command": c.command.as_deref()?, "args": c.args, "env": c.env }),
+                McpTransport::Http => json!({ "type": "http", "url": c.url.as_deref()?, "headers": c.headers }),
+                McpTransport::Other => return None,
+            };
+            Some((c.name.clone(), server))
+        })
+        .collect();
+    json!({ "mcpServers": servers })
 }
 
 /// The `agents` MCP server, as Claude Code's `--mcp-config` file has it.
@@ -65,7 +84,45 @@ impl Hooks {
         std::fs::write(&claude_settings, serde_json::to_vec_pretty(&settings)?)?;
         let mcp = dir.join(format!("mcp-{name}.json"));
         std::fs::write(&mcp, serde_json::to_vec_pretty(&mcp_config(&exe))?)?;
-        Ok(Self { exe, socket: dir.join(format!("runner-{name}.sock")), claude_settings, mcp_config: mcp })
+        Ok(Self { exe, socket: dir.join(format!("runner-{name}.sock")), claude_settings, mcp_config: mcp, dir: dir.to_path_buf() })
+    }
+
+    /// A session's own `--mcp-config` file, for the factory's connectors: their secrets are in it, so
+    /// only this user can read it, and it's removed when the session ends (`remove_session_mcp_config`).
+    pub fn session_mcp_config_path(&self, id: Uuid) -> PathBuf {
+        self.dir.join(format!("mcp-session-{id}.json"))
+    }
+
+    /// Writes the session's connectors file (0600) for Claude Code; none without connectors.
+    pub fn write_session_mcp_config(&self, id: Uuid, connectors: &[McpConnector]) -> Result<Option<PathBuf>> {
+        if connectors.is_empty() {
+            return Ok(None);
+        }
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = self.session_mcp_config_path(id);
+        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
+        file.write_all(&serde_json::to_vec_pretty(&connectors_config(connectors))?)?;
+        Ok(Some(path))
+    }
+
+    pub fn remove_session_mcp_config(&self, id: Uuid) {
+        let _ = std::fs::remove_file(self.session_mcp_config_path(id));
+    }
+
+    /// Removes every session's connectors file but `live` ones'; returns how many went.
+    pub fn sweep_session_mcp_configs(&self, live: &std::collections::HashSet<Uuid>) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return 0 };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_prefix("mcp-session-")?.strip_suffix(".json")).and_then(|s| Uuid::parse_str(s).ok()) else {
+                continue;
+            };
+            if !live.contains(&id) && std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
     }
 
     /// Extra arguments that switch on status hooks and the `agents` MCP server for an agent.
@@ -466,6 +523,77 @@ fn shell_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sessions_connectors_file_is_private_and_removable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("maple-hooks-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hooks = Hooks::prepare(&dir, "test").unwrap();
+        let id = Uuid::new_v4();
+        assert_eq!(hooks.write_session_mcp_config(id, &[]).unwrap(), None, "no connectors, no file");
+        let jira = McpConnector {
+            name: "jira".into(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "mcp-atlassian".into()],
+            url: None,
+            env: [("JIRA_API_TOKEN".to_string(), "secret".to_string())].into(),
+            headers: Default::default(),
+            enabled: true,
+            auto_allow: false,
+        };
+        let docs = McpConnector {
+            name: "docs".into(),
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            url: Some("https://mcp.example.com/mcp".into()),
+            env: Default::default(),
+            headers: [("Authorization".to_string(), "Bearer abc".to_string())].into(),
+            enabled: true,
+            auto_allow: true,
+        };
+        let path = hooks.write_session_mcp_config(id, &[jira, docs]).unwrap().unwrap();
+        assert_eq!(path, dir.join(format!("mcp-session-{id}.json")));
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            json!({ "mcpServers": {
+                "jira": { "type": "stdio", "command": "npx", "args": ["-y", "mcp-atlassian"], "env": { "JIRA_API_TOKEN": "secret" } },
+                "docs": { "type": "http", "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer abc" } },
+            } })
+        );
+        hooks.remove_session_mcp_config(id);
+        assert!(!path.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn startup_sweeps_connectors_files_of_sessions_that_are_gone() {
+        let dir = std::env::temp_dir().join(format!("maple-hooks-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hooks = Hooks::prepare(&dir, "test").unwrap();
+        let jira = McpConnector {
+            name: "jira".into(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec![],
+            url: None,
+            env: [("JIRA_API_TOKEN".to_string(), "secret".to_string())].into(),
+            headers: Default::default(),
+            enabled: true,
+            auto_allow: false,
+        };
+        let (live, gone) = (Uuid::new_v4(), Uuid::new_v4());
+        let kept = hooks.write_session_mcp_config(live, std::slice::from_ref(&jira)).unwrap().unwrap();
+        let stale = hooks.write_session_mcp_config(gone, std::slice::from_ref(&jira)).unwrap().unwrap();
+        assert_eq!(hooks.sweep_session_mcp_configs(&[live].into()), 1);
+        assert!(kept.exists() && !stale.exists());
+        assert!(hooks.mcp_config.exists(), "the runner's own maple config stays");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn state(agent: &str, payload: Value) -> Option<(&'static str, Option<String>)> {
         classify(agent, &payload).map(|a| {

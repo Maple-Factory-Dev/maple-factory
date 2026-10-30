@@ -5,13 +5,14 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
+import { redacted } from "./factory/connectors.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
@@ -150,7 +151,7 @@ export class OrgHub extends DurableObject<Env> {
         return Response.json(await this.engine.fromRunner(machine, msg));
       }
       case "/notice": {
-        const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null; state?: string; version?: string | null } };
+        const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null; state?: string; version?: string | null; status?: AgentLoginStatus } };
         if (msg.type === "session.error" && msg.message) this.broadcast({ type: "error", message: `${machine}: ${msg.message}`, requestId: null });
         if (msg.type === "update.status") {
           // The machine's card shows where it is; a toast only for a failure, which is worth noticing elsewhere.
@@ -161,6 +162,11 @@ export class OrgHub extends DurableObject<Env> {
             const name = known?.name ?? machine;
             this.broadcast({ type: "toast", text: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`, taskId: null });
           }
+        }
+        if (msg.type === "agent.login_status" && msg.status) {
+          // The one-time code is a credential: only the machine's owner sees it, never a broadcast.
+          const owner = (await this.machines()).find((m) => m.id === machine)?.owner;
+          if (owner) this.sendTo(owner, { type: "machine.agent_login", machine, status: msg.status });
         }
         return new Response(null, { status: 204 });
       }
@@ -446,6 +452,7 @@ export class OrgHub extends DurableObject<Env> {
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
           prompts: this.store.prompts(),
+          connectors: redacted(this.store.connectors()),
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
@@ -477,7 +484,7 @@ export class OrgHub extends DurableObject<Env> {
         }
         let command: ServerToRunner;
         if (msg.type === "session.open") {
-          command = { type: "session.open", id: crypto.randomUUID(), agent: msg.agent, cwd: msg.cwd, cols: msg.cols, rows: msg.rows, prompt: msg.prompt ?? null, resume: false, taskId: null };
+          command = { type: "session.open", id: crypto.randomUUID(), agent: msg.agent, cwd: msg.cwd, cols: msg.cols, rows: msg.rows, prompt: msg.prompt ?? null, resume: false, taskId: null, connectors: this.engine.connectors() };
           await audit(this.env, client.member.login, "session.opened", msg.machine, { agent: msg.agent, cwd: msg.cwd, id: command.id });
         } else if (msg.type === "session.kill") {
           command = { type: "session.kill", id: msg.id };
@@ -520,6 +527,23 @@ export class OrgHub extends DurableObject<Env> {
         if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
         await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), from: machine.version ?? null, message: null, at: Date.now() }, true);
         await audit(this.env, client.member.login, "runner.update", msg.machine);
+        return;
+      }
+      case "machine.agent_login": {
+        // Its owner only, not even an admin: a device code signs the machine into whoever finishes it in the browser.
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (machine.owner !== client.member.login) {
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} can sign ${machine.name} in to ${msg.agent}.`, requestId: null });
+        }
+        const cancel = msg.cancel ?? false;
+        const res = await machineHub(this.env, msg.machine).fetch("https://hub/command", {
+          method: "POST",
+          body: JSON.stringify({ type: "agent.login", agent: msg.agent, cancel }),
+          headers: { "x-by": client.member.login },
+        });
+        if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        await audit(this.env, client.member.login, cancel ? "agent.login.cancelled" : "agent.login", msg.machine, { agent: msg.agent });
         return;
       }
       case "runner.check": {

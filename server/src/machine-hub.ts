@@ -283,6 +283,7 @@ export class MachineHub extends DurableObject<Env> {
         await orgHub(this.env).fetch("https://org/notice", { method: "POST", body: JSON.stringify({ machine: machine.id, msg }) });
         return;
       case "update.status":
+      case "agent.login_status":
         await orgHub(this.env).fetch("https://org/notice", { method: "POST", body: JSON.stringify({ machine: machine.id, msg }) });
         return;
     }
