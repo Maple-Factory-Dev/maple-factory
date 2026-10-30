@@ -28,6 +28,7 @@ struct MapleFactoryApp: App {
         }
         _client = State(initialValue: client)
         _state = State(initialValue: state)
+        AppDelegate.client = client
         if Headless.isOn { AppDelegate.headless = (state, client) }
     }
 
@@ -110,16 +111,21 @@ struct MapleFactoryApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// What a `-snapshot` run drives; set by the app before launch finishes.
     @MainActor static var headless: (AppState, FactoryClient)?
+    /// The app's client, whose factory icon the Dock starts on; set by the app before launch finishes.
+    @MainActor static var client: FactoryClient?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Headless: no Dock icon, no activation, no updates or banners; the user keeps the screen.
         if let (state, client) = Self.headless {
+            // Only traced (`-dockTrace`), the way a real launch would show it.
+            DockIcon.apply(client.icon)
             Headless.start(state: state, client: client)
             return
         }
         // Running from `swift run` has no bundle, so promote to a regular foreground app.
         NSApp.setActivationPolicy(.regular)
-        NSApp.applicationIconImage = MapleIcon.dockImage
+        // The factory's cached icon (or Maple's): FactoryClient set it before there was a regular app to show it.
+        DockIcon.apply(Self.client?.icon)
         Updater.shared.start()
         Notifier.shared.start()
         NSApp.activate(ignoringOtherApps: true)
