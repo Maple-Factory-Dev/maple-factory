@@ -97,6 +97,11 @@ struct LiveTerminal: NSViewRepresentable {
                 }
             } catch {
                 guard !closing else { return }
+                // Refused for who's asking (not their machine, or their access revoked): say so, and don't retry.
+                if let refusal = await FactoryClient.terminalRefusal(socket) {
+                    state.wrappedValue = .closed(refusal)
+                    return
+                }
                 state.wrappedValue = .closed(FactoryClient.describe(error, response: socket.response))
                 // Try again on a backoff: a server restart or a network blip shouldn't need a click.
                 retries += 1

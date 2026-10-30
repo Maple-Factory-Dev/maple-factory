@@ -24,6 +24,19 @@ enum DiffReview {
     /// A file's lines as the Diff tab shows them: each hunk's, one hunk after another.
     static func rows(_ hunks: [DiffHunk]) -> [DiffLine] { hunks.flatMap(\.lines) }
 
+    /// `rows`, split after every row in `breaks` and into runs of at most `limit`, so a long file
+    /// builds only the runs on screen.
+    static func runs(_ rows: Range<Int>, breaks: Set<Int>, limit: Int = 100) -> [Range<Int>] {
+        var out: [Range<Int>] = []
+        var start = rows.lowerBound
+        for row in rows where breaks.contains(row) || row + 1 - start >= limit {
+            out.append(start..<row + 1)
+            start = row + 1
+        }
+        if start < rows.upperBound { out.append(start..<rows.upperBound) }
+        return out
+    }
+
     /// The lines a selection covers, numbered the way GitHub would: removed lines alone are on the
     /// old side; otherwise the new side, by the added and unchanged lines' numbers.
     static func span(_ lines: [DiffLine]) -> (start: Int, end: Int, side: Wire.DiffSide)? {

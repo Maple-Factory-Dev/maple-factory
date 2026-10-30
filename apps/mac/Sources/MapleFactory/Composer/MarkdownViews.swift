@@ -219,31 +219,34 @@ struct MarkdownPreview: View {
     @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case let .heading(level, text):
-            Text(inline(text))
-                .font(.system(size: level == 1 ? baseSize + 9 : level == 2 ? baseSize + 4 : baseSize + 1.5, weight: .semibold))
+            let size = level == 1 ? baseSize + 9 : level == 2 ? baseSize + 4 : baseSize + 1.5
+            let rendered = inline(text)
+            Text(rendered)
+                .font(.system(size: size, weight: .semibold))
+                .taskRefHover(rendered, size: size, weight: .semibold, known: knownTasks)
                 .foregroundStyle(Theme.text)
                 .padding(.top, level <= 2 ? 6 : 2)
         case let .task(checked, text):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
                     .foregroundStyle(checked ? Theme.accent : Theme.textMuted)
-                Text(inline(text)).foregroundStyle(Theme.text)
+                hoverable(inline(text)).foregroundStyle(Theme.text)
             }
             .font(.system(size: baseSize))
         case let .bullet(text):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("•").foregroundStyle(Theme.textMuted)
-                Text(inline(text)).foregroundStyle(Theme.text)
+                hoverable(inline(text)).foregroundStyle(Theme.text)
             }
             .font(.system(size: baseSize))
         case let .numbered(number, text):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("\(number).").foregroundStyle(Theme.textMuted).monospacedDigit()
-                Text(inline(text)).foregroundStyle(Theme.text)
+                hoverable(inline(text)).foregroundStyle(Theme.text)
             }
             .font(.system(size: baseSize))
         case let .quote(text):
-            Text(inline(text))
+            hoverable(inline(text))
                 .font(.system(size: baseSize))
                 .foregroundStyle(Theme.textMuted)
                 .padding(.leading, 12)
@@ -271,11 +274,13 @@ struct MarkdownPreview: View {
                 }
             }
         case let .paragraph(text):
-            Text(inline(text))
+            let rendered = inline(text)
+            Text(rendered)
                 .font(.system(size: baseSize))
                 .foregroundStyle(Theme.text.opacity(0.9))
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
+                .taskRefHover(rendered, size: baseSize, lineSpacing: 4, known: knownTasks)
         case .rule:
             Hairline()
         case let .image(alt, path):
@@ -283,6 +288,11 @@ struct MarkdownPreview: View {
         case let .file(name, path):
             AttachmentChip(name: name, path: path)
         }
+    }
+
+    /// Body-size inline text whose task references show a preview card on hover (TaskRefHover).
+    private func hoverable(_ text: AttributedString) -> some View {
+        Text(text).taskRefHover(text, size: baseSize, known: knownTasks)
     }
 
     private func inline(_ text: String) -> AttributedString {
@@ -728,6 +738,11 @@ struct TaskRefQuery: Equatable {
             let id = ns.substring(with: match.range(at: 1))
             return known.contains(id) ? (match.range, id) : nil
         }
+    }
+
+    /// The reference (references(in:known:)) covering a UTF-16 offset, for hovering rendered Markdown.
+    static func reference(at characterIndex: Int, in text: String, known: Set<String>) -> (range: NSRange, id: String)? {
+        references(in: text, known: known).first { NSLocationInRange(characterIndex, $0.range) }
     }
 
     /// `-actions "openref:ATL-150"` (AppState.play): clicks that reference in rendered Markdown.

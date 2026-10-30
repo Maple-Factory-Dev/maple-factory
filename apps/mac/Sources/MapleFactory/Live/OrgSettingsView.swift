@@ -654,7 +654,7 @@ struct FactoryAdminsCard: View {
     static let demo = Notification.Name("FactoryAdminsCard.demo")
 
     var body: some View {
-        SettingsSection("Factory admins", caption: "Admins change the factory's settings, secrets and prompts. Owners of the GitHub organization always are; an admin can make anyone else who has signed in one too.") {
+        SettingsSection("Factory admins", caption: "Admins change the factory's settings, secrets and prompts. Owners of the GitHub organization always are; an admin can make anyone else who has signed in one too, or revoke their access, which signs them out everywhere at once.") {
             ForEach(client.members, id: \.login) { member in row(member) }
             if !client.isAdmin {
                 SettingsNote("Only admins can change who's an admin.")
@@ -684,6 +684,9 @@ struct FactoryAdminsCard: View {
                 } else {
                     Button("Make admin") { client.grantAdmin(member.login) }.controlSize(.small)
                 }
+                Button("Revoke access") { client.revokeAccess(member.login) }
+                    .controlSize(.small)
+                    .help("Signs \(member.login) out of every app and browser now and closes their terminals. They can sign in again while GitHub lets them.")
             }
         }
         .font(.system(size: 12.5))

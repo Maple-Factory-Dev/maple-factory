@@ -12,6 +12,8 @@ import { orgHub } from "./util.ts";
 
 interface Viewer {
   login: string;
+  /** Their role when they opened it; the worker let them in as the machine's owner or an admin. */
+  role: string;
   session: string;
   nonce: string;
   /** False until the replay arrives; live output before it is already in the replay. */
@@ -54,6 +56,18 @@ export class MachineHub extends DurableObject<Env> {
       case "/disconnect": {
         for (const ws of this.ctx.getWebSockets(RUNNER)) ws.close(4001, "token replaced or machine removed");
         if ((await request.text()) === "forget") await this.ctx.storage.deleteAll();
+        return new Response(null, { status: 204 });
+      }
+      case "/drop-viewers": {
+        // Someone's access was revoked: their open terminals close now. With role=admin their admin grant was
+        // taken back, so only the terminals they opened as an admin close, and none on a machine they own.
+        const login = url.searchParams.get("login") ?? "";
+        const role = url.searchParams.get("role");
+        if (role && (await this.machine()).owner === login) return new Response(null, { status: 204 });
+        for (const ws of this.ctx.getWebSockets(VIEWER)) {
+          const viewer = ws.deserializeAttachment() as Viewer;
+          if (viewer.login === login && (!role || viewer.role === role)) ws.close(4003, role ? "admin access taken back" : "access revoked");
+        }
         return new Response(null, { status: 204 });
       }
       case "/state": return Response.json(await this.machine());
@@ -109,7 +123,7 @@ export class MachineHub extends DurableObject<Env> {
 
   private acceptViewer(url: URL): Response {
     const session = url.searchParams.get("session") ?? "";
-    const viewer: Viewer = { login: url.searchParams.get("login") ?? "", session, nonce: crypto.randomUUID(), ready: false };
+    const viewer: Viewer = { login: url.searchParams.get("login") ?? "", role: url.searchParams.get("role") ?? "member", session, nonce: crypto.randomUUID(), ready: false };
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], [VIEWER, `s:${session}`]);
     pair[1].serializeAttachment(viewer);

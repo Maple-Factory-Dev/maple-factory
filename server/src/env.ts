@@ -50,6 +50,8 @@ export interface Env {
   JIRA_EMAIL?: string;
   JIRA_API_TOKEN?: string;
   JIRA_LABEL?: string;
+  /** How old a member's membership check may get before a request asks GitHub again (ms); default 10 minutes. */
+  MEMBERSHIP_RECHECK_MS?: string;
   /** How long an auto-merge counts down (ms) before it merges, so a person can hold it; default 10000. */
   MERGE_GRACE_MS?: string;
 }

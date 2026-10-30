@@ -39,6 +39,13 @@ button, textarea, input, select { font: inherit; color: inherit; }
 main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
 h1 { font-size: 26px; line-height: 1.2; margin: 6px 0 8px; letter-spacing: -0.01em; }
 h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+/* A collapsible section's heading: the h2 as-is, clickable, with a chevron that turns when it's closed. */
+.section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; margin: 0; border: 0; background: none; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: 4px; }
+.section-head:hover { color: var(--text); }
+.section-head:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+.section-head .chevron { display: inline-block; width: 1em; text-align: center; transition: transform 0.15s; }
+.section.closed .chevron { transform: rotate(-90deg); }
+.section.closed h2 { margin-bottom: 4px; }
 .muted { color: var(--muted); }
 .agent-icon { width: 1em; height: 1em; vertical-align: -0.125em; margin-right: 0.3em; flex: none; }
 .faint { color: var(--faint); }
@@ -256,13 +263,56 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
 .toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 99px; font-size: 14px; max-width: calc(100vw - 32px); }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
 .signin { max-width: 420px; margin: 80px auto; text-align: center; }
+.bar .new-plus { display: none; }
 @media (max-width: 600px) {
-  main { padding-top: 16px; }
-  .bar { gap: 8px; padding-left: 12px; padding-right: 12px; }
-  .bar nav a { padding: 4px 7px; }
+  /* Side gutters clear the notch in landscape; the bottom clears the home indicator. */
+  main { padding: 16px max(16px, env(safe-area-inset-right)) calc(80px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .bar { gap: 8px; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .brand { flex: none; }
+  /* Brand, nav, live dot and New task stay on one line; a nav too wide for the screen scrolls sideways. */
+  .bar nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .bar nav::-webkit-scrollbar { display: none; }
+  .bar nav a { flex: none; padding: 6px 8px; white-space: nowrap; }
+  .bar .new { flex: none; width: 40px; padding: 0; font-size: 22px; font-weight: 500; line-height: 1; }
+  .bar .new-plus { display: block; margin-top: -2px; }
+  .bar .new-label { display: none; }
   #org { display: none; }
   .status.live { font-size: 0; }
   .status.live::before { margin-right: 0; }
+
+  /* Long titles, IDs and URLs wrap instead of pushing past the screen. */
+  h1, .item .title, .row > *, .callout, .card, .comment { overflow-wrap: anywhere; }
+  .item > div, .row > * { min-width: 0; }
+
+  /* Inputs at 16px, so Safari doesn't zoom in on focus. */
+  input:not([type="checkbox"], .note-title), select, textarea, .md-editor .md-input { font-size: 16px; }
+
+  /* The decisions stack full-width, easy to hit. */
+  .actions { flex-direction: column; align-items: stretch; }
+  .actions > .muted { text-align: center; }
+
+  /* The task's header: state, owner and goal as their own lines, the owner select at its own width. */
+  h1 + .row > .row > select { width: auto; max-width: 100%; }
+  h1 + .row > .row > .muted:last-child { display: none; }
+  h1 + .row > .muted { flex-basis: 100%; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; white-space: nowrap; }
+
+  /* Wide content scrolls in its own box. */
+  .diff .file > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .diff .file > span:not(:first-child) { flex: none; }
+  .terminal, pre.out, .check-log { max-width: 100%; }
+  /* A mockup renders at a desktop width, scaled down to fit (--fit, set by app.js) rather than squeezed. */
+  .mockup-fit { height: 320px; overflow: hidden; }
+  .mockup-fit .mockup-frame { width: 800px; height: calc(320px / var(--fit, 1)); transform: scale(var(--fit, 1)); transform-origin: 0 0; border-radius: 0; }
+
+  /* A mention's Dismiss and a note's "became MF-x" go under the text instead of crushing it. */
+  .item.mention-row { flex-wrap: wrap; align-items: flex-start; padding: 0 14px 12px 0; }
+  .item.mention-row > .item { flex-basis: 100%; }
+  .item.mention-row > .btn { margin: -4px 0 0 34px; }
+  .item.note { flex-wrap: wrap; }
+  .item.note > div { min-width: 100% !important; }
   .fields { flex-direction: column; }
   .btn kbd { display: none; }
   .md-keys { display: none; }
@@ -272,6 +322,16 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
   .card.draft .actionbar > .muted:empty { display: none; }
   h1 { font-size: 22px; }
   .mockup-frame { height: 320px; }
+}
+/* Tap targets: 40–44px on phones and touch screens. */
+@media (max-width: 600px), (pointer: coarse) {
+  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; }
+  .btn.small { min-height: 40px; }
+  .tab { min-height: 40px; }
+  .option { min-height: 44px; }
+  .md-tab { height: 32px; }
+  .md-head { height: 48px; }
+  .md-tool { width: 36px; height: 36px; }
 }
 
 /* A Done when item's screenshot or recording (MF-44). */

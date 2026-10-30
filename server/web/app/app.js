@@ -8,6 +8,7 @@
 
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
+import { loadCollapsed, toggleCollapsed } from "./sections.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -123,6 +124,7 @@ function receive(m) {
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
+      mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
     case "machine.updated":
@@ -154,6 +156,7 @@ function receive(m) {
       // The task being created didn't take; let the composer try again. Errors carry no request id, so
       // take one that comes back soon after the create to be about it; any later one leaves it alone.
       if (creating && Date.now() - creating.at < 5_000) createFailed();
+      mergeSent.clear(); // a refused Merge or Hold gives its buttons back
       toast(m.message);
       break;
     default: return;
@@ -266,6 +269,20 @@ function render() {
 }
 const view = render;
 
+// Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
+const collapsed = loadCollapsed();
+
+/** A section with a heading that collapses it to "Title · count"; `body()` isn't built while it's collapsed. */
+function section(key, title, count, body) {
+  const open = !collapsed.has(key);
+  const id = `section-${key.replace(/[^\w-]/g, "-")}`;
+  return h("section", { class: `section${open ? "" : " closed"}` },
+    h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
+      onclick: () => { toggleCollapsed(collapsed, key); render(); } },
+      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+    open && h("div", { id }, body()));
+}
+
 function row(t, sub) {
   const goal = goalOf(t);
   return h("a", { class: "item", href: `#/t/${t.id}` },
@@ -295,16 +312,12 @@ function inboxView() {
   return h("div", {},
     h("h1", {}, "Inbox"),
     h("p", { class: "muted" }, total ? `${total} thing${total === 1 ? "" : "s"} waiting on you.` : "Nothing's waiting on you."),
-    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) => [
-      h("h2", {}, `${KINDS[k][0]} · ${groups.get(k).length}`),
-      h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))),
-    ]),
-    mentioned.length > 0 && [
-      h("h2", {}, `Mentions · ${mentioned.length}`),
+    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) =>
+      section(`inbox:${k}`, KINDS[k][0], groups.get(k).length, () => h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))))),
+    mentioned.length > 0 && section("inbox:mentions", "Mentions", mentioned.length, () =>
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
-        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss")))),
-    ],
+        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
     !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
@@ -327,12 +340,12 @@ function tasksView() {
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
-    drafts.length > 0 && [h("h2", {}, `Drafts · ${drafts.length}`), h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))],
-    queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
-    backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
-    h("h2", {}, `In flight · ${active.length}`),
-    active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight."),
-    done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
+    drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
+    queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
+    backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
+    section("tasks:active", "In flight", active.length, () =>
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
+    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
 }
 
 // ---- a new task ----
@@ -545,6 +558,9 @@ function mount(next, keepCompose) {
     active.focus({ preventScroll: true });
     if (range) try { active.setSelectionRange(...range); } catch {}
   }
+  // A section heading is rebuilt on every render; keep the keyboard on it.
+  const head = active?.dataset?.section;
+  if (head) main.querySelector(`[data-section="${CSS.escape(head)}"]`)?.focus({ preventScroll: true });
 }
 
 // ---- a task ----
@@ -732,18 +748,21 @@ function decisions(t) {
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
-    if (countdown) {
+    if (merging(t)) {
+      // The factory has it (or a click is on its way): nothing to click until it lands.
+      buttons.push(h("button", { class: "btn go", disabled: true }, "Merging…"));
+    } else if (countdown) {
       // The factory merges when the fill drains: its delay is the part of the window already gone,
       // so a re-render (or a reload) carries on from where it is.
       buttons.push(h("button", {
-        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt,
+        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.holdMerge", id: t.id }) }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.merge", id: t.id }) }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
-      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
+      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
@@ -800,18 +819,43 @@ function mergeCountdown(t) {
   return { total: Math.max(started ? t.mergeAt - started : 10_000, left, 1), left };
 }
 
+/** Merging, as far as its buttons go: the server says so, a Merge or Hold is on its way, or its
+ *  countdown ran out (the server says Merging… a moment later). */
+function merging(t) {
+  if (t.state !== "reviewing") return false;
+  if (t.liveLog === "Merging…" || mergeSent.has(t.id)) return true;
+  const countdown = !t.hand && mergeCountdown(t);
+  return !!countdown && countdown.left === 0;
+}
+
+/** Sends a Merge or Hold and locks its buttons until the task's next update (or 30s, if none comes). */
+function sendMerge(t, type) {
+  if (mergeSent.has(t.id) || !send({ type, id: t.id })) return;
+  const at = Date.now();
+  mergeSent.set(t.id, at);
+  setTimeout(() => { if (mergeSent.get(t.id) === at) { mergeSent.delete(t.id); render(); } }, 30_000);
+  render();
+}
+
 function countdownLabel(mergeAt) {
   const left = Math.ceil((mergeAt - Date.now()) / 1000);
   return left > 0 ? `Merging in ${left}s` : "Merging…";
 }
 
 // A countdown's label ticks on its own, between the renders that updates bring.
+// A countdown button that reaches 0 redraws once, so Hold and Merge now drop out at once.
 setInterval(() => {
-  for (const el of document.querySelectorAll("[data-merge-at]")) el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+  let due = false;
+  for (const el of document.querySelectorAll("[data-merge-at]")) {
+    el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+    if (el.hasAttribute("data-locks") && Number(el.dataset.mergeAt) <= Date.now()) due = true;
+  }
+  if (due) render();
 }, 250);
 
 const keepingTitle = new Set(); // ids whose approver ticked "Keep current title"
 const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
+const mergeSent = new Map(); // id → when its Merge or Hold was sent, until the task's next update
 
 /** Asks before cancelling, saying what it stops. */
 function cancelCard(t) {
@@ -992,12 +1036,19 @@ function mockup(m) {
   const body = m.kind === "terminal"
     ? h("div", { class: "terminal" }, m.lines.map((l) => h("div", { class: l.style }, l.text || " ", l.callout && h("span", { class: "callout-n" }, l.callout))))
     : h("div", { class: "browser" }, h("div", { class: "url" }, m.url ?? m.title),
-      h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }));
+      fitted(h("div", { class: "mockup-fit" }, h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }))));
   return h("div", { style: "margin-bottom:14px" },
     h("div", { class: "row", style: "margin-bottom:6px" }, h("b", {}, m.title), h("span", { class: "muted" }, m.status === "approved" ? "· approved" : m.status === "changesRequested" ? "· changes asked" : "")),
     body,
     m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
 }
+
+/** On a phone a mockup renders 800px wide and scales down by --fit to its box (app.css). */
+// A re-render drops the old box, which reports a size of 0 on its way out: let go of it then.
+const fit = new ResizeObserver((entries) => {
+  for (const e of entries) e.target.isConnected ? e.target.style.setProperty("--fit", Math.min(1, e.contentRect.width / 800)) : fit.unobserve(e.target);
+});
+const fitted = (el) => (fit.observe(el), el);
 
 const attesting = new Map(); // task id → { item, note }: the Done when item being attested and the reason typed so far
 

@@ -66,6 +66,8 @@ const MERGE_FIX = "Send it back to fix";
 const MERGE_RETRY = "Try the merge again";
 /** Times the factory sends a task that didn't merge back to fix it before asking a person. */
 const MERGE_FIX_TRIES = 2;
+/** What a task says while it's merging, from its countdown running out until it lands. */
+const MERGING = "Merging…";
 /** How long an auto-merge waits for its dry-run merge's answer before merging anyway. */
 const MERGE_CHECK_WAIT_MS = 60_000;
 /** How long a pull request with no checks yet waits for some to show up. */
@@ -561,9 +563,11 @@ export class Engine {
         return;
       }
       case "task.merge": {
+        // A late or repeated click: it's merging (or merged) already, or its countdown ran out and the
+        // factory has it. Nothing to do, and nothing to complain about.
+        if (task.state === "merged" || this.store.private(task.id).merging || this.countdownDone(task)) return;
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
         if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
-        if (this.store.private(task.id).merging) fail("It's merging now.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
@@ -573,6 +577,8 @@ export class Engine {
         return;
       }
       case "task.holdMerge": {
+        // Too late to hold: the countdown ran out and the factory is merging it.
+        if (this.countdownDone(task) || (task.mergeAt == null && this.store.private(task.id).merging)) return;
         if (task.mergeAt == null) fail("It isn't counting down to merge.");
         const head = task.pr?.head ?? task.pr?.branch ?? null;
         task.mergeAt = null;
@@ -2091,6 +2097,12 @@ export class Engine {
       return;
     }
     if (task.mergeAt > now()) return this.hooks.wakeIn(task.mergeAt - now());
+    // Due: from here the factory has it, so clients lock Hold and Merge while the dry-run check runs.
+    if (task.liveLog !== MERGING) {
+      task.liveLog = MERGING;
+      this.save(task);
+      if (task.mergeAt == null) return; // a gate dropped on that save
+    }
     // A dry-run merge first, once per head: a conflict goes back to its builder without a failed merge.
     if (priv.mergeChecked !== head && task.machine && priv.worktree) {
       const asked = priv.mergeCheck;
@@ -2100,7 +2112,15 @@ export class Engine {
       // Its machine is offline, or never answered: merge anyway; a conflict still shows up there.
     }
     task.mergeAt = null;
-    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => this.save(task));
+    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {
+      if (!this.store.private(task.id).merging && task.liveLog === MERGING) task.liveLog = null;
+      this.save(task);
+    });
+  }
+
+  /** Its auto-merge countdown ran out: the factory is merging it (or checking it merges first). */
+  private countdownDone(task: Task) {
+    return task.state === "reviewing" && task.mergeAt != null && task.mergeAt <= now();
   }
 
   /** Auto-merges whose countdown ran out (one still running wakes the hub again); the hub's alarm calls this. */
@@ -2117,7 +2137,7 @@ export class Engine {
       // On GitHub: squash-merge the pull request, pinned to the head that was reviewed.
       this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who });
       this.event(task, who, text);
-      task.liveLog = "Merging…";
+      task.liveLog = MERGING;
       this.save(task);
       await audit(this.env, who, "task.merged", task.id);
       const pr = task.pr;
@@ -2145,7 +2165,7 @@ export class Engine {
     if (!sent) fail(`${(await this.hooks.machines()).find((m) => m.id === task.machine)?.name ?? task.machine} is offline; it merges when it's back.`);
     this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who });
     this.event(task, who, text);
-    task.liveLog = "Merging…";
+    task.liveLog = MERGING;
     this.save(task);
     await audit(this.env, who, "task.merged", task.id);
   }
@@ -2543,7 +2563,11 @@ export class Engine {
     if (task.mergeAt != null) {
       const priv = this.store.private(task.id);
       const head = task.pr?.head ?? task.pr?.branch;
-      if (!this.mergeReady(task) || !this.assessment(task).autoMerge || priv.mergeHead !== head || priv.mergeHeld === head) task.mergeAt = null;
+      if (!this.mergeReady(task) || !this.assessment(task).autoMerge || priv.mergeHead !== head || priv.mergeHeld === head) {
+        task.mergeAt = null;
+        // Said "Merging…" when its countdown ran out, but it isn't merging after all.
+        if (task.liveLog === MERGING && !priv.merging) task.liveLog = null;
+      }
     }
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });

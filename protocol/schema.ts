@@ -1136,6 +1136,7 @@ export const unions: Record<string, Union> = {
       "prompts.save": { doc: "Admins only: the org's prompt additions.", fields: { prompts: "PromptAdditions" } },
       "admins.grant": { doc: "Admins only: make someone who has signed in an admin of this factory.", fields: { login: "string" } },
       "admins.revoke": { doc: "Admins only: take back an admin grant (not a GitHub owner's, nor your own).", fields: { login: "string" } },
+      "members.revoke": { doc: "Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).", fields: { login: "string" } },
       "connectors.save": {
         doc: "Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.",
         fields: { connectors: "McpConnector[]" },
