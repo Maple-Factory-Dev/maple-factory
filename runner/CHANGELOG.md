@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.53.0 — 2026-10-29
+
+Sign a machine's Codex in from the app: the runner runs `codex login --device-auth` and reports its link and one-time code to the machine's owner, then checks its agents again as soon as it's signed in. From this release there's no Intel Mac build.
+
 ## 0.52.0 — 2026-10-29
 
 The protocol carries code review notes and GitHub review threads.
