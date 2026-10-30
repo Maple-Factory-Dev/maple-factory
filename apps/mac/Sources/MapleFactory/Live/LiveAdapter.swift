@@ -75,6 +75,8 @@ import SwiftUI
         // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
         task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state, planned: !t.plan.isEmpty)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
+        task.builder = t.agent
+        task.model = t.model
         task.owner = who(t.owner)
         task.machine = t.machine
         task.pushed = t.pr?.head
