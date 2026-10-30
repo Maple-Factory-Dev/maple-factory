@@ -12,6 +12,8 @@ struct TaskFocusView: View {
 
     enum Tab { case overview, diff, session }
 
+    static let demoTab = Notification.Name("TaskFocusView.demoTab")
+
     private let mainWidth: CGFloat = 720
     private let railWidth: CGFloat = 300
 
@@ -51,6 +53,15 @@ struct TaskFocusView: View {
         .onAppear {
             if appState.pendingTab == "session", hasSession { tab = .session }
             appState.pendingTab = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoTab)) { note in
+            let target: Tab? = switch note.object as? String {
+            case "overview": .overview
+            case "diff": .diff
+            case "session": .session
+            default: nil
+            }
+            if let target { withAnimation(.snappy(duration: 0.2)) { tab = target } }
         }
     }
 
