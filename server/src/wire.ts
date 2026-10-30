@@ -606,6 +606,8 @@ export interface Task {
   plan: PlanStep[];
   planVersion: number;
   planSummary?: string | null;
+  /** The planner's proposed title, taken when the plan is approved. */
+  suggestedTitle?: string | null;
   doneWhen: DoneItem[];
   approvals: string[];
   approvalsNeeded: number;
@@ -1733,6 +1735,8 @@ export interface ClientMessage_TaskReview {
 export interface ClientMessage_TaskApprovePlan {
   type: "task.approvePlan";
   id: string;
+  /** Turn down the plan's suggested title and keep the current one. */
+  keepTitle?: boolean | null;
 }
 
 /** Answer the agent's question. */

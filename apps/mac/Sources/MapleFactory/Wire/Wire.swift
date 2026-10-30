@@ -2397,6 +2397,8 @@ public enum Wire {
         public var plan: [PlanStep]
         public var planVersion: UInt32
         public var planSummary: String?
+        /// The planner's proposed title, taken when the plan is approved.
+        public var suggestedTitle: String?
         public var doneWhen: [DoneItem]
         public var approvals: [String]
         public var approvalsNeeded: UInt32
@@ -2447,7 +2449,7 @@ public enum Wire {
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2459,6 +2461,7 @@ public enum Wire {
             self.plan = plan
             self.planVersion = planVersion
             self.planSummary = planSummary
+            self.suggestedTitle = suggestedTitle
             self.doneWhen = doneWhen
             self.approvals = approvals
             self.approvalsNeeded = approvalsNeeded
@@ -2510,6 +2513,7 @@ public enum Wire {
             plan = try c.decodeIfPresent([PlanStep].self, forKey: .plan) ?? []
             planVersion = try c.decode(UInt32.self, forKey: .planVersion)
             planSummary = try c.decodeIfPresent(String.self, forKey: .planSummary)
+            suggestedTitle = try c.decodeIfPresent(String.self, forKey: .suggestedTitle)
             doneWhen = try c.decodeIfPresent([DoneItem].self, forKey: .doneWhen) ?? []
             approvals = try c.decodeIfPresent([String].self, forKey: .approvals) ?? []
             approvalsNeeded = try c.decode(UInt32.self, forKey: .approvalsNeeded)
@@ -4793,9 +4797,12 @@ public enum Wire {
     /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
         public var id: String
+        /// Turn down the plan's suggested title and keep the current one.
+        public var keepTitle: Bool?
 
-        public init(id: String) {
+        public init(id: String, keepTitle: Bool? = nil) {
             self.id = id
+            self.keepTitle = keepTitle
         }
     }
 
