@@ -7,7 +7,7 @@ publishes it, with the sections of earlier releases, to the feed's `maple-runner
 
 ## 0.46.0 — 2026-10-29
 
-Per-repo worktree scripts: a repo's create, setup, teardown and archive commands run around a task's worktree, with MAPLE_* variables, its secrets and a timeout, and report on the timeline.
+Codex sessions in project mode route approval prompts to Codex's automatic review ("Approve for me") instead of never asking. Per-repo worktree scripts: a repo's create, setup, teardown and archive commands run around a task's worktree, with MAPLE_* variables, its secrets and a timeout, and report on the timeline.
 
 ## 0.45.0 — 2026-10-29
 
