@@ -2405,6 +2405,9 @@ pub enum ServerToClient {
         /// A newer maple-server, when there is one (told to admins only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server_update: Option<ServerUpdate>,
+        /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -2465,6 +2468,13 @@ pub enum ServerToClient {
     #[serde(rename = "prompts.updated")]
     PromptsUpdated {
         prompts: PromptAdditions,
+    },
+    /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
+    #[serde(rename = "icon.updated")]
+    IconUpdated {
+        /// Its new path (`/icon/<id>`); none: removed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
     },
     #[serde(rename = "repos.updated")]
     ReposUpdated {
