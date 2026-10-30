@@ -196,6 +196,22 @@ export async function installationId(app: GitHubApp, owner: string, repo: string
   return id;
 }
 
+/** Whether `login` is in `org` now, asked as the app on the org's installation (it reads members there). */
+export async function orgMember(app: GitHubApp, org: string, login: string): Promise<boolean> {
+  const jwt = `Bearer ${await appJwt(app)}`;
+  const inst = await call(app, "GET", `/orgs/${seg(org)}/installation`, jwt);
+  if (inst.status === 404) throw new GitHubError("not_installed", `The GitHub App isn't installed on ${org}.`, 404);
+  if (!inst.ok) throw await failure(inst, `find the app's installation on ${org}`);
+  const { id } = (await inst.json()) as { id: number };
+  const tokenRes = await call(app, "POST", `/app/installations/${id}/access_tokens`, jwt, { permissions: { members: "read" } });
+  if (!tokenRes.ok) throw await failure(tokenRes, `give a token to read ${org}'s members`);
+  const { token } = (await tokenRes.json()) as { token: string };
+  const res = await call(app, "GET", `/orgs/${seg(org)}/members/${seg(login)}`, `token ${token}`);
+  if (res.status === 204) return true;
+  if (res.status === 404 || res.status === 302) return false;
+  throw await failure(res, `say whether ${login} is in ${org}`);
+}
+
 /** What each job may do with its token. */
 export const PERMISSIONS = {
   /** A runner fetching (or cloning) a task's repo. */

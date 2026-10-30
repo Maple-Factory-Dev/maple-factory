@@ -2759,15 +2759,22 @@ public enum Wire {
         public var login: String
         public var name: String?
         public var avatarUrl: String?
+        /// "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here.
         public var role: String
         public var teams: [String]
+        /// Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server.
+        public var adminSource: String?
+        /// Who granted it, when `adminSource` is "granted".
+        public var adminGrantedBy: String?
 
-        public init(login: String, name: String? = nil, avatarUrl: String? = nil, role: String, teams: [String] = []) {
+        public init(login: String, name: String? = nil, avatarUrl: String? = nil, role: String, teams: [String] = [], adminSource: String? = nil, adminGrantedBy: String? = nil) {
             self.login = login
             self.name = name
             self.avatarUrl = avatarUrl
             self.role = role
             self.teams = teams
+            self.adminSource = adminSource
+            self.adminGrantedBy = adminGrantedBy
         }
 
         public init(from decoder: Decoder) throws {
@@ -2777,6 +2784,8 @@ public enum Wire {
             avatarUrl = try c.decodeIfPresent(String.self, forKey: .avatarUrl)
             role = try c.decode(String.self, forKey: .role)
             teams = try c.decodeIfPresent([String].self, forKey: .teams) ?? []
+            adminSource = try c.decodeIfPresent(String.self, forKey: .adminSource)
+            adminGrantedBy = try c.decodeIfPresent(String.self, forKey: .adminGrantedBy)
         }
     }
 
@@ -4206,6 +4215,24 @@ public enum Wire {
         }
     }
 
+    /// Admins only: make someone who has signed in an admin of this factory.
+    public struct ClientMessageAdminsGrant: Codable, Hashable, Sendable {
+        public var login: String
+
+        public init(login: String) {
+            self.login = login
+        }
+    }
+
+    /// Admins only: take back an admin grant (not a GitHub owner's, nor your own).
+    public struct ClientMessageAdminsRevoke: Codable, Hashable, Sendable {
+        public var login: String
+
+        public init(login: String) {
+            self.login = login
+        }
+    }
+
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
         public var name: String
@@ -4620,6 +4647,8 @@ public enum Wire {
         case runnerCheck(ClientMessageRunnerCheck)
         case policySave(ClientMessagePolicySave)
         case promptsSave(ClientMessagePromptsSave)
+        case adminsGrant(ClientMessageAdminsGrant)
+        case adminsRevoke(ClientMessageAdminsRevoke)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
@@ -4684,6 +4713,8 @@ public enum Wire {
             case "runner.check": self = .runnerCheck(try ClientMessageRunnerCheck(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
+            case "admins.grant": self = .adminsGrant(try ClientMessageAdminsGrant(from: decoder))
+            case "admins.revoke": self = .adminsRevoke(try ClientMessageAdminsRevoke(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
@@ -4793,6 +4824,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .promptsSave(let body):
                 try c.encode("prompts.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .adminsGrant(let body):
+                try c.encode("admins.grant", forKey: .type)
+                try body.encode(to: encoder)
+            case .adminsRevoke(let body):
+                try c.encode("admins.revoke", forKey: .type)
                 try body.encode(to: encoder)
             case .reposRefresh:
                 try c.encode("repos.refresh", forKey: .type)
@@ -5120,6 +5157,20 @@ public enum Wire {
         }
     }
 
+    /// Everyone who has signed in again, after an admin grant changed.
+    public struct ServerToClientMembersUpdated: Codable, Hashable, Sendable {
+        public var members: [Member]
+
+        public init(members: [Member] = []) {
+            self.members = members
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            members = try c.decodeIfPresent([Member].self, forKey: .members) ?? []
+        }
+    }
+
     /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
     public struct ServerToClientIconUpdated: Codable, Hashable, Sendable {
         /// Its new path (`/icon/<id>`); none: removed.
@@ -5250,6 +5301,7 @@ public enum Wire {
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case promptsUpdated(ServerToClientPromptsUpdated)
+        case membersUpdated(ServerToClientMembersUpdated)
         case iconUpdated(ServerToClientIconUpdated)
         case nameUpdated(ServerToClientNameUpdated)
         case reposUpdated(ServerToClientReposUpdated)
@@ -5281,6 +5333,7 @@ public enum Wire {
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
+            case "members.updated": self = .membersUpdated(try ServerToClientMembersUpdated(from: decoder))
             case "icon.updated": self = .iconUpdated(try ServerToClientIconUpdated(from: decoder))
             case "name.updated": self = .nameUpdated(try ServerToClientNameUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
@@ -5338,6 +5391,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .promptsUpdated(let body):
                 try c.encode("prompts.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .membersUpdated(let body):
+                try c.encode("members.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .iconUpdated(let body):
                 try c.encode("icon.updated", forKey: .type)

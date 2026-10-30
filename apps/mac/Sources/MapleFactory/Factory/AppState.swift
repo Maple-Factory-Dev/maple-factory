@@ -2191,6 +2191,8 @@ final class AppState {
             case "icon": NotificationCenter.default.post(name: AppearanceSettings.demoPick, object: parts.dropFirst().joined(separator: ":"))
             // `name:<text>` types that into Settings › Appearance's Name and clicks Save; `name:clear` is its Use Org Name.
             case "name": NotificationCenter.default.post(name: FactoryNameCard.demo, object: parts.dropFirst().joined(separator: ":"))
+            // `admin:grant:<login>` is Settings › People's Make admin on that member's row; `admin:revoke:<login>` its Remove admin.
+            case "admin" where parts.count > 2: NotificationCenter.default.post(name: FactoryAdminsCard.demo, object: nil, userInfo: ["action": parts[1], "login": parts[2]])
             // `factory:<host:port>` picks that saved factory in the factory menu.
             case "factory":
                 if let client, let factory = client.savedFactories.first(where: { $0.id == parts.dropFirst().joined(separator: ":") }) {

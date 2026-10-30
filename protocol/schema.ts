@@ -656,7 +656,20 @@ export const structs: Record<string, Struct> = {
     fields: { goal: "string", following: "bool" },
   },
   Member: {
-    fields: { login: "string", name: "string?", avatarUrl: "string?", role: "string", teams: "string[]" },
+    fields: {
+      login: "string",
+      name: "string?",
+      avatarUrl: "string?",
+      role: "string",
+      teams: "string[]",
+      adminSource: "string?",
+      adminGrantedBy: "string?",
+    },
+    fieldDocs: {
+      role: "\"admin\" or \"member\": admin when GitHub says they're an org owner, or an admin made them one here.",
+      adminSource: "Why they're an admin: \"github\" (an org owner, not changeable here) or \"granted\" (`admins.grant`). None: not an admin, or an older server.",
+      adminGrantedBy: "Who granted it, when `adminSource` is \"granted\".",
+    },
   },
   StatsTotals: {
     doc: "A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet.",
@@ -991,6 +1004,8 @@ export const unions: Record<string, Union> = {
       },
       "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
       "prompts.save": { doc: "Admins only: the org's prompt additions.", fields: { prompts: "PromptAdditions" } },
+      "admins.grant": { doc: "Admins only: make someone who has signed in an admin of this factory.", fields: { login: "string" } },
+      "admins.revoke": { doc: "Admins only: take back an admin grant (not a GitHub owner's, nor your own).", fields: { login: "string" } },
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
       "repos.add": { doc: "Admins only: a repo the GitHub App doesn't list (or there's no app).", fields: { name: "string" } },
       "repos.remove": { doc: "Admins only: one added by hand.", fields: { name: "string" } },
@@ -1134,6 +1149,7 @@ export const unions: Record<string, Union> = {
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
+      "members.updated": { doc: "Everyone who has signed in again, after an admin grant changed.", fields: { members: "Member[]" } },
       "icon.updated": {
         doc: "An admin set or removed the factory's icon (PUT or DELETE /api/icon).",
         fields: { icon: "string?" },
