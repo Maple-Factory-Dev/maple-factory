@@ -63,6 +63,76 @@ Any `MAPLE_DEV_INSTANCE` other than `dev` gives `scripts/dev-stack.sh` a separat
 port and runner home instead, so a real maple-runner is never matched.
 
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
+
+### Codex startup investigation (MF-83)
+
+Run the isolated regression without attaching a terminal:
+
+```sh
+npm ci
+cargo build --manifest-path runner/Cargo.toml
+node server/test/e2e-codex-startup.mjs --interactive --keep
+# Opt-in: uses the installed Codex and a private copy of its config/auth.
+node server/test/e2e-codex-startup.mjs --installed --keep
+# Separate configured case: trust only the generated repository in that private config, before launch.
+node server/test/e2e-codex-startup.mjs --installed --trust-test-repo --keep
+```
+
+Each run creates a worker/database, repository, runner home and tmux socket of its own. It kills only
+its own sessions/process groups. `--keep` prints the artifact directory, including `transcript.log`;
+copied Codex config/auth files are removed on cleanup. Other raw artifacts can include agent output;
+the [investigation transcript](server/test/codex-startup-investigation.txt) is sanitized.
+Without `--keep`, the temporary directory is removed. The installed mode requires a configured CLI
+and may make model requests; the default fixture mode does neither.
+
+Observed on 2026-10-29 with **Codex CLI 0.164.0, tmux 3.8, runner 0.44.0 and Node 24.21.0**:
+
+| Launch/delivery condition | Observation |
+| --- | --- |
+| Fixture, 30-byte argv / 21-byte multiline argv | One initial submission, no startup keys. |
+| Fixture, 1,140-byte multiline file / 1,124-byte file ending in two newlines | One initial submission. Before the correction the second prompt arrived as 1,122 bytes; afterward all bytes survive. |
+| Fixture, 1,200 ms readiness; factory answer and multiline steer | Each message submitted once after bracketed paste and the existing 400 ms delayed Return. |
+| Blank prompt, Claude launch, raw permission choices, runner adoption | No blank/startup/adoption submissions; Claude launch unchanged; permission `1`/Esc gets no paste wrapper or Return. Existing shell, interactive and steering suites pass. |
+| Installed Codex, fresh untrusted repository | Stops deliberately at **Folder access → Trust this folder?** before assistant activity. No diagnostic Return sent to this menu. |
+| Installed Codex, explicitly trusted private test repository | Assistant activity starts with no viewer or manual keys; factory multiline steering arrives once and starts another assistant turn. |
+
+The original Enter-only startup symptom was **not reproduced in a configured, trusted session**.
+The fresh-repository trust gate is a confirmed startup stop, but does not establish what happened in
+the original session. Review and trust a real repository through Codex's normal setup before expecting
+unattended work; the runner does not select trust, onboarding or login options automatically.
+
+One independent transport defect was reproduced: `$(cat "$MAPLE_PROMPT_FILE")` strips trailing
+newlines. Appending a sentinel before command substitution and removing it afterward preserves the
+prompt exactly. Focused tests execute both prompt transports with hooks, model, images, permission
+arguments and resume arguments intact. This defect does **not** explain an Enter requirement.
+No startup keys, session/tmux behavior or MachineHub input sequencing were changed.
+
+Real factory `ask` remains unverified: the tested Codex configuration rejects `maple.ask` with
+`MCP tool call requires approval, but approval policy is never`. A controlled single Return changed
+neither the screen nor that result. MCP tool approval settings need separate review; changing them
+was outside this correction. The harness records this failure separately and still checks real
+steering against the main CLI rollout, excluding approval-review rollouts that copy its transcript.
+An earlier trusted launch exited with status 1 before a rollout was written; its cause was not
+captured. The harness now preserves ended-session output and never sends diagnostic keys to a lost
+session. Another run produced a steering assistant event but exceeded a 60-second turn-completion
+timeout after a tool kernel failed. The smoke test checks the required first assistant/tool event,
+not full task completion. A successful observation does not certify the full planner/tool workflow.
+
+Validation: 282 Rust tests pass (one ignored) with a throwaway test home, 45 server tests pass, and
+server typechecking passes. Two existing Rust secrets tests otherwise try to write to the restricted
+user home. `cargo fmt --manifest-path runner/Cargo.toml --check` fails in the same 52 sections on
+unmodified `HEAD` and this patch with rustfmt 1.10.0; the modified `agents.rs` passes its focused
+format check. Afomera instructed that the existing formatting baseline be handled separately; it is
+an explicit exception, not a passing full format check. Unrelated formatting edits were reverted.
+
+After the approved environment correction, Git metadata writes succeeded with sandbox escalation.
+The final fixture, shell, interactive and steering suite exits successfully, including cleanup.
+The installed Codex smoke also exits successfully: its main CLI rollout records one steering user
+message, two completed turns and five assistant/tool events, and the screen shows `STEER_RECEIVED`
+with the second line preserved. No terminal was attached and no diagnostic Return was needed.
+The earlier setup timeouts and cleanup failure remain in the transcript as investigation history;
+cleanup now signals only live test process groups, avoiding stale group IDs. The real factory `ask`
+policy rejection above remains a separate limitation.
 Runner tests: `cd runner && cargo test`.
 
 ## Deploying a factory

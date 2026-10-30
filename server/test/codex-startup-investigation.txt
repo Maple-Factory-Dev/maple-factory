@@ -1,0 +1,219 @@
+MF-83 investigation: 2026-10-29 America/Denver (timestamps below UTC)
+Codex CLI 0.164.0; tmux 3.8; maple-runner 0.44.0; Node v24.21.0
+
+$ node server/test/e2e-codex-startup.mjs --installed --keep
+2026-10-30T01:09:42.461Z mode=installed; tmux 3.8; node=v24.21.0
+2026-10-30T01:09:42.883Z codex-cli 0.164.0
+2026-10-30T01:09:56.550Z isolated worker and runner online; terminal viewers=0
+2026-10-30T01:10:56.910Z TIMEOUT first assistant/tool event; last screen="Folder access\n  /private<test>/.worktrees/repo/boot-1\n\n  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:\n  /private<test>/repo\n\n  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even without a\n  model request. Continue only if you trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue\n  2. Quit\n\n  enter continue · esc quit"
+2026-10-30T01:10:56.941Z Deliberate setup prompt detected; no Return sent.
+
+$ node server/test/e2e-codex-startup.mjs --installed --trust-test-repo --keep
+2026-10-30T01:11:31.780Z test-owned repository explicitly trusted in private Codex config before launch
+2026-10-30T01:11:47.813Z PASS first assistant/tool event; no intervention
+Observed screen: Error: MCP tool call requires approval, but approval policy is never
+2026-10-30T01:12:53.173Z controlled single Return: progressed=false; screenChanged=false
+
+$ node server/test/e2e-codex-startup.mjs --keep  # before prompt-file correction
+2026-10-30T01:11:43.965Z PASS initial prompt 1124 bytes; no intervention
+2026-10-30T01:11:43.978Z FAIL AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+Captured submission: expected 1124 UTF-8 bytes; received 1122 bytes; trailing newlines=0
+
+$ cargo test --manifest-path runner/Cargo.toml codex_prompt_transports  # before
+
+failures:
+
+failures:
+    agents::tests::codex_prompt_transports_preserve_every_argument_including_on_resume
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 282 filtered out; finished in 0.21s
+
+error: test failed, to rerun pass `--bin maple-runner`
+
+$ cargo test --manifest-path runner/Cargo.toml codex_prompt_transports  # after
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 56.35s
+     Running unittests src/main.rs (runner/target/debug/deps/maple_runner-f61db8dccb310285)
+
+running 1 test
+test agents::tests::codex_prompt_transports_preserve_every_argument_including_on_resume ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 282 filtered out; finished in 0.21s
+
+
+$ node server/test/e2e-codex-startup.mjs --interactive --keep  # after
+2026-10-30T01:21:11.064Z mode=fixture; tmux 3.8; node=v24.21.0
+2026-10-30T01:21:11.068Z Codex stand-in; installed CLI behavior is a separate opt-in check
+2026-10-30T01:21:14.494Z isolated worker and runner online; terminal viewers=0
+2026-10-30T01:21:15.807Z PASS initial prompt 30 bytes; no intervention
+2026-10-30T01:21:15.807Z argv exactly once; transport=argv
+2026-10-30T01:21:17.121Z PASS initial prompt 21 bytes; no intervention
+2026-10-30T01:21:17.122Z argv exactly once; transport=argv
+2026-10-30T01:21:18.438Z PASS initial prompt 1140 bytes; no intervention
+2026-10-30T01:21:18.438Z argv exactly once; transport=file
+2026-10-30T01:21:19.753Z PASS initial prompt 1124 bytes; no intervention
+2026-10-30T01:21:19.753Z argv exactly once; transport=file
+2026-10-30T01:21:21.067Z PASS blank prompt: no submission or startup keys
+2026-10-30T01:21:22.386Z PASS Claude launch control; no intervention
+2026-10-30T01:21:22.794Z factory planner opened; observing fixture submissions
+2026-10-30T01:21:25.034Z PASS factory initial instruction; no intervention
+2026-10-30T01:21:25.034Z PASS planner asks through MCP; no intervention
+2026-10-30T01:21:25.541Z PASS factory answer; no intervention
+2026-10-30T01:21:26.053Z PASS factory steer; no intervention
+2026-10-30T01:21:26.768Z PASS raw permission choice yes; no added Return or submission
+2026-10-30T01:21:27.491Z PASS raw permission choice no; no added Return or submission
+2026-10-30T01:21:29.198Z PASS adoption; no extra terminal input or submission
+2026-10-30T01:21:29.204Z last screen="fixture booting\nfixture ready\nsubmitted 1 (argv)\nsubmitted 2 (tty)\nsubmitted 3 (tty)"
+2026-10-30T01:21:29.204Z PASS startup matrix
+2026-10-30T01:21:31.729Z e2e-local:
+snapshot: startup in local; startup online=true
+opened shell 3d569b0d-271a-4727-b3f8-0e43c543447a
+relay: typed a command and saw its output
+ended by Kill → cause=killed
+exited → cause=exited code=3 detail=exit status 3; last line: "logout"
+PASS
+
+2026-10-30T01:21:34.965Z e2e-interactive:
+✓ BOOT-2: the planner asks "Formal or casual greeting?" (Formal / Casual)
+✓ answered; the plan has it: "or casual greeting?"): Casual)"
+✓ the builder raises a hand: The greeting could go in a file or the README; the plan doesn't say. [A new file / The README]
+✓ resolved; it built, passed review and merged (4 reviewer events)
+
+2026-10-30T01:23:13.237Z e2e-steer:
+✓ BOOT-3 plan v1 is waiting and its planner has closed
+✓ asking for changes sent it back to planning
+✓ a new planner session started
+✓ plan v2 is waiting for approval
+✓ BOOT-4 building
+✓ C1 typed into the builder's session
+✓ C1 applied
+✓ the pushed change has it: "Say it in French too: bonjour."
+✓ cancelled
+✓ BOOT-5 passed review round 2; waiting on people
+✓ asking for changes sent it back to the builder
+✓ the change is applied on top of the earlier work and review passed again (round 3)
+
+
+Original Enter-only startup symptom is NOT established: the untrusted repo has a deliberate trust prompt; trusted Codex produces assistant events. The separate file transport defect loses trailing newlines and does not explain a stalled launch.
+cargo fmt --manifest-path runner/Cargo.toml --check: fails in 52 sections in both unmodified HEAD and this tree (rustfmt 1.10.0). No unrelated formatting changes retained.
+cargo test with a throwaway HOME: 282 passed, 0 failed, 1 ignored; server tests: 45 passed; server typecheck passed.
+git add: fatal: Unable to create the external worktree index.lock: Operation not permitted. No local commits possible under the current sandbox.
+
+Additional bounded observations (not accepted as startup root cause):
+2026-10-30T01:17:30.922Z fixture timeout was started from task.worker assignment, before the runner had finished opening the session under compile load.
+2026-10-30T01:17:39.357Z fixture received diagnostic newline while not ready; 01:17:40.564Z submitted origin=argv; 01:17:40.566Z recorded blank Return. No TTY message was submitted. This is not evidence that Enter caused argv submission. The harness now starts this deadline after runner session.opened.
+2026-10-30T01:23:48.493449Z one trusted Codex launch exited with status 1 before any rollout. Cause not captured; ended-session output capture was added afterward.
+2026-10-30T01:27:14.898Z a later real steering run exceeded the extra turn-completion timeout while showing Working and a failed Node tool kernel. The steering assistant event had already appeared at 01:26:14.742Z without intervention. The final smoke checks the required first assistant/tool event and exact user-message count, rather than claiming the full task completed.
+2026-10-30T01:32:05.237Z final installed smoke retry failed in migration setup (spawnSync Node ETIMEDOUT), before a planner existed. This is not a passing final smoke. Migration setup now uses a bounded, tracked process group so timeout cleanup also covers its descendants; that final harness adjustment is syntax-checked but not integration-verified.
+
+Resumed verification after afomera resolved the hand:
+Instruction: Continue in a corrected test environment. Restore writable Git metadata and stable isolated worker/Codex execution. Handle the pre-existing formatting baseline separately.
+Git writes succeeded with scoped sandbox escalation: 7419ef6 (implementation), 2208e96 (cleanup correction).
+First resumed functional suite passed, but its cleanup re-signalled the completed migration group and failed with kill EPERM. The harness now removes exited children and signals groups only while their parent is live; cleanup errors cannot skip credential removal.
+
+$ node server/test/e2e-codex-startup.mjs --interactive --keep
+2026-10-30T01:45:32.836Z mode=fixture; tmux 3.8; node=v24.21.0
+2026-10-30T01:45:32.844Z Codex stand-in; installed CLI behavior is a separate opt-in check
+2026-10-30T01:46:08.703Z isolated worker and runner online; terminal viewers=0
+2026-10-30T01:46:13.506Z PASS initial prompt 30 bytes; no intervention
+2026-10-30T01:46:13.507Z argv exactly once; transport=argv
+2026-10-30T01:46:15.025Z PASS initial prompt 21 bytes; no intervention
+2026-10-30T01:46:15.025Z argv exactly once; transport=argv
+2026-10-30T01:46:16.452Z PASS initial prompt 1140 bytes; no intervention
+2026-10-30T01:46:16.454Z argv exactly once; transport=file
+2026-10-30T01:46:17.883Z PASS initial prompt 1124 bytes; no intervention
+2026-10-30T01:46:17.884Z argv exactly once; transport=file
+2026-10-30T01:46:19.201Z PASS blank prompt: no submission or startup keys
+2026-10-30T01:46:20.643Z PASS Claude launch control; no intervention
+2026-10-30T01:46:28.078Z factory planner opened; observing fixture submissions
+2026-10-30T01:46:29.846Z PASS factory initial instruction; no intervention
+2026-10-30T01:46:30.281Z PASS planner asks through MCP; no intervention
+2026-10-30T01:46:31.500Z PASS factory answer; no intervention
+2026-10-30T01:46:34.338Z PASS factory steer; no intervention
+2026-10-30T01:46:37.517Z PASS raw permission choice yes; no added Return or submission
+2026-10-30T01:46:39.188Z PASS raw permission choice no; no added Return or submission
+2026-10-30T01:46:42.706Z PASS adoption; no extra terminal input or submission
+2026-10-30T01:46:43.552Z last screen="fixture booting\nfixture ready\nsubmitted 1 (argv)\nsubmitted 2 (tty)\nsubmitted 3 (tty)"
+2026-10-30T01:46:43.552Z PASS startup matrix
+2026-10-30T01:47:11.414Z e2e-local:
+snapshot: startup in local; startup online=true
+opened shell c6601c66-683a-460a-a77d-ba68e5acbc57
+relay: typed a command and saw its output
+ended by Kill → cause=killed
+exited → cause=exited code=3 detail=exit status 3; last line: "logout"
+PASS
+
+2026-10-30T01:47:33.234Z e2e-interactive:
+✓ BOOT-2: the planner asks "Formal or casual greeting?" (Formal / Casual)
+✓ answered; the plan has it: "or casual greeting?"): Casual)"
+✓ the builder raises a hand: The greeting could go in a file or the README; the plan doesn't say. [A new file / The README]
+✓ resolved; it built, passed review and merged (4 reviewer events)
+
+2026-10-30T01:49:21.076Z e2e-steer:
+✓ BOOT-3 plan v1 is waiting and its planner has closed
+✓ asking for changes sent it back to planning
+✓ a new planner session started
+✓ plan v2 is waiting for approval
+✓ BOOT-4 building
+✓ C1 typed into the builder's session
+✓ C1 applied
+✓ the pushed change has it: "Say it in French too: bonjour."
+✓ cancelled
+✓ BOOT-5 passed review round 2; waiting on people
+✓ asking for changes sent it back to the builder
+✓ the change is applied on top of the earlier work and review passed again (round 3)
+
+fixture process exit: 0
+
+$ node server/test/e2e-codex-startup.mjs --installed --trust-test-repo --keep
+2026-10-30T01:50:15.729Z mode=installed; tmux 3.8; node=v24.21.0
+2026-10-30T01:50:15.806Z codex-cli 0.164.0
+2026-10-30T01:50:15.952Z test-owned repository explicitly trusted in private Codex config before launch
+2026-10-30T01:50:18.910Z isolated worker and runner online; terminal viewers=0
+2026-10-30T01:50:19.415Z factory planner opened; observing rollout assistant/tool events
+2026-10-30T01:50:25.096Z PASS first assistant/tool event; no intervention
+2026-10-30T01:50:31.712Z PASS initial turn completed; no intervention
+2026-10-30T01:50:31.726Z UNRESOLVED real factory answer: planner did not create a factory question; last screen=">_ OpenAI Codex (v0.164.0)\n     <test>/.worktrees/repo/boot-1\n\n\n› You are the planner for a software factory task. You write the plan; you do NOT change code.\n\n  Task BOOT-1 · Startup greeting question\n  Goal: Codex startup — Isolated startup investigation\n\n  ## Brief\n  Ask which greeting is required using the ask tool with Casual and Formal options. After the answer, acknowledge it and wait for steering; do not submit a\n  plan yet.\n\n  Read the repository (this worktree) to understand where the change goes. Then call the `submit_plan` tool once with:\n  - summary: two or three sentences on the approach.\n  - steps: 3–8 concrete steps, each with the main file it touches.\n  - doneWhen: 2–5 checks that prove it works, each with the proof kind the builder will produce (tests, terminal, screenshot or video).\n  - risk: low, medium or high, with reasons (auth, payments, migrations and public APIs are high) and the areas it touches.\n  - footprint: your estimate of files and lines changed.\n  - mockups: for UI changes, at least one screen mockup as a small self-contained HTML page (inline CSS, no scripts) of the changed screen,\n    with numbered callouts in its notes; for CLI or API changes, a terminal mockup (lines with style command/output/highlight/dim/error,\n    and callout numbers on the lines that change). Skip mockups for pure refactors.\n\n  If something essential is ambiguous, call `ask` with the question and a few options, then end your turn and wait: the answer will be typed here.\n  If the task can't be planned as asked, call `raise_hand`. After `submit_plan` succeeds, end your turn; your session will be closed.\n\n\n• I’ll ask which greeting is required, then acknowledge your choice and wait for steering before preparing a plan.\n\n• Failed maple.ask\n  └ Error: MCP tool call requires approval, but approval policy is never\n    + Show details\n\n• Which startup greeting is required: Casual or Formal?\n\n  The ask tool was blocked by this session’s approval policy. I’ll wait for your answer; no plan has been submitted.\n\n  Worked for 10s • 7:50 PM\n\n\n\n\n\n› Ask Codex to do anything\n\n  GPT-6.1-Sol high · <test>/.worktrees/repo/boot-1\n  ? for shortcuts                                                                                                                      ⚠ 1 warning · f2 to view"
+2026-10-30T01:50:31.727Z Continuing the independent factory steering check; MCP approval settings are unchanged.
+2026-10-30T01:50:36.632Z PASS factory steer; no intervention
+2026-10-30T01:50:36.634Z PASS installed steering: CLI user messages=1; completed turns=2; assistant/tool events=5
+2026-10-30T01:50:38.342Z PASS adoption; planner remains live
+2026-10-30T01:50:38.348Z last screen="Goal: Codex startup — Isolated startup investigation\n\n  ## Brief\n  Ask which greeting is required using the ask tool with Casual and Formal options. After the answer, acknowledge it and wait for steering; do not submit a\n  plan yet.\n\n  Read the repository (this worktree) to understand where the change goes. Then call the `submit_plan` tool once with:\n  - summary: two or three sentences on the approach.\n  - steps: 3–8 concrete steps, each with the main file it touches.\n  - doneWhen: 2–5 checks that prove it works, each with the proof kind the builder will produce (tests, terminal, screenshot or video).\n  - risk: low, medium or high, with reasons (auth, payments, migrations and public APIs are high) and the areas it touches.\n  - footprint: your estimate of files and lines changed.\n  - mockups: for UI changes, at least one screen mockup as a small self-contained HTML page (inline CSS, no scripts) of the changed screen,\n    with numbered callouts in its notes; for CLI or API changes, a terminal mockup (lines with style command/output/highlight/dim/error,\n    and callout numbers on the lines that change). Skip mockups for pure refactors.\n\n  If something essential is ambiguous, call `ask` with the question and a few options, then end your turn and wait: the answer will be typed here.\n  If the task can't be planned as asked, call `raise_hand`. After `submit_plan` succeeds, end your turn; your session will be closed.\n\n\n• I’ll ask which greeting is required, then acknowledge your choice and wait for steering before preparing a plan.\n\n• Failed maple.ask\n  └ Error: MCP tool call requires approval, but approval policy is never\n    + Show details\n\n• Which startup greeting is required: Casual or Formal?\n\n  The ask tool was blocked by this session’s approval policy. I’ll wait for your answer; no plan has been submitted.\n\n  Worked for 10s • 7:50 PM\n\n\n› Change request C1 from startup: For this startup smoke test, reply with STEER_RECEIVED and end your turn. Do not inspect or modify files or call tools.\n  Keep this second line in the message.\n  Apply it, then report it with `progress` (applied: [\"C1\"]).\n\n\n• STEER_RECEIVED\n  Keep this second line in the message.\n\n  Worked for 4s • 7:50 PM\n\n\n› Ask Codex to do anything\n\n  GPT-6.1-Sol high · <test>/.worktrees/repo/boot-1\n  ? for shortcuts                                                                                                                      ⚠ 1 warning · f2 to view"
+2026-10-30T01:50:38.348Z PASS startup/steering observations; real factory answer remains unresolved
+installed process exit: 0
+
+$ cargo test --manifest-path runner/Cargo.toml  # throwaway HOME, normal dependency/toolchain caches
+
+test result: ok. 282 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 11.09s
+
+
+$ npm test --workspace server
+✔ a finding's area is its first two folders; its stats row trims long text (0.28225ms)
+ℹ tests 45
+ℹ suites 0
+ℹ pass 45
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 174.985666
+
+$ npm run typecheck --workspace server
+
+> @maple/server@0.25.0 typecheck
+> tsc --noEmit
+
+typecheck process exit: 0
+
+$ cargo fmt --manifest-path runner/Cargo.toml --check
+baseline: exit=1; differing sections=52; files=14
+current: exit=1; differing sections=52; files=14
+Baseline and current formatter diagnostics identical: True
+Modified agents.rs focused format check exit: 0
+Formatter baseline is explicitly deferred separately per afomera; this is not a passing full format check.
+Cleanup verification: copied auth.json and config.toml are absent for both final runs. Socket paths remain in retained artifacts; server reachability is checked separately below.
+Final diagnosis: original Enter-only startup stall unconfirmed; explicit trust stop confirmed. Trusted installed Codex starts and processes steering without manual keys. Real factory ask remains blocked by the existing MCP approval policy; no permission-policy change was made.
+
+Retained-socket reachability check after final cleanup:
+fixture-clean: tmux list-sessions exit=1; no server running on <test>/home/.config/maple/tmux/startup.sock
+installed: tmux list-sessions exit=1; no server running on <test>/home/.config/maple/tmux/startup.sock
+Socket files in retained artifacts are stale; no live tmux server is reachable.
