@@ -1091,6 +1091,12 @@ pub struct OrgRepo {
     pub is_private: bool,
     /// Granted to the GitHub App, or added by hand (no app, or not yet granted).
     pub source: RepoSource,
+    /// GitHub's description of the repo. None: added by hand, it has none, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The owner's GitHub avatar. None: added by hand, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_avatar_url: Option<String>,
 }
 
 /// The factory's GitHub App, for installing it on another GitHub account.

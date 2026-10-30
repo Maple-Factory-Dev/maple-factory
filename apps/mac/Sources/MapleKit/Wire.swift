@@ -2341,12 +2341,18 @@ public enum Wire {
         public var isPrivate: Bool
         /// Granted to the GitHub App, or added by hand (no app, or not yet granted).
         public var source: RepoSource
+        /// GitHub's description of the repo. None: added by hand, it has none, or an older server.
+        public var description: String?
+        /// The owner's GitHub avatar. None: added by hand, or an older server.
+        public var ownerAvatarUrl: String?
 
-        public init(name: String, defaultBranch: String? = nil, isPrivate: Bool, source: RepoSource) {
+        public init(name: String, defaultBranch: String? = nil, isPrivate: Bool, source: RepoSource, description: String? = nil, ownerAvatarUrl: String? = nil) {
             self.name = name
             self.defaultBranch = defaultBranch
             self.isPrivate = isPrivate
             self.source = source
+            self.description = description
+            self.ownerAvatarUrl = ownerAvatarUrl
         }
     }
 

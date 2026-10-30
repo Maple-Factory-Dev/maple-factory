@@ -536,6 +536,10 @@ export interface OrgRepo {
   isPrivate: boolean;
   /** Granted to the GitHub App, or added by hand (no app, or not yet granted). */
   source: RepoSource;
+  /** GitHub's description of the repo. None: added by hand, it has none, or an older server. */
+  description?: string | null;
+  /** The owner's GitHub avatar. None: added by hand, or an older server. */
+  ownerAvatarUrl?: string | null;
 }
 
 /** The factory's GitHub App, for installing it on another GitHub account. */
