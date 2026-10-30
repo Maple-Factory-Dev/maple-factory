@@ -106,7 +106,7 @@ final class AppState {
         }
     }
 
-    /// The task panel exists only with "Peek in the side panel"; otherwise its toolbar button and menu item are off.
+    /// The task panel exists only with "Peek in the side panel"; otherwise its toolbar button is hidden and its menu item is off.
     var taskPanelEnabled: Bool { taskOpening == .panel }
 
     nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
