@@ -3,7 +3,7 @@
 
 import type { Env } from "./env.ts";
 import type { Member, TicketLink } from "./wire.ts";
-import { orgHub, text } from "./util.ts";
+import { orgHub, sameText, text } from "./util.ts";
 
 const enc = new TextEncoder();
 
@@ -12,17 +12,23 @@ async function hmacHex(secret: string, message: string) {
   return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(message)))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function sameText(a: string, b: string) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 /** The org's intake key, as `Authorization: Bearer mfi_…`. */
 export function intakeKey(request: Request, env: Env) {
   const bearer = /^Bearer (mfi_[\w-]+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
   return Boolean(env.INTAKE_KEY && bearer && sameText(bearer, env.INTAKE_KEY));
+}
+
+/** Where an API request's replies may go: the factory POSTs to its replyUrl (trackers.ts `deliver`), so
+ *  only to Slack's incoming webhooks and the hosts INTAKE_REPLY_HOSTS names, never anywhere a caller says. */
+function replyAllowed(env: Env, replyUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(replyUrl);
+  } catch {
+    return false;
+  }
+  const hosts = new Set(["hooks.slack.com", ...(env.INTAKE_REPLY_HOSTS ?? "").split(/[\s,]+/).filter(Boolean).map((h) => h.toLowerCase())]);
+  return url.protocol === "https:" && !url.username && !url.password && hosts.has(url.hostname);
 }
 
 /**
@@ -47,7 +53,7 @@ export async function intakeApi(request: Request, env: Env, path: string, me: Me
   if (path !== "/api/intake") return text("Not found.", 404);
   if (!str("title")) return text("A request needs a title.", 400);
   const replyUrl = str("replyUrl");
-  if (replyUrl && !/^https:\/\//.test(replyUrl)) return text("replyUrl must be https.", 400);
+  if (replyUrl && !replyAllowed(env, replyUrl)) return text("replyUrl must be https on hooks.slack.com or a host in INTAKE_REPLY_HOSTS.", 400);
   return orgHub(env).fetch("https://org/intake", {
     method: "POST",
     body: JSON.stringify({

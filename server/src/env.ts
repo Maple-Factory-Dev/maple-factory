@@ -34,6 +34,9 @@ export interface Env {
   DEV_LOGIN?: string;
   /** A shared secret for posting requests to /api/intake from outside (Bearer mfi_…). */
   INTAKE_KEY?: string;
+  /** Hosts besides hooks.slack.com that an /api/intake request's replyUrl may name, comma or space separated:
+   *  the factory POSTs the bot's replies there. */
+  INTAKE_REPLY_HOSTS?: string;
   /** Verifies Slack's slash commands at /integrations/slack/command. */
   SLACK_SIGNING_SECRET?: string;
   /** Linear: verifies its webhook at /integrations/linear; the API key lets the bot comment back. */

@@ -53,6 +53,54 @@ export async function verify<T extends { exp: number }>(token: string | undefine
   }
 }
 
+/** Whether two strings are equal, in time that depends only on their length: for comparing secrets. */
+export function sameText(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** A request's body, reading at most `max` bytes: null once it's longer, whatever content-length said
+ *  (a chunked upload sends none, so checking that alone would read any size into memory). */
+export async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+  if (Number(request.headers.get("content-length") ?? "0") > max) return null;
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
+}
+
+/** What every HTML page the Worker makes sends: it can't be framed (clickjacking), sniffed, or name
+ *  itself to other sites in a referrer. */
+export const PAGE_HEADERS: Readonly<Record<string, string>> = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-frame-options": "DENY",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "same-origin",
+};
+
+export function html(body: string, status = 200) {
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...PAGE_HEADERS } });
+}
+
 export function text(message: string, status = 200) {
   return new Response(message, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 }

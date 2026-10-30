@@ -2,7 +2,7 @@
 
 import type { Env } from "./env.ts";
 import type { Machine, Member } from "./wire.ts";
-import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sha256, text } from "./util.ts";
+import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sameText, sha256, text } from "./util.ts";
 
 export const MACHINE_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CODE_TTL = 15 * 60 * 1000;
@@ -96,7 +96,7 @@ export async function authenticateRunner(env: Env, id: string, request: Request)
   const token = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
   if (!token) return false;
   const row = await env.DB.prepare("SELECT token_hash FROM machines WHERE id = ?").bind(id).first<{ token_hash: string }>();
-  return !!row && row.token_hash === (await sha256(token));
+  return !!row && sameText(row.token_hash, await sha256(token));
 }
 
 /** DELETE /api/machines/:id: forgets a machine and cuts it off. Its owner or an admin. */

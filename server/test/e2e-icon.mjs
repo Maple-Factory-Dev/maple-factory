@@ -1,8 +1,8 @@
 // The factory's icon against `wrangler dev`:
 //   node server/test/e2e-icon.mjs http://localhost:8788
 // Checks: an admin's PUT /api/icon comes back as icon.updated to everyone and in a fresh snapshot, and
-// /icon/<id> serves it without signing in; a member's PUT gets 403; a non-image or an image over 2 MB
-// gets 400; DELETE /api/icon clears it to null (and the old image is gone).
+// /icon/<id> serves it without signing in; a member's PUT gets 403; a non-image gets 400 and an image over 2 MB
+// gets 413; DELETE /api/icon clears it to null (and the old image is gone).
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 
@@ -67,7 +67,7 @@ step(`GET ${set.icon} without signing in → 200 image/png, ${bytes.length} byte
 step(`member's PUT → 403: "${await expect(await member.icon("PUT", png), 403, "member's PUT")}"`);
 step(`member's DELETE → 403: "${await expect(await member.icon("DELETE"), 403, "member's DELETE")}"`);
 step(`a text file → 400: "${await expect(await admin.icon("PUT", new TextEncoder().encode("not an image"), "text/plain"), 400, "text PUT")}"`);
-step(`a PNG over 2 MB → 400: "${await expect(await admin.icon("PUT", big), 400, "big PUT")}"`);
+step(`a PNG over 2 MB → 413: "${await expect(await admin.icon("PUT", big), 413, "big PUT")}"`);
 fresh = await connect();
 if (fresh.last("snapshot").icon !== set.icon) throw new Error("a refused upload changed the icon");
 fresh.close();
