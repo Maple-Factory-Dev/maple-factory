@@ -915,6 +915,9 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
         Inbound::TaskDiff(d) => {
             tokio::spawn(tasks::run_diff(sessions.clone(), d));
         }
+        Inbound::TaskMergeCheck(c) => {
+            tokio::spawn(tasks::run_merge_check(sessions.clone(), c));
+        }
         Inbound::TaskMerge(m) => {
             info!("merging task {} into {}", m.task_id, m.base);
             tokio::spawn(tasks::run_merge(sessions.clone(), m));
