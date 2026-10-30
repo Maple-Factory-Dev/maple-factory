@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.46.0 — 2026-10-29
+
+Per-repo worktree scripts: a repo's create, setup, teardown and archive commands run around a task's worktree, with MAPLE_* variables, its secrets and a timeout, and report on the timeline.
+
 ## 0.45.0 — 2026-10-29
 
 Secrets hardening: a task's values live only in its pane (not tmux's environment, where other sessions could read them), terminal output and replays are scrubbed, and multi-line values survive a restart. Checking for a runner update only looks; it never installs. Auto-merges count down and can be held.
