@@ -27,7 +27,7 @@
 //   GET  /repos/:o/:r/check-runs/:id                      a check run with its output
 //   POST /app-manifests/:code/conversions                /setup's new app; code `app-<owner>` makes one owned by <owner>
 //   GET  /users/:login                                   a personal account for each --user, otherwise an organization
-//   POST /login/oauth/access_token                       sign-in: code `as-<login>` is <login>'s user token
+//   POST /login/oauth/access_token                       sign-in: code (or device_code) `as-<login>` is <login>'s user token
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
 //                                                        (its admin, for each --owner org:login)
 //   POST /graphql                                        repository.pullRequest.reviewThreads, from /_threads
@@ -242,7 +242,7 @@ createServer((req, res) => {
       });
     }
     if (req.method === "POST" && url.pathname === "/login/oauth/access_token") {
-      const login = /^as-([\w-]+)$/.exec(body?.code ?? "")?.[1];
+      const login = /^as-([\w-]+)$/.exec(body?.code ?? body?.device_code ?? "")?.[1];
       return send(res, 200, login ? { access_token: `ghu_fake_${login}`, token_type: "bearer" } : { error: "bad_verification_code" });
     }
     const me = /^Bearer ghu_fake_([\w-]+)$/.exec(req.headers.authorization ?? "")?.[1];
