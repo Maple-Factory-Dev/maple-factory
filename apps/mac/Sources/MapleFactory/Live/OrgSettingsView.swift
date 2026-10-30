@@ -8,6 +8,8 @@ struct OrgSettingsView: View {
 
     /// The Settings window's size, here and headless.
     static let size = CGSize(width: 900, height: 660)
+    /// Its height: a headless run's `-height` can make it taller, to show a long pane whole.
+    static var height: CGFloat { Headless.isOn ? max(size.height, AppDefaults.double(forKey: "height")) : size.height }
     /// A demo script's `ui:settings-row:<pane>`, as a click on that sidebar row would.
     static let demoPick = Notification.Name("OrgSettingsView.demoPick")
 
@@ -118,7 +120,7 @@ struct OrgSettingsView: View {
             if let pane = (note.object as? String).flatMap(Pane.init) { tab = pane.rawValue }
         }
         .navigationTitle(current.title)
-        .frame(width: Self.size.width, height: Self.size.height)
+        .frame(width: Self.size.width, height: Self.height)
     }
 
     private var sidebar: some View {
