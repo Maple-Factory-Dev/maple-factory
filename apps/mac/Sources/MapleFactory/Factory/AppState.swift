@@ -389,6 +389,8 @@ final class AppState {
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
     var postedComments: [String: [Comment]] = [:]
+    /// Each task's review being drafted in its Diff tab.
+    @ObservationIgnored private var reviewDrafts: [String: ReviewDraft] = [:]
     /// The risk policy and goals' accepted risk: the factory's when signed in (edits go to it).
     var policy: RiskPolicy {
         get { isLive ? client?.riskPolicy ?? RiskPolicy() : mockPolicy }
@@ -1172,6 +1174,36 @@ final class AppState {
             return
         }
         postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+    }
+
+    /// The review being drafted on a task's diff; the same one each time, until it's sent.
+    func reviewDraft(for id: String) -> ReviewDraft {
+        if let draft = reviewDrafts[id] { return draft }
+        let draft = ReviewDraft()
+        reviewDrafts[id] = draft
+        return draft
+    }
+
+    /// Sends a task's drafted review: its notes go to the comments, and the batch to the agent as one change request.
+    func submitReview(_ id: String) {
+        let draft = reviewDraft(for: id)
+        let notes = draft.notes.map(\.note)
+        let summary = draft.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !notes.isEmpty else { return }
+        if let client, isLive {
+            client.send(.taskReview(.init(id: id, notes: notes, summary: summary.isEmpty ? nil : summary)))
+        } else {
+            // The mockup: what the factory would post.
+            for note in notes {
+                postedComments[id, default: []].append(Comment(author: FactoryData.me, text: "```diff\n\(note.snippet)\n```\n\(note.text)", when: "now", anchor: DiffReview.anchor(note)))
+            }
+            if !summary.isEmpty { postedComments[id, default: []].append(Comment(author: FactoryData.me, text: summary, when: "now", anchor: "Review")) }
+            let text = ([summary.isEmpty ? nil : summary] + notes.enumerated().map { "\($0.offset + 1). \(DiffReview.anchor($0.element)): \($0.element.text)" })
+                .compactMap { $0 }.joined(separator: "\n")
+            steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: text, anchor: "Review · \(notes.count) comment\(notes.count == 1 ? "" : "s")", timing: task(id).steerTiming))
+        }
+        draft.clear()
+        showToast("Review sent: \(notes.count) comment\(notes.count == 1 ? "" : "s")", icon: "text.bubble")
     }
 
     /// Answers the agent's open question.
@@ -2089,6 +2121,10 @@ final class AppState {
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
+            // The Diff tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
+            // `diff:add`, `diff:summary:<text>`, `diff:submit` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
+            case "diff": NotificationCenter.default.post(name: DiffView.demo, object: Array(parts.dropFirst()))
+            case "tab": NotificationCenter.default.post(name: TaskFocusView.demoTab, object: parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()

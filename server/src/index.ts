@@ -131,6 +131,8 @@ export default {
     }
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
     if (diff && request.method === "GET") return orgHub(env).fetch(`https://org/diff?task=${diff[1]}`);
+    const threads = /^\/api\/tasks\/([\w-]+)\/threads$/.exec(path);
+    if (threads && request.method === "GET") return orgHub(env).fetch(`https://org/threads?task=${threads[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);
     const removing = /^\/api\/machines\/([a-z0-9-]+)$/.exec(path);
     if (removing && request.method === "DELETE") return removeMachine(env, me, removing[1]);

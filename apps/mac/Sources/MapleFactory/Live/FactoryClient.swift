@@ -836,6 +836,17 @@ import Security
         diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
     }
 
+    /// Each task's GitHub review threads as last fetched, and the change they were fetched for.
+    private(set) var threads: [String: (key: String, threads: [Wire.ReviewThread])] = [:]
+
+    /// Fetches the review threads on a task's pull request unless the ones held are for the same
+    /// change (`key`, as for the diff); `force` reads them again regardless.
+    func loadThreads(task id: String, key: String, force: Bool = false) async {
+        guard force || threads[id]?.key != key else { return }
+        guard let found: [Wire.ReviewThread] = try? await api("/api/tasks/\(id)/threads") else { return }
+        threads[id] = (key, found)
+    }
+
     /// A file pasted or dropped into a brief or note, as the factory keeps it (`POST /api/attachments`).
     struct Attachment: Decodable {
         let id: String

@@ -154,6 +154,23 @@ extension FactoryData {
         ], inProgress: true),
     ]
 
+    /// The mockup's review threads on a task's pull request.
+    static func reviewThreads(for taskID: String) -> [Wire.ReviewThread] {
+        guard taskID == "ATL-141" else { return [] }
+        let hour: UInt64 = 3_600_000
+        let now = UInt64(Date().timeIntervalSince1970 * 1000)
+        return [
+            Wire.ReviewThread(id: "PRRT_1", path: "lib/auth/jwt.ts", line: 21, startLine: 20, side: .new, resolved: false, outdated: false, comments: [
+                .init(author: "ana-k", body: "Pin the algorithm here too: `jwtVerify(token, secret, { algorithms: [\"HS256\"] })`, or a token signed with another alg could slip through.", at: now - 3 * hour),
+                .init(author: "dmitri", body: "+1, jose accepts whatever the header says otherwise.", at: now - 2 * hour),
+            ]),
+            Wire.ReviewThread(id: "PRRT_2", path: "package.json", line: 22, side: .new, resolved: true, outdated: false, comments: [
+                .init(author: "dmitri", body: "Is jose 5 fine on the edge runtime?", at: now - 5 * hour),
+                .init(author: "ana-k", body: "Yes, it's what Vercel recommends.", at: now - 4 * hour),
+            ]),
+        ]
+    }
+
     /// Stand-in for fetching a collapsed file's diff from the PR.
     static func loadHunks(for file: DiffFile) -> [DiffHunk] {
         let name = (file.path as NSString).lastPathComponent

@@ -132,15 +132,44 @@ struct TaskTimeline: View {
     }
 
     private func commentCard(_ comment: Comment) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // A review comment on lines of the diff: its file and lines, the code, then what was said.
+        let code = comment.anchor.flatMap(DiffReview.parseAnchor)
+        let split = code == nil ? nil : DiffReview.splitSnippet(comment.text)
+        return VStack(alignment: .leading, spacing: 0) {
             header(name: comment.author.id == FactoryData.me.id ? "You" : comment.author.firstName,
-                   verb: comment.via.map { "replied in \($0)" } ?? (comment.author.isHuman ? "commented" : "replied"),
-                   anchor: comment.anchor, when: comment.when)
+                   verb: comment.via.map { "replied in \($0)" } ?? (code != nil ? "commented on" : comment.author.isHuman ? "commented" : "replied"),
+                   anchor: code == nil ? comment.anchor : nil, code: code, when: comment.when)
             Hairline()
-            MarkdownPreview(source: comment.text, baseSize: 13)
-                .padding(12)
+            if let split {
+                snippet(split.snippet)
+                Hairline()
+                MarkdownPreview(source: split.body, baseSize: 13)
+                    .padding(12)
+            } else {
+                MarkdownPreview(source: comment.text, baseSize: 13)
+                    .padding(12)
+            }
         }
         .background(card(Theme.stroke))
+    }
+
+    /// Diff lines as the comment quoted them, coloured like the Diff tab.
+    private func snippet(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                let tint: Color? = line.hasPrefix("+") ? Theme.State.merged : line.hasPrefix("-") ? Theme.State.cancelled : nil
+                Text(line.isEmpty ? " " : line)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+                    .background(tint.map { $0.opacity(0.09) } ?? .clear)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Theme.editorBG)
     }
 
     private func requestCard(_ request: ChangeRequest) -> some View {
@@ -178,10 +207,23 @@ struct TaskTimeline: View {
         .frame(minHeight: 22)
     }
 
-    private func header(name: String, verb: String, anchor: String?, when: String) -> some View {
+    private func header(name: String, verb: String, anchor: String?, code: (path: String, lines: String)? = nil, when: String) -> some View {
         HStack(spacing: 6) {
             Text(name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
             Text(verb).font(.system(size: 12.5)).foregroundStyle(Theme.textMuted)
+            if let code {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text").font(.system(size: 9.5))
+                    Text(code.path).truncationMode(.middle)
+                    Text(code.lines).foregroundStyle(Theme.textMuted)
+                }
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 7)
+                .frame(height: 19)
+                .background(Capsule().fill(Theme.fill))
+                .help("\(code.path), \(code.lines)")
+            }
             if let anchor {
                 Text(anchor)
                     .font(.system(size: 10.5, weight: .medium))

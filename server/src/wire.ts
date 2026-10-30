@@ -17,6 +17,9 @@ export const RoleValues: readonly Role[] = ["planner","builder","reviewer"];
 export type StepProgress = "done" | "active" | "pending";
 export const StepProgressValues: readonly StepProgress[] = ["done","active","pending"];
 
+export type DiffSide = "new" | "old";
+export const DiffSideValues: readonly DiffSide[] = ["new","old"];
+
 export type ProofKind = "screenshot" | "video" | "terminal" | "tests";
 export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","terminal","tests"];
 
@@ -677,6 +680,39 @@ export interface DiffStat {
   path: string;
   added: number;
   removed: number;
+}
+
+/** A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review. */
+export interface ReviewNote {
+  path: string;
+  /** First line, numbered on `side`. */
+  start: number;
+  /** Last line (the same as start for one line). */
+  end: number;
+  side: DiffSide;
+  /** The lines it's about, as the diff showed them (with +/-/space prefixes). */
+  snippet: string;
+  text: string;
+}
+
+export interface ReviewThreadComment {
+  author: string;
+  body: string;
+  at: number;
+}
+
+/** A review thread on the task's GitHub pull request (`GET /api/tasks/:id/threads`). */
+export interface ReviewThread {
+  id: string;
+  path: string;
+  /** The line it ends on; none once the code it was on is gone. */
+  line?: number | null;
+  /** Where a multi-line thread starts. */
+  startLine?: number | null;
+  side: DiffSide;
+  resolved: boolean;
+  outdated: boolean;
+  comments: ReviewThreadComment[];
 }
 
 /** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
@@ -1616,6 +1652,14 @@ export interface ClientMessage_TaskSteer {
   anchor?: string | null;
 }
 
+/** Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request. */
+export interface ClientMessage_TaskReview {
+  type: "task.review";
+  id: string;
+  notes: ReviewNote[];
+  summary?: string | null;
+}
+
 /** Approve its plan; a planned backlog task is picked up and builds once its approvals are met. */
 export interface ClientMessage_TaskApprovePlan {
   type: "task.approvePlan";
@@ -1733,8 +1777,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
