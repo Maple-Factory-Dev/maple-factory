@@ -272,7 +272,15 @@ function row(t, sub) {
     h("span", { class: `dot bg-${t.state}` }),
     h("div", {},
       h("div", { class: "title" }, t.title),
-      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", ` · ${sub}`)));
+      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", " · ", sub)));
+}
+
+/** Its state's title, or "Merging…" (the server's live log while it merges) or the auto-merge countdown. */
+function stateLabel(t) {
+  if (t.state !== "reviewing") return STATE_TITLE[t.state];
+  if (t.liveLog === "Merging…") return "Merging…";
+  if (t.mergeAt != null && !t.hand) return h("span", { "data-merge-at": t.mergeAt }, countdownLabel(t.mergeAt));
+  return STATE_TITLE[t.state];
 }
 
 function inboxView() {
@@ -323,7 +331,7 @@ function tasksView() {
     queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
     backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
     h("h2", {}, `In flight · ${active.length}`),
-    active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || STATE_TITLE[t.state]))) : h("div", { class: "card empty" }, "Nothing in flight."),
+    active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight."),
     done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
 }
 
@@ -554,7 +562,7 @@ function taskView(id) {
     h("div", { class: "row muted" }, h("a", { href: "#/" }, "← Inbox"), h("span", { class: "spacer" }), h("span", { class: "mono" }, t.id)),
     h("h1", {}, t.title),
     h("div", { class: "row" },
-      h("span", { class: `pill s-${t.state}` }, STATE_TITLE[t.state]),
+      h("span", { class: `pill s-${t.state}` }, stateLabel(t)),
       ownerControl(t),
       h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
