@@ -96,6 +96,8 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
+    /// A live session a maplefactory://session/<machine>/<id> link asked for; Machines opens it.
+    var openingLiveSession: LiveMachinesView.OpenSession? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
     /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.

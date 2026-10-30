@@ -878,6 +878,11 @@ import Security
         send(.sessionKill(.init(machine: machine, id: id)))
     }
 
+    /// Who else may open a session's terminal: the whole list, each to watch or to type.
+    func shareSession(machine: String, id: String, shares: [Wire.ShareGrant]) {
+        send(.sessionShare(.init(machine: machine, id: id, shares: shares)))
+    }
+
     /// The commands to run on a new machine, with a fresh one-time code.
     func enrollment() async throws -> Enrollment {
         try await api("/api/machines/enroll", method: "POST")

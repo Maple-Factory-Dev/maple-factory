@@ -26,6 +26,12 @@ struct LiveMachinesView: View {
             }
         }
         .onAppear(perform: openFromLaunchArgs)
+        .onChange(of: state.openingLiveSession, initial: true) { _, link in
+            // A maplefactory://session/<machine>/<id> link.
+            guard let link else { return }
+            state.openingLiveSession = nil
+            withAnimation(.snappy) { open = OpenSession(machine: link.machine, id: link.id) }
+        }
         .onChange(of: client.machines) { _, machines in
             guard let awaiting, let machine = machines.first(where: { $0.id == awaiting.machine }),
                   let new = machine.sessions.first(where: { !awaiting.known.contains($0.session.id) }) else { return }
@@ -443,9 +449,13 @@ struct LiveMachineCard: View {
         } else {
             VStack(spacing: 6) {
                 ForEach(machine.sessions, id: \.session.id) { live in
-                    LiveSessionRow(live: live)
+                    // Teammates' sessions open only when they're shared with you; the terminal would refuse.
+                    let shared = isMine ? nil : live.shares?.first { $0.login == client.me?.login }
+                    let openable = isMine || client.me?.role == "admin" || shared != nil
+                    LiveSessionRow(live: live, sharedWithMe: shared, openable: openable)
                         .contentShape(Rectangle())
-                        .onTapGesture { onOpen(live.session.id) }
+                        .onTapGesture { if openable { onOpen(live.session.id) } }
+                        .help(openable ? "" : "Only \(machine.owner) or an admin can open it; ask \(machine.owner) to share it with you.")
                 }
             }
         }
@@ -589,6 +599,8 @@ struct AgentLoginPanel: View {
 
 struct LiveSessionRow: View {
     let live: Wire.LiveSession
+    var sharedWithMe: Wire.SessionShare? = nil
+    var openable = true
     @State private var hovering = false
 
     var body: some View {
@@ -616,6 +628,16 @@ struct LiveSessionRow: View {
                         .foregroundStyle(Theme.textMuted)
                         .lineLimit(1)
                         .truncationMode(.head)
+                    if let sharedWithMe {
+                        Text(sharedWithMe.canType ? "Shared with you · can type" : "Shared with you")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 6)
+                            .frame(height: 17)
+                            .background(Capsule().fill(Theme.accent.opacity(0.12)))
+                            .fixedSize()
+                            .help("Shared by @\(sharedWithMe.by)")
+                    }
                 }
                 Text(live.activity?.message ?? live.activity?.step ?? (live.session.agent == "shell" ? "Interactive shell" : state.title))
                     .font(.system(size: 11.5))
@@ -626,13 +648,19 @@ struct LiveSessionRow: View {
             Text(relative(live.session.startedAt))
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textFaint)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
+            if openable {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
+            } else {
+                Image(systemName: "lock")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+            }
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(hovering ? Theme.fillSelected : Theme.fillSubtle))
+        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && openable ? Theme.fillSelected : Theme.fillSubtle))
         .onHover { hovering = $0 }
     }
 }
