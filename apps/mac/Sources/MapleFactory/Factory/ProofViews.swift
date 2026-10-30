@@ -330,10 +330,11 @@ private struct TestsProof: View {
 }
 
 /// A stand-in thumbnail for screenshot and video proofs: a tiny browser window with a login form.
-/// The screenshot a runner uploaded (`/attachments/…`), fetched with the app's token; a click opens it full size.
+/// The screenshot a runner uploaded (`/attachments/…`), fetched with the app's token; a click shows it in the lightbox.
 private struct ScreenshotProof: View {
     let caption: String
     let path: String
+    @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client: FactoryClient?
     @State private var image: NSImage?
     @State private var failed: String?
@@ -342,7 +343,7 @@ private struct ScreenshotProof: View {
         VStack(alignment: .leading, spacing: 6) {
             if let image {
                 Button {
-                    Task { await client?.open(attachment: path) }
+                    state.showLightbox(.image(image, caption: caption, attachment: path))
                 } label: {
                     Image(nsImage: image)
                         .resizable()
@@ -352,11 +353,16 @@ private struct ScreenshotProof: View {
                         .frame(maxWidth: min(image.size.width, 380), alignment: .leading)
                 }
                 .buttonStyle(.plain)
-                .help("Open full size")
+                .help("View larger")
             } else {
                 ProofLoading(failed: failed)
             }
             ProofCaption(icon: "photo", caption: caption)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { _ in
+            // Only the first proof on screen answers, so one lightbox opens.
+            guard let image, state.lightbox == nil else { return }
+            state.showLightbox(.image(image, caption: caption, attachment: path))
         }
         .task(id: path) {
             do {
@@ -377,6 +383,7 @@ struct VideoProof: View {
 
     let caption: String
     let path: String
+    @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client: FactoryClient?
     @State private var file: URL?
     @State private var poster: NSImage?
@@ -392,6 +399,7 @@ struct VideoProof: View {
                     .frame(maxWidth: 380)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+                    .overlay(alignment: .topTrailing) { expandButton }
             } else if let file {
                 Button { play(file) } label: {
                     ZStack {
@@ -422,6 +430,7 @@ struct VideoProof: View {
                 }
                 .buttonStyle(.plain)
                 .help("Play")
+                .overlay(alignment: .topTrailing) { expandButton }
             } else {
                 ProofLoading(failed: failed)
             }
@@ -432,6 +441,32 @@ struct VideoProof: View {
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPlay)) { _ in
             if let file, player == nil { play(file) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: ProofLightboxView.demoOpen)) { _ in
+            if file != nil, state.lightbox == nil { expand() }
+        }
+    }
+
+    /// Opens the recording in the lightbox, from where the inline player was; the inline one stays paused.
+    @ViewBuilder private var expandButton: some View {
+        if file != nil {
+            Button(action: expand) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(.black.opacity(0.55)))
+            }
+            .buttonStyle(.plain)
+            .padding(6)
+            .help("View larger")
+        }
+    }
+
+    private func expand() {
+        guard let file else { return }
+        player?.pause()
+        let at = player.map { $0.currentTime().seconds } ?? 0
+        state.showLightbox(.video(file, poster: poster, caption: caption, at: at.isFinite ? at : 0))
     }
 
     private func play(_ file: URL) {
@@ -574,5 +609,121 @@ private struct MediaProof: View {
             .background(Color.white)
         }
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
+    }
+}
+
+/// A proof shown as large as the window allows, over a dimmed window. Esc, the close button or a click
+/// on the backdrop puts it away; Open in Preview (or QuickTime) still hands the file to the Mac.
+struct ProofLightboxView: View {
+    /// A demo script's `lightbox:open`: the first screenshot or video proof on screen opens itself here.
+    static let demoOpen = Notification.Name("ProofLightboxView.demoOpen")
+    static let padding: CGFloat = 48
+    /// Room under the media for its caption and buttons.
+    static let barHeight: CGFloat = 40
+
+    let lightbox: ProofLightbox
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client: FactoryClient?
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        GeometryReader { geo in
+            let room = CGSize(width: geo.size.width - Self.padding * 2,
+                              height: geo.size.height - Self.padding * 2 - Self.barHeight)
+            ZStack {
+                Color.black.opacity(0.75)
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.closeLightbox() }
+
+                VStack(spacing: 12) {
+                    media(in: room)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
+                    bar
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .onAppear(perform: startVideo)
+        .onDisappear { player?.pause() }
+    }
+
+    @ViewBuilder private func media(in room: CGSize) -> some View {
+        switch lightbox {
+        case let .image(image, _, _):
+            let size = Self.fit(image.size, in: room)
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size.width, height: size.height)
+                .contentShape(Rectangle())
+                .onTapGesture {}
+        case let .video(_, poster, _, _):
+            // Recordings are often small: they grow to fill the room, unlike screenshots.
+            let size = Self.fit(poster?.size ?? CGSize(width: 16, height: 10), in: room, upscale: true)
+            Group {
+                if let player { VideoPlayer(player: player) } else { Color.black }
+            }
+            .frame(width: size.width, height: size.height)
+        }
+    }
+
+    private var bar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isVideo ? "video" : "photo")
+            Text(lightbox.caption).lineLimit(1)
+            Spacer(minLength: 16)
+            if canOpen {
+                Button(isVideo ? "Open in QuickTime" : "Open in Preview", action: openExternally)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.white)
+            }
+            Button { state.closeLightbox() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(.white.opacity(0.16)))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("Close (Esc)")
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(.white.opacity(0.85))
+        .frame(height: Self.barHeight - 12)
+        .padding(.horizontal, Self.padding)
+    }
+
+    private var isVideo: Bool { if case .video = lightbox { true } else { false } }
+    private var canOpen: Bool { if case .image(_, _, nil) = lightbox { false } else { true } }
+
+    private func startVideo() {
+        guard case let .video(file, _, _, at) = lightbox else { return }
+        let player = AVPlayer(url: file)
+        if at > 0 { player.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
+        self.player = player
+        player.play()
+    }
+
+    private func openExternally() {
+        switch lightbox {
+        case let .image(_, _, attachment?):
+            Task { await client?.open(attachment: attachment) }
+        case .image:
+            break
+        case let .video(file, _, _, _):
+            player?.pause()
+            FactoryClient.quarantine(file)
+            NSWorkspace.shared.open(file)
+        }
+    }
+
+    /// Media fitted into the room it has, keeping its shape; screenshots never grow past their own size.
+    nonisolated static func fit(_ media: CGSize, in room: CGSize, upscale: Bool = false) -> CGSize {
+        guard media.width > 0, media.height > 0, room.width > 0, room.height > 0 else { return .zero }
+        var scale = min(room.width / media.width, room.height / media.height)
+        if !upscale { scale = min(scale, 1) }
+        return CGSize(width: (media.width * scale).rounded(), height: (media.height * scale).rounded())
     }
 }

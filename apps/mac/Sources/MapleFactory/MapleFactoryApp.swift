@@ -230,6 +230,14 @@ struct ContentView: View {
             .padding(.leading, state.sidebarSpace)
             .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
+        // A proof shown large: above the sidebar, the slab and the toasts.
+        .overlay {
+            if let lightbox = state.lightbox {
+                ProofLightboxView(lightbox: lightbox)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    .zIndex(10)
+            }
+        }
         .background(VisualEffect(material: .sidebar))
         .ignoresSafeArea()
         .onAppear { NSApp.appearance = appearance.nsAppearance }

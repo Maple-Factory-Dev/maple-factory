@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// What the proof lightbox shows: a screenshot (and its upload, for Open in Preview) or a recording from where it was.
+enum ProofLightbox {
+    case image(NSImage, caption: String, attachment: String? = nil)
+    case video(URL, poster: NSImage?, caption: String, at: Double = 0)
+
+    var caption: String {
+        switch self {
+        case let .image(_, caption, _), let .video(_, _, caption, _): caption
+        }
+    }
+}
+
 struct Toast: Identifiable, Equatable {
     let id = UUID()
     let icon: String
@@ -389,6 +401,8 @@ final class AppState {
     var mergeGrace: Duration = .seconds(10)
     var dismissedMentions: Set<String> = []
     var toast: Toast?
+    /// A proof screenshot or recording shown large over the window.
+    var lightbox: ProofLightbox?
 
     // MARK: Composer & scratchpad
 
@@ -1019,6 +1033,14 @@ final class AppState {
                 withAnimation(.easeOut(duration: 0.3)) { self.toast = nil }
             }
         }
+    }
+
+    func showLightbox(_ lightbox: ProofLightbox) {
+        withAnimation(.snappy(duration: 0.25)) { self.lightbox = lightbox }
+    }
+
+    func closeLightbox() {
+        withAnimation(.snappy(duration: 0.2)) { lightbox = nil }
     }
 
     // MARK: Task actions
@@ -1909,6 +1931,9 @@ final class AppState {
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
+            // The first screenshot or video proof on screen, shown large (`lightbox:open`), and put away (`lightbox:close`).
+            case "lightbox":
+                if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: nil) }
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
