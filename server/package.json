@@ -7,7 +7,7 @@
     "dev": "wrangler d1 migrations apply maple --local && wrangler dev --port ${MAPLE_PORT:-8788}",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --no-warnings=ExperimentalWarning --test test/*.test.ts"
+    "test": "node --no-warnings=ExperimentalWarning --experimental-transform-types --test test/*.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261011.1",
