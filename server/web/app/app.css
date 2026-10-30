@@ -234,6 +234,7 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
 .review-bar { position: sticky; top: 52px; z-index: 4; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--awaiting) 40%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--awaiting) 8%, var(--bg)); }
 .review-bar textarea { min-height: 38px; }
+.comment .anchor { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .timeline { display: flex; flex-direction: column; gap: 10px; }
 .event { font-size: 14px; }
@@ -337,6 +338,12 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
   .btn kbd { display: none; }
   .md-keys { display: none; }
   :is(.composer, .card.draft) .actionbar .spacer { display: none; }
+  /* The review bar sits under the taller header, its title above two even buttons. */
+  .review-bar { top: 60px; }
+  .review-bar > .row { flex-wrap: wrap; }
+  .review-bar > .row > b { flex-basis: 100%; }
+  .review-bar > .row > .spacer { display: none; }
+  .review-bar > .row > .btn { flex: 1; }
   :is(.composer, .card.draft) .actionbar .btn { flex: 1; }
   :is(.composer, .card.draft) .actionbar .btn.plan { flex-basis: 100%; order: -1; padding: 9px 14px; }
   .card.draft .actionbar > .muted:empty { display: none; }
