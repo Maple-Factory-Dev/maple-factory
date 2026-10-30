@@ -7,7 +7,8 @@
 // and metadata; a member's secrets.set is refused; OrgHub's row holds ciphertext, not the value; the
 // audit rows name the secret, never its value. Then the machine a task on acme/web is assigned to
 // gets its values, another machine asking with that task is refused (and without a task gets them
-// for its owner's checkout), and a deleted secret is gone from the next reply.
+// for its admin owner's checkout), a member's machine without a task is refused with no audit row,
+// and a deleted secret is gone from the next reply.
 
 import { execFileSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
@@ -58,8 +59,8 @@ async function app(tok) {
 }
 
 /** A runner that only talks: enrolls, says hello, and answers nothing but records what it's sent. */
-async function runner(runnerId) {
-  const { code } = await (await fetch(`${base}/api/machines/enroll`, { method: "POST", headers: auth })).json();
+async function runner(runnerId, as = auth) {
+  const { code } = await (await fetch(`${base}/api/machines/enroll`, { method: "POST", headers: as })).json();
   const enrolled = await (await fetch(`${base}/runner/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -94,7 +95,8 @@ const rows = (file, query) => JSON.parse(sql(file, query) || "[]");
 
 // ---- an admin sets a secret; apps see names only ----
 const admin = await app(token);
-const member = await app(await tokenFor(`mate${Date.now() % 10000}`));
+const memberToken = await tokenFor(`mate${Date.now() % 10000}`);
+const member = await app(memberToken);
 if (admin.snapshot.me.role !== "admin") throw new Error(`the dev login is ${admin.snapshot.me.role}, not admin`);
 if (!Array.isArray(admin.snapshot.secrets)) throw new Error("the snapshot has no secrets list");
 if (!admin.snapshot.repos.some((r) => r.name === REPO)) {
@@ -196,7 +198,27 @@ step(`${near.id} asking for acme/other with ${taskId} refused: "${wrongRepo.erro
 
 const own = await far.request(REPO);
 if (own.values?.API_KEY !== VALUE) throw new Error(`${far.id}'s pull for its owner's checkout: ${JSON.stringify(own.error)}`);
-step(`${far.id} without a task (secrets pull, its owner a member) got ${Object.keys(own.values).sort().join(", ")}`);
+step(`${far.id} without a task (secrets pull, its owner an admin) got ${Object.keys(own.values).sort().join(", ")}`);
+
+// A member's machine can't pull: an agent there could get around the runner's own check. No row for a refusal.
+if (member.snapshot.me.role === "admin") throw new Error(`${member.snapshot.me.login} is an admin, not a member`);
+const mates = await runner(`secrets-m-${Date.now() % 100000}`, { authorization: `Bearer ${memberToken}` });
+await admin.wait("the member's runner", () => admin.machines.some((m) => m.id === mates.id && m.online && m.owner === member.snapshot.me.login));
+const pulledBefore = audits().filter((a) => a.action === "secret.pulled").length;
+const notAdmin = await mates.request(REPO);
+if (notAdmin.values || notAdmin.code !== "forbidden" || !/Only an admin's machine can pull secrets/.test(notAdmin.error)) throw new Error(`a member's machine pulled: ${JSON.stringify({ ...notAdmin, values: Object.keys(notAdmin.values ?? {}) })}`);
+if (audits().filter((a) => a.action === "secret.pulled").length !== pulledBefore) throw new Error("a refused pull wrote a secret.pulled row");
+step(`${mates.id} (owned by member ${member.snapshot.me.login}) without a task refused: "${notAdmin.error}" (${notAdmin.code}); no audit row`);
+
+// …but a task the member owns, on their own machine, still gets its repo's values.
+member.send({ type: "task.create", goal: goal.id, title: "Use the API key too", brief: "Read API_KEY.", shareable: false, plan: true, tickets: [], agent: "claude" });
+const mateTask = await member.wait("the member's task", () => [...member.tasks.values()].find((t) => t.goal === goal.id && t.title === "Use the API key too"));
+await admin.wait(`${mateTask.id} on ${mates.id}`, () => admin.tasks.get(mateTask.id)?.machine === mates.id && mates.opened.includes(mateTask.id));
+const mateGot = await mates.request(REPO, mateTask.id);
+if (mateGot.error || mateGot.values?.API_KEY !== VALUE) throw new Error(`${mates.id} with ${mateTask.id}: ${JSON.stringify(mateGot.error)}`);
+step(`${mates.id} asking with ${mateTask.id} (its owner's task) got ${Object.keys(mateGot.values).sort().join(", ")}`);
+member.send({ type: "task.cancel", id: mateTask.id });
+await admin.wait(`${mateTask.id} cancelled`, () => admin.tasks.get(mateTask.id)?.state === "cancelled");
 
 admin.send({ type: "secrets.delete", repo: REPO, name: "OTHER_TOKEN" });
 await admin.wait("OTHER_TOKEN deleted", () => !admin.secrets.some((x) => x.repo === REPO && x.name === "OTHER_TOKEN"));
@@ -206,7 +228,7 @@ step(`deleted OTHER_TOKEN: the next reply has only ${Object.keys(got.values).joi
 
 const pulled = audits().filter((a) => a.action === "secret.pulled");
 const deleted = audits().filter((a) => a.action === "secret.deleted");
-if (pulled.length < 3 || !deleted.some((a) => JSON.parse(a.detail).name === "OTHER_TOKEN")) throw new Error(`audit: ${JSON.stringify(audits().slice(-5))}`);
+if (pulled.length < 4 || !deleted.some((a) => JSON.parse(a.detail).name === "OTHER_TOKEN")) throw new Error(`audit: ${JSON.stringify(audits().slice(-5))}`);
 if (JSON.stringify(audits()).includes(VALUE) || JSON.stringify(audits()).includes(OTHER)) throw new Error("a value is in the audit");
 step(`audit: secret.pulled ${pulled.at(-1).detail}; secret.deleted ${deleted.at(-1).detail}; no values`);
 
