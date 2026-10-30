@@ -58,6 +58,8 @@ import Security
     private(set) var repos: [Wire.OrgRepo] = []
     /// Every repo's secrets: names and who changed them when, never a value.
     private(set) var secrets: [Wire.RepoSecret] = []
+    /// The repos with worktree scripts (Settings › Repositories); empty from an older server.
+    private(set) var repoScripts: [Wire.RepoWorktreeScripts] = []
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
     /// Runner releases with their notes, newest first (What's new); empty from an older server.
@@ -255,6 +257,7 @@ import Security
         acceptances = []
         repos = []
         secrets = []
+        repoScripts = []
         runnerLatest = nil
         runnerReleases = []
         serverVersion = nil
@@ -372,6 +375,7 @@ import Security
             intakeRequests = snapshot.intake
             repos = snapshot.repos
             secrets = snapshot.secrets
+            repoScripts = snapshot.scripts ?? []
             runnerLatest = snapshot.runnerLatest
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
@@ -439,6 +443,7 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+            if let scripts = update.scripts { repoScripts = scripts }
         case .secretsUpdated(let update):
             secrets = update.secrets
         case .runnerReleased(let update):
@@ -555,6 +560,16 @@ import Security
     /// Admins only; the server trims them and says so with prompts.updated.
     func save(prompts: Wire.PromptAdditions) {
         send(.promptsSave(.init(prompts: prompts)))
+    }
+
+    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
+    func save(scripts: Wire.WorktreeScripts, for repo: String) {
+        send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    }
+
+    /// `repo`'s worktree scripts, if it has any.
+    func scripts(for repo: String) -> Wire.RepoWorktreeScripts? {
+        repoScripts.first { $0.repo.lowercased() == repo.lowercased() }
     }
 
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {

@@ -256,6 +256,7 @@ export class MachineHub extends DurableObject<Env> {
       case "task.finished":
       case "task.merged":
       case "task.cleaned":
+      case "task.progress":
       case "task.handed_off":
       case "task.token_request":
       // Answered from the factory (engine.ts releaseSecrets): only this enrolled machine's socket gets here.

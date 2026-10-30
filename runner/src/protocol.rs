@@ -231,6 +231,9 @@ pub enum Outbound {
     /// A Draft with AI run finished: the agent's last message, or why it couldn't.
     #[serde(rename = "draft.done")]
     DraftDone { id: String, output: Option<String>, error: Option<String> },
+    /// A line for a task's timeline: one of its repo's worktree scripts ran (see `worktree_scripts`).
+    #[serde(rename = "task.progress")]
+    TaskProgress { task_id: String, text: String },
     /// How `task.cleanup` went: the worktree (and branch) removed, or why not.
     #[serde(rename = "task.cleaned")]
     TaskCleaned { task_id: String, ok: bool, branch_deleted: bool, message: Option<String> },

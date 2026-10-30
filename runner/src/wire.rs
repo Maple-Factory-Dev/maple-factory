@@ -986,6 +986,38 @@ pub struct RepoSecret {
     pub updated_at: u64,
 }
 
+/// A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeScripts {
+    /// Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create: Option<String>,
+    /// Runs once the worktree exists, before the agent starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
+    /// Runs before the worktree is removed when a finished task is cleaned up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teardown: Option<String>,
+    /// Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<String>,
+    /// How long each one may run (default 600).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u32>,
+}
+
+/// One repo's worktree scripts, and who last changed them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoWorktreeScripts {
+    /// GitHub owner/name.
+    pub repo: String,
+    pub scripts: WorktreeScripts,
+    pub updated_by: String,
+    pub updated_at: u64,
+}
+
 /// A newer maple-server than the factory runs, and how this factory gets it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1214,6 +1246,9 @@ pub struct TaskStart {
     /// GitHub owner/name; none for a goal that names a folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// The repo's worktree scripts, when it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts: Option<WorktreeScripts>,
 }
 
 /// How a factory session treats the agent's permission prompts.
@@ -1771,6 +1806,12 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// A line about setting a task's worktree up or cleaning it up (a worktree script starting or finishing), for its timeline.
+    #[serde(rename = "task.progress")]
+    TaskProgress {
+        task_id: String,
+        text: String,
+    },
     #[serde(rename = "task.cleaned")]
     TaskCleaned {
         task_id: String,
@@ -1924,6 +1965,11 @@ pub enum ServerToRunner {
         merged: bool,
         #[serde(default)]
         heads: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+        /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scripts: Option<WorktreeScripts>,
     },
     /// The answer to `task.token_request`.
     #[serde(rename = "task.token")]
@@ -2120,6 +2166,12 @@ pub enum ClientMessage {
     SecretsDelete {
         repo: String,
         name: String,
+    },
+    /// Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.
+    #[serde(rename = "repos.scripts.set")]
+    ReposScriptsSet {
+        repo: String,
+        scripts: WorktreeScripts,
     },
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
     #[serde(rename = "goal.acceptRisk")]
@@ -2338,6 +2390,9 @@ pub enum ServerToClient {
         /// Every repo's secrets, names and who changed them only.
         #[serde(default)]
         secrets: Vec<RepoSecret>,
+        /// The repos that have worktree scripts. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scripts: Option<Vec<RepoWorktreeScripts>>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
@@ -2415,6 +2470,9 @@ pub enum ServerToClient {
     ReposUpdated {
         #[serde(default)]
         repos: Vec<OrgRepo>,
+        /// The repos that have worktree scripts. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scripts: Option<Vec<RepoWorktreeScripts>>,
     },
     /// Every repo's secrets again (names only), after one changed.
     #[serde(rename = "secrets.updated")]

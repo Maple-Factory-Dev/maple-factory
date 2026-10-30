@@ -82,6 +82,26 @@ Replace each secret with its value, which seals it under the new key. Rotate whe
 the key (a Cloudflare account admin) leaves, and rotate the secrets themselves at their source, since
 anyone who pulled them keeps a copy.
 
+### Worktree scripts
+
+Teams with their own scripts for making and cleaning up worktrees set them per repo in Settings →
+Repositories (click a repo). There are four, each optional, each a shell command of at most 4 KB:
+
+- **create** makes the task's worktree instead of the runner's `git worktree add`. It must leave a git
+  worktree on `$MAPLE_BRANCH` at `$MAPLE_WORKTREE`, or the task fails to start.
+- **setup** runs once the worktree exists (whichever made it), before the agent starts.
+- **teardown** runs before a finished task's worktree is removed (merged, or cancelled with "clean up").
+- **archive** runs instead of the runner's removal: the script owns the folder and the branch.
+
+The runner runs each with `sh -c` in the repo's main checkout, with the login shell's PATH, the repo's
+secrets and `MAPLE_REPO`, `MAPLE_REPO_ROOT`, `MAPLE_WORKTREE`, `MAPLE_BRANCH`, `MAPLE_BASE`,
+`MAPLE_TASK_ID` and `MAPLE_PHASE` (create, setup, teardown or archive). Each may run for the repo's
+timeout (10 minutes unless set), in a process group that's killed when it ends. A script that fails stops
+what it was part of: a failed create or setup removes the half-made worktree (and the branch, if it made
+one) and the task's session doesn't start, with the end of the script's output (secret values scrubbed)
+as the reason; a failed teardown leaves the worktree as it is. Each run is a line on the task's timeline.
+Only admins change them (`repo.scripts` in the audit, naming which ones changed); everyone sees them.
+
 Admins see when a newer maple-server is out, and how this factory gets it, on the home page, `/setup` and
 the Mac app's Account settings. `/healthz` says which version is running.
 

@@ -501,22 +501,36 @@ struct PromptFields: View {
 }
 
 /// The repos goals can work in: the ones the GitHub App is installed on, and any an admin adds.
+/// Clicking one opens its worktree scripts (`RepoScriptsDetail`).
 struct RepositoriesSettings: View {
     @Environment(FactoryClient.self) private var client
     @State private var adding = ""
     @State private var refreshing = false
     @State private var filter = ""
+    /// The repo whose detail is open (`-reposSelected owner/name` opens one at launch).
+    @AppStorage("reposSelected") private var selected = ""
 
     private var isAdmin: Bool { client.me?.role == "admin" }
+    private var selectedRepo: Wire.OrgRepo? {
+        selected.isEmpty || !client.isSignedIn ? nil : client.repos.first { $0.name.lowercased() == selected.lowercased() }
+    }
 
     var body: some View {
+        if let repo = selectedRepo {
+            RepoScriptsDetail(repo: repo) { selected = "" }
+        } else {
+            list
+        }
+    }
+
+    private var list: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Repositories")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.text)
-                    Text("The ones the GitHub App is installed on come from GitHub: grant or remove its access there. Goals pick from these.")
+                    Text("The ones the GitHub App is installed on come from GitHub: grant or remove its access there. Goals pick from these. Click one for its worktree scripts.")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -551,6 +565,14 @@ struct RepositoriesSettings: View {
                         if let branch = repo.defaultBranch {
                             Text(branch).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
                         }
+                        if client.scripts(for: repo.name) != nil {
+                            Text("scripts")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(Theme.textMuted)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Capsule().fill(Theme.fill))
+                                .help("Has worktree scripts")
+                        }
                         Spacer()
                         Text(repo.source == .github ? "GitHub App" : "Added by hand")
                             .font(.system(size: 11))
@@ -564,8 +586,12 @@ struct RepositoriesSettings: View {
                             .buttonStyle(.borderless)
                             .help("Remove \(repo.name)")
                         }
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textFaint)
                     }
                     .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selected = repo.name }
+                    .help("Open \(repo.name)'s worktree scripts")
                 }
                 .listStyle(.bordered(alternatesRowBackgrounds: true))
             }

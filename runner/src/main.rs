@@ -32,6 +32,7 @@ mod update;
 mod usage;
 mod ends;
 mod wire;
+mod worktree_scripts;
 mod worktrees;
 
 use std::sync::Arc;

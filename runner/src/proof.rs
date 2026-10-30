@@ -449,6 +449,11 @@ pub async fn run_checks(
 /// One check: `sh -c <command>` in `dir`, in a process group of its own, with stdout and stderr
 /// together and only their end kept. The group is killed once the command ends, or at `limit`.
 pub async fn run_check(dir: &Path, command: &str, path: Option<&str>, limit: Duration) -> CheckResult {
+    run_check_env(dir, command, path, &[], limit).await
+}
+
+/// `run_check` with `env` added to the command's environment.
+pub async fn run_check_env(dir: &Path, command: &str, path: Option<&str>, env: &[(String, String)], limit: Duration) -> CheckResult {
     let began = std::time::Instant::now();
     let mut cmd = Command::new("sh");
     // `exec 2>&1` first, so both streams come through one pipe, in order.
@@ -460,6 +465,7 @@ pub async fn run_check(dir: &Path, command: &str, path: Option<&str>, limit: Dur
     for var in crate::agents::INHERITED_SESSION_MARKERS {
         cmd.env_remove(var);
     }
+    cmd.envs(env.iter().map(|(k, v)| (k, v)));
     let ms = |b: std::time::Instant| b.elapsed().as_millis() as u64;
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -523,7 +529,7 @@ async fn tail_of(out: tokio::process::ChildStdout) -> String {
 
 /// The PATH of the user's login shell, so checks find what a terminal would (`npm`, `cargo`) even
 /// when the runner is started by launchd. Read once.
-async fn login_path() -> Option<String> {
+pub(crate) async fn login_path() -> Option<String> {
     static PATH: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
     PATH.get_or_init(|| async {
         const MARK: &str = "__maple_path__=";

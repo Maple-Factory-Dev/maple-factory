@@ -384,6 +384,7 @@ export class OrgHub extends DurableObject<Env> {
           intake: this.intake.list(),
           secrets: this.secrets.list(),
           repos: this.store.repos(),
+          scripts: this.store.repoScripts(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,

@@ -310,6 +310,15 @@ pub async fn create(cwd: &str, req: &Request) -> Result<String> {
 /// branched from that. A local branch that origin's has moved past (the task went away and came
 /// back) is moved up to it first. Returns its path, `~`-abbreviated.
 pub async fn create_from(root: &Path, name: &str, start: &str) -> Result<String> {
+    create_with(root, name, start, None).await
+}
+
+/// `create_from` with the repo's worktree scripts (see `worktree_scripts`): its `create` script makes
+/// the worktree in place of `git worktree add` (and must leave a git worktree on `agent/<name>` at
+/// the path), and its `setup` script runs once it's there. When either fails, the half-made worktree
+/// goes (and the branch, if this made it) and the error has the script's output.
+pub async fn create_with(root: &Path, name: &str, start: &str, scripts: Option<&crate::worktree_scripts::ForTask<'_>>) -> Result<String> {
+    use crate::worktree_scripts::{Phase, command, run};
     valid_name(name)?;
     if start.starts_with('-') {
         bail!("`{start}` isn't a branch or commit.");
@@ -325,26 +334,73 @@ pub async fn create_from(root: &Path, name: &str, start: &str) -> Result<String>
         }
         bail!("{} already exists. Pick another name.", abbreviate(&path));
     }
+    let had_branch = has_branch(root, &branch).await;
+    let custom = scripts.and_then(|s| command(Some(s.scripts), Phase::Create));
+    if let (Some(s), Some(custom)) = (scripts, custom) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Err(e) = run(Some(s.scripts), Phase::Create, &s.context(root, &path, &branch)).await {
+            undo(root, &path, &branch, had_branch).await;
+            return Err(e);
+        }
+        let made = list(root).await?.iter().any(|w| canonical(&w.path) == canonical(&path) && w.branch.as_deref() == Some(branch.as_str()));
+        if !made {
+            undo(root, &path, &branch, had_branch).await;
+            bail!("The repo's create script (`{custom}`) finished, but there's no git worktree on {branch} at {} (MAPLE_WORKTREE).", abbreviate(&path));
+        }
+    } else {
+        add(root, &path, &branch, start, had_branch).await?;
+    }
+    poke(false);
+    if let Some(s) = scripts
+        && let Err(e) = run(Some(s.scripts), Phase::Setup, &s.context(root, &path, &branch)).await
+    {
+        undo(root, &path, &branch, had_branch).await;
+        poke(false);
+        return Err(e);
+    }
+    Ok(abbreviate(&path))
+}
+
+/// `git worktree add` for `create_with`: an existing branch, else one from origin's copy, else from `start`.
+async fn add(root: &Path, path: &Path, branch: &str, start: &str, had_branch: bool) -> Result<()> {
     let path_str = path.to_string_lossy().into_owned();
     let remote = format!("refs/remotes/origin/{branch}");
     let on_origin = git(root, &["show-ref", "--verify", "--quiet", &remote]).await.is_ok();
-    let args: Vec<&str> = if has_branch(root, &branch).await {
-        if on_origin && git(root, &["merge-base", "--is-ancestor", &branch, &remote]).await.is_ok() {
+    let args: Vec<&str> = if had_branch {
+        if on_origin && git(root, &["merge-base", "--is-ancestor", branch, &remote]).await.is_ok() {
             // Not checked out anywhere (its worktree isn't there), so this only moves the ref.
-            let _ = git(root, &["branch", "--force", "--no-track", &branch, &remote]).await;
+            let _ = git(root, &["branch", "--force", "--no-track", branch, &remote]).await;
         }
-        vec!["worktree", "add", &path_str, &branch]
+        vec!["worktree", "add", &path_str, branch]
     } else if on_origin {
-        vec!["worktree", "add", "--no-track", "-b", &branch, &path_str, &remote]
+        vec!["worktree", "add", "--no-track", "-b", branch, &path_str, &remote]
     } else {
-        vec!["worktree", "add", "--no-track", "-b", &branch, &path_str, start]
+        vec!["worktree", "add", "--no-track", "-b", branch, &path_str, start]
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     git(root, &args).await.map_err(|e| anyhow!("Couldn't create the worktree: {e}"))?;
-    poke(false);
-    Ok(abbreviate(&path))
+    Ok(())
+}
+
+/// Takes away a worktree a script failed on: git's worktree at `path` if there is one, and the branch
+/// if it wasn't there before. A folder git doesn't list is left alone. Best-effort.
+async fn undo(root: &Path, path: &Path, branch: &str, had_branch: bool) {
+    let listed = list(root).await.map(|l| l.iter().any(|w| canonical(&w.path) == canonical(path))).unwrap_or(false);
+    if listed {
+        let p = path.to_string_lossy();
+        if let Err(e) = git(root, &["worktree", "remove", "--force", "--force", &p]).await {
+            tracing::warn!("couldn't remove the half-made worktree {}: {e}", abbreviate(path));
+        }
+    }
+    let _ = git(root, &["worktree", "prune"]).await;
+    if !had_branch && has_branch(root, branch).await {
+        let _ = git(root, &["branch", "-D", branch]).await;
+    }
+    tidy(root, path);
 }
 
 // ---- reporting ----
@@ -1609,6 +1665,68 @@ mod tests {
         sh(&repo, &["update-ref", "refs/remotes/origin/agent/carry-0001", &other]);
         let wt = expand_home(&create_from(&repo, "carry-0001", "main").await.unwrap());
         assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), mine);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn scripts(create: Option<&str>, setup: Option<&str>) -> crate::worktree_scripts::WorktreeScripts {
+        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), setup: setup.map(String::from), teardown: None, archive: None, timeout_secs: Some(30) }
+    }
+
+    fn for_task<'a>(s: &'a crate::worktree_scripts::WorktreeScripts, env: &'a [(String, String)]) -> crate::worktree_scripts::ForTask<'a> {
+        crate::worktree_scripts::ForTask { scripts: s, task_id: "MF-9", repo: Some("acme/app"), base: Some("main"), env, emit: None, path: None }
+    }
+
+    /// The repo's create script makes the worktree (here with its own `git worktree add`, plus a file of
+    /// its own), and setup then runs with MAPLE_WORKTREE pointing at it.
+    #[tokio::test]
+    async fn a_create_script_makes_the_worktree_and_setup_runs_in_it() {
+        let (root, repo, _, _) = repo_with_task("script-create");
+        let s = scripts(
+            Some(r#"git worktree add --quiet -b "$MAPLE_BRANCH" "$MAPLE_WORKTREE" "$MAPLE_BASE" && echo made-by-script > "$MAPLE_WORKTREE/marker""#),
+            Some(r#"echo "$MAPLE_PHASE for $MAPLE_TASK_ID in $PWD" > "$MAPLE_WORKTREE/setup.txt""#),
+        );
+        let env = vec![];
+        let wt = expand_home(&create_with(&repo, "mf-9", "main", Some(&for_task(&s, &env))).await.unwrap());
+        assert_eq!(wt, worktree_path(&repo, "mf-9").unwrap());
+        assert_eq!(sh(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]), "agent/mf-9");
+        assert_eq!(std::fs::read_to_string(wt.join("marker")).unwrap(), "made-by-script\n");
+        assert_eq!(std::fs::read_to_string(wt.join("setup.txt")).unwrap(), format!("setup for MF-9 in {}\n", canonical(&repo).display()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Without a create script maple makes the worktree itself, and setup still runs.
+    #[tokio::test]
+    async fn setup_runs_after_maples_own_worktree_add() {
+        let (root, repo, _, _) = repo_with_task("script-setup");
+        let s = scripts(None, Some(r#"touch "$MAPLE_WORKTREE/.setup-done""#));
+        let wt = expand_home(&create_with(&repo, "mf-10", "main", Some(&for_task(&s, &[]))).await.unwrap());
+        assert!(wt.join(".setup-done").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A failing setup takes the new worktree and branch away and fails with its (scrubbed) output.
+    #[tokio::test]
+    async fn a_failing_setup_removes_the_worktree_with_its_output() {
+        let (root, repo, _, _) = repo_with_task("script-fail");
+        let s = scripts(None, Some(r#"echo "bundle install failed (token $GEM_TOKEN)"; exit 3"#));
+        let env = vec![("GEM_TOKEN".to_string(), "ghp_abcdef123456".to_string())];
+        let e = format!("{:#}", create_with(&repo, "mf-11", "main", Some(&for_task(&s, &env))).await.unwrap_err());
+        assert!(e.contains("setup script"), "{e}");
+        assert!(e.contains("failed with exit code 3:\nbundle install failed (token ***)"), "{e}");
+        let wt = worktree_path(&repo, "mf-11").unwrap();
+        assert!(!wt.exists(), "the half-made worktree is still there");
+        assert!(!has_branch(&repo, "agent/mf-11").await, "the branch it made is still there");
+        assert!(!list(&repo).await.unwrap().iter().any(|w| w.branch.as_deref() == Some("agent/mf-11")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A create script that doesn't leave a worktree on the task's branch at MAPLE_WORKTREE fails the start.
+    #[tokio::test]
+    async fn a_create_script_that_makes_no_worktree_fails() {
+        let (root, repo, _, _) = repo_with_task("script-none");
+        let s = scripts(Some(r#"mkdir -p "$MAPLE_WORKTREE""#), None);
+        let e = format!("{:#}", create_with(&repo, "mf-12", "main", Some(&for_task(&s, &[]))).await.unwrap_err());
+        assert!(e.contains("there's no git worktree on agent/mf-12"), "{e}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
