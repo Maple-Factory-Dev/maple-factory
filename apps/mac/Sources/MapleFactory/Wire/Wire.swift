@@ -259,6 +259,46 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum DiffSide: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// The changed file: added and unchanged lines.
+        case new
+        /// The file before: removed lines.
+        case old
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DiffSide] = [.new, .old]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "new": self = .new
+            case "old": self = .old
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .new: "new"
+            case .old: "old"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DiffSide, b: DiffSide) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum ProofKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// An image.
         case screenshot
@@ -2470,6 +2510,77 @@ public enum Wire {
         }
     }
 
+    /// A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.
+    public struct ReviewNote: Codable, Hashable, Sendable {
+        public var path: String
+        /// First line, numbered on `side`.
+        public var start: UInt32
+        /// Last line (the same as start for one line).
+        public var end: UInt32
+        public var side: DiffSide
+        /// The lines it's about, as the diff showed them (with +/-/space prefixes).
+        public var snippet: String
+        public var text: String
+
+        public init(path: String, start: UInt32, end: UInt32, side: DiffSide, snippet: String, text: String) {
+            self.path = path
+            self.start = start
+            self.end = end
+            self.side = side
+            self.snippet = snippet
+            self.text = text
+        }
+    }
+
+    public struct ReviewThreadComment: Codable, Hashable, Sendable {
+        public var author: String
+        public var body: String
+        public var at: UInt64
+
+        public init(author: String, body: String, at: UInt64) {
+            self.author = author
+            self.body = body
+            self.at = at
+        }
+    }
+
+    /// A review thread on the task's GitHub pull request (`GET /api/tasks/:id/threads`).
+    public struct ReviewThread: Codable, Hashable, Sendable {
+        public var id: String
+        public var path: String
+        /// The line it ends on; none once the code it was on is gone.
+        public var line: UInt32?
+        /// Where a multi-line thread starts.
+        public var startLine: UInt32?
+        public var side: DiffSide
+        public var resolved: Bool
+        public var outdated: Bool
+        public var comments: [ReviewThreadComment]
+
+        public init(id: String, path: String, line: UInt32? = nil, startLine: UInt32? = nil, side: DiffSide, resolved: Bool, outdated: Bool, comments: [ReviewThreadComment] = []) {
+            self.id = id
+            self.path = path
+            self.line = line
+            self.startLine = startLine
+            self.side = side
+            self.resolved = resolved
+            self.outdated = outdated
+            self.comments = comments
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            path = try c.decode(String.self, forKey: .path)
+            line = try c.decodeIfPresent(UInt32.self, forKey: .line)
+            startLine = try c.decodeIfPresent(UInt32.self, forKey: .startLine)
+            side = try c.decode(DiffSide.self, forKey: .side)
+            resolved = try c.decode(Bool.self, forKey: .resolved)
+            outdated = try c.decode(Bool.self, forKey: .outdated)
+            comments = try c.decodeIfPresent([ReviewThreadComment].self, forKey: .comments) ?? []
+        }
+    }
+
     /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
     public struct WorktreeSpec: Codable, Hashable, Sendable {
         public var name: String
@@ -4364,6 +4475,26 @@ public enum Wire {
         }
     }
 
+    /// Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.
+    public struct ClientMessageTaskReview: Codable, Hashable, Sendable {
+        public var id: String
+        public var notes: [ReviewNote]
+        public var summary: String?
+
+        public init(id: String, notes: [ReviewNote] = [], summary: String? = nil) {
+            self.id = id
+            self.notes = notes
+            self.summary = summary
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            notes = try c.decodeIfPresent([ReviewNote].self, forKey: .notes) ?? []
+            summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        }
+    }
+
     /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     public struct ClientMessageTaskApprovePlan: Codable, Hashable, Sendable {
         public var id: String
@@ -4574,6 +4705,7 @@ public enum Wire {
         case taskBacklog(ClientMessageTaskBacklog)
         case taskComment(ClientMessageTaskComment)
         case taskSteer(ClientMessageTaskSteer)
+        case taskReview(ClientMessageTaskReview)
         case taskApprovePlan(ClientMessageTaskApprovePlan)
         case taskAnswer(ClientMessageTaskAnswer)
         case taskAnswerPrompt(ClientMessageTaskAnswerPrompt)
@@ -4636,6 +4768,7 @@ public enum Wire {
             case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
+            case "task.review": self = .taskReview(try ClientMessageTaskReview(from: decoder))
             case "task.approvePlan": self = .taskApprovePlan(try ClientMessageTaskApprovePlan(from: decoder))
             case "task.answer": self = .taskAnswer(try ClientMessageTaskAnswer(from: decoder))
             case "task.answerPrompt": self = .taskAnswerPrompt(try ClientMessageTaskAnswerPrompt(from: decoder))
@@ -4770,6 +4903,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskSteer(let body):
                 try c.encode("task.steer", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskReview(let body):
+                try c.encode("task.review", forKey: .type)
                 try body.encode(to: encoder)
             case .taskApprovePlan(let body):
                 try c.encode("task.approvePlan", forKey: .type)

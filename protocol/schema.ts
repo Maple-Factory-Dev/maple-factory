@@ -51,6 +51,7 @@ export const enums: Record<string, Enum> = {
     values: { planner: "Writes the plan.", builder: "Builds and proves it.", reviewer: "Reviews the change." },
   },
   StepProgress: { values: { done: "Finished.", active: "Being worked on.", pending: "Not started." } },
+  DiffSide: { values: { new: "The changed file: added and unchanged lines.", old: "The file before: removed lines." } },
   ProofKind: { values: { screenshot: "An image.", video: "A recording.", terminal: "A command and its output.", tests: "A test run." } },
   ProofStatus: { values: { pending: "No evidence yet.", proving: "Being proven.", proven: "Proven.", failed: "The proof failed." } },
   DraftState: {
@@ -549,6 +550,17 @@ export const structs: Record<string, Struct> = {
     fields: { goal: "string", upTo: "RiskLevel", by: "string", at: "u64", note: "string?" },
   },
   DiffStat: { fields: { path: "string", added: "u32", removed: "u32" } },
+  ReviewNote: {
+    doc: "A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.",
+    fields: { path: "string", start: "u32", end: "u32", side: "DiffSide", snippet: "string", text: "string" },
+    fieldDocs: { start: "First line, numbered on `side`.", end: "Last line (the same as start for one line).", snippet: "The lines it's about, as the diff showed them (with +/-/space prefixes)." },
+  },
+  ReviewThreadComment: { fields: { author: "string", body: "string", at: "u64" } },
+  ReviewThread: {
+    doc: "A review thread on the task's GitHub pull request (`GET /api/tasks/:id/threads`).",
+    fields: { id: "string", path: "string", line: "u32?", startLine: "u32?", side: "DiffSide", resolved: "bool", outdated: "bool", comments: "ReviewThreadComment[]" },
+    fieldDocs: { line: "The line it ends on; none once the code it was on is gone.", startLine: "Where a multi-line thread starts." },
+  },
   WorktreeSpec: {
     doc: "A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.",
     fields: { name: "string", base: "string?", existing: "bool" },
@@ -1010,6 +1022,10 @@ export const unions: Record<string, Union> = {
       "task.backlog": { doc: "Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.", fields: { id: "string" } },
       "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
+      "task.review": {
+        doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",
+        fields: { id: "string", notes: "ReviewNote[]", summary: "string?" },
+      },
       "task.approvePlan": { doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.", fields: { id: "string" } },
       "task.answer": { doc: "Answer the agent's question.", fields: { id: "string", text: "string" } },
       "task.answerPrompt": {

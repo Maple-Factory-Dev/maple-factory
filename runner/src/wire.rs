@@ -92,6 +92,18 @@ pub enum StepProgress {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum DiffSide {
+    /// The changed file: added and unchanged lines.
+    New,
+    /// The file before: removed lines.
+    Old,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ProofKind {
     /// An image.
     Screenshot,
@@ -1228,6 +1240,48 @@ pub struct DiffStat {
     pub removed: u32,
 }
 
+/// A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewNote {
+    pub path: String,
+    /// First line, numbered on `side`.
+    pub start: u32,
+    /// Last line (the same as start for one line).
+    pub end: u32,
+    pub side: DiffSide,
+    /// The lines it's about, as the diff showed them (with +/-/space prefixes).
+    pub snippet: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThreadComment {
+    pub author: String,
+    pub body: String,
+    pub at: u64,
+}
+
+/// A review thread on the task's GitHub pull request (`GET /api/tasks/:id/threads`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThread {
+    pub id: String,
+    pub path: String,
+    /// The line it ends on; none once the code it was on is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// Where a multi-line thread starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    pub side: DiffSide,
+    pub resolved: bool,
+    pub outdated: bool,
+    #[serde(default)]
+    pub comments: Vec<ReviewThreadComment>,
+}
+
 /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2250,6 +2304,15 @@ pub enum ClientMessage {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<String>,
+    },
+    /// Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.
+    #[serde(rename = "task.review")]
+    TaskReview {
+        id: String,
+        #[serde(default)]
+        notes: Vec<ReviewNote>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
     },
     /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     #[serde(rename = "task.approvePlan")]
