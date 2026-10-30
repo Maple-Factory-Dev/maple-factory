@@ -216,24 +216,31 @@ struct GeneralSettings: View {
 
     var body: some View {
         @Bindable var state = state
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "General", detail: "How Maple Factory behaves on this Mac.")
-            SettingsCard {
-                Picker("When you click a task", selection: $state.taskOpening) {
+        SettingsPane("General", subtitle: "How Maple Factory behaves on this Mac.") {
+            SettingsSection("Tasks", caption: "The task panel button in the toolbar (⌥⌘I) appears only with Peek in the side panel.") {
+                SettingsPicker("When you click a task", selection: $state.taskOpening) {
                     ForEach(AppState.TaskOpening.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.radioGroup)
-                Text("The task panel button in the toolbar (⌥⌘I) appears only with Peek in the side panel.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
             }
-            SettingsCard {
-                Toggle("Show the factory's icon in the Dock", isOn: $dockShowsFactoryIcon)
-                Text("When the factory you're in has an icon (Settings › Appearance), the Dock shows it; switching factories changes it. Off, or for a factory without one, the Dock shows Maple's.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            SettingsSection("Dock") {
+                SettingsToggle("Show the factory's icon in the Dock",
+                               detail: "When the factory you're in has an icon (Settings › Appearance), the Dock shows it; switching factories changes it. Off, or for a factory without one, the Dock shows Maple's.",
+                               isOn: $dockShowsFactoryIcon)
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
+    }
+}
+
+/// A pane with nothing to show until there's a factory.
+struct SettingsUnavailable: View {
+    var title = "Not connected"
+    var systemImage = "network.slash"
+    let detail: String
+
+    var body: some View {
+        ContentUnavailableView(title, systemImage: systemImage, description: Text(detail))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 40)
     }
 }
 
@@ -243,37 +250,39 @@ struct AccountSettings: View {
     @Environment(FactoryClient.self) private var client
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Account", detail: "The factory this app is connected to. Switch or add factories from the factory menu at the top of the sidebar.")
+        SettingsPane("Account", subtitle: "The factory this app is connected to. Switch or add factories from the factory menu at the top of the sidebar.") {
             if let me = client.me, let server = client.server {
-                SettingsCard {
-                    HStack(spacing: 12) {
-                        AgentAvatar(agent: LiveAdapter.person(me.login, members: client.members), size: 36)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(me.name ?? me.login).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
-                            Text("@\(me.login) · \(me.role.capitalized)").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                SettingsSection {
+                    SettingsBlock {
+                        HStack(spacing: 12) {
+                            AgentAvatar(agent: LiveAdapter.person(me.login, members: client.members), size: 40)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(me.name ?? me.login).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
+                                Text("@\(me.login) · \(me.role.capitalized)").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                            }
                         }
                     }
-                    Divider()
-                    LabeledContent("Factory", value: client.workspaceName)
-                    LabeledContent("Address", value: server.absoluteString)
-                    LabeledContent("Status", value: client.status == .live ? "Connected" : client.status == .tooNew ? "Update needed" : "Reconnecting…")
-                    if let version = client.serverVersion { LabeledContent("Server", value: "maple-server \(version)") }
                 }
-                if let update = client.serverUpdate {
-                    SettingsCard {
-                        Label("maple-server \(update.version) is out", systemImage: "arrow.down.circle")
-                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.State.awaitingApproval)
-                        Text(LocalizedStringKey(update.how)).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                SettingsSection("Factory") {
+                    SettingsValueRow("Name", value: client.workspaceName)
+                    SettingsValueRow("Address", value: server.absoluteString)
+                    SettingsValueRow("Status", value: client.status == .live ? "Connected" : client.status == .tooNew ? "Update needed" : "Reconnecting…")
+                    if let version = client.serverVersion { SettingsValueRow("Server", value: "maple-server \(version)") }
+                    if let update = client.serverUpdate {
+                        SettingsBlock(spacing: 4) {
+                            Label("maple-server \(update.version) is out", systemImage: "arrow.down.circle")
+                                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.State.awaitingApproval)
+                            Text(LocalizedStringKey(update.how)).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        }
                     }
                 }
-                Button("Sign Out of \(client.workspaceName)", role: .destructive) { state.signOut() }
+                SettingsSection {
+                    SettingsButtonRow("Signed in to \(client.workspaceName)", button: "Sign Out of \(client.workspaceName)", role: .destructive) { state.signOut() }
+                }
             } else {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Add a factory from the factory menu at the top of the sidebar."))
+                SettingsUnavailable(detail: "Add a factory from the factory menu at the top of the sidebar.")
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
     }
 }
 
@@ -470,24 +479,21 @@ struct NotificationSettings: View {
     @Bindable private var notifier = Notifier.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Notifications", detail: "A banner when a task newly needs you (a raised hand, a question, a plan to approve or a PR to review) while Maple Factory is in the background. Snooze them from the bell in the sidebar.")
-            SettingsCard {
-                Toggle("Notifications", isOn: $notifier.enabled)
-                LabeledContent("Status", value: notifier.statusText)
+        SettingsPane("Notifications", subtitle: "A banner when a task newly needs you (a raised hand, a question, a plan to approve or a PR to review) while Maple Factory is in the background. Snooze them from the bell in the sidebar.") {
+            SettingsSection("Banners") {
+                SettingsToggle("Notifications", isOn: $notifier.enabled)
                 if notifier.isSnoozed {
-                    Button("Resume Notifications") { notifier.resume() }
+                    SettingsButtonRow("Status", value: notifier.statusText, button: "Resume Notifications") { notifier.resume() }
+                } else {
+                    SettingsValueRow("Status", value: notifier.statusText)
                 }
-                if notifier.denied {
-                    Divider()
-                    Text("macOS isn't letting Maple Factory show notifications.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.State.awaitingApproval)
-                    Button("Open System Settings") { notifier.openSystemSettings() }
+            }
+            if notifier.denied {
+                SettingsSection("macOS") {
+                    SettingsButtonRow("macOS isn't letting Maple Factory show notifications.", button: "Open System Settings") { notifier.openSystemSettings() }
                 }
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
         .task { await notifier.refreshPermission() }
     }
 }
@@ -497,32 +503,23 @@ struct UpdateSettings: View {
     @Bindable private var updater = Updater.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Updates", detail: "Maple Factory updates itself from maplefactory.dev. Runners and the factory's server update on their own.")
-            SettingsCard {
-                LabeledContent("Version", value: updater.version)
-                if updater.available {
-                    Toggle("Check for updates automatically", isOn: $updater.automaticChecks)
-                    Picker("Channel", selection: $updater.channel) {
-                        ForEach(Updater.Channel.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    if updater.channel == .beta {
-                        Text("Beta gets prereleases as well as releases. Going back to Stable keeps the beta you have until a release passes it.")
-                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    }
-                    HStack {
-                        Button("Check Now") { updater.checkForUpdates() }.disabled(!updater.canCheck)
-                        Spacer()
-                        Text(status).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    }
-                } else {
-                    Text("This build doesn't update itself (it isn't a release build).")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+        SettingsPane("Updates", subtitle: "Maple Factory updates itself from maplefactory.dev. Runners and the factory's server update on their own.") {
+            SettingsSection("Maple Factory", caption: updater.available ? nil : "This build doesn't update itself (it isn't a release build).") {
+                SettingsValueRow("Version", value: updater.version)
+                SettingsButtonRow("Check for updates", value: updater.available ? status : nil, button: "Check Now", disabled: !updater.canCheck) {
+                    updater.checkForUpdates()
                 }
             }
+            SettingsSection("Releases", caption: updater.channel == .beta
+                            ? "Beta gets prereleases as well as releases. Going back to Stable keeps the beta you have until a release passes it."
+                            : nil) {
+                SettingsToggle("Check for updates automatically", isOn: $updater.automaticChecks)
+                SettingsPicker("Channel", selection: $updater.channel) {
+                    ForEach(Updater.Channel.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+            }
+            .disabled(!updater.available)
         }
-        .font(.system(size: 13))
-        .padding(20)
     }
 
     private var status: String {
@@ -552,92 +549,75 @@ struct RunnerSettings: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Runner", detail: "This Mac runs factory sessions in the background, starting at login. These settings are the same ones as on Machines.")
+        SettingsPane("Runner", subtitle: "This Mac runs factory sessions in the background, starting at login. These settings are the same ones as on Machines.") {
             if !client.isSignedIn {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory first."))
+                SettingsUnavailable(detail: "Connect to a factory first.")
             } else if let machine = client.thisMac {
-                SettingsCard {
-                    HStack(spacing: 10) {
-                        Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(Theme.textMuted)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(machine.name).font(.system(size: 14, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text)
-                            HStack(spacing: 5) {
-                                Circle().fill(machine.online ? Theme.State.merged : Theme.textFaint).frame(width: 6, height: 6)
-                                Text(machine.online ? "Online" : "Offline")
-                                if let version = machine.version { Text("· runner \(version)") }
-                                Text("·")
-                                Button("What's New") { showingChanges = true }
-                                    .buttonStyle(.link)
-                                    .disabled(client.runnerReleases.isEmpty)
+                SettingsSection("This Mac") {
+                    SettingsBlock {
+                        HStack(spacing: 10) {
+                            SettingsTile(icon: "laptopcomputer", color: .gray, size: 32)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(machine.name).font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text)
+                                HStack(spacing: 5) {
+                                    Circle().fill(machine.online ? Theme.State.merged : Theme.textFaint).frame(width: 6, height: 6)
+                                    Text(machine.online ? "Online" : "Offline")
+                                    if let version = machine.version { Text("· runner \(version)") }
+                                    Text("·")
+                                    Button("What's New") { showingChanges = true }
+                                        .buttonStyle(.link)
+                                        .disabled(client.runnerReleases.isEmpty)
+                                }
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.textMuted)
                             }
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.textMuted)
-                        }
-                        Spacer()
-                        let action = client.runnerAction(machine)
-                        Button(action == .check ? "Check for Update" : "Update") {
-                            client.perform(action, on: machine)
-                        }
-                        .disabled((action != .check && !machine.online) || client.updatePhase(machine).isBusy)
-                        Button("Show Log") {
-                            NSWorkspace.shared.open(LocalRunner.logFile)
+                            Spacer()
+                            let action = client.runnerAction(machine)
+                            Button(action == .check ? "Check for Update" : "Update") {
+                                client.perform(action, on: machine)
+                            }
+                            .disabled((action != .check && !machine.online) || client.updatePhase(machine).isBusy)
+                            Button("Show Log") {
+                                NSWorkspace.shared.open(LocalRunner.logFile)
+                            }
                         }
                     }
                     // Its progress and how it ended; Settings has its own Update and Show Log beside it.
                     if case let phase = client.updatePhase(machine), phase != .current, !Self.outdatedOnly(phase) {
-                        RunnerUpdateRow(machine: machine, canUpdate: false) { showingChanges = true }
+                        SettingsBlock { RunnerUpdateRow(machine: machine, canUpdate: false) { showingChanges = true } }
                     } else if client.runnerOutdated(machine), let latest = client.runnerLatest {
-                        Text("Runner \(latest) is available.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.State.awaitingApproval)
+                        SettingsNote("Runner \(latest) is available.", systemImage: "arrow.down.circle", color: Theme.State.awaitingApproval)
                     }
-                }
-                .runnerChanges(machine, isPresented: $showingChanges)
-                SettingsCard {
-                    HStack {
-                        Text("Name")
+                    SettingsRow("Name", detail: "What everyone sees for this Mac on Machines, tasks and the sidebar. Leave it empty to use \(machine.id).") {
                         TextField(machine.id, text: $nickname)
                             .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
                             .onSubmit { rename(machine) }
                         Button("Rename") { rename(machine) }
                             .disabled(nickname.trimmingCharacters(in: .whitespaces) == machine.name)
                     }
-                    Text("What everyone sees for this Mac on Machines, tasks and the sidebar. Leave it empty to use \(machine.id).")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textFaint)
                 }
+                .runnerChanges(machine, isPresented: $showingChanges)
                 .onAppear { nickname = machine.name == machine.id ? "" : machine.name }
                 MachineSettingsSheet(machine: machine, embedded: true)
                     .id(machine.id)
             } else if LocalRunner.enrolled != nil {
-                SettingsCard {
-                    Text("This Mac is enrolled with another factory (\(LocalRunner.enrolled?.url ?? "")), or it was removed from this one.")
-                        .foregroundStyle(Theme.textMuted)
-                        .fixedSize(horizontal: false, vertical: true)
+                SettingsSection {
+                    SettingsRow("This Mac is enrolled with another factory (\(LocalRunner.enrolled?.url ?? "")), or it was removed from this one.")
                 }
             } else {
-                SettingsCard {
-                    HStack(spacing: 12) {
-                        Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(Theme.textMuted)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("This Mac isn't a factory machine").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
-                            Text(adding ?? "Add it to run agents here, starting at login. No Homebrew needed.")
-                                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                        }
-                        Spacer()
+                SettingsSection("This Mac") {
+                    SettingsRow("This Mac isn't a factory machine", detail: adding ?? "Add it to run agents here, starting at login. No Homebrew needed.") {
                         Button("Add This Mac", action: add)
                             .buttonStyle(.borderedProminent)
                             .disabled(adding != nil || LocalRunner.helpers == nil)
                     }
                     if let error {
-                        Text(error).font(.system(size: 12)).foregroundStyle(Theme.State.cancelled).fixedSize(horizontal: false, vertical: true)
+                        SettingsNote(error, systemImage: "exclamationmark.triangle", color: Theme.State.cancelled)
                     }
                 }
             }
         }
-        .font(.system(size: 13))
-        .padding(20)
     }
 
     private func add() {
