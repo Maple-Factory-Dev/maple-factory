@@ -71,6 +71,8 @@ import Security
     private(set) var iconLink: String?
     /// The factory's icon, from this Mac's cache; nil shows the letter tile (and the Maple Dock icon).
     private(set) var icon: NSImage?
+    /// The name an admin gave the factory (Settings › Appearance), nil when unset (or the server is older).
+    private(set) var displayName: String?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
     var isAdmin: Bool { me?.role == "admin" }
@@ -145,10 +147,15 @@ import Security
 
     var isSignedIn: Bool { server != nil && token != nil }
 
-    /// The org's name, or the mockup's workspace when not signed in.
+    /// The factory's name an admin set, else the org's, or the mockup's workspace when not signed in.
     var workspaceName: String {
         guard isSignedIn else { return "Studio Workspace" }
-        return org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
+        return displayName ?? orgName
+    }
+
+    /// The GitHub org's name (or the server's host), what the factory is called when it has no name of its own.
+    var orgName: String {
+        org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
     }
 
     init() {
@@ -272,6 +279,7 @@ import Security
         serverUpdate = nil
         iconLink = nil
         icon = nil
+        displayName = nil
         toast = nil
         notice = nil
         viewing = nil
@@ -390,6 +398,7 @@ import Security
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
+            displayName = snapshot.name
             rebuild()
             hasSnapshot = true
             remember()
@@ -465,6 +474,10 @@ import Security
             prompts = update.prompts
         case .iconUpdated(let update):
             showIcon(update.icon)
+        case .nameUpdated(let update):
+            // Every app shows the new name at once, and the factory switcher keeps it.
+            displayName = update.name
+            remember()
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
@@ -638,6 +651,25 @@ import Security
     /// Admins only: back to the letter tile.
     func removeIcon() async throws {
         let _: Empty = try await api("/api/icon", method: "DELETE")
+    }
+
+    /// The factory's limit for its name.
+    nonisolated static let maxName = 60
+
+    /// Admins only: names the factory (blank clears it); name.updated brings it back.
+    func setName(_ name: String) async throws {
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        var request = URLRequest(url: server.appending(path: "/api/name"))
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["name": name])
+        let _: Empty = try await Self.load(request)
+    }
+
+    /// Admins only: back to the GitHub org's name.
+    func clearName() async throws {
+        let _: Empty = try await api("/api/name", method: "DELETE")
     }
 
     /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
