@@ -282,6 +282,8 @@ struct FactoryNameCard: View {
     private var isAdmin: Bool { client.isAdmin }
     private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var unchanged: Bool { trimmed == (client.displayName ?? "") }
+    /// A demo script's `name:<text>` (typed in, then Save) or `name:clear` (Use Org Name).
+    static let demo = Notification.Name("FactoryNameCard.demo")
 
     var body: some View {
         SettingsCard {
@@ -312,6 +314,18 @@ struct FactoryNameCard: View {
         .onAppear { draft = client.displayName ?? "" }
         // Someone else renamed it (name.updated): show theirs.
         .onChange(of: client.displayName) { _, name in draft = name ?? "" }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard isAdmin, let text = note.object as? String else { return }
+            if text == "clear" { return clear() }
+            Task {
+                draft = ""
+                for character in text {
+                    draft.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+                save()
+            }
+        }
     }
 
     private func save() {
