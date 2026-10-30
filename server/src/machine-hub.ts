@@ -258,6 +258,8 @@ export class MachineHub extends DurableObject<Env> {
       case "task.cleaned":
       case "task.handed_off":
       case "task.token_request":
+      // Answered from the factory (engine.ts releaseSecrets): only this enrolled machine's socket gets here.
+      case "secrets.request":
         await this.toFactory(machine.id, msg);
         return;
       case "session.ended":

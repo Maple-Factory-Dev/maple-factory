@@ -56,6 +56,8 @@ import Security
     private(set) var prompts: Wire.PromptAdditions?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
+    /// Every repo's secrets: names and who changed them when, never a value.
+    private(set) var secrets: [Wire.RepoSecret] = []
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
     /// Runner releases with their notes, newest first (What's new); empty from an older server.
@@ -251,6 +253,7 @@ import Security
         prompts = nil
         acceptances = []
         repos = []
+        secrets = []
         runnerLatest = nil
         runnerReleases = []
         serverVersion = nil
@@ -367,6 +370,7 @@ import Security
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             intakeRequests = snapshot.intake
             repos = snapshot.repos
+            secrets = snapshot.secrets
             runnerLatest = snapshot.runnerLatest
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
@@ -434,6 +438,8 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+        case .secretsUpdated(let update):
+            secrets = update.secrets
         case .runnerReleased(let update):
             // The hub's hourly look at the release feed: every outdated badge and What's new follows.
             runnerLatest = update.runnerLatest

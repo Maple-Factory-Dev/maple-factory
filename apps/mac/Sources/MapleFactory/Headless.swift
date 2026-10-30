@@ -13,7 +13,7 @@ nonisolated(unsafe) let AppDefaults: UserDefaults = Headless.isOn ? Headless.def
 /// `-appearance light|dark|both`, `-settle 1.5` (seconds before the shot), `-frames N` and `-fps 10`
 /// (a frame sequence, for video), `-timeout 60`, `-height 1000`, `-instance` (the defaults suite's name),
 /// `-keep YES` (leave that suite as the last run left it, to show a setting surviving a relaunch),
-/// `-window sheet|settings` (shoot the main window's sheet, or the Settings window, instead).
+/// `-window sheet|settings|settings-sheet` (shoot the main window's sheet, the Settings window, or its sheet, instead).
 /// `-snapshot` makes it a demo launch, so a signed-out run shows the mockup; `-mock NO` shows what a
 /// fresh install does instead: the connect-to-a-factory screen.
 enum Headless {
@@ -45,6 +45,13 @@ enum Headless {
     static func value(_ key: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: "-\(key)"), index + 1 < arguments.count else { return nil }
         return arguments[index + 1]
+    }
+
+    /// `view` and everything in it, to be drawn again (in a new appearance).
+    @MainActor static func markForDisplay(_ view: NSView?) {
+        guard let view else { return }
+        view.needsDisplay = true
+        view.subviews.forEach(markForDisplay)
     }
 
     /// Far outside every screen: right of the rightmost one, so nothing of the window is ever seen.
@@ -133,6 +140,10 @@ enum Headless {
         }
         Task { @MainActor in
             await self.waitUntilReady()
+            // Made now, so the script's actions (`secret:add`) reach its views before the shot.
+            if AppDefaults.string(forKey: "window")?.hasPrefix("settings") == true {
+                self.settingsWindow.orderBack(nil)
+            }
             let frames = Int(self.number("frames", 0))
             async let recording: Void = self.record(frames: frames)
             while !self.state.scriptFinished { try? await Task.sleep(for: .milliseconds(100)) }
@@ -205,9 +216,14 @@ enum Headless {
             if let appearance {
                 NSApp.appearance = NSAppearance(named: appearance)
                 // Off screen, SwiftUI isn't told about the app's appearance; the window's own reaches it.
-                window?.appearance = NSAppearance(named: appearance)
-                window?.contentView?.needsLayout = true
-                window?.contentView?.needsDisplay = true
+                // The Settings window and its sheet too, when they're what's shot.
+                for w in Set([window, target, target?.sheetParent].compactMap { $0 }) {
+                    w.appearance = NSAppearance(named: appearance)
+                    w.contentView?.needsLayout = true
+                    // AppKit's own controls (a popup, a bordered button) and the window's background
+                    // only repaint when everything under the frame view is marked.
+                    Headless.markForDisplay(w.contentView?.superview ?? w.contentView)
+                }
                 // A frame or two for SwiftUI to redraw in the new colors.
                 try? await Task.sleep(for: .milliseconds(400))
             }
@@ -220,6 +236,7 @@ enum Headless {
         switch AppDefaults.string(forKey: "window") {
         case "sheet": window?.attachedSheet
         case "settings": settingsWindow
+        case "settings-sheet": settingsWindow.attachedSheet
         default: window
         }
     }
@@ -254,7 +271,18 @@ enum Headless {
             rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
         }
         guard let rep else { return nil }
-        view.cacheDisplay(in: view.bounds, to: rep)
+        // AppKit's controls draw in the current drawing appearance, not the window's, off screen.
+        target.effectiveAppearance.performAsCurrentDrawingAppearance {
+            if target !== window {
+                // The Settings window's background is the frame's, which the content's bitmap leaves out.
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+                NSColor.windowBackgroundColor.setFill()
+                NSRect(origin: .zero, size: view.bounds.size).fill()
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            view.cacheDisplay(in: view.bounds, to: rep)
+        }
         if let window, target === window, let sheet = window.attachedSheet, let content = sheet.contentView {
             // Like the window's, the sheet's own appearance is what reaches SwiftUI off screen.
             if sheet.appearance != window.appearance { sheet.appearance = window.appearance }

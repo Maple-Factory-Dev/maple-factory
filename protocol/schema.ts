@@ -416,6 +416,11 @@ export const structs: Record<string, Struct> = {
     fields: { name: "string", defaultBranch: "string?", isPrivate: "bool", source: "RepoSource" },
     fieldDocs: { name: "GitHub owner/name.", source: "Granted to the GitHub App, or added by hand (no app, or not yet granted)." },
   },
+  RepoSecret: {
+    doc: "A secret kept for one of the org's repos: who set it and when, never its value.",
+    fields: { repo: "string", name: "string", updatedBy: "string", updatedAt: "u64" },
+    fieldDocs: { repo: "GitHub owner/name.", name: "An environment variable's name (A–Z, 0–9 and _)." },
+  },
   ServerUpdate: {
     doc: "A newer maple-server than the factory runs, and how this factory gets it.",
     fields: { version: "string", how: "string" },
@@ -825,6 +830,11 @@ export const unions: Record<string, Union> = {
         doc: "A GitHub token to fetch or push a task's repo.",
         fields: { reqId: "string", taskId: "string", owner: "string", repo: "string", purpose: "string?" },
       },
+      "secrets.request": {
+        doc: "A repo's secrets: for a task assigned to this machine (`taskId`), or for its owner's own checkout (`maple-runner secrets pull`).",
+        fields: { reqId: "string", taskId: "string?", repo: "string" },
+        fieldDocs: { repo: "GitHub owner/name." },
+      },
     },
   },
   ServerToRunner: {
@@ -890,6 +900,10 @@ export const unions: Record<string, Union> = {
         doc: "The answer to `task.token_request`.",
         fields: { reqId: "string", token: "string?", error: "string?", code: "string?" },
       },
+      "secrets.reply": {
+        doc: "The answer to `secrets.request`: `values` by name, or `error` with a `code`.",
+        fields: { reqId: "string", values: "map<string>?", error: "string?", code: "string?" },
+      },
     },
   },
   ClientMessage: {
@@ -939,6 +953,11 @@ export const unions: Record<string, Union> = {
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
       "repos.add": { doc: "Admins only: a repo the GitHub App doesn't list (or there's no app).", fields: { name: "string" } },
       "repos.remove": { doc: "Admins only: one added by hand.", fields: { name: "string" } },
+      "secrets.set": {
+        doc: "Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.",
+        fields: { repo: "string", name: "string", value: "string" },
+      },
+      "secrets.delete": { doc: "Admins only.", fields: { repo: "string", name: "string" } },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",
         fields: { goal: "string", upTo: "RiskLevel?", note: "string?" },
@@ -1015,6 +1034,7 @@ export const unions: Record<string, Union> = {
           follows: "GoalFollow[]",
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
+          secrets: "RepoSecret[]",
           runnerLatest: "string?",
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
@@ -1024,6 +1044,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: {
           ended: "The most recent session ends (last 7 days, newest first).",
           prompts: "The org's prompt additions. None: an older server.",
+          secrets: "Every repo's secrets, names and who changed them only.",
           runnerLatest: "The newest released runner version, when there's a release.",
           runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
@@ -1044,6 +1065,7 @@ export const unions: Record<string, Union> = {
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
       "repos.updated": { fields: { repos: "OrgRepo[]" } },
+      "secrets.updated": { doc: "Every repo's secrets again (names only), after one changed.", fields: { secrets: "RepoSecret[]" } },
       "runner.released": {
         doc: "A runner release came out (or the feed changed) since the snapshot.",
         fields: { runnerLatest: "string?", runnerReleases: "RunnerRelease[]" },

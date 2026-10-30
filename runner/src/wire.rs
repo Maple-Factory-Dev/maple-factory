@@ -974,6 +974,18 @@ pub struct OrgRepo {
     pub source: RepoSource,
 }
 
+/// A secret kept for one of the org's repos: who set it and when, never its value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSecret {
+    /// GitHub owner/name.
+    pub repo: String,
+    /// An environment variable's name (A–Z, 0–9 and _).
+    pub name: String,
+    pub updated_by: String,
+    pub updated_at: u64,
+}
+
 /// A newer maple-server than the factory runs, and how this factory gets it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1774,6 +1786,15 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         purpose: Option<String>,
     },
+    /// A repo's secrets: for a task assigned to this machine (`taskId`), or for its owner's own checkout (`maple-runner secrets pull`).
+    #[serde(rename = "secrets.request")]
+    SecretsRequest {
+        req_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        /// GitHub owner/name.
+        repo: String,
+    },
 }
 
 /// Server → runner.
@@ -1907,6 +1928,17 @@ pub enum ServerToRunner {
         req_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+    },
+    /// The answer to `secrets.request`: `values` by name, or `error` with a `code`.
+    #[serde(rename = "secrets.reply")]
+    SecretsReply {
+        req_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        values: Option<BTreeMap<String, String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2066,6 +2098,19 @@ pub enum ClientMessage {
     /// Admins only: one added by hand.
     #[serde(rename = "repos.remove")]
     ReposRemove {
+        name: String,
+    },
+    /// Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.
+    #[serde(rename = "secrets.set")]
+    SecretsSet {
+        repo: String,
+        name: String,
+        value: String,
+    },
+    /// Admins only.
+    #[serde(rename = "secrets.delete")]
+    SecretsDelete {
+        repo: String,
         name: String,
     },
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
@@ -2277,6 +2322,9 @@ pub enum ServerToClient {
         intake: Vec<IntakeRequest>,
         #[serde(default)]
         repos: Vec<OrgRepo>,
+        /// Every repo's secrets, names and who changed them only.
+        #[serde(default)]
+        secrets: Vec<RepoSecret>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
@@ -2354,6 +2402,12 @@ pub enum ServerToClient {
     ReposUpdated {
         #[serde(default)]
         repos: Vec<OrgRepo>,
+    },
+    /// Every repo's secrets again (names only), after one changed.
+    #[serde(rename = "secrets.updated")]
+    SecretsUpdated {
+        #[serde(default)]
+        secrets: Vec<RepoSecret>,
     },
     /// A runner release came out (or the feed changed) since the snapshot.
     #[serde(rename = "runner.released")]

@@ -10,6 +10,7 @@ import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
+import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
@@ -33,6 +34,7 @@ export class OrgHub extends DurableObject<Env> {
   private store: Store;
   private engine: Engine;
   private intake: Intake;
+  private secrets: Secrets;
   /** Each machine's runner update (storage `u:<id>`), loaded before anything else runs. */
   private updates = new Map<string, MachineUpdate>();
 
@@ -42,6 +44,7 @@ export class OrgHub extends DurableObject<Env> {
       for (const [key, update] of await ctx.storage.list<MachineUpdate>({ prefix: "u:" })) this.updates.set(key.slice(2), update);
     });
     this.store = new Store(ctx.storage.sql);
+    this.secrets = new Secrets(ctx.storage.sql, env);
     this.intake = new Intake(this.store, {
       broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
       waitUntil: (p) => ctx.waitUntil(p),
@@ -58,7 +61,7 @@ export class OrgHub extends DurableObject<Env> {
       },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
       wakeIn: (ms) => ctx.waitUntil(this.wakeAt(Date.now() + ms)),
-    }, this.intake);
+    }, this.intake, this.secrets);
   }
 
   /** Sets the alarm for `at` unless it's already due sooner: the earliest wake wins. */
@@ -372,6 +375,7 @@ export class OrgHub extends DurableObject<Env> {
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
           intake: this.intake.list(),
+          secrets: this.secrets.list(),
           repos: this.store.repos(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),

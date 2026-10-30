@@ -143,6 +143,7 @@ impl Sessions {
                     if let Some(ports) = existing.ports {
                         sessions.ports.lock().unwrap().insert(id, ports);
                     }
+                    crate::secrets::recover(&sessions.tmux, &existing.name).await;
                     info!("reattached to session {id}")
                 }
                 Err(e) => warn!("could not reattach to {}: {e:#}", existing.name),
@@ -150,6 +151,16 @@ impl Sessions {
         }
         tokio::spawn(sessions.clone().watch_exits());
         Ok(sessions)
+    }
+
+    /// Whether `pid` runs inside one of this runner's sessions: a pane's process or anything it started.
+    pub async fn hosts(&self, pid: u32) -> bool {
+        let mut roots: HashSet<u32> = self.inner.lock().unwrap().values().filter_map(|s| s.info.pid).collect();
+        // The tmux server is every pane's parent, including a pane from before this runner started.
+        if let Ok(out) = self.tmux.run(&["display-message", "-p", "#{pid}"]).await {
+            roots.extend(out.trim().parse::<u32>().ok());
+        }
+        crate::ports::descends_from(pid, &roots).await
     }
 
     pub fn emit(&self, msg: Outbound) {
@@ -195,6 +206,7 @@ impl Sessions {
         cols: u16,
         rows: u16,
         task: Option<TaskTag>,
+        env: &[(String, String)],
     ) -> Result<SessionInfo> {
         let agent = crate::agent_config::find(agent_name).ok_or_else(|| anyhow!("unknown agent {agent_name:?}"))?;
         let dir = expand_home(cwd);
@@ -231,6 +243,13 @@ impl Sessions {
         if let Some(t) = &task {
             meta.push(("@maple_task", t.to_meta()));
         }
+        // A task's repo secrets: in the session's environment only, never a file in its worktree.
+        for (name, value) in env {
+            args.extend(["-e".into(), format!("{name}={value}")]);
+        }
+        if !env.is_empty() {
+            meta.push((crate::secrets::OPTION, env.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" ")));
+        }
         // A long prompt goes through a file the shell reads (and removes): tmux refuses a long command.
         let long = prompt.filter(|p| !p.trim().is_empty() && p.len() > PROMPT_IN_FILE && agent.takes_prompt());
         if let Some(p) = long {
@@ -251,7 +270,8 @@ impl Sessions {
         for (key, value) in meta {
             args.extend([";".into(), "set-option".into(), "-t".into(), name.clone(), key.into(), value]);
         }
-        let out = match self.tmux.run(&args).await {
+        // With secrets in its `-e`s the command goes on tmux's stdin: argv is public to `ps`.
+        let out = match if env.is_empty() { self.tmux.run(&args).await } else { self.tmux.run_hidden(&args).await } {
             Ok(out) => out,
             Err(e) => {
                 self.ports.lock().unwrap().remove(&id);
