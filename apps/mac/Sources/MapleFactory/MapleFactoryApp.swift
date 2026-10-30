@@ -39,6 +39,7 @@ struct MapleFactoryApp: App {
                 // A maplefactory:// link opens in the window that's there rather than a new one.
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .task { client.connect() }
+                .modifier(DockIconFollower())
                 .frame(minWidth: 720, minHeight: 620)
                 // Every @AppStorage reads the headless run's own suite when there is one.
                 .defaultAppStorage(AppDefaults)

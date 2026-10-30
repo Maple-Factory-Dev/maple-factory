@@ -11,7 +11,7 @@ struct SidebarRail: View {
                 Menu {
                     FactoryMenu()
                 } label: {
-                    FactoryInitial(name: client.workspaceName, size: 22)
+                    FactoryIcon(name: client.workspaceName, image: client.icon, size: 22)
                         .frame(width: 34, height: 34)
                         .background(
                             RoundedRectangle(cornerRadius: 9)

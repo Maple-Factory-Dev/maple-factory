@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The factory's settings (⌘,): what the org shares, what's yours, and this Mac's runner.
 struct OrgSettingsView: View {
@@ -6,12 +7,13 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case general, account, repos, secrets, people, prompts, merging, runner, notifications, updates
+        case general, account, appearance, repos, secrets, people, prompts, merging, runner, notifications, updates
 
         var title: String {
             switch self {
             case .general: "General"
             case .account: "Account"
+            case .appearance: "Appearance"
             case .repos: "Repositories"
             case .secrets: "Secrets"
             case .people: "People"
@@ -27,6 +29,7 @@ struct OrgSettingsView: View {
             switch self {
             case .general: "gearshape"
             case .account: "person.crop.circle"
+            case .appearance: "paintpalette"
             case .repos: "shippingbox"
             case .secrets: "key"
             case .people: "person.2"
@@ -48,7 +51,7 @@ struct OrgSettingsView: View {
             List(selection: pane) {
                 row(.general)
                 Section("Factory") {
-                    ForEach([Pane.account, .repos, .secrets, .people, .prompts, .merging], id: \.self) { row($0) }
+                    ForEach([Pane.account, .appearance, .repos, .secrets, .people, .prompts, .merging], id: \.self) { row($0) }
                 }
                 Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
             }
@@ -60,6 +63,7 @@ struct OrgSettingsView: View {
                 switch Pane(rawValue: tab) ?? .repos {
                 case .general: ScrollView { GeneralSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .account: ScrollView { AccountSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                case .appearance: ScrollView { AppearanceSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .repos: RepositoriesSettings()
                 case .secrets: SecretsSettings()
                 case .people: PeopleSettings()
@@ -88,9 +92,10 @@ struct OrgSettingsView: View {
     }
 }
 
-/// How the app behaves on this Mac: what clicking a task opens.
+/// How the app behaves on this Mac: what clicking a task opens, and what the Dock shows.
 struct GeneralSettings: View {
     @Environment(AppState.self) private var state
+    @AppStorage(DockIcon.settingKey) private var dockShowsFactoryIcon = true
 
     var body: some View {
         @Bindable var state = state
@@ -103,6 +108,11 @@ struct GeneralSettings: View {
                 .pickerStyle(.radioGroup)
                 Text("The task panel button in the toolbar (⌥⌘I) appears only with Peek in the side panel.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+            SettingsCard {
+                Toggle("Show the factory's icon in the Dock", isOn: $dockShowsFactoryIcon)
+                Text("When the factory you're in has an icon (Settings › Appearance), the Dock shows it; switching factories changes it. Off, or for a factory without one, the Dock shows Maple's.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
             }
         }
         .font(.system(size: 13))
@@ -147,6 +157,111 @@ struct AccountSettings: View {
         }
         .font(.system(size: 13))
         .padding(20)
+    }
+}
+
+/// The factory's icon, for everyone in it: the sidebar, the factory menu and the Dock. Admins change it;
+/// everyone else sees it with the lock note.
+struct AppearanceSettings: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var targeted = false
+
+    private var isAdmin: Bool { client.isAdmin }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Appearance", detail: "The factory's icon, for everyone in it: at the top of the sidebar, in the factory menu, and in the Dock on each Mac that shows it (Settings › General).")
+            if !client.isSignedIn {
+                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its icon."))
+            } else {
+                SettingsCard {
+                    HStack(alignment: .center, spacing: 28) {
+                        VStack(spacing: 8) {
+                            HStack(spacing: 10) {
+                                FactoryIcon(name: client.workspaceName, image: client.icon, size: 22)
+                                Text(client.workspaceName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(width: 200, height: 44)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
+                            Text("Sidebar").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        }
+                        VStack(spacing: 8) {
+                            Image(nsImage: client.icon.map(MapleIcon.dockImage) ?? MapleIcon.dockImage)
+                                .resizable()
+                                .frame(width: 72, height: 72)
+                            Text("Dock").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(targeted ? Theme.accent : Theme.stroke, style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: isAdmin ? [5, 4] : []))
+                    )
+                    .overlay { if busy { ProgressView().controlSize(.small) } }
+                    .dropDestination(for: URL.self) { urls, _ in
+                        guard isAdmin, let url = urls.first else { return false }
+                        upload(url)
+                        return true
+                    } isTargeted: { targeted = isAdmin && $0 }
+                    Text(isAdmin
+                         ? "Choose an image or drop one on the preview. A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB."
+                         : "A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    if !isAdmin {
+                        Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    } else if let problem {
+                        Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.State.cancelled)
+                    }
+                    Spacer()
+                    if isAdmin {
+                        Button("Remove", role: .destructive) { remove() }.disabled(busy || client.iconLink == nil)
+                        Button("Choose Image…") { choose() }.disabled(busy)
+                    }
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .webP]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the factory's icon: a square image of at least 512 × 512 px."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        upload(url)
+    }
+
+    private func upload(_ url: URL) {
+        problem = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let data = try Data(contentsOf: url)
+                guard NSImage(data: data) != nil else { throw FactoryClient.ClientError.message("That isn't an image.") }
+                try await client.upload(iconData: data)
+            } catch {
+                problem = FactoryClient.describe(error)
+            }
+        }
+    }
+
+    private func remove() {
+        problem = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do { try await client.removeIcon() } catch { problem = FactoryClient.describe(error) }
+        }
     }
 }
 
