@@ -2025,6 +2025,8 @@ final class AppState {
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
             // A key pressed in the window, headless: `key:esc`.
             case "key": Headless.press(parts[1])
+            // A left click at a point in the window (`click:<x>:<y>`, points from the top left).
+            case "click": Headless.click(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
             // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
             // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
             case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))

@@ -82,6 +82,16 @@ enum Headless {
         if !window.performKeyEquivalent(with: event) { window.sendEvent(event) }
     }
 
+    /// A left click at `point` (window points, from the top left) as far as focus goes (`click:<x>:<y>`): the view
+    /// under it that takes focus gets it. A clicked mouse event isn't delivered to a window that's never key.
+    @MainActor static func click(at point: CGPoint) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView else { return }
+        var view = content.hitTest(CGPoint(x: point.x, y: content.bounds.height - point.y))
+        while let current = view, !current.acceptsFirstResponder { view = current.superview }
+        if let view { window.makeFirstResponder(view) }
+        print("headless: click at \(point) focused \(view.map { String(describing: type(of: $0)) } ?? "nothing")")
+    }
+
     /// The context menu a right-click at `point` (window points, from the top left) brings up, as SwiftUI builds it
     /// (`rightclick:<x>:<y>`): kept, and drawn into the shots, until an item is picked (`menupick:<title>`) or it's
     /// put away (`menupick:none`). Its items are logged.
