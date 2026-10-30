@@ -948,6 +948,10 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", name: "string" },
       },
       "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
+      "runner.check": {
+        doc: "Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.",
+        fields: { machine: "string" },
+      },
       "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
       "prompts.save": { doc: "Admins only: the org's prompt additions.", fields: { prompts: "PromptAdditions" } },
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
