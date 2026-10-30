@@ -382,7 +382,10 @@ export const structs: Record<string, Struct> = {
       findings: "Finding[]",
     },
   },
-  CICheck: { fields: { name: "string", status: "CheckStatus", duration: "string?", required: "bool" } },
+  CICheck: {
+    fields: { name: "string", status: "CheckStatus", duration: "string?", required: "bool", url: "string?" },
+    fieldDocs: { url: "Its run on GitHub (the job's page for GitHub Actions). None: an older server." },
+  },
   PullRequest: {
     fields: { number: "u32", url: "string?", state: "PRState", head: "string?", branch: "string", base: "string", checks: "CICheck[]" },
     fieldDocs: { url: "On GitHub; none for a local repo." },
@@ -1092,6 +1095,11 @@ export const unions: Record<string, Union> = {
         fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
+      "task.rerunCheck": { doc: "Run one of the pull request's CI checks again, by name.", fields: { id: "string", check: "string" } },
+      "task.checkLog": {
+        doc: "The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.",
+        fields: { id: "string", check: "string" },
+      },
       "task.split": {
         doc: "Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.",
         fields: { id: "string", parts: "u32" },
@@ -1189,6 +1197,17 @@ export const unions: Record<string, Union> = {
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
+      checkLog: {
+        doc: "The CI check log `task.checkLog` asked for, to that connection only.",
+        fields: { id: "string", check: "string", url: "string?", text: "string", truncated: "bool", failedStep: "string?" },
+        fieldDocs: {
+          id: "The task.",
+          url: "The check's run on GitHub.",
+          text: "The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.",
+          truncated: "Only the log's end is kept.",
+          failedStep: "The first line GitHub marked as an error, when there is one.",
+        },
+      },
       error: { fields: { message: "string", requestId: "string?" } },
     },
   },

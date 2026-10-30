@@ -1964,12 +1964,15 @@ public enum Wire {
         public var status: CheckStatus
         public var duration: String?
         public var required: Bool
+        /// Its run on GitHub (the job's page for GitHub Actions). None: an older server.
+        public var url: String?
 
-        public init(name: String, status: CheckStatus, duration: String? = nil, required: Bool) {
+        public init(name: String, status: CheckStatus, duration: String? = nil, required: Bool, url: String? = nil) {
             self.name = name
             self.status = status
             self.duration = duration
             self.required = required
+            self.url = url
         }
     }
 
@@ -4696,6 +4699,28 @@ public enum Wire {
         }
     }
 
+    /// Run one of the pull request's CI checks again, by name.
+    public struct ClientMessageTaskRerunCheck: Codable, Hashable, Sendable {
+        public var id: String
+        public var check: String
+
+        public init(id: String, check: String) {
+            self.id = id
+            self.check = check
+        }
+    }
+
+    /// The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.
+    public struct ClientMessageTaskCheckLog: Codable, Hashable, Sendable {
+        public var id: String
+        public var check: String
+
+        public init(id: String, check: String) {
+            self.id = id
+            self.check = check
+        }
+    }
+
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     public struct ClientMessageTaskSplit: Codable, Hashable, Sendable {
         public var id: String
@@ -4808,6 +4833,8 @@ public enum Wire {
         case taskQueue(ClientMessageTaskQueue)
         case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
+        case taskRerunCheck(ClientMessageTaskRerunCheck)
+        case taskCheckLog(ClientMessageTaskCheckLog)
         case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
         case taskCheckedIt(ClientMessageTaskCheckedIt)
@@ -4875,6 +4902,8 @@ public enum Wire {
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
             case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
+            case "task.rerunCheck": self = .taskRerunCheck(try ClientMessageTaskRerunCheck(from: decoder))
+            case "task.checkLog": self = .taskCheckLog(try ClientMessageTaskCheckLog(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
@@ -5046,6 +5075,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRerunCheck(let body):
+                try c.encode("task.rerunCheck", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskCheckLog(let body):
+                try c.encode("task.checkLog", forKey: .type)
                 try body.encode(to: encoder)
             case .taskSplit(let body):
                 try c.encode("task.split", forKey: .type)
@@ -5411,6 +5446,30 @@ public enum Wire {
         }
     }
 
+    /// The CI check log `task.checkLog` asked for, to that connection only.
+    public struct ServerToClientCheckLog: Codable, Hashable, Sendable {
+        /// The task.
+        public var id: String
+        public var check: String
+        /// The check's run on GitHub.
+        public var url: String?
+        /// The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.
+        public var text: String
+        /// Only the log's end is kept.
+        public var truncated: Bool
+        /// The first line GitHub marked as an error, when there is one.
+        public var failedStep: String?
+
+        public init(id: String, check: String, url: String? = nil, text: String, truncated: Bool, failedStep: String? = nil) {
+            self.id = id
+            self.check = check
+            self.url = url
+            self.text = text
+            self.truncated = truncated
+            self.failedStep = failedStep
+        }
+    }
+
     public struct ServerToClientError: Codable, Hashable, Sendable {
         public var message: String
         public var requestId: String?
@@ -5446,6 +5505,7 @@ public enum Wire {
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
+        case checkLog(ServerToClientCheckLog)
         case error(ServerToClientError)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
@@ -5478,6 +5538,7 @@ public enum Wire {
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
+            case "checkLog": self = .checkLog(try ServerToClientCheckLog(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
             default: self = .unknown(type)
             }
@@ -5554,6 +5615,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .stats(let body):
                 try c.encode("stats", forKey: .type)
+                try body.encode(to: encoder)
+            case .checkLog(let body):
+                try c.encode("checkLog", forKey: .type)
                 try body.encode(to: encoder)
             case .error(let body):
                 try c.encode("error", forKey: .type)
