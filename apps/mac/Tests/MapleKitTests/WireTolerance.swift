@@ -35,6 +35,13 @@ struct WireTolerance {
         #expect(String(decoding: try JSONEncoder().encode(Wire.HandReason.other("somethingNew")), as: UTF8.self) == #""somethingNew""#)
     }
 
+    /// An OrgRepo from before description and ownerAvatarUrl (an older server, or a stored repo list) still decodes.
+    @Test func orgRepoWithoutDescriptionOrAvatarDecodes() throws {
+        let repo = try JSONDecoder().decode(Wire.OrgRepo.self, from: Data(#"{"name":"acme/api","defaultBranch":null,"isPrivate":false,"source":"manual"}"#.utf8))
+        #expect(repo == Wire.OrgRepo(name: "acme/api", isPrivate: false, source: .manual))
+        #expect(repo.description == nil && repo.ownerAvatarUrl == nil)
+    }
+
     @Test func allCasesLeavesOutOther() {
         #expect(Wire.HandReason.allCases.count == 6)
         #expect(!Wire.HandReason.allCases.contains { if case .other = $0 { true } else { false } })
