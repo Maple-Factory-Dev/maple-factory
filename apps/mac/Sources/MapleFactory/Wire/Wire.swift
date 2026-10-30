@@ -2247,6 +2247,8 @@ public enum Wire {
         public var shareable: Bool
         /// claude or codex: what builds it.
         public var agent: String
+        /// The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine.
+        public var model: String?
         public var branch: String?
         /// Where its worktree lives once building started.
         public var machine: String?
@@ -2268,7 +2270,7 @@ public enum Wire {
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2303,6 +2305,7 @@ public enum Wire {
             self.tickets = tickets
             self.shareable = shareable
             self.agent = agent
+            self.model = model
             self.branch = branch
             self.machine = machine
             self.splitFrom = splitFrom
@@ -2352,6 +2355,7 @@ public enum Wire {
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             shareable = try c.decode(Bool.self, forKey: .shareable)
             agent = try c.decode(String.self, forKey: .agent)
+            model = try c.decodeIfPresent(String.self, forKey: .model)
             branch = try c.decodeIfPresent(String.self, forKey: .branch)
             machine = try c.decodeIfPresent(String.self, forKey: .machine)
             splitFrom = try c.decodeIfPresent(String.self, forKey: .splitFrom)
@@ -4298,14 +4302,20 @@ public enum Wire {
         public var repo: String?
         /// Put it in this effort; an empty string takes it out.
         public var effort: String?
+        /// claude or codex; refused once it's merged or cancelled. Takes effect from its next session.
+        public var agent: String?
+        /// The model its next sessions use; an empty string goes back to the agent's default.
+        public var model: String?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
             self.shareable = shareable
             self.repo = repo
             self.effort = effort
+            self.agent = agent
+            self.model = model
         }
     }
 
