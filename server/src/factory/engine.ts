@@ -13,9 +13,9 @@ import type {
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
-import { affectedBy, emptyForecast, refreshOverlaps, type Lane } from "./forecast.ts";
+import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { merged, redacted } from "./connectors.ts";
@@ -960,7 +960,8 @@ export class Engine {
       ? { reason: `This task was moved here from ${priv.movedFrom.machine}${priv.movedFrom.commit ? `; its work so far is on the branch, up to ${priv.movedFrom.commit.slice(0, 7)} (any "WIP" commit is unfinished)` : ""}.` }
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
     const org = this.store.prompts();
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org) : role === "builder" ? builderPrompt(task, goal, resumed, org) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
+    const others = role === "reviewer" ? [] : this.moving(task);
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others) : role === "builder" ? builderPrompt(task, goal, resumed, org, others) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -2084,6 +2085,20 @@ export class Engine {
     const repo = taskRepo(task, goal) ?? goal?.folder ?? null;
     if (!repo) return null;
     return { repo, base: task.pr?.base ?? this.store.private(task.id).base ?? goal?.base ?? "main" };
+  }
+
+  /** The other tasks building or in review where this one merges, for its planner's and builder's prompts:
+   *  the ones it overlaps first. */
+  private moving(task: Task): Moving[] {
+    const mine = this.lane(task);
+    if (!mine) return [];
+    const overlapping = new Set(task.mergeForecast?.overlaps.map((o) => o.task) ?? []);
+    return this.store
+      .tasks()
+      .filter((t) => t.id !== task.id && inFlight(t))
+      .filter((t) => { const l = this.lane(t); return l != null && l.repo.toLowerCase() === mine.repo.toLowerCase() && l.base === mine.base; })
+      .sort((a, b) => Number(overlapping.has(b.id)) - Number(overlapping.has(a.id)) || b.updatedAt - a.updatedAt)
+      .map((t) => ({ id: t.id, title: t.title, state: t.state, files: t.diff?.files ?? [] }));
   }
 
   /** Brings every task's overlaps up to date after `current` changed (passed as they are now, since
