@@ -45,22 +45,27 @@ Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_C
 Admins keep per-repo secrets in Settings → Secrets (names, who changed them and when; values are never
 shown again). They live in OrgHub's SQLite, each value sealed with AES-GCM (a fresh IV, the repo and name
 as additional data) under a key derived with HKDF from `SECRETS_KEY`. A runner gets a repo's values only
-for a planning, building or reviewing task assigned to it, as environment variables in the task's sessions, or with
-`maple-runner secrets pull` in its owner's checkout (into a gitignored `.env.local`, mode 0600). Every
+for a planning, building or reviewing task assigned to it, as environment variables in the task's sessions, or,
+when its owner is an org admin, with `maple-runner secrets pull` in their checkout (into a gitignored `.env.local`,
+mode 0600). A member's machine can't pull: ask an admin, or let a task use them. Every
 change and every release is in the D1 `audit` table (`secret.set`, `secret.deleted`, `secret.pulled`),
 by name only.
 
 What that does and doesn't guard on a runner's machine:
 
 - A task's agent has its own repo's values in its environment, so it can read them; scrubbing only keeps
-  them out of what the runner sends the factory (logs, proofs, last output).
-- `secrets pull` asks the runner over its local socket, which every session can reach. The runner refuses
-  a request from a process inside one of its sessions (it walks up from the asking process to the
-  session's pane), so an agent can't pull another repo's values. Run `secrets pull` from your own
-  terminal. A process that detaches itself from its session can get past that check: the socket is as
-  private as the user account the runner runs as, and anything running as that user can read the values.
-- The tmux command that starts a session with secrets goes on tmux's stdin, not its arguments, so other
-  users on the machine can't see the values with `ps`.
+  them out of what the runner sends the factory (logs, proofs, last output, the terminal stream and its
+  replays).
+- Scrubbing replaces a value only as it is: values shorter than 6 characters aren't scrubbed at all, and
+  neither is an encoded form of one (base64, URL-encoded, quoted with escapes, or split up by the agent).
+- The values reach a session through a one-shot file (mode 0600, in `~/.config/maple/secrets/`, never the
+  worktree) that the pane's shell reads and deletes before it starts the agent. They're in the pane's
+  processes only, not tmux's session environment, which any client of the runner's tmux server could read.
+  Anything running as the same user account can still read a process's environment.
+- The factory hands values to a task-less request (`secrets pull`) only when the machine's owner is an org
+  admin. The runner also refuses a pull from a process inside one of its sessions (it walks up from the
+  asking process to the session's pane), but a process that detaches itself, or reads the runner's token,
+  gets past that; the admin check on the factory is what stops an agent on a member's machine.
 
 `SECRETS_KEY` is a Worker secret when you set one; otherwise `/setup` (or the first secret saved) generates
 one into D1's `settings` table and never replaces it. **Back it up**: without it no stored value can be
@@ -69,8 +74,9 @@ read. Read it with
 and keep it in your password manager (or set the same value as a Worker secret with
 `npx wrangler secret put SECRETS_KEY`). Restoring a factory means restoring that value with its data.
 
-**Rotating** it re-encrypts nothing on its own: a different key makes every stored value unreadable (a
-runner's pull then says the factory couldn't decrypt them). To rotate, note the names in Settings →
+**Changing or losing it loses every stored value**: nothing re-encrypts them, so a different key makes all
+of them unreadable (a runner's pull then says the factory couldn't decrypt them) and each has to be set
+again. To rotate, note the names in Settings →
 Secrets, set the new key (`npx wrangler secret put SECRETS_KEY`, or replace the `settings` row), then
 Replace each secret with its value, which seals it under the new key. Rotate when someone who could read
 the key (a Cloudflare account admin) leaves, and rotate the secrets themselves at their source, since

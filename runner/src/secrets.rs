@@ -2,17 +2,18 @@
 //! gitignored `.env.local` in the owner's own checkout (`maple-runner secrets pull`).
 //!
 //! The hub hands a repo's values (`secrets.request` / `secrets.reply`) only to the machine a task on
-//! that repo is assigned to, or, with no task, to a machine whose owner is one of the org's members.
-//! A task's session gets them in its tmux session's environment (`new-session -e`), never as a file,
-//! so nothing lands in the worktree where it could be committed. The session's `@maple_secrets`
-//! option names them, so a restarted runner can find their values again.
+//! that repo is assigned to, or, with no task, to a machine whose owner is an org admin.
+//! A task's session gets them through a one-shot file (`env_file`, 0600, in the runner's config
+//! folder, never the worktree) that its pane's shell sources and deletes before it starts the agent
+//! (`source_first`). So they're only in the pane's processes, not tmux's session environment, which
+//! any client of the tmux server can read with `show-environment`. The session's `@maple_secrets`
+//! and `@maple_secrets_repo` options name them and their repo, so a restarted runner can ask the hub
+//! for them again with the session's task (`recover`, `refetch`).
 //!
 //! Every value the runner has been given is remembered for `scrub`: it's replaced by `***` in
 //! everything the runner sends the hub (agents' MCP calls and proofs, session ends' last output,
-//! activity) and in git's error messages (`tasks::scrub`).
-//!
-//! The tmux command that starts such a session goes to tmux on its stdin, not in its argv, which
-//! any user on the machine can read with `ps`.
+//! activity, terminal output through a `Scrubber`, replays) and in git's error messages
+//! (`tasks::scrub`). Values shorter than `MIN_SCRUB`, and encoded forms of a value, aren't scrubbed.
 //!
 //! The CLI can't open a second hub connection (the hub keeps the newest runner with a name), so
 //! `secrets pull` and `secrets list` ask the running runner over its local hook socket, one line
@@ -21,7 +22,7 @@
 //! sessions (found by walking up from the socket peer's pid): an agent, prompt-injected or not,
 //! can't use the owner's pull to read another repo's values. A process that detaches itself from
 //! its session (double-forks to launchd/init) gets past that check; the socket is only as private
-//! as the user account it runs under.
+//! as the user account it runs under, which is why the hub only answers an admin's machine.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
