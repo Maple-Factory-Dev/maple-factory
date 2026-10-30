@@ -2027,6 +2027,11 @@ final class AppState {
                     task.mergeFrom = nil
                 }
                 self.autoMerging.insert(id)
+                // A demo script shows the factory's "Merging…" for a moment, as the server's merge does.
+                if AppDefaults.string(forKey: "actions") != nil {
+                    self.update(id) { $0.liveLog = FactoryTask.mergingLog }
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
                 self.merge(id, byFactory: true)
             }
         }

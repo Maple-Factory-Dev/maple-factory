@@ -729,7 +729,8 @@ struct TaskCard: View {
             }
 
             if mergeButton {
-                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isInFlight(task.id, .merge),
+                // Busy from the click until the server reports it merged, not just until the request returns.
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: task.merging || state.isInFlight(task.id, .merge),
                               busyTitle: "Merging…") {
                     state.merge(task.id)
                 }
@@ -787,11 +788,19 @@ struct QueuedFooter: View {
 
 /// The state-specific line under a task: progress, checks and diff, a spinner, or plain detail text.
 struct TaskProgressFooter: View {
+    @Environment(AppState.self) private var state
     let task: FactoryTask
     var compact = false
 
     var body: some View {
-        if let progress = task.progress {
+        if task.merging || state.isInFlight(task.id, .merge) {
+            merging(FactoryTask.mergingLog)
+        } else if task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt {
+            TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
+                merging(left > 0 ? "Merging in \(left)s" : FactoryTask.mergingLog)
+            }
+        } else if let progress = task.progress {
             if compact {
                 HStack(spacing: 8) {
                     bar(progress).frame(width: 60)
@@ -834,6 +843,16 @@ struct TaskProgressFooter: View {
             .font(.system(size: 11.5))
             .foregroundStyle(Theme.textMuted)
             .lineLimit(1)
+    }
+
+    /// Merging, or counting down to the auto-merge: a spinner and the line in the merged color.
+    private func merging(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(text).monospacedDigit().lineLimit(1)
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(Theme.State.merged)
     }
 
     private func bar(_ progress: Double) -> some View {

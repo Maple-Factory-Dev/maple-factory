@@ -284,6 +284,10 @@ struct FactoryTask: Identifiable {
     /// The tasks in flight it overlaps, and conflicts a dry-run merge found with its base.
     var mergeForecast: MergeForecast? = nil
 
+    /// The factory is merging it: the server marks that with this live log line (engine.ts startMerge).
+    static let mergingLog = "Merging…"
+    var merging: Bool { state == .reviewing && liveLog == Self.mergingLog }
+
     /// What its next session does, while it's queued.
     var nextStep: String {
         switch state {
