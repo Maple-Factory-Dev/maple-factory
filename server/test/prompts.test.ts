@@ -25,6 +25,12 @@ test("a planner prompt gets the org's planning text, then the goal's, after the 
   assert.ok(!p.includes("ORG BUILDING") && !p.includes("GOAL BUILDING") && !p.includes("ORG REVIEW"));
 });
 
+test("a planner prompt offers an optional title, quoting the current one", () => {
+  const p = plannerPrompt(task, goal(null), null);
+  assert.ok(p.includes('- title (optional): a clearer title for the task, only when its current one ("Add a thing") is vague or misleading'));
+  assert.ok(p.indexOf("- title (optional)") < p.indexOf("- steps:"));
+});
+
 test("a builder prompt with no additions is what it was without them", () => {
   const empty = { planner: "", builder: "  ", reviewer: "" };
   const before = builderPrompt(task, goal(null), null);

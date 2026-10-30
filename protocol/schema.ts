@@ -510,6 +510,7 @@ export const structs: Record<string, Struct> = {
       plan: "PlanStep[]",
       planVersion: "u32",
       planSummary: "string?",
+      suggestedTitle: "string?",
       doneWhen: "DoneItem[]",
       approvals: "string[]",
       approvalsNeeded: "u32",
@@ -550,6 +551,7 @@ export const structs: Record<string, Struct> = {
     },
     fieldDocs: {
       mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
+      suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
       effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
@@ -1144,7 +1146,11 @@ export const unions: Record<string, Union> = {
         doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",
         fields: { id: "string", notes: "ReviewNote[]", summary: "string?" },
       },
-      "task.approvePlan": { doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.", fields: { id: "string" } },
+      "task.approvePlan": {
+        doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.",
+        fields: { id: "string", keepTitle: "bool?" },
+        fieldDocs: { keepTitle: "Turn down the plan's suggested title and keep the current one." },
+      },
       "task.answer": { doc: "Answer the agent's question.", fields: { id: "string", text: "string" } },
       "task.answerPrompt": {
         doc: "Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.",

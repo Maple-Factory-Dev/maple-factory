@@ -85,6 +85,7 @@ ${brief(task, goal)}${extra("planner", org, goal)}${moving(inFlight)}${comments(
 
 Read the repository (this worktree) to understand where the change goes. Then call the \`submit_plan\` tool once with:
 - summary: two or three sentences on the approach.
+- title (optional): a clearer title for the task, only when its current one ("${task.title}") is vague or misleading; it's renamed once the plan is approved.
 - steps: 3–8 concrete steps, each with the main file it touches.
 - doneWhen: 2–5 checks that prove it works, each with the proof kind the builder will produce (tests, terminal, screenshot or video).
 - risk: low, medium or high, with reasons (auth, payments, migrations and public APIs are high) and the areas it touches.
