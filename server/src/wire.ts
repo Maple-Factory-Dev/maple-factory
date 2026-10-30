@@ -788,8 +788,13 @@ export interface Member {
   login: string;
   name?: string | null;
   avatarUrl?: string | null;
+  /** "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here. */
   role: string;
   teams: string[];
+  /** Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server. */
+  adminSource?: string | null;
+  /** Who granted it, when `adminSource` is "granted". */
+  adminGrantedBy?: string | null;
 }
 
 /** A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet. */
@@ -1466,6 +1471,18 @@ export interface ClientMessage_PromptsSave {
   prompts: PromptAdditions;
 }
 
+/** Admins only: make someone who has signed in an admin of this factory. */
+export interface ClientMessage_AdminsGrant {
+  type: "admins.grant";
+  login: string;
+}
+
+/** Admins only: take back an admin grant (not a GitHub owner's, nor your own). */
+export interface ClientMessage_AdminsRevoke {
+  type: "admins.revoke";
+  login: string;
+}
+
 /** Read the repos the GitHub App is installed on again. */
 export interface ClientMessage_ReposRefresh {
   type: "repos.refresh";
@@ -1697,8 +1714,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1807,6 +1824,12 @@ export interface ServerToClient_PromptsUpdated {
   prompts: PromptAdditions;
 }
 
+/** Everyone who has signed in again, after an admin grant changed. */
+export interface ServerToClient_MembersUpdated {
+  type: "members.updated";
+  members: Member[];
+}
+
 /** An admin set or removed the factory's icon (PUT or DELETE /api/icon). */
 export interface ServerToClient_IconUpdated {
   type: "icon.updated";
@@ -1869,5 +1892,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","error"] as const;

@@ -1407,9 +1407,16 @@ pub struct Member {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
+    /// "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here.
     pub role: String,
     #[serde(default)]
     pub teams: Vec<String>,
+    /// Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_source: Option<String>,
+    /// Who granted it, when `adminSource` is "granted".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_granted_by: Option<String>,
 }
 
 /// A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet.
@@ -2147,6 +2154,16 @@ pub enum ClientMessage {
     PromptsSave {
         prompts: PromptAdditions,
     },
+    /// Admins only: make someone who has signed in an admin of this factory.
+    #[serde(rename = "admins.grant")]
+    AdminsGrant {
+        login: String,
+    },
+    /// Admins only: take back an admin grant (not a GitHub owner's, nor your own).
+    #[serde(rename = "admins.revoke")]
+    AdminsRevoke {
+        login: String,
+    },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]
     ReposRefresh,
@@ -2491,6 +2508,12 @@ pub enum ServerToClient {
     #[serde(rename = "prompts.updated")]
     PromptsUpdated {
         prompts: PromptAdditions,
+    },
+    /// Everyone who has signed in again, after an admin grant changed.
+    #[serde(rename = "members.updated")]
+    MembersUpdated {
+        #[serde(default)]
+        members: Vec<Member>,
     },
     /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
     #[serde(rename = "icon.updated")]
