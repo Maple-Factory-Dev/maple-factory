@@ -493,6 +493,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where a repo's Set up with AI run is.
+    public enum RepoSetupState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Its agent is reading the repo.
+        case running
+        /// Finished: `suggestion` is filled in.
+        case done
+        /// It couldn't; `error` says why.
+        case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RepoSetupState] = [.running, .done, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "running": self = .running
+            case "done": self = .done
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .running: "running"
+            case .done: "done"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RepoSetupState, b: RepoSetupState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// A line of a draft's transcript.
     public enum DraftLineKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Something the agent said or thought.
@@ -2337,12 +2382,15 @@ public enum Wire {
         /// GitHub owner/name.
         public var repo: String
         public var scripts: WorktreeScripts
+        /// The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server.
+        public var prompts: PromptAdditions?
         public var updatedBy: String
         public var updatedAt: UInt64
 
-        public init(repo: String, scripts: WorktreeScripts, updatedBy: String, updatedAt: UInt64) {
+        public init(repo: String, scripts: WorktreeScripts, prompts: PromptAdditions? = nil, updatedBy: String, updatedAt: UInt64) {
             self.repo = repo
             self.scripts = scripts
+            self.prompts = prompts
             self.updatedBy = updatedBy
             self.updatedAt = updatedAt
         }
@@ -3058,6 +3106,50 @@ public enum Wire {
         public init(kind: DraftLineKind, text: String) {
             self.kind = kind
             self.text = text
+        }
+    }
+
+    /// What a Set up with AI run suggests for a repo, for an admin to review and save.
+    public struct RepoSetupSuggestion: Codable, Hashable, Sendable {
+        public var scripts: WorktreeScripts
+        public var prompts: PromptAdditions
+        /// Short notes from the agent: what it found and why it suggests these.
+        public var notes: [String]
+
+        public init(scripts: WorktreeScripts, prompts: PromptAdditions, notes: [String] = []) {
+            self.scripts = scripts
+            self.prompts = prompts
+            self.notes = notes
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            scripts = try c.decode(WorktreeScripts.self, forKey: .scripts)
+            prompts = try c.decode(PromptAdditions.self, forKey: .prompts)
+            notes = try c.decodeIfPresent([String].self, forKey: .notes) ?? []
+        }
+    }
+
+    /// Set up with AI for one repo: an agent that can't change anything reads the repo and suggests its worktree scripts and prompt additions.
+    public struct RepoSetupRun: Codable, Hashable, Sendable {
+        public var repo: String
+        /// Who started it (an admin); it runs on their machine.
+        public var by: String
+        public var state: RepoSetupState
+        public var startedAt: UInt64
+        /// What the agent is doing now, one line.
+        public var progress: String?
+        public var suggestion: RepoSetupSuggestion?
+        public var error: String?
+
+        public init(repo: String, by: String, state: RepoSetupState, startedAt: UInt64, progress: String? = nil, suggestion: RepoSetupSuggestion? = nil, error: String? = nil) {
+            self.repo = repo
+            self.by = by
+            self.state = state
+            self.startedAt = startedAt
+            self.progress = progress
+            self.suggestion = suggestion
+            self.error = error
         }
     }
 
@@ -4642,6 +4734,27 @@ public enum Wire {
         }
     }
 
+    /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
+    public struct ClientMessageRepoSetupStart: Codable, Hashable, Sendable {
+        public var repo: String
+        /// claude or codex; none: whichever the machine has.
+        public var agent: String?
+
+        public init(repo: String, agent: String? = nil) {
+            self.repo = repo
+            self.agent = agent
+        }
+    }
+
+    /// Stop a repo's Set up with AI run.
+    public struct ClientMessageRepoSetupCancel: Codable, Hashable, Sendable {
+        public var repo: String
+
+        public init(repo: String) {
+            self.repo = repo
+        }
+    }
+
     /// Follow a goal (it's in your sidebar) or stop following it.
     public struct ClientMessageGoalFollow: Codable, Hashable, Sendable {
         public var id: String
@@ -4838,14 +4951,17 @@ public enum Wire {
         }
     }
 
-    /// Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.
+    /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     public struct ClientMessageReposScriptsSet: Codable, Hashable, Sendable {
         public var repo: String
         public var scripts: WorktreeScripts
+        /// The repo's prompt additions; none (an older app) keeps the stored ones.
+        public var prompts: PromptAdditions?
 
-        public init(repo: String, scripts: WorktreeScripts) {
+        public init(repo: String, scripts: WorktreeScripts, prompts: PromptAdditions? = nil) {
             self.repo = repo
             self.scripts = scripts
+            self.prompts = prompts
         }
     }
 
@@ -5233,6 +5349,8 @@ public enum Wire {
         case draftGoal(ClientMessageDraftGoal)
         case draftCancel(ClientMessageDraftCancel)
         case goalScout(ClientMessageGoalScout)
+        case repoSetupStart(ClientMessageRepoSetupStart)
+        case repoSetupCancel(ClientMessageRepoSetupCancel)
         case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
@@ -5306,6 +5424,8 @@ public enum Wire {
             case "draft.goal": self = .draftGoal(try ClientMessageDraftGoal(from: decoder))
             case "draft.cancel": self = .draftCancel(try ClientMessageDraftCancel(from: decoder))
             case "goal.scout": self = .goalScout(try ClientMessageGoalScout(from: decoder))
+            case "repo.setup.start": self = .repoSetupStart(try ClientMessageRepoSetupStart(from: decoder))
+            case "repo.setup.cancel": self = .repoSetupCancel(try ClientMessageRepoSetupCancel(from: decoder))
             case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
@@ -5410,6 +5530,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalScout(let body):
                 try c.encode("goal.scout", forKey: .type)
+                try body.encode(to: encoder)
+            case .repoSetupStart(let body):
+                try c.encode("repo.setup.start", forKey: .type)
+                try body.encode(to: encoder)
+            case .repoSetupCancel(let body):
+                try c.encode("repo.setup.cancel", forKey: .type)
                 try body.encode(to: encoder)
             case .goalFollow(let body):
                 try c.encode("goal.follow", forKey: .type)
@@ -5588,6 +5714,8 @@ public enum Wire {
         public var secrets: [RepoSecret]
         /// The repos that have worktree scripts. None: an older server.
         public var scripts: [RepoWorktreeScripts]?
+        /// Each repo's latest Set up with AI run. None: an older server.
+        public var setupRuns: [RepoSetupRun]?
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
         /// Runner releases, newest first, with their notes (What's new). None: an older server.
@@ -5602,7 +5730,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -5623,6 +5751,7 @@ public enum Wire {
             self.githubApp = githubApp
             self.secrets = secrets
             self.scripts = scripts
+            self.setupRuns = setupRuns
             self.runnerLatest = runnerLatest
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
@@ -5654,6 +5783,7 @@ public enum Wire {
             githubApp = try c.decodeIfPresent(GitHubAppInfo.self, forKey: .githubApp)
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
+            setupRuns = try c.decodeIfPresent([RepoSetupRun].self, forKey: .setupRuns)
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
@@ -5753,6 +5883,15 @@ public enum Wire {
         public var run: ScoutRun
 
         public init(run: ScoutRun) {
+            self.run = run
+        }
+    }
+
+    /// How a repo's Set up with AI run is going.
+    public struct ServerToClientRepoSetupUpdated: Codable, Hashable, Sendable {
+        public var run: RepoSetupRun
+
+        public init(run: RepoSetupRun) {
             self.run = run
         }
     }
@@ -5989,6 +6128,7 @@ public enum Wire {
         case noteRemoved(ServerToClientNoteRemoved)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
+        case repoSetupUpdated(ServerToClientRepoSetupUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
@@ -6025,6 +6165,7 @@ public enum Wire {
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
+            case "repo.setup.updated": self = .repoSetupUpdated(try ServerToClientRepoSetupUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
@@ -6083,6 +6224,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .scoutUpdated(let body):
                 try c.encode("scout.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .repoSetupUpdated(let body):
+                try c.encode("repo.setup.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .followsUpdated(let body):
                 try c.encode("follows.updated", forKey: .type)

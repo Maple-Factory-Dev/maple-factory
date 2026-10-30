@@ -8,7 +8,7 @@
 import type { Env } from "../env.ts";
 import type {
   ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  McpConnector, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  McpConnector, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
@@ -16,9 +16,10 @@ import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
-import { allowed, toolsFor } from "./tools.ts";
+import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
+import { RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
@@ -96,6 +97,7 @@ const fail = (message: string): never => {
 export class Engine {
   private drafts: Drafts;
   private scout: Scout;
+  private setup: RepoSetup;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
@@ -113,6 +115,24 @@ export class Engine {
       toRunner: (machine, command) => this.toRunner(machine, command),
       make: (goal, by, picks, shown) => this.scouted(goal, by, picks, shown),
     });
+    this.setup = new RepoSetup(store, {
+      broadcast: (message) => hooks.broadcast(message),
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      isAdmin: (login) => this.isAdmin(login),
+      toRunner: (machine, command) => this.toRunner(machine, command),
+    });
+  }
+
+  /** Whether someone who has signed in is an admin here (a GitHub owner, or granted). */
+  private async isAdmin(login: string): Promise<boolean> {
+    return (await this.hooks.members()).some((m) => m.login.toLowerCase() === login.toLowerCase() && m.role === "admin");
+  }
+
+  /** Every repo's latest Set up with AI run, for an app that's just connected. */
+  setupRuns() {
+    return this.setup.runs();
   }
 
   // ---------------------------------------------------------------------------
@@ -136,6 +156,15 @@ export class Engine {
       case "goal.scout":
         try {
           await this.scout.start(who, msg.goal);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
+      case "repo.setup.start":
+      case "repo.setup.cancel":
+        try {
+          if (msg.type === "repo.setup.start") await this.setup.start(who, msg.repo, msg.agent ?? null);
+          else await this.setup.cancel(who, msg.repo);
         } catch (e) {
           fail((e as Error).message);
         }
@@ -231,15 +260,7 @@ export class Engine {
       }
       case "repos.scripts.set": {
         if (member.role !== "admin") fail("Only admins can change a repo's worktree scripts.");
-        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name
-          ?? fail(`${msg.repo} isn't one of the org's repos.`);
-        const scripts = cleanScripts(msg.scripts);
-        const before = this.store.scriptsFor(repo) ?? {};
-        const changed = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
-        this.store.saveRepoScripts(repo, scripts, who);
-        // Which ones changed, not the commands (they can carry hosts and paths).
-        await audit(this.env, who, "repo.scripts", repo, { repo, changed });
-        this.reposUpdated();
+        await this.saveRepoSetup(who, msg.repo, msg.scripts, msg.prompts, null);
         return;
       }
       case "policy.save": {
@@ -1027,7 +1048,8 @@ export class Engine {
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others) : role === "builder" ? builderPrompt(task, goal, resumed, org, others) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
+    const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -1112,13 +1134,15 @@ export class Engine {
   /** What a runner said that's about the factory. `mcp.request` gets an answer for the runner. */
   async fromRunner(machine: string, msg: RunnerMessage): Promise<Reply | null> {
     switch (msg.type) {
-      case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
+      case "mcp.request": return this.tool(machine, msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
       case "draft.progress":
-        // A Scout run only reports what it picked, at the end.
-        if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        // A Scout run only reports what it picked, at the end; a setup run shows what it's reading.
+        if (msg.id.startsWith(SETUP_PREFIX)) this.setup.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        else if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
         return null;
       case "draft.done":
         if (msg.id.startsWith(SCOUT_PREFIX)) await this.scout.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        else if (msg.id.startsWith(SETUP_PREFIX)) this.setup.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         else await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         return null;
       case "session.opened": {
@@ -1235,9 +1259,12 @@ export class Engine {
           this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
-        if (this.drafts.forRun(msg.taskId, machine) || this.scout.forRun(msg.taskId, machine)) {
-          // Draft with AI and Scout read their goal's code: a fetch of one of that goal's repos, nothing more.
-          const mayFetch = msg.taskId.startsWith(SCOUT_PREFIX) ? this.scout.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`) : this.drafts.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`);
+        if (this.drafts.forRun(msg.taskId, machine) || this.scout.forRun(msg.taskId, machine) || this.setup.forRun(msg.taskId, machine)) {
+          // Draft with AI and Scout read their goal's code, Set up with AI its repo's: a fetch of one of those repos, nothing more.
+          const full = `${msg.owner}/${msg.repo}`;
+          const mayFetch = msg.taskId.startsWith(SCOUT_PREFIX) ? this.scout.mayFetch(msg.taskId, machine, full)
+            : msg.taskId.startsWith(SETUP_PREFIX) ? this.setup.mayFetch(msg.taskId, machine, full)
+            : this.drafts.mayFetch(msg.taskId, machine, full);
           if (msg.purpose !== "fetch" || !mayFetch) {
             return await reply(null, "A draft can only fetch its goal's repos.", "api"), null;
           }
@@ -1663,13 +1690,46 @@ export class Engine {
     });
   }
 
+  /** A repo's worktree scripts and prompt additions, saved by an admin (from an app, or an admin's
+   *  own agent session through the maple MCP, `via`). No prompts (an older app) keeps the stored ones. */
+  private async saveRepoSetup(who: string, name: string, raw: WorktreeScripts, rawPrompts: PromptAdditions | null | undefined, via: string | null) {
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === name.trim().toLowerCase())?.name
+      ?? fail(`${name} isn't one of the org's repos.`);
+    const scripts = cleanScripts(raw);
+    const beforePrompts = this.store.repoPrompts(repo);
+    let prompts = rawPrompts ? cleanPrompts(rawPrompts) : beforePrompts;
+    if (prompts && !prompts.planner && !prompts.builder && !prompts.reviewer) prompts = null;
+    const before = this.store.scriptsFor(repo) ?? {};
+    const changed: string[] = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
+    for (const role of ["planner", "builder", "reviewer"] as const) {
+      if ((prompts?.[role] ?? "") !== (beforePrompts?.[role] ?? "")) changed.push(`prompts.${role}`);
+    }
+    this.store.saveRepoScripts(repo, scripts, who, prompts);
+    // Which ones changed, not the commands or prompts (they can carry hosts and paths).
+    await audit(this.env, who, "repo.scripts", repo, { repo, changed, ...(via ? { via } : {}) });
+    this.reposUpdated();
+    return repo;
+  }
+
   // ---------------------------------------------------------------------------
   // Agents' tools
 
-  private async tool(sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
+  private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
-    if (name === "tools/list") return { result: { summary: "", data: { tools: s ? toolsFor(s.role) : [] } } };
-    if (!s) return { error: "This session isn't working on a factory task." };
+    if (!s) {
+      // Not one the factory started for a task: your own session on a member's machine.
+      const known = (await this.hooks.machines()).find((m) => m.id === machine);
+      const live = known?.sessions.find((x) => x.session.id === sessionId);
+      const personal = Boolean(known && !live?.session.taskId);
+      if (name === "tools/list") return { result: { summary: "", data: { tools: personal ? personalTools() : [] } } };
+      if (!personal || !isPersonalTool(name)) return { error: "This session isn't working on a factory task." };
+      try {
+        return { result: await this.personalTool(known!, name, args) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    if (name === "tools/list") return { result: { summary: "", data: { tools: toolsFor(s.role) } } };
     if (!allowed(s.role, name)) return { error: `${name} isn't one of the ${s.role}'s tools.` };
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
@@ -1683,6 +1743,49 @@ export class Engine {
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  /** A repo's setup as get_repo_setup shows it. */
+  private repoSetupView(repo: string) {
+    const row = this.store.repoSetup(repo);
+    return {
+      repo,
+      scripts: this.store.scriptsFor(repo) ?? {},
+      prompts: row?.prompts ?? { planner: "", builder: "", reviewer: "" },
+      variables: SCRIPT_VARIABLES,
+      updatedBy: row?.updatedBy ?? null,
+      updatedAt: row?.updatedAt ?? null,
+    };
+  }
+
+  /** get_repo_setup and save_repo_setup, from a session on `machine` that isn't a factory task's. */
+  private async personalTool(machine: Machine, name: string, a: Record<string, unknown>): Promise<{ summary: string; data?: unknown }> {
+    const asked = str(a.repo, "repo");
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === asked.trim().toLowerCase())?.name
+      ?? fail(`${asked} isn't one of the org's repos.`);
+    if (name === "get_repo_setup") {
+      const view = this.repoSetupView(repo);
+      return { summary: view.updatedBy ? `${repo}'s setup, last changed by ${view.updatedBy}.` : `${repo} has no setup yet.`, data: view };
+    }
+    if (!(await this.isAdmin(machine.owner))) fail("Only admins' sessions can save a repo's setup.");
+    // Only what's passed changes; the rest stays as stored.
+    const scripts: WorktreeScripts = { ...(this.store.scriptsFor(repo) ?? {}) };
+    if (a.scripts != null) {
+      const given = obj(a.scripts);
+      for (const f of ["create", "setup", "teardown", "archive"] as const) {
+        if (given[f] !== undefined) scripts[f] = given[f] == null ? null : typeof given[f] === "string" ? given[f] : fail(`scripts.${f} is a command (a string).`);
+      }
+      if (given.timeoutSecs !== undefined) scripts.timeoutSecs = given.timeoutSecs == null ? null : (given.timeoutSecs as number);
+    }
+    const prompts: PromptAdditions = { planner: "", builder: "", reviewer: "", ...(this.store.repoPrompts(repo) ?? {}) };
+    if (a.prompts != null) {
+      const given = obj(a.prompts);
+      for (const role of ["planner", "builder", "reviewer"] as const) {
+        if (given[role] != null) prompts[role] = typeof given[role] === "string" ? given[role] : fail(`prompts.${role} is Markdown (a string).`);
+      }
+    }
+    await this.saveRepoSetup(machine.owner, repo, scripts, prompts, `via MCP from ${machine.name}`);
+    return { summary: `Saved ${repo}'s setup.`, data: this.repoSetupView(repo) };
   }
 
   private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>): { summary: string; data?: unknown } {
@@ -2472,23 +2575,11 @@ export class Engine {
 }
 
 const SCRIPT_FIELDS = ["create", "setup", "teardown", "archive", "timeoutSecs"] as const;
-/** The longest command kept for one worktree script. */
-const MAX_SCRIPT = 4096;
-
 /** A repo's worktree scripts as stored: commands trimmed, blank ones dropped, none when nothing's left. */
 function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
-  const out: WorktreeScripts = {};
-  for (const f of ["create", "setup", "teardown", "archive"] as const) {
-    const command = typeof s[f] === "string" ? s[f]!.trim() : "";
-    if (!command) continue;
-    if (new TextEncoder().encode(command).length > MAX_SCRIPT) fail(`The ${f} script is over 4 KB; put it in a file in the repo and run that.`);
-    out[f] = command;
-  }
-  if (s.timeoutSecs != null) {
-    if (!Number.isSafeInteger(s.timeoutSecs) || s.timeoutSecs < 1 || s.timeoutSecs > 3600) fail("A worktree script's timeout is 1–3600 seconds.");
-    out.timeoutSecs = s.timeoutSecs;
-  }
-  return out.create || out.setup || out.teardown || out.archive ? out : null;
+  const problem = scriptsProblem(s);
+  if (problem) fail(problem);
+  return tidyScripts(s);
 }
 
 /** An effort's name as stored: trimmed and spaces collapsed; blank is none. */

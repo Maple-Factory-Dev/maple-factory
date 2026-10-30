@@ -54,6 +54,8 @@ import Security
     private(set) var follows: [String: Bool] = [:]
     /// Each goal's latest Scout run since this app connected, by goal id.
     private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
+    /// Each repo's latest Set up with AI run, by lowercased repo name.
+    private(set) var setupRuns: [String: Wire.RepoSetupRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
@@ -284,6 +286,7 @@ import Security
         drafts = [:]
         follows = [:]
         scoutRuns = [:]
+        setupRuns = [:]
         policy = nil
         prompts = nil
         connectors = nil
@@ -415,6 +418,7 @@ import Security
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
+            setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
@@ -487,6 +491,8 @@ import Security
             drafts[update.draft.id] = update.draft
         case .scoutUpdated(let update):
             scoutRuns[update.run.goal] = update.run
+        case .repoSetupUpdated(let update):
+            setupRuns[update.run.repo.lowercased()] = update.run
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
@@ -747,9 +753,24 @@ import Security
         let _: Empty = try await api("/api/name", method: "DELETE")
     }
 
-    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
-    func save(scripts: Wire.WorktreeScripts, for repo: String) {
-        send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared) and its prompt additions; repos.updated says how they were saved.
+    func save(scripts: Wire.WorktreeScripts, prompts: Wire.PromptAdditions? = nil, for repo: String) {
+        send(.reposScriptsSet(.init(repo: repo, scripts: scripts, prompts: prompts)))
+    }
+
+    /// Admins only: Set up with AI on `repo`. An agent on one of your machines reads it and suggests
+    /// scripts and prompts; `setupRun(for:)` says how it's going, and nothing is saved until you do.
+    func startSetup(for repo: String) {
+        send(.repoSetupStart(.init(repo: repo)))
+    }
+
+    func cancelSetup(for repo: String) {
+        send(.repoSetupCancel(.init(repo: repo)))
+    }
+
+    /// `repo`'s latest Set up with AI run, if there's been one.
+    func setupRun(for repo: String) -> Wire.RepoSetupRun? {
+        setupRuns[repo.lowercased()]
     }
 
     /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.

@@ -379,7 +379,9 @@ enum Headless {
     private lazy var settingsWindow: NSWindow = {
         let settings = NSWindow(contentViewController: NSHostingController(rootView: OrgSettingsView()
             .environment(state).environment(client).defaultAppStorage(AppDefaults)))
-        settings.setContentSize(OrgSettingsView.size)
+        // `-height` makes it taller, to show a long pane whole.
+        let height = AppDefaults.double(forKey: "height")
+        settings.setContentSize(CGSize(width: OrgSettingsView.size.width, height: max(OrgSettingsView.size.height, height)))
         settings.isExcludedFromWindowsMenu = true
         settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
         return settings

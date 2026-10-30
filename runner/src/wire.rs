@@ -168,6 +168,21 @@ pub enum ScoutState {
     Other,
 }
 
+/// Where a repo's Set up with AI run is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoSetupState {
+    /// Its agent is reading the repo.
+    Running,
+    /// Finished: `suggestion` is filled in.
+    Done,
+    /// It couldn't; `error` says why.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// A line of a draft's transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1110,6 +1125,9 @@ pub struct RepoWorktreeScripts {
     /// GitHub owner/name.
     pub repo: String,
     pub scripts: WorktreeScripts,
+    /// The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptAdditions>,
     pub updated_by: String,
     pub updated_at: u64,
 }
@@ -1555,6 +1573,35 @@ pub struct NewGoalIdea {
 pub struct DraftLine {
     pub kind: DraftLineKind,
     pub text: String,
+}
+
+/// What a Set up with AI run suggests for a repo, for an admin to review and save.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSetupSuggestion {
+    pub scripts: WorktreeScripts,
+    pub prompts: PromptAdditions,
+    /// Short notes from the agent: what it found and why it suggests these.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// Set up with AI for one repo: an agent that can't change anything reads the repo and suggests its worktree scripts and prompt additions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSetupRun {
+    pub repo: String,
+    /// Who started it (an admin); it runs on their machine.
+    pub by: String,
+    pub state: RepoSetupState,
+    pub started_at: u64,
+    /// What the agent is doing now, one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<RepoSetupSuggestion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.
@@ -2370,6 +2417,19 @@ pub enum ClientMessage {
     GoalScout {
         goal: String,
     },
+    /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
+    #[serde(rename = "repo.setup.start")]
+    RepoSetupStart {
+        repo: String,
+        /// claude or codex; none: whichever the machine has.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+    },
+    /// Stop a repo's Set up with AI run.
+    #[serde(rename = "repo.setup.cancel")]
+    RepoSetupCancel {
+        repo: String,
+    },
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
     GoalFollow {
@@ -2481,11 +2541,14 @@ pub enum ClientMessage {
         repo: String,
         name: String,
     },
-    /// Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.
+    /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     #[serde(rename = "repos.scripts.set")]
     ReposScriptsSet {
         repo: String,
         scripts: WorktreeScripts,
+        /// The repo's prompt additions; none (an older app) keeps the stored ones.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompts: Option<PromptAdditions>,
     },
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
     #[serde(rename = "goal.acceptRisk")]
@@ -2754,6 +2817,9 @@ pub enum ServerToClient {
         /// The repos that have worktree scripts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<Vec<RepoWorktreeScripts>>,
+        /// Each repo's latest Set up with AI run. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup_runs: Option<Vec<RepoSetupRun>>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
@@ -2821,6 +2887,11 @@ pub enum ServerToClient {
     #[serde(rename = "scout.updated")]
     ScoutUpdated {
         run: ScoutRun,
+    },
+    /// How a repo's Set up with AI run is going.
+    #[serde(rename = "repo.setup.updated")]
+    RepoSetupUpdated {
+        run: RepoSetupRun,
     },
     /// Your goal follows, to your apps only.
     #[serde(rename = "follows.updated")]
