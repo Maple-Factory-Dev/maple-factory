@@ -8,6 +8,7 @@
 
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
+import { loadCollapsed, toggleCollapsed } from "./sections.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -268,6 +269,20 @@ function render() {
 }
 const view = render;
 
+// Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
+const collapsed = loadCollapsed();
+
+/** A section with a heading that collapses it to "Title · count"; `body()` isn't built while it's collapsed. */
+function section(key, title, count, body) {
+  const open = !collapsed.has(key);
+  const id = `section-${key.replace(/[^\w-]/g, "-")}`;
+  return h("section", { class: `section${open ? "" : " closed"}` },
+    h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
+      onclick: () => { toggleCollapsed(collapsed, key); render(); } },
+      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+    open && h("div", { id }, body()));
+}
+
 function row(t, sub) {
   const goal = goalOf(t);
   return h("a", { class: "item", href: `#/t/${t.id}` },
@@ -297,16 +312,12 @@ function inboxView() {
   return h("div", {},
     h("h1", {}, "Inbox"),
     h("p", { class: "muted" }, total ? `${total} thing${total === 1 ? "" : "s"} waiting on you.` : "Nothing's waiting on you."),
-    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) => [
-      h("h2", {}, `${KINDS[k][0]} · ${groups.get(k).length}`),
-      h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))),
-    ]),
-    mentioned.length > 0 && [
-      h("h2", {}, `Mentions · ${mentioned.length}`),
+    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) =>
+      section(`inbox:${k}`, KINDS[k][0], groups.get(k).length, () => h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))))),
+    mentioned.length > 0 && section("inbox:mentions", "Mentions", mentioned.length, () =>
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
-        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss")))),
-    ],
+        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
     !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
@@ -329,12 +340,12 @@ function tasksView() {
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
-    drafts.length > 0 && [h("h2", {}, `Drafts · ${drafts.length}`), h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))],
-    queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
-    backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
-    h("h2", {}, `In flight · ${active.length}`),
-    active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight."),
-    done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
+    drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
+    queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
+    backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
+    section("tasks:active", "In flight", active.length, () =>
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
+    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
 }
 
 // ---- a new task ----
@@ -547,6 +558,9 @@ function mount(next, keepCompose) {
     active.focus({ preventScroll: true });
     if (range) try { active.setSelectionRange(...range); } catch {}
   }
+  // A section heading is rebuilt on every render; keep the keyboard on it.
+  const head = active?.dataset?.section;
+  if (head) main.querySelector(`[data-section="${CSS.escape(head)}"]`)?.focus({ preventScroll: true });
 }
 
 // ---- a task ----
