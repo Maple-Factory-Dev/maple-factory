@@ -68,7 +68,7 @@
           <ul>
             <li>People sign in with GitHub, through a GitHub App your factory creates for itself at <code>/setup</code>. <code>/setup</code> only accepts an app owned by your configured organization, and changes nothing once sign-in works.</li>
             <li>Only active members of that GitHub organization can sign in, plus any logins listed in <code>GITHUB_ALLOWED_LOGINS</code>. For a factory on a personal account, only that account and the listed logins can sign in. Refused sign-ins are recorded in the audit log.</li>
-            <li>Org membership is checked with GitHub at each sign-in. Someone who leaves the organization keeps an existing web session for up to 7 days and an app token for up to 30. On a personal-account factory, removing a login from the list signs them out at once.</li>
+            <li>Org membership is checked with GitHub at each sign-in, and again every 10 minutes for anyone with the web or Mac app open. Someone who has left the organization is cut off at the next check: their web sessions and app tokens stop working, their open terminals close, and their machines stay offline until they can sign in again. An admin can also cut someone off at once with <b>Revoke access</b> in the Mac app’s settings. On a personal-account factory, removing a login from the list signs them out at once.</li>
             <li>The web app gets a session cookie signed with HMAC-SHA256. It is <code>HttpOnly</code>, <code>SameSite=Lax</code>, and on HTTPS <code>Secure</code> with a <code>__Host-</code> prefix. The GitHub OAuth flow uses a signed, single-browser <code>state</code> that expires after 10 minutes.</li>
             <li>Browser requests that change data, and WebSocket upgrades, are refused unless their <code>Origin</code> is the factory itself.</li>
           </ul>
@@ -78,7 +78,7 @@
             <li>GitHub organization owners are admins. An admin can make another member an admin in the factory. That changes their role, but doesn’t let in anyone who couldn’t already sign in.</li>
             <li>Only admins can add or remove repos, set or delete repo secrets, change worktree scripts, the risk policy, prompts and MCP connectors, or see usage statistics.</li>
             <li>Only a machine’s owner or an admin can start or end sessions on that machine, change its settings, or remove it.</li>
-            <li>Any signed-in member can open the live terminal of a running session on any machine, and type into it.</li>
+            <li>Only a machine’s owner or an admin can open, type into or resize the live terminal of a session on that machine. Taking back someone’s admin grant closes the terminals they opened as an admin.</li>
           </ul>
 
           <h3>How the Mac app and runners authenticate</h3>
