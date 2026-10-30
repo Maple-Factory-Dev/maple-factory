@@ -153,6 +153,21 @@ pub enum DraftState {
     Other,
 }
 
+/// Where a goal's Scout run is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScoutState {
+    /// Its agent is looking over the goal's leftovers.
+    Running,
+    /// Finished: `tasks` went to planning.
+    Done,
+    /// It couldn't; `error` says why.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// A line of a draft's transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1223,6 +1238,9 @@ pub struct Task {
     /// The task it was split off from to stay inside the PR budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_from: Option<String>,
+    /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scouted_from: Option<String>,
     /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
@@ -1284,6 +1302,9 @@ pub struct RiskPolicy {
     /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_merges: Option<bool>,
+    /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scout_items: Option<u32>,
 }
 
 /// An MCP server the factory adds to every session, alongside its own `maple` server.
@@ -1499,6 +1520,22 @@ pub struct NewGoalIdea {
 pub struct DraftLine {
     pub kind: DraftLineKind,
     pub text: String,
+}
+
+/// A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoutRun {
+    pub goal: String,
+    /// Who started it; it runs on their machine.
+    pub by: String,
+    pub state: ScoutState,
+    pub started_at: u64,
+    /// The tasks it sent to planning.
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
@@ -2268,6 +2305,11 @@ pub enum ClientMessage {
     DraftCancel {
         id: String,
     },
+    /// Run Scout on a goal: its leftovers still worth doing come back as drafted plans.
+    #[serde(rename = "goal.scout")]
+    GoalScout {
+        goal: String,
+    },
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
     GoalFollow {
@@ -2706,6 +2748,11 @@ pub enum ServerToClient {
     #[serde(rename = "draft.updated")]
     DraftUpdated {
         draft: Draft,
+    },
+    /// How a goal's Scout run is going.
+    #[serde(rename = "scout.updated")]
+    ScoutUpdated {
+        run: ScoutRun,
     },
     /// Your goal follows, to your apps only.
     #[serde(rename = "follows.updated")]

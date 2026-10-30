@@ -448,6 +448,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where a goal's Scout run is.
+    public enum ScoutState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Its agent is looking over the goal's leftovers.
+        case running
+        /// Finished: `tasks` went to planning.
+        case done
+        /// It couldn't; `error` says why.
+        case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ScoutState] = [.running, .done, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "running": self = .running
+            case "done": self = .done
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .running: "running"
+            case .done: "done"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ScoutState, b: ScoutState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// A line of a draft's transcript.
     public enum DraftLineKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Something the agent said or thought.
@@ -2432,6 +2477,8 @@ public enum Wire {
         public var machine: String?
         /// The task it was split off from to stay inside the PR budget.
         public var splitFrom: String?
+        /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
+        public var scoutedFrom: String?
         /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
         public var repo: String?
         /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
@@ -2450,7 +2497,7 @@ public enum Wire {
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2489,6 +2536,7 @@ public enum Wire {
             self.branch = branch
             self.machine = machine
             self.splitFrom = splitFrom
+            self.scoutedFrom = scoutedFrom
             self.repo = repo
             self.after = after
             self.followUps = followUps
@@ -2540,6 +2588,7 @@ public enum Wire {
             branch = try c.decodeIfPresent(String.self, forKey: .branch)
             machine = try c.decodeIfPresent(String.self, forKey: .machine)
             splitFrom = try c.decodeIfPresent(String.self, forKey: .splitFrom)
+            scoutedFrom = try c.decodeIfPresent(String.self, forKey: .scoutedFrom)
             repo = try c.decodeIfPresent(String.self, forKey: .repo)
             after = try c.decodeIfPresent([String].self, forKey: .after) ?? []
             followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
@@ -2589,8 +2638,10 @@ public enum Wire {
         public var autoFixMerges: Bool?
         /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
         public var autoMerges: Bool?
+        /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
+        public var scoutItems: UInt32?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -2599,6 +2650,7 @@ public enum Wire {
             self.autoMerge = autoMerge
             self.autoFixMerges = autoFixMerges
             self.autoMerges = autoMerges
+            self.scoutItems = scoutItems
         }
 
         public init(from decoder: Decoder) throws {
@@ -2611,6 +2663,7 @@ public enum Wire {
             autoMerge = try c.decodeIfPresent([String: Bool].self, forKey: .autoMerge) ?? [:]
             autoFixMerges = try c.decodeIfPresent(Bool.self, forKey: .autoFixMerges)
             autoMerges = try c.decodeIfPresent(Bool.self, forKey: .autoMerges)
+            scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
         }
     }
 
@@ -2950,6 +3003,37 @@ public enum Wire {
         public init(kind: DraftLineKind, text: String) {
             self.kind = kind
             self.text = text
+        }
+    }
+
+    /// A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.
+    public struct ScoutRun: Codable, Hashable, Sendable {
+        public var goal: String
+        /// Who started it; it runs on their machine.
+        public var by: String
+        public var state: ScoutState
+        public var startedAt: UInt64
+        /// The tasks it sent to planning.
+        public var tasks: [String]
+        public var error: String?
+
+        public init(goal: String, by: String, state: ScoutState, startedAt: UInt64, tasks: [String] = [], error: String? = nil) {
+            self.goal = goal
+            self.by = by
+            self.state = state
+            self.startedAt = startedAt
+            self.tasks = tasks
+            self.error = error
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            goal = try c.decode(String.self, forKey: .goal)
+            by = try c.decode(String.self, forKey: .by)
+            state = try c.decode(ScoutState.self, forKey: .state)
+            startedAt = try c.decode(UInt64.self, forKey: .startedAt)
+            tasks = try c.decodeIfPresent([String].self, forKey: .tasks) ?? []
+            error = try c.decodeIfPresent(String.self, forKey: .error)
         }
     }
 
@@ -4437,6 +4521,15 @@ public enum Wire {
         }
     }
 
+    /// Run Scout on a goal: its leftovers still worth doing come back as drafted plans.
+    public struct ClientMessageGoalScout: Codable, Hashable, Sendable {
+        public var goal: String
+
+        public init(goal: String) {
+            self.goal = goal
+        }
+    }
+
     /// Follow a goal (it's in your sidebar) or stop following it.
     public struct ClientMessageGoalFollow: Codable, Hashable, Sendable {
         public var id: String
@@ -5015,6 +5108,7 @@ public enum Wire {
         case draftStart(ClientMessageDraftStart)
         case draftGoal(ClientMessageDraftGoal)
         case draftCancel(ClientMessageDraftCancel)
+        case goalScout(ClientMessageGoalScout)
         case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
@@ -5086,6 +5180,7 @@ public enum Wire {
             case "draft.start": self = .draftStart(try ClientMessageDraftStart(from: decoder))
             case "draft.goal": self = .draftGoal(try ClientMessageDraftGoal(from: decoder))
             case "draft.cancel": self = .draftCancel(try ClientMessageDraftCancel(from: decoder))
+            case "goal.scout": self = .goalScout(try ClientMessageGoalScout(from: decoder))
             case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
@@ -5186,6 +5281,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .draftCancel(let body):
                 try c.encode("draft.cancel", forKey: .type)
+                try body.encode(to: encoder)
+            case .goalScout(let body):
+                try c.encode("goal.scout", forKey: .type)
                 try body.encode(to: encoder)
             case .goalFollow(let body):
                 try c.encode("goal.follow", forKey: .type)
@@ -5521,6 +5619,15 @@ public enum Wire {
         }
     }
 
+    /// How a goal's Scout run is going.
+    public struct ServerToClientScoutUpdated: Codable, Hashable, Sendable {
+        public var run: ScoutRun
+
+        public init(run: ScoutRun) {
+            self.run = run
+        }
+    }
+
     /// Your goal follows, to your apps only.
     public struct ServerToClientFollowsUpdated: Codable, Hashable, Sendable {
         public var follows: [GoalFollow]
@@ -5752,6 +5859,7 @@ public enum Wire {
         case intakeUpdated(ServerToClientIntakeUpdated)
         case noteRemoved(ServerToClientNoteRemoved)
         case draftUpdated(ServerToClientDraftUpdated)
+        case scoutUpdated(ServerToClientScoutUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
@@ -5787,6 +5895,7 @@ public enum Wire {
             case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
+            case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
@@ -5842,6 +5951,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .draftUpdated(let body):
                 try c.encode("draft.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .scoutUpdated(let body):
+                try c.encode("scout.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .followsUpdated(let body):
                 try c.encode("follows.updated", forKey: .type)

@@ -30,6 +30,10 @@ export const ProofStatusValues: readonly ProofStatus[] = ["pending","proving","p
 export type DraftState = "choosing" | "reading" | "needsGoal" | "ready" | "failed";
 export const DraftStateValues: readonly DraftState[] = ["choosing","reading","needsGoal","ready","failed"];
 
+/** Where a goal's Scout run is. */
+export type ScoutState = "running" | "done" | "failed";
+export const ScoutStateValues: readonly ScoutState[] = ["running","done","failed"];
+
 /** A line of a draft's transcript. */
 export type DraftLineKind = "text" | "tool";
 export const DraftLineKindValues: readonly DraftLineKind[] = ["text","tool"];
@@ -640,6 +644,8 @@ export interface Task {
   machine?: string | null;
   /** The task it was split off from to stay inside the PR budget. */
   splitFrom?: string | null;
+  /** What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3). */
+  scoutedFrom?: string | null;
   /** Which of its goal's repos it changes; none: the goal's `repo` (or its folder). */
   repo?: string | null;
   /** Tasks that must merge before it starts building, e.g. the API change a web change uses. */
@@ -681,6 +687,8 @@ export interface RiskPolicy {
   autoFixMerges?: boolean | null;
   /** When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on. */
   autoMerges?: boolean | null;
+  /** The most leftovers one Scout run turns into drafted plans (1–10). None: 3. */
+  scoutItems?: number | null;
 }
 
 /** An MCP server the factory adds to every session, alongside its own `maple` server. */
@@ -840,6 +848,18 @@ export interface NewGoalIdea {
 export interface DraftLine {
   kind: DraftLineKind;
   text: string;
+}
+
+/** A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task. */
+export interface ScoutRun {
+  goal: string;
+  /** Who started it; it runs on their machine. */
+  by: string;
+  state: ScoutState;
+  startedAt: number;
+  /** The tasks it sent to planning. */
+  tasks: string[];
+  error?: string | null;
 }
 
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
@@ -1521,6 +1541,12 @@ export interface ClientMessage_DraftCancel {
   id: string;
 }
 
+/** Run Scout on a goal: its leftovers still worth doing come back as drafted plans. */
+export interface ClientMessage_GoalScout {
+  type: "goal.scout";
+  goal: string;
+}
+
 /** Follow a goal (it's in your sidebar) or stop following it. */
 export interface ClientMessage_GoalFollow {
   type: "goal.follow";
@@ -1862,8 +1888,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ConnectorsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","connectors.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_ConnectorsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","connectors.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1960,6 +1986,12 @@ export interface ServerToClient_NoteRemoved {
 export interface ServerToClient_DraftUpdated {
   type: "draft.updated";
   draft: Draft;
+}
+
+/** How a goal's Scout run is going. */
+export interface ServerToClient_ScoutUpdated {
+  type: "scout.updated";
+  run: ScoutRun;
 }
 
 /** Your goal follows, to your apps only. */
@@ -2077,5 +2109,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_ConnectorsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","connectors.updated","toast","session.ended","stats","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_ConnectorsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","connectors.updated","toast","session.ended","stats","checkLog","error"] as const;

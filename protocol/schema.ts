@@ -64,6 +64,10 @@ export const enums: Record<string, Enum> = {
       failed: "It couldn't; `error` says why.",
     },
   },
+  ScoutState: {
+    doc: "Where a goal's Scout run is.",
+    values: { running: "Its agent is looking over the goal's leftovers.", done: "Finished: `tasks` went to planning.", failed: "It couldn't; `error` says why." },
+  },
   DraftLineKind: {
     doc: "A line of a draft's transcript.",
     values: { text: "Something the agent said or thought.", tool: "Something it did: \"Reading lib/session.ts\"." },
@@ -523,6 +527,7 @@ export const structs: Record<string, Struct> = {
       branch: "string?",
       machine: "string?",
       splitFrom: "string?",
+      scoutedFrom: "string?",
       repo: "string?",
       after: "string[]",
       followUps: "FollowUp[]",
@@ -543,6 +548,7 @@ export const structs: Record<string, Struct> = {
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
       after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
       splitFrom: "The task it was split off from to stay inside the PR budget.",
+      scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
@@ -566,10 +572,12 @@ export const structs: Record<string, Struct> = {
       autoMerge: "map<bool>",
       autoFixMerges: "bool?",
       autoMerges: "bool?",
+      scoutItems: "u32?",
     },
     fieldDocs: {
       autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
+      scoutItems: "The most leftovers one Scout run turns into drafted plans (1–10). None: 3.",
       maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
       planApprovals: "By risk level (low, medium, high).",
     },
@@ -674,6 +682,11 @@ export const structs: Record<string, Struct> = {
   DraftLine: {
     doc: "One line of what a draft's agent said or did.",
     fields: { kind: "DraftLineKind", text: "string" },
+  },
+  ScoutRun: {
+    doc: "A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.",
+    fields: { goal: "string", by: "string", state: "ScoutState", startedAt: "u64", tasks: "string[]", error: "string?" },
+    fieldDocs: { by: "Who started it; it runs on their machine.", tasks: "The tasks it sent to planning." },
   },
   Draft: {
     doc: "Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.",
@@ -1042,6 +1055,7 @@ export const unions: Record<string, Union> = {
       },
       "draft.goal": { doc: "Carry on a draft with this goal (one it suggested making, or another).", fields: { id: "string", goal: "string" } },
       "draft.cancel": { fields: { id: "string" } },
+      "goal.scout": { doc: "Run Scout on a goal: its leftovers still worth doing come back as drafted plans.", fields: { goal: "string" } },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -1224,6 +1238,7 @@ export const unions: Record<string, Union> = {
       "intake.updated": { fields: { request: "IntakeRequest" } },
       "note.removed": { fields: { id: "uuid" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
+      "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
