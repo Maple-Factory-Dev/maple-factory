@@ -78,7 +78,7 @@ enum Headless {
         else { return }
         if window.performKeyEquivalent(with: event) { return }
         if !modifiers.isEmpty, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
-        window.sendEvent(event)
+        NSApp.postEvent(event, atStart: false)
     }
 
     /// A left click at `point` (window points, from the top left) as far as focus goes (`click:<x>:<y>`): the view
@@ -90,6 +90,51 @@ enum Headless {
         if let view { window.makeFirstResponder(view) }
         print("headless: click at \(point) focused \(view.map { String(describing: type(of: $0)) } ?? "nothing")")
     }
+
+    /// A trackpad scroll at a point in the main window (`scroll:<x>:<y>:<dx>:<dy>`, points from the top left; `:cmd` holds ⌘),
+    /// queued like a real one so local event monitors see it.
+    @MainActor static func scroll(at point: CGPoint, by delta: CGPoint, command: Bool) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView,
+              let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                    wheel1: Int32(delta.y), wheel2: Int32(delta.x), wheel3: 0)
+        else { return }
+        // CG's screen points run from the top left of the main screen; the window's frame from the bottom left.
+        let inWindow = CGPoint(x: point.x, y: content.frame.height - point.y)
+        let onScreen = window.convertPoint(toScreen: inWindow)
+        let screenHeight = NSScreen.screens.first?.frame.maxY ?? 0
+        cgEvent.location = CGPoint(x: onScreen.x, y: screenHeight - onScreen.y)
+        cgEvent.flags = command ? .maskCommand : []
+        cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+        guard let event = NSEvent(cgEvent: cgEvent) else { return }
+        // Off screen, the event comes without a window or the point it was meant for: whoever handles it asks here.
+        scrollPoint = inWindow
+        print("headless: scroll at \(point) by \(delta)\(command ? " with ⌘" : "")")
+        NSApp.postEvent(event, atStart: false)
+    }
+
+    /// A double-click in the main window (`doubleclick:<x>:<y>`, points from the top left).
+    @MainActor static func doubleClick(at point: CGPoint) async {
+        for clicks in 1...2 {
+            sendMouse(.leftMouseDown, at: point, clicks: clicks)
+            sendMouse(.leftMouseUp, at: point, clicks: clicks)
+            try? await Task.sleep(for: .milliseconds(60))
+        }
+        print("headless: double-click at \(point)")
+    }
+
+    @MainActor private static func sendMouse(_ type: NSEvent.EventType, at point: CGPoint, clicks: Int) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView,
+              let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: point.x, y: content.frame.height - point.y), modifierFlags: [],
+                                             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                                             eventNumber: 0, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1)
+        else { return }
+        NSApp.postEvent(event, atStart: false)
+    }
+
+    /// Where the last `scroll:` was, in the main window's coordinates (from the bottom left).
+    @MainActor static var scrollPoint: CGPoint?
 
     /// `key:` as characters, key code and modifiers: `cmd+b` → ("b", 11, .command). Modifiers are cmd, ctrl, opt
     /// (or alt) and shift, joined by `+`; the last part is the key.
