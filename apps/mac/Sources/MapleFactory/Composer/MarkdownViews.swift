@@ -730,6 +730,11 @@ struct TaskRefQuery: Equatable {
         }
     }
 
+    /// The reference (references(in:known:)) covering a UTF-16 offset, for hovering rendered Markdown.
+    static func reference(at characterIndex: Int, in text: String, known: Set<String>) -> (range: NSRange, id: String)? {
+        references(in: text, known: known).first { NSLocationInRange(characterIndex, $0.range) }
+    }
+
     /// `-actions "openref:ATL-150"` (AppState.play): clicks that reference in rendered Markdown.
     static let demoOpen = Notification.Name("TaskRefQuery.demoOpen")
 
