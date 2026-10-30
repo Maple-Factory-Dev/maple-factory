@@ -169,6 +169,8 @@ struct AppearanceSettings: View {
     @State private var targeted = false
 
     private var isAdmin: Bool { client.isAdmin }
+    /// A demo script's `icon:<file>` (or `icon:remove`), as Choose Image… or Remove would.
+    static let demoPick = Notification.Name("AppearanceSettings.demoPick")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -229,6 +231,10 @@ struct AppearanceSettings: View {
         }
         .font(.system(size: 13))
         .padding(20)
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPick)) { note in
+            guard isAdmin, let path = note.object as? String else { return }
+            if path == "remove" { remove() } else { upload(URL(fileURLWithPath: path)) }
+        }
     }
 
     private func choose() {

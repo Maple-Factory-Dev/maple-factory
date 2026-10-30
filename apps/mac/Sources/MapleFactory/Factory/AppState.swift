@@ -1959,6 +1959,14 @@ final class AppState {
             case "secret" where parts.count > 3 && parts[1] == "save":
                 NotificationCenter.default.post(name: SecretsSettings.demoSave, object: nil, userInfo: ["name": parts[2], "value": parts.dropFirst(3).joined(separator: ":")])
             case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
+            // `icon:<file>` is Settings › Appearance's Choose Image… picking that file; `icon:remove` its Remove.
+            case "icon": NotificationCenter.default.post(name: AppearanceSettings.demoPick, object: parts.dropFirst().joined(separator: ":"))
+            // `factory:<host:port>` picks that saved factory in the factory menu.
+            case "factory":
+                if let client, let factory = client.savedFactories.first(where: { $0.id == parts.dropFirst().joined(separator: ":") }) {
+                    if client.switchTo(factory) { didSwitchFactory() }
+                }
+            case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":
