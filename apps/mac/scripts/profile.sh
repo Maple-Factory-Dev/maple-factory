@@ -115,6 +115,7 @@ run() {
   sleep 30
   record "steady_footprint_mb" "$(footprint "$PID" now)"
   record "peak_footprint_mb" "$(footprint "$PID" peak)"
+  vmmap --summary "$PID" >"$OUT/steady.vmmap.txt" 2>/dev/null || true
   sample "$PID" 3 -file "$OUT/steady.sample.txt" >/dev/null 2>&1 || true
   finish_app
 
@@ -140,6 +141,7 @@ updates_footprint_mb|Footprint after updates (MB)
 browse_footprint_mb|Footprint right after browsing (MB)
 steady_footprint_mb|Footprint 30s later, steady (MB)
 peak_footprint_mb|Peak footprint (MB)
+screen_idle_cpu_pct|CPU, same screen before the countdown (%)
 countdown_cpu_pct|CPU with a countdown on screen (%)
 countdown_main_idle_samples|Main thread idle, countdown (samples)
 updates_sent|Load'
