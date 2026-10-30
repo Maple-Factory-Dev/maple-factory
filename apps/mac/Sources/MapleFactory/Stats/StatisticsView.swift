@@ -225,16 +225,17 @@ struct StatisticsView: View {
                 tableRow(["Agent", "Tasks", "Merged", "Hands", "Steers", "Rounds", "First-try"], header: true)
                 ForEach(rows, id: \.agent) { r in
                     Hairline()
-                    tableRow([r.agent.capitalized, "\(r.tasks)", "\(r.merged)", "\(r.hands)", "\(r.steers)", "\(r.reviewRounds)", percent(r.firstTryApproval)])
+                    tableRow([agentTitle(r.agent), "\(r.tasks)", "\(r.merged)", "\(r.hands)", "\(r.steers)", "\(r.reviewRounds)", percent(r.firstTryApproval)], agent: r.agent)
                 }
             }
         }
     }
 
-    private func tableRow(_ cells: [String], header: Bool = false, dot: Color? = nil) -> some View {
+    private func tableRow(_ cells: [String], header: Bool = false, dot: Color? = nil, agent: String? = nil) -> some View {
         HStack(spacing: 8) {
             HStack(spacing: 7) {
                 if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
+                if let agent { AgentIcon(agent: agent, size: 13) }
                 Text(cells[0]).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

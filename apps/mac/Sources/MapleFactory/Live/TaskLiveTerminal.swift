@@ -18,6 +18,7 @@ struct TaskLiveTerminal: View {
                 Text(LiveAdapter.role(worker.role).name)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
+                AgentIcon(agent: worker.agent, size: 12).foregroundStyle(Theme.textMuted)
                 Text("\(agentTitle(worker.agent)) on \(machine?.name ?? worker.machine)")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
