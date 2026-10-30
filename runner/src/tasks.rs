@@ -1623,6 +1623,8 @@ mod tests {
             delete_remote: false,
             scripts: Some(crate::worktree_scripts::WorktreeScripts {
                 create: None,
+                preflight: None,
+                preflight_watch: None,
                 setup: None,
                 teardown: teardown.map(String::from),
                 archive: archive.map(String::from),

@@ -190,7 +190,7 @@ mod tests {
     }
 
     fn scripts(setup: &str, timeout: Option<u32>) -> WorktreeScripts {
-        WorktreeScripts { create: None, setup: Some(setup.into()), teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
+        WorktreeScripts { create: None, preflight: None, preflight_watch: None, setup: Some(setup.into()), teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
     }
 
     #[tokio::test]

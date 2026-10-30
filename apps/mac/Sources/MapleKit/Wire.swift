@@ -2390,6 +2390,10 @@ public enum Wire {
     public struct WorktreeScripts: Codable, Hashable, Sendable {
         /// Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.
         public var create: String?
+        /// Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes.
+        public var preflight: String?
+        /// Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.
+        public var preflightWatch: String?
         /// Runs once the worktree exists, before the agent starts.
         public var setup: String?
         /// Runs before the worktree is removed when a finished task is cleaned up.
@@ -2399,8 +2403,10 @@ public enum Wire {
         /// How long each one may run (default 600).
         public var timeoutSecs: UInt32?
 
-        public init(create: String? = nil, setup: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
+        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
             self.create = create
+            self.preflight = preflight
+            self.preflightWatch = preflightWatch
             self.setup = setup
             self.teardown = teardown
             self.archive = archive

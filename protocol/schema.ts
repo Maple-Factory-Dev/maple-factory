@@ -471,9 +471,11 @@ export const structs: Record<string, Struct> = {
   },
   WorktreeScripts: {
     doc: "A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional.",
-    fields: { create: "string?", setup: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?" },
+    fields: { create: "string?", preflight: "string?", preflightWatch: "string?", setup: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?" },
     fieldDocs: {
       create: "Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.",
+      preflight: "Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes.",
+      preflightWatch: "Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.",
       setup: "Runs once the worktree exists, before the agent starts.",
       teardown: "Runs before the worktree is removed when a finished task is cleaned up.",
       archive: "Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.",

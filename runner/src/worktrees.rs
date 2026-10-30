@@ -1746,7 +1746,7 @@ mod tests {
     }
 
     fn scripts(create: Option<&str>, setup: Option<&str>) -> crate::worktree_scripts::WorktreeScripts {
-        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), setup: setup.map(String::from), teardown: None, archive: None, timeout_secs: Some(30) }
+        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), preflight: None, preflight_watch: None, setup: setup.map(String::from), teardown: None, archive: None, timeout_secs: Some(30) }
     }
 
     fn for_task<'a>(s: &'a crate::worktree_scripts::WorktreeScripts, env: &'a [(String, String)]) -> crate::worktree_scripts::ForTask<'a> {
