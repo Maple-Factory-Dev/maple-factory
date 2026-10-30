@@ -8,7 +8,7 @@
 import type { Env } from "../env.ts";
 import type {
   ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
-  ServerToRunner, SessionEnd, Task,
+  ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
@@ -148,7 +148,7 @@ export class Engine {
         if (repos.some((r) => r.name.toLowerCase() === name.toLowerCase())) fail(`${name} is already there.`);
         this.store.saveRepos([...repos, { name, defaultBranch: null, isPrivate: true, source: "manual" }]);
         await audit(this.env, who, "repo.added", null, { name });
-        this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+        this.reposUpdated();
         return;
       }
       case "repos.remove": {
@@ -158,7 +158,7 @@ export class Engine {
         if (repo.source === "github") fail(`${repo.name} comes from the GitHub App; remove the app's access to it on GitHub.`);
         this.store.saveRepos(repos.filter((r) => r !== repo));
         await audit(this.env, who, "repo.removed", null, { name: repo.name });
-        this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+        this.reposUpdated();
         return;
       }
       case "secrets.set":
@@ -177,6 +177,19 @@ export class Engine {
         // Which one and who, never the value.
         await audit(this.env, who, msg.type === "secrets.set" ? "secret.set" : "secret.deleted", repo, { repo, name });
         this.hooks.broadcast({ type: "secrets.updated", secrets: this.secrets.list() });
+        return;
+      }
+      case "repos.scripts.set": {
+        if (member.role !== "admin") fail("Only admins can change a repo's worktree scripts.");
+        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name
+          ?? fail(`${msg.repo} isn't one of the org's repos.`);
+        const scripts = cleanScripts(msg.scripts);
+        const before = this.store.scriptsFor(repo) ?? {};
+        const changed = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
+        this.store.saveRepoScripts(repo, scripts, who);
+        // Which ones changed, not the commands (they can carry hosts and paths).
+        await audit(this.env, who, "repo.scripts", repo, { repo, changed });
+        this.reposUpdated();
         return;
       }
       case "policy.save": {
@@ -872,7 +885,7 @@ export class Engine {
       resume: false,
       taskId: task.id,
       worktree: { name: branchName(task), base: goal.base ?? null, existing },
-      task: { id: task.id, repo: taskRepo(task, goal) },
+      task: { id: task.id, repo: taskRepo(task, goal), scripts: this.store.scriptsFor(taskRepo(task, goal)) },
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
       model: null,
     };
@@ -1013,6 +1026,17 @@ export class Engine {
         const task = this.store.task(msg.taskId);
         if (!task) return null;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), repoDir: msg.repoDir, base: msg.base });
+        return null;
+      }
+      case "task.progress":
+      case "task.cleaned": {
+        // A worktree script's line, or how cleaning up went: on the task's timeline.
+        const task = this.store.task(msg.taskId);
+        if (!task || task.machine !== machine) return null;
+        const text = msg.type === "task.progress" ? msg.text : msg.ok ? `cleaned up: ${msg.message ?? "its worktree was removed"}` : `couldn't clean up: ${msg.message ?? "no reason given"}`;
+        this.event(task, "factory", text.slice(0, 2000));
+        if (msg.type === "task.progress" && task.worker) task.liveLog = msg.text.split("\n")[0].slice(0, 200);
+        this.save(task, false);
         return null;
       }
       case "task.finished": return this.finished(msg), null;
@@ -1270,7 +1294,7 @@ export class Engine {
     }
     const manual = this.store.repos().filter((r) => r.source === "manual" && !granted.some((g) => g.name.toLowerCase() === r.name.toLowerCase()));
     this.store.saveRepos([...granted, ...manual]);
-    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+    this.reposUpdated();
   }
 
   async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean }) {
@@ -1405,6 +1429,8 @@ export class Engine {
       branch: task.pr?.branch ?? `agent/${branchName(task)}`,
       merged: task.state === "merged",
       heads: [task.pr?.head, priv.mergedAs].filter((h): h is string => Boolean(h)),
+      repo: taskRepo(task, this.store.goal(task.goal) ?? null),
+      scripts: this.store.scriptsFor(taskRepo(task, this.store.goal(task.goal) ?? null)),
     });
   }
 
@@ -1985,6 +2011,10 @@ export class Engine {
     return res.ok;
   }
 
+  private reposUpdated() {
+    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts() });
+  }
+
   private event(task: Task, who: string, text: string) {
     task.events.push({ who, text, at: now() });
     if (task.events.length > MAX_EVENTS) task.events.splice(0, task.events.length - MAX_EVENTS);
@@ -2008,6 +2038,26 @@ export class Engine {
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
+}
+
+const SCRIPT_FIELDS = ["create", "setup", "teardown", "archive", "timeoutSecs"] as const;
+/** The longest command kept for one worktree script. */
+const MAX_SCRIPT = 4096;
+
+/** A repo's worktree scripts as stored: commands trimmed, blank ones dropped, none when nothing's left. */
+function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
+  const out: WorktreeScripts = {};
+  for (const f of ["create", "setup", "teardown", "archive"] as const) {
+    const command = typeof s[f] === "string" ? s[f]!.trim() : "";
+    if (!command) continue;
+    if (new TextEncoder().encode(command).length > MAX_SCRIPT) fail(`The ${f} script is over 4 KB; put it in a file in the repo and run that.`);
+    out[f] = command;
+  }
+  if (s.timeoutSecs != null) {
+    if (!Number.isSafeInteger(s.timeoutSecs) || s.timeoutSecs < 1 || s.timeoutSecs > 3600) fail("A worktree script's timeout is 1–3600 seconds.");
+    out.timeoutSecs = s.timeoutSecs;
+  }
+  return out.create || out.setup || out.teardown || out.archive ? out : null;
 }
 
 /** An effort's name as stored: trimmed and spaces collapsed; blank is none. */

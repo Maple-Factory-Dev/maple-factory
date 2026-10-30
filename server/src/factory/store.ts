@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, PromptAdditions, RiskAcceptance, RiskPolicy, Role, Task } from "../wire.ts";
+import type { Goal, GoalFollow, IntakeRequest, MachineSettings, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
 
@@ -104,6 +104,7 @@ export class Store {
         model TEXT, cost_usd REAL, tokens TEXT NOT NULL DEFAULT '{}', updated INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS session_costs_updated ON session_costs (updated);
+      CREATE TABLE IF NOT EXISTS repo_scripts (repo TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL);
     `);
     this.backfillStats();
   }
@@ -393,6 +394,25 @@ export class Store {
   saveRepos(repos: OrgRepo[]) {
     this.set("repos", JSON.stringify([...repos].sort((a, b) => a.name.localeCompare(b.name))));
     this.set("reposAt", String(Date.now()));
+  }
+
+  /** Every repo's worktree scripts, by repo name. */
+  repoScripts(): RepoWorktreeScripts[] {
+    return this.sql.exec<{ repo: string; doc: string; updated_by: string; updated_at: number }>("SELECT * FROM repo_scripts ORDER BY repo")
+      .toArray().map((r) => ({ repo: r.repo, scripts: JSON.parse(r.doc), updatedBy: r.updated_by, updatedAt: r.updated_at }));
+  }
+
+  /** One repo's worktree scripts (its name in any case), if it has any. */
+  scriptsFor(repo: string | null | undefined): WorktreeScripts | null {
+    if (!repo) return null;
+    const row = this.sql.exec<{ doc: string }>("SELECT doc FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo).toArray()[0];
+    return row ? JSON.parse(row.doc) : null;
+  }
+
+  /** None removes them. */
+  saveRepoScripts(repo: string, scripts: WorktreeScripts | null, by: string) {
+    this.sql.exec("DELETE FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo);
+    if (scripts) this.sql.exec("INSERT INTO repo_scripts (repo, doc, updated_by, updated_at) VALUES (?, ?, ?, ?)", repo, JSON.stringify(scripts), by, Date.now());
   }
 
   reposAt(): number {
