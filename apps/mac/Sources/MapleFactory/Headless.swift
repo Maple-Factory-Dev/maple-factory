@@ -114,19 +114,6 @@ enum Headless {
         NSApp.postEvent(event, atStart: false)
     }
 
-    /// A left-button drag in the main window (`drag:<x>:<y>:<dx>:<dy>`, points from the top left), sent to the window
-    /// as a mouse down, moves over about half a second and a mouse up, so SwiftUI's drag gestures follow it.
-    @MainActor static func drag(from point: CGPoint, by delta: CGPoint) async {
-        let steps = 12
-        for step in 0...steps + 1 {
-            let t = CGFloat(min(step, steps)) / CGFloat(steps)
-            let type: NSEvent.EventType = step == 0 ? .leftMouseDown : step > steps ? .leftMouseUp : .leftMouseDragged
-            sendMouse(type, at: CGPoint(x: point.x + delta.x * t, y: point.y + delta.y * t), clicks: 1, delay: Double(step) * 0.04)
-        }
-        try? await Task.sleep(for: .milliseconds(40 * (steps + 2)))
-        print("headless: drag from \(point) by \(delta)")
-    }
-
     /// A double-click in the main window (`doubleclick:<x>:<y>`, points from the top left).
     @MainActor static func doubleClick(at point: CGPoint) async {
         for clicks in 1...2 {
@@ -137,10 +124,10 @@ enum Headless {
         print("headless: double-click at \(point)")
     }
 
-    @MainActor private static func sendMouse(_ type: NSEvent.EventType, at point: CGPoint, clicks: Int, delay: TimeInterval = 0) {
+    @MainActor private static func sendMouse(_ type: NSEvent.EventType, at point: CGPoint, clicks: Int) {
         guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView,
               let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: point.x, y: content.frame.height - point.y), modifierFlags: [],
-                                             timestamp: ProcessInfo.processInfo.systemUptime + delay, windowNumber: window.windowNumber, context: nil,
+                                             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
                                              eventNumber: 0, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1)
         else { return }
         NSApp.postEvent(event, atStart: false)

@@ -2247,10 +2247,8 @@ final class AppState {
             case "scroll" where parts.count > 4:
                 let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
                 Headless.scroll(at: CGPoint(x: n[0], y: n[1]), by: CGPoint(x: n[2], y: n[3]), command: parts.count > 5 && parts[5] == "cmd")
-            // A left-button drag in the window, headless: `drag:<x>:<y>:<dx>:<dy>`; and a double-click, `doubleclick:<x>:<y>`.
-            case "drag" where parts.count > 4:
-                let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
-                await Headless.drag(from: CGPoint(x: n[0], y: n[1]), by: CGPoint(x: n[2], y: n[3]))
+            // A double-click at a point in the window, headless: `doubleclick:<x>:<y>`. (A drag can't be sent: SwiftUI
+            // drops one that isn't from a real mouse.)
             case "doubleclick" where parts.count > 2:
                 await Headless.doubleClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
             // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
