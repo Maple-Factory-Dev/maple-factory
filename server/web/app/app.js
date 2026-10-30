@@ -90,11 +90,12 @@ function receive(m) {
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
       state.notes = m.notes ?? [];
       state.machines = m.machines ?? [];
-      $("org").textContent = m.org || "Maple Factory";
+      $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
       break;
     case "icon.updated": showIcon(m.icon); return;
+    case "name.updated": $("org").textContent = m.name || state.org || "Maple Factory"; return;
     case "task.updated":
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
