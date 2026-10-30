@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.48.0 — 2026-10-29
+
+The protocol carries each draft's place in its goal's order.
+
 ## 0.47.0 — 2026-10-29
 
 Codex sessions get their whole prompt, trailing newlines and all, so they start without someone pressing Enter. The protocol carries the factory's icon.
