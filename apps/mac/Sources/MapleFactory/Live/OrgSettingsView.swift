@@ -117,29 +117,29 @@ struct OrgSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Room for the traffic lights.
             Color.clear.frame(height: 40)
-            accountHeader.padding(.horizontal, 10)
+            accountHeader.padding(.horizontal, 12)
             ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(Self.sidebarGroups.enumerated()), id: \.offset) { _, group in
                         if let title = group.title {
                             Text(title)
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(Theme.textFaint)
                                 .padding(.leading, 8)
-                                .padding(.top, 12)
-                                .padding(.bottom, 3)
+                                .padding(.top, 16)
+                                .padding(.bottom, 4)
                         }
                         ForEach(group.panes, id: \.self) { row($0) }
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
             }
             .scrollIndicators(.never)
-            Hairline().padding(.horizontal, 14)
-            row(Self.footerPane).padding(10)
+            Hairline().padding(.horizontal, 20)
+            row(Self.footerPane).padding(12)
         }
-        .frame(width: 220)
+        .frame(width: 232)
         .background(SettingsKit.sidebarBG)
     }
 
@@ -188,8 +188,8 @@ struct OrgSettingsView: View {
                         .help(machine.online ? "Online" : "Offline")
                 }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
             .background(RoundedRectangle(cornerRadius: 8).fill(current == pane ? Self.selection : .clear))
         }
