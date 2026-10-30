@@ -6,7 +6,8 @@
 // (two notes on lines and a summary) and checks: each note is a comment anchored to `path:Lstart–end` with its
 // code, the summary is a comment of its own, the builder gets one change request ("Review · 2 comments") and the
 // timeline says "asked for a change: a review of 2 comments"; a review with no comments is refused.
-// The mockup's task is cancelled after; the review's task is left building with the review on it, to look at in the web app.
+// The mockup's task is cancelled after, and so is the review's. A third task with a mockup is approved into building,
+// where a mockup change is refused (MF-131); with HOLD=1 it waits for you to approve it in the web app, and holds after.
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -157,7 +158,31 @@ const refused = await wait("the refusal", () => errors.length > early && errors.
 check(/Add a comment to a line first/.test(refused), `an empty review is refused ("${refused}")`);
 check(tasks.get(id).changes.length === changes + 1, "and asks for no change");
 
+// ---- a mockup change once it's building (MF-131): refused, nothing marked ----
+
+const shown = { title: "Profile saved", kind: "screen", url: "/profile", html: "<p>Profile saved ✓</p>", notes: ["A toast once it's saved"] };
+// The review's task gives up the runner's one slot to this one.
+send({ type: "task.cancel", id });
+await wait("the review's task cancelled", () => tasks.get(id)?.state === "cancelled");
+const lid = await planned(`Profile mockup ${prefix}`, { risk: { level: "medium", reasons: ["Touches the profile."], areas: ["profile"] }, mockups: [shown] });
+await wait("awaiting approval", () => tasks.get(lid)?.state === "awaitingApproval");
+if (process.env.HOLD) {
+  // To look at it in the web app: Request a change is offered now; approve the plan there and it's gone.
+  console.log(`HOLD: ${lid} awaits approval with a mockup; approve it in the web app`);
+  await wait("approved in the web app", () => tasks.get(lid)?.state === "building", 600000);
+} else send({ type: "task.approvePlan", id: lid });
+const l = await wait("building", () => tasks.get(lid)?.state === "building" && tasks.get(lid));
+const late = errors.length;
+send({ type: "task.mockupChange", id: lid, mockup: l.mockups[0].id, text: "Too late for this." });
+const lateNo = await wait("the late refusal", () => errors.length > late && errors.at(-1));
+check(/while it's being planned or waiting for approval/.test(lateNo), `a mockup change while building is refused ("${lateNo}")`);
+check(tasks.get(lid).mockups[0].status !== "changesRequested" && !tasks.get(lid).changes.some((c) => c.text === "Too late for this."), "and marks nothing");
+if (process.env.HOLD) {
+  console.log(`HOLD: ${lid} is building; holding 10 minutes`);
+  await new Promise((r) => setTimeout(r, 600000));
+}
+
 for (const x of others) send({ type: "machine.settings", machine: x.id, settings: settings(false) });
 await new Promise((r) => setTimeout(r, 500));
-console.log(`${id}, ${mid}: ${failures ? `${failures} failed` : "all ok"}`);
+console.log(`${id}, ${mid}, ${lid}: ${failures ? `${failures} failed` : "all ok"}`);
 process.exit(failures ? 1 : 0);
