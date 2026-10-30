@@ -1,4 +1,5 @@
 mod agent_config;
+mod agent_login;
 mod agents;
 mod autoupdate;
 mod config;
