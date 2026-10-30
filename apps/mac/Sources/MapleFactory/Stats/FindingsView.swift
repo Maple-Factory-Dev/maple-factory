@@ -14,6 +14,10 @@ struct FindingsView: View {
     @State private var kind: Wire.FindingKind?
     @State private var severity: Wire.Severity?
     @State private var area: String?
+    /// A legend item clicked in What happened to them: only findings of that status.
+    @State private var status: Wire.FindingStatus?
+    /// The list's Hide fixed chip: what's left to deal with.
+    @State private var hideFixed = false
     @State private var query = ""
 
     private static let severities: [Wire.Severity] = [.blocker, .major, .minor]
@@ -255,9 +259,16 @@ struct FindingsView: View {
 
     /// The list's findings under the filters and search.
     private func visible(_ f: Wire.StatsFindings) -> [Wire.StatsFindingRow] {
+        Self.visible(f.recent, kind: kind, severity: severity, area: area, status: status, hideFixed: hideFixed, query: query)
+    }
+
+    /// The rows the filters keep. A status filter never matches a finding whose task is gone (no status).
+    static func visible(_ rows: [Wire.StatsFindingRow], kind: Wire.FindingKind?, severity: Wire.Severity?, area: String?,
+                        status: Wire.FindingStatus?, hideFixed: Bool, query: String) -> [Wire.StatsFindingRow] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return f.recent.filter { r in
+        return rows.filter { r in
             (kind == nil || r.kind == kind) && (severity == nil || r.severity == severity) && (area == nil || r.area == area)
+                && (status == nil || r.status == status) && !(hideFixed && r.status == .fixed)
                 && (needle.isEmpty || [r.text, r.file ?? "", r.task, r.title].contains { $0.lowercased().contains(needle) })
         }
     }
