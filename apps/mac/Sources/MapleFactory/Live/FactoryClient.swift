@@ -425,6 +425,7 @@ import Foundation
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
             setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
+            scoutRuns = Dictionary((snapshot.scoutRuns ?? []).map { ($0.goal, $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest

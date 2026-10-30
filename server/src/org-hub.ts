@@ -532,6 +532,7 @@ export class OrgHub extends DurableObject<Env> {
           githubApp: githubAppInfo(this.env),
           scripts: this.store.repoScripts(),
           setupRuns: this.engine.setupRuns(),
+          scoutRuns: this.engine.scoutRuns(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,

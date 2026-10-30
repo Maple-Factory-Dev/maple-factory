@@ -108,6 +108,12 @@ export class Scout {
     return Boolean(saved && saved.run.state === "running" && goal && goalMayFetch(goal, repo));
   }
 
+  /** Every goal's latest run, for an app that's just connected. */
+  runs(): ScoutRun[] {
+    const lost = (r: ScoutRun): ScoutRun => r.state === "running" && Date.now() - r.startedAt >= STALE_MS ? { ...r, state: "failed", error: "Its agent stopped answering." } : r;
+    return this.store.goals().map((g) => this.load(g.id)?.run).filter((r): r is ScoutRun => !!r).map(lost);
+  }
+
   async start(by: string, goalId: string) {
     const goal = this.store.goal(goalId);
     if (!goal || goal.archived) throw new Error("That goal isn't there any more.");

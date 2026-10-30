@@ -135,6 +135,11 @@ export class Engine {
     return this.setup.runs();
   }
 
+  /** Every goal's latest Scout run, for an app that's just connected. */
+  scoutRuns() {
+    return this.scout.runs();
+  }
+
   // ---------------------------------------------------------------------------
   // Apps
 
