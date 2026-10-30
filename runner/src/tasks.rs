@@ -79,6 +79,12 @@ pub struct Cleanup {
     /// The PR's head commit and the commit the task last pushed.
     #[serde(default)]
     pub heads: Vec<String>,
+    /// owner/name, for its secrets when its scripts run.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
+    #[serde(default)]
+    pub scripts: Option<crate::worktree_scripts::WorktreeScripts>,
 }
 
 /// `task.diff` from the hub: what a task's branch changes against its base, for the apps' Diff tab.
@@ -213,26 +219,113 @@ async fn delete_merged_branch(dir: &Path, m: &Merge) {
 /// Runs a cleanup and answers with `task.cleaned`.
 pub async fn run_cleanup(sessions: Sessions, c: Cleanup) {
     let cwds: Vec<String> = sessions.list().into_iter().map(|s| s.cwd).collect();
-    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads };
-    let msg = match crate::worktrees::remove_task(&cwds, work).await {
-        Ok(done) => {
-            tracing::info!("task {}: {}", c.task_id, done.message);
-            // Its evidence was uploaded long ago: the proof folder goes with the worktree.
-            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
-                match crate::proof::forget_folder(&home, &c.branch) {
-                    Ok(true) => tracing::info!("task {}: removed its proof folder", c.task_id),
-                    Ok(false) => {}
-                    Err(e) => tracing::warn!("task {}: couldn't remove its proof folder: {e}", c.task_id),
-                }
+    let emit = |m: Outbound| sessions.emit(m);
+    let path = match c.scripts {
+        Some(_) => crate::proof::login_path().await,
+        None => None,
+    };
+    let msg = cleanup(&emit, &cwds, &c, path.as_deref()).await;
+    sessions.emit(msg);
+}
+
+/// A finished task's cleanup: the repo's teardown script first (if it has one), then its archive
+/// script in place of `worktrees::remove_task` (if it has one), else that. A script that fails stops
+/// it there, with the script's output as the reason.
+async fn cleanup(emit: Emit<'_>, cwds: &[String], c: &Cleanup, path: Option<&str>) -> Outbound {
+    use crate::worktree_scripts::{Phase, command};
+    let cleaned = |ok: bool, branch_deleted: bool, message: String| Outbound::TaskCleaned { task_id: c.task_id.clone(), ok, branch_deleted, message: Some(message) };
+    let scripts = c.scripts.as_ref();
+    let dir = expand_home(&c.cwd);
+    let archive = command(scripts, Phase::Archive);
+    let mut done = Vec::new();
+    // Nothing to tear down or archive once the folder's gone: remove_task forgets it and its branch.
+    if dir.is_dir() && (archive.is_some() || command(scripts, Phase::Teardown).is_some()) {
+        match cleanup_scripts(emit, cwds, c, &dir, path).await {
+            Ok((ran, branch_deleted)) if archive.is_some() => {
+                tracing::info!("task {}: {}", c.task_id, ran.join(", "));
+                forget_proof(c);
+                crate::worktrees::poke(true);
+                return cleaned(true, branch_deleted, format!("{}; the archive script took the worktree and branch from there", ran.join(", ")));
             }
-            Outbound::TaskCleaned { task_id: c.task_id, ok: true, branch_deleted: done.branch_deleted, message: Some(done.message) }
+            Ok((ran, _)) => done = ran,
+            Err(e) => {
+                tracing::warn!("task {}: cleanup stopped: {e:#}", c.task_id);
+                crate::worktrees::poke(true);
+                return cleaned(false, false, format!("{e:#}"));
+            }
+        }
+    }
+    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads };
+    match crate::worktrees::remove_task(cwds, work).await {
+        Ok(removed) => {
+            tracing::info!("task {}: {}", c.task_id, removed.message);
+            forget_proof(c);
+            done.push(removed.message);
+            cleaned(true, removed.branch_deleted, done.join(", then "))
         }
         Err(e) => {
             tracing::warn!("task {}: cleanup refused: {e:#}", c.task_id);
-            Outbound::TaskCleaned { task_id: c.task_id, ok: false, branch_deleted: false, message: Some(format!("{e:#}")) }
+            done.push(format!("{e:#}"));
+            cleaned(false, false, done.join(", but "))
         }
+    }
+}
+
+/// Runs the repo's teardown and archive scripts (each if it has one) in its main checkout: their
+/// timeline lines, and whether the task's branch is gone afterwards.
+async fn cleanup_scripts(emit: Emit<'_>, cwds: &[String], c: &Cleanup, dir: &Path, path: Option<&str>) -> Result<(Vec<String>, bool)> {
+    use crate::worktree_scripts::{Phase, run};
+    let target = crate::worktrees::canonical(dir);
+    if cwds.iter().any(|w| crate::worktrees::canonical(&expand_home(w)).starts_with(&target)) {
+        bail!("A session is still using {}. End it first.", c.cwd);
+    }
+    let root = match crate::worktrees::main_root(dir).await {
+        Ok(root) => root,
+        Err(_) => crate::worktrees::main_root(&expand_home(&c.repo_dir)).await.map_err(|e| anyhow!("{} isn't a git repository any more ({e}).", c.repo_dir))?,
     };
-    sessions.emit(msg);
+    if crate::worktrees::canonical(&root) == target {
+        bail!("{} is the repository's main checkout; only a task's worktree is cleaned up.", c.cwd);
+    }
+    // Its secrets, as for the owner's own checkout: the task itself is finished.
+    let env = match c.repo.as_deref().filter(|r| r.contains('/')) {
+        Some(repo) => match crate::secrets::request(emit, repo, None).await {
+            Ok(values) => values.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!("task {}: its cleanup scripts run without {repo}'s secrets: {e:#}", c.task_id);
+                vec![]
+            }
+        },
+        None => vec![],
+    };
+    let scripts = crate::worktree_scripts::ForTask {
+        scripts: c.scripts.as_ref().expect("cleanup_scripts runs with scripts"),
+        task_id: &c.task_id,
+        repo: c.repo.as_deref(),
+        base: None,
+        env: &env,
+        emit: Some(emit),
+        path,
+    };
+    let ctx = scripts.context(&root, dir, &c.branch);
+    let mut ran = Vec::new();
+    for phase in [Phase::Teardown, Phase::Archive] {
+        if let Some(r) = run(Some(scripts.scripts), phase, &ctx).await? {
+            ran.push(r.line());
+        }
+    }
+    let branch_gone = git(&root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}", c.branch)], None).await.is_err();
+    Ok((ran, branch_gone))
+}
+
+/// Its evidence was uploaded long ago: the proof folder goes with the worktree.
+fn forget_proof(c: &Cleanup) {
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        match crate::proof::forget_folder(&home, &c.branch) {
+            Ok(true) => tracing::info!("task {}: removed its proof folder", c.task_id),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("task {}: couldn't remove its proof folder: {e}", c.task_id),
+        }
+    }
 }
 
 /// The hub's answer to a token request.
@@ -1363,5 +1456,110 @@ mod tests {
     fn fetch_url_carries_the_token_only_in_the_url() {
         assert_eq!(fetch_url("acme", "w", "ghs_x", None), "https://x-access-token:ghs_x@github.com/acme/w.git");
         assert_eq!(fetch_url("acme", "w", "ghs_x", Some("/r/{token}/{owner}/{repo}.git")), "/r/ghs_x/acme/w.git");
+    }
+
+    /// A repo with a finished task's worktree on agent/mf-20 (its HEAD is the PR's head), and that head.
+    fn finished_task(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf, String) {
+        let root = tmp(tag);
+        let repo = root.join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        let sh = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        sh(&repo, &["init", "--quiet", "-b", "main"]);
+        sh(&repo, &["config", "user.name", "Test"]);
+        sh(&repo, &["config", "user.email", "t@example.com"]);
+        sh(&repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        sh(&repo, &["add", "-A"]);
+        sh(&repo, &["commit", "--quiet", "-m", "first"]);
+        let wt = crate::worktrees::worktree_path(&repo, "mf-20").unwrap();
+        sh(&repo, &["worktree", "add", "--quiet", "-b", "agent/mf-20", wt.to_str().unwrap()]);
+        std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+        sh(&wt, &["commit", "--quiet", "-am", "the change"]);
+        let head = sh(&wt, &["rev-parse", "HEAD"]);
+        (root, repo, wt, head)
+    }
+
+    fn cleanup_of(repo: &Path, wt: &Path, head: &str, teardown: Option<&str>, archive: Option<&str>) -> Cleanup {
+        Cleanup {
+            task_id: "MF-20".into(),
+            cwd: wt.to_string_lossy().into_owned(),
+            repo_dir: repo.to_string_lossy().into_owned(),
+            branch: "agent/mf-20".into(),
+            merged: false,
+            heads: vec![head.to_string()],
+            repo: None,
+            scripts: Some(crate::worktree_scripts::WorktreeScripts {
+                create: None,
+                setup: None,
+                teardown: teardown.map(String::from),
+                archive: archive.map(String::from),
+                timeout_secs: Some(30),
+            }),
+        }
+    }
+
+    fn cleaned(m: &Outbound) -> (bool, bool, String) {
+        match m {
+            Outbound::TaskCleaned { ok, branch_deleted, message, .. } => (*ok, *branch_deleted, message.clone().unwrap_or_default()),
+            other => panic!("not task.cleaned: {other:?}"),
+        }
+    }
+
+    /// Teardown runs while the worktree is still there, then the runner removes it as usual.
+    #[tokio::test]
+    async fn teardown_runs_before_the_worktree_is_removed() {
+        let (root, repo, wt, head) = finished_task("teardown");
+        let lines = Mutex::new(Vec::new());
+        let emit = |m: Outbound| lines.lock().unwrap().push(m);
+        let c = cleanup_of(&repo, &wt, &head, Some(r#"test -f "$MAPLE_WORKTREE/a.txt" && echo "$MAPLE_PHASE $MAPLE_BRANCH" > ../teardown.log"#), None);
+        let (ok, branch_deleted, message) = cleaned(&cleanup(&emit, &[], &c, None).await);
+        assert!(ok, "{message}");
+        assert_eq!(std::fs::read_to_string(root.join("teardown.log")).unwrap(), "teardown agent/mf-20\n");
+        assert!(!wt.exists());
+        assert!(branch_deleted);
+        assert!(message.starts_with("ran the teardown script (`test -f"), "{message}");
+        assert!(message.contains(", then Removed "), "{message}");
+        assert!(matches!(&lines.lock().unwrap()[..], [Outbound::TaskProgress { text, .. }] if text.starts_with("ran the teardown script")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The archive script owns the worktree and branch: the runner removes neither.
+    #[tokio::test]
+    async fn archive_replaces_the_removal() {
+        let (root, repo, wt, head) = finished_task("archive");
+        let emit = |_: Outbound| {};
+        let c = cleanup_of(&repo, &wt, &head, None, Some(r#"mkdir -p ../archive && git worktree move "$MAPLE_WORKTREE" "../archive/$MAPLE_TASK_ID""#));
+        let (ok, branch_deleted, message) = cleaned(&cleanup(&emit, &[], &c, None).await);
+        assert!(ok, "{message}");
+        assert!(!wt.exists());
+        let archived = root.join("archive/MF-20");
+        assert_eq!(std::fs::read_to_string(archived.join("a.txt")).unwrap(), "two\n");
+        // The branch is the script's to keep.
+        assert!(!branch_deleted);
+        assert!(git(&repo, &["rev-parse", "--verify", "--quiet", "refs/heads/agent/mf-20"], None).await.is_ok());
+        assert!(message.contains("archive script took the worktree and branch from there"), "{message}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A teardown that fails stops the cleanup, with its output, and leaves the worktree alone.
+    #[tokio::test]
+    async fn a_failing_teardown_stops_the_cleanup() {
+        let (root, repo, wt, head) = finished_task("teardown-fail");
+        let emit = |_: Outbound| {};
+        let c = cleanup_of(&repo, &wt, &head, Some("echo 'docker compose down: no such project'; exit 1"), Some("echo never"));
+        let (ok, _, message) = cleaned(&cleanup(&emit, &[], &c, None).await);
+        assert!(!ok);
+        assert!(message.contains("teardown script (`echo 'docker compose down: no such project'; exit 1`) failed with exit code 1:\ndocker compose down: no such project"), "{message}");
+        assert!(wt.join("a.txt").exists());
+        // A session still in it: nothing runs.
+        let c = cleanup_of(&repo, &wt, &head, Some("touch ../ran"), None);
+        let (ok, _, message) = cleaned(&cleanup(&emit, &[wt.to_string_lossy().into_owned()], &c, None).await);
+        assert!(!ok && message.contains("A session is still using"), "{message}");
+        assert!(!root.join("ran").exists());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

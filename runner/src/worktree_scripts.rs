@@ -229,10 +229,10 @@ mod tests {
         }
         // The output's end is kept, without the secret.
         assert_eq!(ran.tail, "key is ***");
-        let sent = sent.lock().unwrap();
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0]["type"], "task.progress");
-        assert!(sent[0]["text"].as_str().unwrap().starts_with("ran the setup script (`pwd > where;"));
+        let lines = sent.lock().unwrap().clone();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["type"], "task.progress");
+        assert!(lines[0]["text"].as_str().unwrap().starts_with("ran the setup script (`pwd > where;"));
         // No archive command (blank), so nothing runs.
         assert!(run(Some(&s), Phase::Archive, &ctx).await.unwrap().is_none());
         assert!(run(None, Phase::Setup, &ctx).await.unwrap().is_none());
