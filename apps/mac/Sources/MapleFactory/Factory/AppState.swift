@@ -1763,8 +1763,8 @@ final class AppState {
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
     /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
-    /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:select:0` ticks a
-    /// shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
+    /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:severity:blocker` is a severity chip,
+    /// `findings:select:0` ticks a shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
     /// is Make a task from them.
     static let demoFindings = Notification.Name("AppState.demoFindings")
 

@@ -33,6 +33,7 @@ struct FindingsView: View {
                 kind = Wire.FindingKind(rawValue: parts[1])
                 severity = Wire.Severity(rawValue: parts[2])
             case "area": area = area == arg ? nil : arg
+            case "severity": severity = severity?.rawValue == arg ? nil : Wire.Severity(rawValue: arg)
             case "row": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { open(r.task) }
             case "select": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { toggle(r) }
             case "selectall": selectAll(visible(f))
