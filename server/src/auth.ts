@@ -1,7 +1,8 @@
 // Who may use this factory: members of one GitHub organization (or, when GITHUB_ORG is someone's
 // personal account, just them), and anyone in GITHUB_ALLOWED_LOGINS, who signs in as a member. The web signs in with GitHub's
 // OAuth redirect and gets a signed cookie; the apps use GitHub's device flow and get a bearer
-// token. Membership is checked with GitHub at every sign-in, and roles and teams come from there.
+// token. Membership is checked with GitHub at every sign-in, and roles and teams come from there; an admin
+// can also make someone admin here (members.admin_granted_by), which raises their role but never lets them in.
 
 import type { Env } from "./env.ts";
 import { API, apiBase } from "./github.ts";
@@ -18,12 +19,25 @@ export interface MemberRow {
   github_id: number;
   name: string | null;
   avatar_url: string | null;
+  /** GitHub's role, rewritten at each sign-in. */
   role: string;
   teams: string;
+  /** Who made them admin here; NULL: nobody. A sign-in leaves it alone. */
+  admin_granted_by: string | null;
 }
 
+/** A member as the apps see them: admin when GitHub says they're an owner, or an admin made them one here. */
 export function toMember(row: MemberRow): Member {
-  return { login: row.login, name: row.name, avatarUrl: row.avatar_url, role: row.role, teams: JSON.parse(row.teams) };
+  const adminSource = row.role === "admin" ? "github" : row.admin_granted_by ? "granted" : null;
+  return {
+    login: row.login,
+    name: row.name,
+    avatarUrl: row.avatar_url,
+    role: adminSource ? "admin" : "member",
+    teams: JSON.parse(row.teams),
+    adminSource,
+    adminGrantedBy: row.admin_granted_by,
+  };
 }
 
 function cookieName(url: URL, name: string) {
@@ -149,6 +163,7 @@ async function admit(env: Env, token: string): Promise<Verdict> {
   return { ok: true, member: toMember((await memberRow(env, me.body.login))!) };
 }
 
+/** Records a sign-in. It sets GitHub's role and never touches an admin grant, so a grant survives every sign-in. */
 async function upsertMember(env: Env, who: Identity, role: string, teams: string[]) {
   await env.DB.prepare(
     `INSERT INTO members (login, github_id, name, avatar_url, role, teams, created_at, last_seen)
