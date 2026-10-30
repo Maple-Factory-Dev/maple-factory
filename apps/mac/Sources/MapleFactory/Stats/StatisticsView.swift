@@ -40,7 +40,7 @@ struct StatisticsView: View {
                 .frame(maxWidth: .infinity)
                 .id("top")
             }
-            .defaultScrollAnchor(.top)
+            .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
             .safeAreaInset(edge: .bottom) {
                 if section == "findings", !pickedFindings.isEmpty, let findings = summary?.findings {
                     FindingsPickBar(findings: findings, picked: $pickedFindings)
