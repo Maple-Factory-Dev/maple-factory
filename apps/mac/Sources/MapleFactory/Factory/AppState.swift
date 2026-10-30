@@ -62,6 +62,11 @@ final class AppState {
     var timelineShowsMerged = AppDefaults.bool(forKey: "timelineShowsMerged") {
         didSet { AppDefaults.set(timelineShowsMerged, forKey: "timelineShowsMerged") }
     }
+    /// One board display preference for every goal; absent defaults keep the existing empty rails.
+    @ObservationIgnored private let boardDefaults: UserDefaults
+    var boardHidesEmptyColumns: Bool {
+        didSet { boardDefaults.set(boardHidesEmptyColumns, forKey: "boardHidesEmptyColumns") }
+    }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
@@ -1747,7 +1752,9 @@ final class AppState {
     // MARK: Launch arguments
 
     /// Launch arguments like `-destination inbox -layout timeline -inspector NO` jump straight to a view.
-    init() {
+    init(boardDefaults: UserDefaults = AppDefaults) {
+        self.boardDefaults = boardDefaults
+        boardHidesEmptyColumns = boardDefaults.bool(forKey: "boardHidesEmptyColumns")
         let defaults = AppDefaults
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
@@ -1944,6 +1951,8 @@ final class AppState {
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // The board's hide-empty toggle, through the same persisted preference as the UI.
+            case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             // `secret:add` opens Settings › Secrets' Add sheet (with `-window settings-sheet`).
