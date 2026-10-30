@@ -421,6 +421,22 @@ export const structs: Record<string, Struct> = {
     fields: { repo: "string", name: "string", updatedBy: "string", updatedAt: "u64" },
     fieldDocs: { repo: "GitHub owner/name.", name: "An environment variable's name (A–Z, 0–9 and _)." },
   },
+  WorktreeScripts: {
+    doc: "A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional.",
+    fields: { create: "string?", setup: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?" },
+    fieldDocs: {
+      create: "Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.",
+      setup: "Runs once the worktree exists, before the agent starts.",
+      teardown: "Runs before the worktree is removed when a finished task is cleaned up.",
+      archive: "Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.",
+      timeoutSecs: "How long each one may run (default 600).",
+    },
+  },
+  RepoWorktreeScripts: {
+    doc: "One repo's worktree scripts, and who last changed them.",
+    fields: { repo: "string", scripts: "WorktreeScripts", updatedBy: "string", updatedAt: "u64" },
+    fieldDocs: { repo: "GitHub owner/name." },
+  },
   ServerUpdate: {
     doc: "A newer maple-server than the factory runs, and how this factory gets it.",
     fields: { version: "string", how: "string" },
@@ -537,8 +553,8 @@ export const structs: Record<string, Struct> = {
   },
   TaskStart: {
     doc: "The task a session works on, for the runner to set its worktree up.",
-    fields: { id: "string", repo: "string?" },
-    fieldDocs: { repo: "GitHub owner/name; none for a goal that names a folder." },
+    fields: { id: "string", repo: "string?", scripts: "WorktreeScripts?" },
+    fieldDocs: { repo: "GitHub owner/name; none for a goal that names a folder.", scripts: "The repo's worktree scripts, when it has any." },
   },
   Unattended: {
     doc: "How a factory session treats the agent's permission prompts.",
@@ -825,6 +841,10 @@ export const unions: Record<string, Union> = {
         fields: { id: "string", text: "string", kind: "DraftLineKind?" },
       },
       "draft.done": { doc: "A draft's agent finished: its last message, or why it couldn't.", fields: { id: "string", output: "string?", error: "string?" } },
+      "task.progress": {
+        doc: "A line about setting a task's worktree up or cleaning it up (a worktree script starting or finishing), for its timeline.",
+        fields: { taskId: "string", text: "string" },
+      },
       "task.cleaned": { fields: { taskId: "string", ok: "bool", branchDeleted: "bool", message: "string?" } },
       "task.token_request": {
         doc: "A GitHub token to fetch or push a task's repo.",
@@ -894,7 +914,8 @@ export const unions: Record<string, Union> = {
       "draft.cancel": { fields: { id: "string" } },
       "task.cleanup": {
         doc: "Remove a finished task's worktree and local branch if nothing would be lost.",
-        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]" },
+        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", merged: "bool", heads: "string[]", repo: "string?", scripts: "WorktreeScripts?" },
+        fieldDocs: { scripts: "The repo's worktree scripts: teardown runs first, and archive replaces the removal." },
       },
       "task.token": {
         doc: "The answer to `task.token_request`.",
@@ -958,6 +979,10 @@ export const unions: Record<string, Union> = {
         fields: { repo: "string", name: "string", value: "string" },
       },
       "secrets.delete": { doc: "Admins only.", fields: { repo: "string", name: "string" } },
+      "repos.scripts.set": {
+        doc: "Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.",
+        fields: { repo: "string", scripts: "WorktreeScripts" },
+      },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",
         fields: { goal: "string", upTo: "RiskLevel?", note: "string?" },
@@ -1035,6 +1060,7 @@ export const unions: Record<string, Union> = {
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
           secrets: "RepoSecret[]",
+          scripts: "RepoWorktreeScripts[]?",
           runnerLatest: "string?",
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
@@ -1045,6 +1071,7 @@ export const unions: Record<string, Union> = {
           ended: "The most recent session ends (last 7 days, newest first).",
           prompts: "The org's prompt additions. None: an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
+          scripts: "The repos that have worktree scripts. None: an older server.",
           runnerLatest: "The newest released runner version, when there's a release.",
           runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
@@ -1064,7 +1091,10 @@ export const unions: Record<string, Union> = {
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
-      "repos.updated": { fields: { repos: "OrgRepo[]" } },
+      "repos.updated": {
+        fields: { repos: "OrgRepo[]", scripts: "RepoWorktreeScripts[]?" },
+        fieldDocs: { scripts: "The repos that have worktree scripts. None: an older server." },
+      },
       "secrets.updated": { doc: "Every repo's secrets again (names only), after one changed.", fields: { secrets: "RepoSecret[]" } },
       "runner.released": {
         doc: "A runner release came out (or the feed changed) since the snapshot.",

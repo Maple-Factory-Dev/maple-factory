@@ -2087,6 +2087,44 @@ public enum Wire {
         }
     }
 
+    /// A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional.
+    public struct WorktreeScripts: Codable, Hashable, Sendable {
+        /// Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.
+        public var create: String?
+        /// Runs once the worktree exists, before the agent starts.
+        public var setup: String?
+        /// Runs before the worktree is removed when a finished task is cleaned up.
+        public var teardown: String?
+        /// Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.
+        public var archive: String?
+        /// How long each one may run (default 600).
+        public var timeoutSecs: UInt32?
+
+        public init(create: String? = nil, setup: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
+            self.create = create
+            self.setup = setup
+            self.teardown = teardown
+            self.archive = archive
+            self.timeoutSecs = timeoutSecs
+        }
+    }
+
+    /// One repo's worktree scripts, and who last changed them.
+    public struct RepoWorktreeScripts: Codable, Hashable, Sendable {
+        /// GitHub owner/name.
+        public var repo: String
+        public var scripts: WorktreeScripts
+        public var updatedBy: String
+        public var updatedAt: UInt64
+
+        public init(repo: String, scripts: WorktreeScripts, updatedBy: String, updatedAt: UInt64) {
+            self.repo = repo
+            self.scripts = scripts
+            self.updatedBy = updatedBy
+            self.updatedAt = updatedAt
+        }
+    }
+
     /// A newer maple-server than the factory runs, and how this factory gets it.
     public struct ServerUpdate: Codable, Hashable, Sendable {
         public var version: String
@@ -2446,10 +2484,13 @@ public enum Wire {
         public var id: String
         /// GitHub owner/name; none for a goal that names a folder.
         public var repo: String?
+        /// The repo's worktree scripts, when it has any.
+        public var scripts: WorktreeScripts?
 
-        public init(id: String, repo: String? = nil) {
+        public init(id: String, repo: String? = nil, scripts: WorktreeScripts? = nil) {
             self.id = id
             self.repo = repo
+            self.scripts = scripts
         }
     }
 
@@ -3345,6 +3386,17 @@ public enum Wire {
         }
     }
 
+    /// A line about setting a task's worktree up or cleaning it up (a worktree script starting or finishing), for its timeline.
+    public struct RunnerMessageTaskProgress: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var text: String
+
+        public init(taskId: String, text: String) {
+            self.taskId = taskId
+            self.text = text
+        }
+    }
+
     public struct RunnerMessageTaskCleaned: Codable, Hashable, Sendable {
         public var taskId: String
         public var ok: Bool
@@ -3410,6 +3462,7 @@ public enum Wire {
         case taskHandedOff(RunnerMessageTaskHandedOff)
         case draftProgress(RunnerMessageDraftProgress)
         case draftDone(RunnerMessageDraftDone)
+        case taskProgress(RunnerMessageTaskProgress)
         case taskCleaned(RunnerMessageTaskCleaned)
         case taskTokenRequest(RunnerMessageTaskTokenRequest)
         case secretsRequest(RunnerMessageSecretsRequest)
@@ -3439,6 +3492,7 @@ public enum Wire {
             case "task.handed_off": self = .taskHandedOff(try RunnerMessageTaskHandedOff(from: decoder))
             case "draft.progress": self = .draftProgress(try RunnerMessageDraftProgress(from: decoder))
             case "draft.done": self = .draftDone(try RunnerMessageDraftDone(from: decoder))
+            case "task.progress": self = .taskProgress(try RunnerMessageTaskProgress(from: decoder))
             case "task.cleaned": self = .taskCleaned(try RunnerMessageTaskCleaned(from: decoder))
             case "task.token_request": self = .taskTokenRequest(try RunnerMessageTaskTokenRequest(from: decoder))
             case "secrets.request": self = .secretsRequest(try RunnerMessageSecretsRequest(from: decoder))
@@ -3502,6 +3556,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .draftDone(let body):
                 try c.encode("draft.done", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskProgress(let body):
+                try c.encode("task.progress", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCleaned(let body):
                 try c.encode("task.cleaned", forKey: .type)
@@ -3702,14 +3759,19 @@ public enum Wire {
         public var branch: String
         public var merged: Bool
         public var heads: [String]
+        public var repo: String?
+        /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
+        public var scripts: WorktreeScripts?
 
-        public init(taskId: String, cwd: String, repoDir: String, branch: String, merged: Bool, heads: [String] = []) {
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, merged: Bool, heads: [String] = [], repo: String? = nil, scripts: WorktreeScripts? = nil) {
             self.taskId = taskId
             self.cwd = cwd
             self.repoDir = repoDir
             self.branch = branch
             self.merged = merged
             self.heads = heads
+            self.repo = repo
+            self.scripts = scripts
         }
 
         public init(from decoder: Decoder) throws {
@@ -3720,6 +3782,8 @@ public enum Wire {
             branch = try c.decode(String.self, forKey: .branch)
             merged = try c.decode(Bool.self, forKey: .merged)
             heads = try c.decodeIfPresent([String].self, forKey: .heads) ?? []
+            repo = try c.decodeIfPresent(String.self, forKey: .repo)
+            scripts = try c.decodeIfPresent(WorktreeScripts.self, forKey: .scripts)
         }
     }
 
@@ -4144,6 +4208,17 @@ public enum Wire {
         }
     }
 
+    /// Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.
+    public struct ClientMessageReposScriptsSet: Codable, Hashable, Sendable {
+        public var repo: String
+        public var scripts: WorktreeScripts
+
+        public init(repo: String, scripts: WorktreeScripts) {
+            self.repo = repo
+            self.scripts = scripts
+        }
+    }
+
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
     public struct ClientMessageGoalAcceptRisk: Codable, Hashable, Sendable {
         public var goal: String
@@ -4467,6 +4542,7 @@ public enum Wire {
         case reposRemove(ClientMessageReposRemove)
         case secretsSet(ClientMessageSecretsSet)
         case secretsDelete(ClientMessageSecretsDelete)
+        case reposScriptsSet(ClientMessageReposScriptsSet)
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
         case taskEdit(ClientMessageTaskEdit)
@@ -4526,6 +4602,7 @@ public enum Wire {
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
             case "secrets.set": self = .secretsSet(try ClientMessageSecretsSet(from: decoder))
             case "secrets.delete": self = .secretsDelete(try ClientMessageSecretsDelete(from: decoder))
+            case "repos.scripts.set": self = .reposScriptsSet(try ClientMessageReposScriptsSet(from: decoder))
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
@@ -4638,6 +4715,9 @@ public enum Wire {
             case .secretsDelete(let body):
                 try c.encode("secrets.delete", forKey: .type)
                 try body.encode(to: encoder)
+            case .reposScriptsSet(let body):
+                try c.encode("repos.scripts.set", forKey: .type)
+                try body.encode(to: encoder)
             case .goalAcceptRisk(let body):
                 try c.encode("goal.acceptRisk", forKey: .type)
                 try body.encode(to: encoder)
@@ -4733,6 +4813,8 @@ public enum Wire {
         public var repos: [OrgRepo]
         /// Every repo's secrets, names and who changed them only.
         public var secrets: [RepoSecret]
+        /// The repos that have worktree scripts. None: an older server.
+        public var scripts: [RepoWorktreeScripts]?
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
         /// Runner releases, newest first, with their notes (What's new). None: an older server.
@@ -4743,7 +4825,7 @@ public enum Wire {
         public var serverUpdate: ServerUpdate?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -4760,6 +4842,7 @@ public enum Wire {
             self.intake = intake
             self.repos = repos
             self.secrets = secrets
+            self.scripts = scripts
             self.runnerLatest = runnerLatest
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
@@ -4785,6 +4868,7 @@ public enum Wire {
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
+            scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
@@ -4920,14 +5004,18 @@ public enum Wire {
 
     public struct ServerToClientReposUpdated: Codable, Hashable, Sendable {
         public var repos: [OrgRepo]
+        /// The repos that have worktree scripts. None: an older server.
+        public var scripts: [RepoWorktreeScripts]?
 
-        public init(repos: [OrgRepo] = []) {
+        public init(repos: [OrgRepo] = [], scripts: [RepoWorktreeScripts]? = nil) {
             self.repos = repos
+            self.scripts = scripts
         }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
+            scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
         }
     }
 

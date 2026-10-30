@@ -496,6 +496,29 @@ export interface RepoSecret {
   updatedAt: number;
 }
 
+/** A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional. */
+export interface WorktreeScripts {
+  /** Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE. */
+  create?: string | null;
+  /** Runs once the worktree exists, before the agent starts. */
+  setup?: string | null;
+  /** Runs before the worktree is removed when a finished task is cleaned up. */
+  teardown?: string | null;
+  /** Runs in place of the runner's own removal at cleanup; it owns the folder and the branch. */
+  archive?: string | null;
+  /** How long each one may run (default 600). */
+  timeoutSecs?: number | null;
+}
+
+/** One repo's worktree scripts, and who last changed them. */
+export interface RepoWorktreeScripts {
+  /** GitHub owner/name. */
+  repo: string;
+  scripts: WorktreeScripts;
+  updatedBy: string;
+  updatedAt: number;
+}
+
 /** A newer maple-server than the factory runs, and how this factory gets it. */
 export interface ServerUpdate {
   version: string;
@@ -650,6 +673,8 @@ export interface TaskStart {
   id: string;
   /** GitHub owner/name; none for a goal that names a folder. */
   repo?: string | null;
+  /** The repo's worktree scripts, when it has any. */
+  scripts?: WorktreeScripts | null;
 }
 
 /** How a factory session treats the agent's permission prompts. */
@@ -1089,6 +1114,13 @@ export interface RunnerMessage_DraftDone {
   error?: string | null;
 }
 
+/** A line about setting a task's worktree up or cleaning it up (a worktree script starting or finishing), for its timeline. */
+export interface RunnerMessage_TaskProgress {
+  type: "task.progress";
+  taskId: string;
+  text: string;
+}
+
 export interface RunnerMessage_TaskCleaned {
   type: "task.cleaned";
   taskId: string;
@@ -1117,8 +1149,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -1241,6 +1273,9 @@ export interface ServerToRunner_TaskCleanup {
   branch: string;
   merged: boolean;
   heads: string[];
+  repo?: string | null;
+  /** The repo's worktree scripts: teardown runs first, and archive replaces the removal. */
+  scripts?: WorktreeScripts | null;
 }
 
 /** The answer to `task.token_request`. */
@@ -1451,6 +1486,13 @@ export interface ClientMessage_SecretsDelete {
   name: string;
 }
 
+/** Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them. */
+export interface ClientMessage_ReposScriptsSet {
+  type: "repos.scripts.set";
+  repo: string;
+  scripts: WorktreeScripts;
+}
+
 /** Let the factory auto-merge a goal's work up to `upTo`; none takes it back. */
 export interface ClientMessage_GoalAcceptRisk {
   type: "goal.acceptRisk";
@@ -1625,8 +1667,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1649,6 +1691,8 @@ export interface ServerToClient_Snapshot {
   repos: OrgRepo[];
   /** Every repo's secrets, names and who changed them only. */
   secrets: RepoSecret[];
+  /** The repos that have worktree scripts. None: an older server. */
+  scripts?: RepoWorktreeScripts[] | null;
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes (What's new). None: an older server. */
@@ -1732,6 +1776,8 @@ export interface ServerToClient_PromptsUpdated {
 export interface ServerToClient_ReposUpdated {
   type: "repos.updated";
   repos: OrgRepo[];
+  /** The repos that have worktree scripts. None: an older server. */
+  scripts?: RepoWorktreeScripts[] | null;
 }
 
 /** Every repo's secrets again (names only), after one changed. */
