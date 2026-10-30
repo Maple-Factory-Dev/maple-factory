@@ -65,6 +65,81 @@ port and runner home instead, so a real maple-runner is never matched.
 Server tests: `node server/test/e2e-local.mjs http://localhost:8788 dev-mac` (relay, Kill, exit causes).
 Runner tests: `cd runner && cargo test`.
 
+### Codex factory approvals
+
+In Settings → Factory, **project** unattended mode launches Codex planners, builders and reviewers
+with **Approve for me** on every invocation, including new and retried sessions and resume launches:
+
+```sh
+--ask-for-approval on-request -c 'approvals_reviewer="auto_review"' \
+  --sandbox workspace-write -c sandbox_workspace_write.network_access=true
+```
+
+`on-request` lets Codex request approval, and `auto_review` routes eligible requests, including Maple
+reporting tools, to an automatic reviewer. `never` cannot do that: it refuses requests that need
+approval. The workspace-write sandbox and existing network access stay in place; automatic review
+can approve or deny an escalation. Factory plan approval remains a separate human decision.
+These flags follow ordinary `agents.toml` arguments, overriding an earlier `-c` reviewer setting for
+that invocation without editing personal Codex configuration. Explicit **ask** and **skip** modes,
+personal sessions and other agents keep their existing behavior. Draft with AI uses a separate
+read-only execution path and is outside this change.
+
+Checked with Codex CLI 0.164.0. Automatic review must be supported by the installed Codex version and
+available to the account; managed organization requirements take precedence over these local
+settings. If the mode is unavailable, policy rejects it or review denies a request, inspect the
+terminal and resolve that constraint; the runner does not fall back to full access.
+See [OpenAI's auto-review documentation](https://learn.chatgpt.com/docs/sandboxing/auto-review).
+
+To smoke-test planning without changing personal Codex settings, use a disposable factory and repo
+(requires installed npm dependencies, Rust, tmux and Codex):
+
+1. From this checkout, create the disposable repo and an isolated Codex home, then authenticate that
+   home with an account supporting automatic review:
+
+   ```sh
+   smoke=$(mktemp -d /tmp/maple-approval-smoke.XXXXXX)
+   export CODEX_HOME="$smoke/codex"
+   mkdir -p "$CODEX_HOME"
+   codex login
+   git init -b main "$smoke/repo"
+   printf '# Planning smoke check\nOriginal greeting: hello\n' > "$smoke/repo/README.md"
+   git -C "$smoke/repo" add README.md
+   git -C "$smoke/repo" -c user.name=Smoke -c user.email=smoke@example.test commit -m 'Seed planning fixture'
+   git clone --bare "$smoke/repo" "$smoke/origin.git"
+   git -C "$smoke/repo" remote add origin "$smoke/origin.git"
+   git -C "$smoke/repo" rev-parse HEAD > "$smoke/before-head"
+   git -C "$smoke/repo" ls-tree -r HEAD > "$smoke/before-tree"
+   export MAPLE_DEV_INSTANCE="approval-smoke-$$"
+   scripts/dev-stack.sh up
+   scripts/dev-stack.sh port
+   ```
+
+2. Connect the Mac app to `localhost:<printed port>` using Continue as the dev user. Add a goal
+   pointing at `$smoke/repo` (run `echo "$smoke/repo"` for its full path), base `main`. Leave factory
+   unattended mode at **project**. Create a Codex task with planning enabled: “Read README.md and plan changing the
+   greeting from hello to welcome; submit the plan without changing files.” Open its terminal and
+   capture the repository read and successful `submit_plan`. Check the effective permissions with
+   `/status` or `/permissions` if needed: **Approve for me**, `on-request` / `auto_review`, with
+   workspace-write. Do not switch permissions manually. Record the task ID, session ID and
+   `awaitingApproval` state; leave the plan unapproved so no builder starts.
+3. Create a second task with the same brief to check a new planner session. For explicit retry
+   coverage, use Retry while that planner is running (after its worktree appears), then capture the
+   replacement session ID, effective permissions, repository read, successful plan submission and
+   `awaitingApproval`. Each launch must receive the settings automatically. Check both planner
+   worktrees with `git -C <worktree> status --porcelain` and `git -C <worktree> diff HEAD --exit-code`;
+   both should be empty/clean. Confirm the fixture's HEAD and tree are unchanged:
+
+   ```sh
+   test "$(git -C "$smoke/repo" rev-parse HEAD)" = "$(cat "$smoke/before-head")"
+   git -C "$smoke/repo" ls-tree -r HEAD > "$smoke/after-tree"
+   diff -u "$smoke/before-tree" "$smoke/after-tree"
+   git -C "$smoke/repo" status --porcelain
+   ```
+
+4. Save task-state and terminal evidence, cancel the disposable tasks and stop only this stack with
+   `scripts/dev-stack.sh down`. Unset `CODEX_HOME` and `MAPLE_DEV_INSTANCE` when done. Keep or remove the
+   disposable folders as needed; personal `~/.codex/config.toml` is never edited by this check.
+
 ## Deploying a factory
 
 Each org runs its own factory in its own Cloudflare account, one of two ways:
