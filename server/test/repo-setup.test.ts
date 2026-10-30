@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { Engine } from "../src/factory/engine.ts";
 import { builderPrompt, plannerPrompt, reviewerPrompt } from "../src/factory/prompts.ts";
-import { parseSetup } from "../src/factory/repo-setup.ts";
+import { parseSetup, scriptsProblem, tidyScripts } from "../src/factory/repo-setup.ts";
 import { Store } from "../src/factory/store.ts";
 import type { ServerToClient, ServerToRunner, Task } from "../src/wire.ts";
 
@@ -170,6 +170,32 @@ test("parseSetup: takes the last JSON, caps prompts and notes, and rejects overs
     assert.ok("error" in bad && /1–3600/.test(bad.error), `timeout ${timeoutSecs} is refused`);
   }
   assert.ok("error" in parseSetup("No JSON at all."));
+});
+
+test("preflight: kept with its watch list, which must be at most 20 repo-relative paths", async () => {
+  const scripts = { preflight: " mise install ", preflightWatch: " .ruby-version \n\n  Brewfile\n", setup: "bin/setup" };
+  assert.equal(scriptsProblem(scripts), null);
+  assert.deepEqual(tidyScripts(scripts), { preflight: "mise install", preflightWatch: ".ruby-version\nBrewfile", setup: "bin/setup" });
+  assert.deepEqual(tidyScripts({ preflight: "brew bundle" }), { preflight: "brew bundle" }, "preflight alone is something to keep");
+  assert.equal(tidyScripts({ preflightWatch: ".nvmrc" }), null, "a watch list without commands is nothing");
+  for (const bad of ["/etc/hosts", "../other/.ruby-version", "config/../../x", "~/.tool-versions"]) {
+    assert.match(scriptsProblem({ preflight: "x", preflightWatch: `.nvmrc\n${bad}` }) ?? "", /isn't inside the repo/, `${bad} is refused`);
+  }
+  const many = Array.from({ length: 21 }, (_, i) => `f${i}`).join("\n");
+  assert.match(scriptsProblem({ preflight: "x", preflightWatch: many }) ?? "", /at most 20/);
+  assert.match(scriptsProblem({ preflight: "x".repeat(5000) }) ?? "", /preflight script is over 4 KB/);
+
+  const parsed = parseSetup(JSON.stringify({ scripts: { preflight: "brew bundle", preflightWatch: ["Brewfile", ".ruby-version"], setup: "bin/setup" }, prompts: {} }));
+  assert.ok("suggestion" in parsed);
+  assert.deepEqual(parsed.suggestion.scripts, { preflight: "brew bundle", preflightWatch: "Brewfile\n.ruby-version", setup: "bin/setup" });
+  assert.ok("error" in parseSetup(JSON.stringify({ scripts: { preflight: "x", preflightWatch: "/abs" } })));
+
+  const f = factory();
+  await f.mcp("boss-mbp", PERSONAL, "save_repo_setup", { repo: REPO, scripts: { preflight: "mise install", preflightWatch: "mise.toml", setup: "bin/setup" } });
+  const after = (await f.mcp("pat-mbp", PERSONAL, "get_repo_setup", { repo: REPO })).result!.data;
+  assert.deepEqual(after.scripts, { preflight: "mise install", preflightWatch: "mise.toml", setup: "bin/setup" });
+  assert.deepEqual(f.audits.at(-1)?.detail, { repo: REPO, changed: ["preflight", "preflightWatch", "setup"], via: "via MCP from boss-mbp" });
+  assert.match((await f.mcp("boss-mbp", PERSONAL, "save_repo_setup", { repo: REPO, scripts: { preflightWatch: "../x" } })).error ?? "", /isn't inside the repo/);
 });
 
 test("Set up with AI: an admin's run reads the repo on their machine and its reply becomes the suggestion", async () => {

@@ -1133,6 +1133,12 @@ pub struct WorktreeScripts {
     /// Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create: Option<String>,
+    /// Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<String>,
+    /// Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_watch: Option<String>,
     /// Runs once the worktree exists, before the agent starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,

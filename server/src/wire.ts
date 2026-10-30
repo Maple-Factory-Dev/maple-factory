@@ -568,6 +568,10 @@ export interface RepoSecret {
 export interface WorktreeScripts {
   /** Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE. */
   create?: string | null;
+  /** Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes. */
+  preflight?: string | null;
+  /** Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml. */
+  preflightWatch?: string | null;
   /** Runs once the worktree exists, before the agent starts. */
   setup?: string | null;
   /** Runs before the worktree is removed when a finished task is cleaned up. */

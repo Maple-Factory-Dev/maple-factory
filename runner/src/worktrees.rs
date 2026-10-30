@@ -315,10 +315,11 @@ pub async fn create_from(root: &Path, name: &str, start: &str) -> Result<String>
 
 /// `create_from` with the repo's worktree scripts (see `worktree_scripts`): its `create` script makes
 /// the worktree in place of `git worktree add` (and must leave a git worktree on `agent/<name>` at
-/// the path), and its `setup` script runs once it's there. When either fails, the half-made worktree
+/// the path), its `preflight` script runs in it when this checkout needs it (`worktree_scripts::preflight`),
+/// and its `setup` script runs once it's there. When any fails, the half-made worktree
 /// goes (and the branch, if this made it) and the error has the script's output.
 pub async fn create_with(root: &Path, name: &str, start: &str, scripts: Option<&crate::worktree_scripts::ForTask<'_>>) -> Result<String> {
-    use crate::worktree_scripts::{Phase, command, run};
+    use crate::worktree_scripts::{Phase, command, preflight, run};
     valid_name(name)?;
     if start.starts_with('-') {
         bail!("`{start}` isn't a branch or commit.");
@@ -354,7 +355,12 @@ pub async fn create_with(root: &Path, name: &str, start: &str, scripts: Option<&
     }
     poke(false);
     if let Some(s) = scripts
-        && let Err(e) = run(Some(s.scripts), Phase::Setup, &s.context(root, &path, &branch)).await
+        && let Err(e) = async {
+            let ctx = s.context(root, &path, &branch);
+            preflight(s.scripts, &ctx).await?;
+            run(Some(s.scripts), Phase::Setup, &ctx).await
+        }
+        .await
     {
         undo(root, &path, &branch, had_branch).await;
         poke(false);
@@ -1746,7 +1752,7 @@ mod tests {
     }
 
     fn scripts(create: Option<&str>, setup: Option<&str>) -> crate::worktree_scripts::WorktreeScripts {
-        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), setup: setup.map(String::from), teardown: None, archive: None, timeout_secs: Some(30) }
+        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), preflight: None, preflight_watch: None, setup: setup.map(String::from), teardown: None, archive: None, timeout_secs: Some(30) }
     }
 
     fn for_task<'a>(s: &'a crate::worktree_scripts::WorktreeScripts, env: &'a [(String, String)]) -> crate::worktree_scripts::ForTask<'a> {
@@ -1794,6 +1800,127 @@ mod tests {
         assert!(!wt.exists(), "the half-made worktree is still there");
         assert!(!has_branch(&repo, "agent/mf-11").await, "the branch it made is still there");
         assert!(!list(&repo).await.unwrap().iter().any(|w| w.branch.as_deref() == Some("agent/mf-11")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Preflight with its timeline lines collected: what `$MAPLE_PHASE` it ran as and where goes in
+    /// `<root>/preflight.log`, one line a run.
+    async fn start_with_preflight(repo: &Path, name: &str, s: &crate::worktree_scripts::WorktreeScripts) -> (Result<String>, Vec<String>) {
+        let lines = std::sync::Mutex::new(Vec::new());
+        let emit = |m: crate::protocol::Outbound| {
+            if let crate::protocol::Outbound::TaskProgress { text, .. } = m {
+                lines.lock().unwrap().push(text);
+            }
+        };
+        let t = crate::worktree_scripts::ForTask { scripts: s, task_id: "MF-12", repo: Some("acme/app"), base: Some("main"), env: &[], emit: Some(&emit), path: None };
+        let r = create_with(repo, name, "main", Some(&t)).await;
+        (r, lines.into_inner().unwrap())
+    }
+
+    fn preflight(command: &str, watch: Option<&str>) -> crate::worktree_scripts::WorktreeScripts {
+        crate::worktree_scripts::WorktreeScripts { preflight: Some(command.into()), preflight_watch: watch.map(String::from), ..scripts(None, Some("true")) }
+    }
+
+    fn runs(root: &Path) -> Vec<String> {
+        std::fs::read_to_string(root.join("preflight.log")).unwrap_or_default().lines().map(String::from).collect()
+    }
+
+    /// Preflight runs in the first worktree of a checkout, not again while nothing it watches changes,
+    /// again when .ruby-version changes on the base or its command does, and stamps only a run that passed.
+    #[tokio::test]
+    async fn preflight_runs_once_per_checkout_and_again_when_a_watched_file_changes() {
+        let (root, repo, _, _) = repo_with_task("preflight");
+        std::fs::write(repo.join(".ruby-version"), "3.3.0\n").unwrap();
+        sh(&repo, &["add", "-A"]);
+        sh(&repo, &["commit", "--quiet", "-m", "ruby"]);
+        let log = root.join("preflight.log");
+        let cmd = format!(r#"echo "$MAPLE_PHASE in $PWD with ruby $(cat .ruby-version)" >> {}"#, log.display());
+        let s = preflight(&cmd, None);
+        let stamp = std::path::PathBuf::from(sh(&repo, &["rev-parse", "--path-format=absolute", "--git-common-dir"])).join("maple/preflight.json");
+
+        // A fresh checkout: it runs, in the worktree, and says why.
+        let (wt, lines) = start_with_preflight(&repo, "mf-12", &s).await;
+        let wt = expand_home(&wt.unwrap());
+        assert_eq!(runs(&root), [format!("preflight in {} with ruby 3.3.0", canonical(&wt).display())]);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("ran the preflight script (`echo"), "{lines:?}");
+        assert!(lines[0].ends_with("(first run on this checkout)"), "{lines:?}");
+        assert!(lines[1].starts_with("ran the setup script"), "{lines:?}");
+        assert!(stamp.exists());
+
+        // The next task: nothing changed, so it doesn't run.
+        let (r, lines) = start_with_preflight(&repo, "mf-13", &s).await;
+        r.unwrap();
+        assert_eq!(runs(&root).len(), 1);
+        assert!(!lines.iter().any(|l| l.contains("preflight")), "{lines:?}");
+
+        // .ruby-version bumped on main: the next task runs it again, saying which file changed.
+        std::fs::write(repo.join(".ruby-version"), "3.4.1\n").unwrap();
+        sh(&repo, &["commit", "--quiet", "-am", "Bump ruby"]);
+        let (r, lines) = start_with_preflight(&repo, "mf-14", &s).await;
+        r.unwrap();
+        assert_eq!(runs(&root).len(), 2);
+        assert!(runs(&root)[1].ends_with("with ruby 3.4.1"));
+        assert!(lines[0].ends_with("(changed: .ruby-version)"), "{lines:?}");
+        let (_, lines) = start_with_preflight(&repo, "mf-15", &s).await;
+        assert_eq!(runs(&root).len(), 2, "{lines:?}");
+
+        // A file outside the default list doesn't count, unless the repo watches it.
+        std::fs::write(repo.join("deps.txt"), "pg\n").unwrap();
+        sh(&repo, &["add", "-A"]);
+        sh(&repo, &["commit", "--quiet", "-m", "deps"]);
+        start_with_preflight(&repo, "mf-16", &s).await.0.unwrap();
+        assert_eq!(runs(&root).len(), 2);
+        let watching = preflight(&cmd, Some("deps.txt\n.ruby-version"));
+        let (_, lines) = start_with_preflight(&repo, "mf-17", &watching).await;
+        assert_eq!(runs(&root).len(), 3);
+        assert!(lines[0].ends_with("(changed: deps.txt)"), "{lines:?}");
+
+        // A new command runs it again.
+        let changed = preflight(&format!("{cmd}; true"), Some("deps.txt\n.ruby-version"));
+        let (_, lines) = start_with_preflight(&repo, "mf-18", &changed).await;
+        assert_eq!(runs(&root).len(), 4);
+        assert!(lines[0].ends_with("(the command changed)"), "{lines:?}");
+
+        // One that fails stops the start, removes its worktree and leaves the old stamp, so the next task tries again.
+        let before = std::fs::read(&stamp).unwrap();
+        let failing = preflight(&format!("{cmd}; echo brew is missing; exit 4"), None);
+        let (r, _) = start_with_preflight(&repo, "mf-19", &failing).await;
+        let e = format!("{:#}", r.unwrap_err());
+        assert!(e.contains("preflight script") && e.contains("failed with exit code 4:\nbrew is missing"), "{e}");
+        assert!(!worktree_path(&repo, "mf-19").unwrap().exists());
+        assert_eq!(std::fs::read(&stamp).unwrap(), before, "a failed run left a stamp");
+        start_with_preflight(&repo, "mf-20", &failing).await.0.unwrap_err();
+        assert_eq!(runs(&root).len(), 6, "the failed preflight wasn't tried again");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// No stamp at first: a failed first run leaves none, so the next task's run is still the first.
+    #[tokio::test]
+    async fn a_failed_first_preflight_leaves_no_stamp() {
+        let (root, repo, _, _) = repo_with_task("preflight-fail");
+        let stamp = std::path::PathBuf::from(sh(&repo, &["rev-parse", "--path-format=absolute", "--git-common-dir"])).join("maple/preflight.json");
+        start_with_preflight(&repo, "mf-21", &preflight("exit 1", None)).await.0.unwrap_err();
+        assert!(!stamp.exists());
+        let (r, lines) = start_with_preflight(&repo, "mf-22", &preflight("true", None)).await;
+        r.unwrap();
+        assert!(lines[0].ends_with("(first run on this checkout)"), "{lines:?}");
+        assert!(stamp.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Two tasks starting together on a fresh checkout: one runs preflight, the other waits for it and
+    /// then finds it done.
+    #[tokio::test]
+    async fn concurrent_starts_run_preflight_once() {
+        let (root, repo, _, _) = repo_with_task("preflight-race");
+        let s = preflight(&format!("echo start >> {0}; sleep 1; echo end >> {0}", root.join("preflight.log").display()), None);
+        let ((a, la), (b, lb)) = tokio::join!(start_with_preflight(&repo, "mf-23", &s), start_with_preflight(&repo, "mf-24", &s));
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(runs(&root), ["start", "end"]);
+        let ran = |l: &[String]| l.iter().any(|l| l.starts_with("ran the preflight script"));
+        assert!(ran(&la) != ran(&lb), "{la:?} {lb:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

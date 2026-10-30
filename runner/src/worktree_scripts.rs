@@ -4,20 +4,28 @@
 //!
 //! - `create` makes the worktree in place of `git worktree add`: it must leave a git worktree on
 //!   `MAPLE_BRANCH` at `MAPLE_WORKTREE` (`worktrees::create_from` checks).
+//! - `preflight` sets up the machine (runtimes, brew, services) for the repo: in the new worktree,
+//!   before setup, the first time this checkout is used and again when the command or one of its
+//!   watched files changes (`preflight`).
 //! - `setup` runs once the worktree exists, whichever made it, before the agent starts.
 //! - `teardown` runs before a finished task's worktree is removed.
 //! - `archive` runs in place of the runner's own removal; the script owns the folder and the branch.
 //!
-//! Each runs with `sh -c` in the repo's main checkout, like a project check (`proof::run_check_env`:
+//! Each runs with `sh -c` in the repo's main checkout (preflight in the worktree: a managed clone's
+//! main checkout has no files), like a project check (`proof::run_check_env`:
 //! its own process group, the login shell's PATH, stdout and stderr together and only their end
 //! kept), with the MAPLE_* variables below and the repo's secrets in its environment. One that fails
 //! or runs past its timeout (10 minutes unless the repo says) stops what it was part of, with its
 //! output's end, secret values scrubbed out, as the reason.
 
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::protocol::Outbound;
 use crate::tasks::Emit;
@@ -30,6 +38,7 @@ const ERROR_TAIL_LINES: usize = 40;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Create,
+    Preflight,
     Setup,
     Teardown,
     Archive,
@@ -39,6 +48,7 @@ impl Phase {
     pub fn name(self) -> &'static str {
         match self {
             Phase::Create => "create",
+            Phase::Preflight => "preflight",
             Phase::Setup => "setup",
             Phase::Teardown => "teardown",
             Phase::Archive => "archive",
@@ -86,6 +96,7 @@ pub fn command(scripts: Option<&WorktreeScripts>, phase: Phase) -> Option<&str> 
     let s = scripts?;
     let c = match phase {
         Phase::Create => &s.create,
+        Phase::Preflight => &s.preflight,
         Phase::Setup => &s.setup,
         Phase::Teardown => &s.teardown,
         Phase::Archive => &s.archive,
@@ -124,12 +135,15 @@ pub struct Ran {
     pub ms: u64,
     /// The end of its output, scrubbed.
     pub tail: String,
+    /// Why it ran, for preflight.
+    pub why: Option<String>,
 }
 
 impl Ran {
     /// Its line for the task's timeline.
     pub fn line(&self) -> String {
-        format!("ran the {} script (`{}`) in {:.1}s", self.phase.name(), self.command, self.ms as f64 / 1000.0)
+        let why = self.why.as_deref().map(|w| format!(" ({w})")).unwrap_or_default();
+        format!("ran the {} script (`{}`) in {:.1}s{why}", self.phase.name(), self.command, self.ms as f64 / 1000.0)
     }
 }
 
@@ -137,11 +151,16 @@ impl Ran {
 /// with the end of its output.
 pub async fn run(scripts: Option<&WorktreeScripts>, phase: Phase, ctx: &Context<'_>) -> Result<Option<Ran>> {
     let Some(command) = command(scripts, phase) else { return Ok(None) };
+    run_in(ctx.root, scripts, phase, command, None, ctx).await.map(Some)
+}
+
+/// Runs `command` for `phase` in `dir`; `why` goes on its timeline line.
+async fn run_in(dir: &Path, scripts: Option<&WorktreeScripts>, phase: Phase, command: &str, why: Option<String>, ctx: &Context<'_>) -> Result<Ran> {
     // Its secrets come out of anything it prints, here and in the runner's log.
     crate::secrets::remember(ctx.env.iter().map(|(_, v)| v));
     tracing::info!("task {}: running its {} script: {command}", ctx.task_id, phase.name());
     let limit = timeout(scripts);
-    let r = crate::proof::run_check_env(ctx.root, command, ctx.path, &environment(phase, ctx), limit).await;
+    let r = crate::proof::run_check_env(dir, command, ctx.path, &environment(phase, ctx), limit).await;
     let tail = scrub(&r.tail, ctx.env);
     let say = |text: String| {
         if let Some(emit) = ctx.emit {
@@ -149,10 +168,10 @@ pub async fn run(scripts: Option<&WorktreeScripts>, phase: Phase, ctx: &Context<
         }
     };
     if r.passed() {
-        let ran = Ran { phase, command: command.to_string(), ms: r.ms, tail };
+        let ran = Ran { phase, command: command.to_string(), ms: r.ms, tail, why };
         tracing::info!("task {}: {}", ctx.task_id, ran.line());
         say(ran.line());
-        return Ok(Some(ran));
+        return Ok(ran);
     }
     let how = match (r.timed_out, r.code) {
         (true, _) => format!("was stopped after {}s", limit.as_secs()),
@@ -167,6 +186,90 @@ pub async fn run(scripts: Option<&WorktreeScripts>, phase: Phase, ctx: &Context<
         bail!("The repo's {} script (`{command}`) {how}, with no output.", phase.name());
     }
     bail!("The repo's {} script (`{command}`) {how}:\n{end}", phase.name())
+}
+
+/// The files preflight watches when the repo doesn't say: the usual runtime and package pins.
+pub const DEFAULT_WATCH: &[&str] = &[".ruby-version", ".tool-versions", ".node-version", ".nvmrc", ".python-version", "Brewfile", "mise.toml"];
+
+/// The files that re-run preflight: the repo's list (one per line), else `DEFAULT_WATCH`. A path
+/// outside the repo (absolute, or with `..`) is skipped; the hub refuses those anyway.
+pub fn watched(scripts: &WorktreeScripts) -> Vec<String> {
+    let mine: Vec<String> = scripts
+        .preflight_watch
+        .as_deref()
+        .unwrap_or("")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('/') && !l.starts_with('~') && !l.split(['/', '\\']).any(|p| p == ".."))
+        .map(String::from)
+        .collect();
+    if mine.is_empty() { DEFAULT_WATCH.iter().map(|s| s.to_string()).collect() } else { mine }
+}
+
+/// What preflight last ran with on a checkout: its command's hash and each watched file's
+/// (`absent` when it wasn't there). Kept in `<git-common-dir>/maple/preflight.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct Stamp {
+    command: String,
+    files: BTreeMap<String, String>,
+}
+
+fn sha(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+impl Stamp {
+    fn of(command: &str, worktree: &Path, files: &[String]) -> Stamp {
+        let files = files.iter().map(|f| (f.clone(), std::fs::read(worktree.join(f)).map(|b| sha(&b)).unwrap_or_else(|_| "absent".into()))).collect();
+        Stamp { command: sha(command.as_bytes()), files }
+    }
+
+    /// Why preflight runs again after `was`, or None when nothing it watches changed.
+    fn why(&self, was: Option<&Stamp>) -> Option<String> {
+        let Some(was) = was else { return Some("first run on this checkout".into()) };
+        if was.command != self.command {
+            return Some("the command changed".into());
+        }
+        let changed: Vec<&str> = self.files.iter().filter(|(f, h)| was.files.get(*f) != Some(*h)).map(|(f, _)| f.as_str()).collect();
+        (!changed.is_empty()).then(|| format!("changed: {}", changed.join(", ")))
+    }
+}
+
+/// One lock per checkout, so tasks starting together on a fresh clone run preflight once.
+static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
+
+/// Where a checkout keeps its preflight stamp: its git common dir, shared by all its worktrees.
+async fn stamp_path(worktree: &Path) -> Result<PathBuf> {
+    let out = tokio::process::Command::new("git").arg("-C").arg(worktree).args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).output().await?;
+    if !out.status.success() {
+        bail!("Couldn't find the git directory of {} for its preflight.", worktree.display());
+    }
+    let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    Ok(std::fs::canonicalize(&dir).unwrap_or(dir).join("maple").join("preflight.json"))
+}
+
+/// Runs the repo's preflight script in the new worktree when this checkout hasn't run it yet, or its
+/// command or a watched file (as the worktree has it) changed since it last passed. None when there's
+/// no preflight or nothing changed. Only a run that passes is stamped, so a failed one runs again on
+/// the next task.
+pub async fn preflight(scripts: &WorktreeScripts, ctx: &Context<'_>) -> Result<Option<Ran>> {
+    let Some(command) = command(Some(scripts), Phase::Preflight) else { return Ok(None) };
+    let at = stamp_path(ctx.worktree).await?;
+    let lock = LOCKS.lock().unwrap().entry(at.clone()).or_default().clone();
+    let _one = lock.lock().await;
+    // Read under the lock: a task that waited sees the stamp the first one wrote.
+    let was: Option<Stamp> = std::fs::read(&at).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    let now = Stamp::of(command, ctx.worktree, &watched(scripts));
+    let Some(why) = now.why(was.as_ref()) else {
+        tracing::info!("task {}: preflight is up to date on this checkout", ctx.task_id);
+        return Ok(None);
+    };
+    let ran = run_in(ctx.worktree, Some(scripts), Phase::Preflight, command, Some(why), ctx).await?;
+    if let Some(dir) = at.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&at, serde_json::to_vec_pretty(&now)?)?;
+    Ok(Some(ran))
 }
 
 /// `text` without the secret values in `env` (and every other one the runner was given).
@@ -190,7 +293,7 @@ mod tests {
     }
 
     fn scripts(setup: &str, timeout: Option<u32>) -> WorktreeScripts {
-        WorktreeScripts { create: None, setup: Some(setup.into()), teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
+        WorktreeScripts { create: None, preflight: None, preflight_watch: None, setup: Some(setup.into()), teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
     }
 
     #[tokio::test]
@@ -262,6 +365,19 @@ mod tests {
         assert!(began.elapsed() < Duration::from_secs(10));
         assert!(e.contains("setup script (`echo waiting; sleep 30`) was stopped after 1s"), "{e}");
         assert!(e.contains("waiting"), "{e}");
+    }
+
+    #[test]
+    fn preflight_watches_the_repos_files_or_the_usual_pins() {
+        let mut s = scripts("x", None);
+        assert_eq!(watched(&s), DEFAULT_WATCH);
+        s.preflight_watch = Some(" Gemfile.lock \n\n/etc/hosts\n../up\n~/.zshrc\nconfig/.tool-versions\n".into());
+        assert_eq!(watched(&s), ["Gemfile.lock", "config/.tool-versions"]);
+        s.preflight_watch = Some("/only/outside".into());
+        assert_eq!(watched(&s), DEFAULT_WATCH);
+        assert_eq!(command(Some(&s), Phase::Preflight), None);
+        s.preflight = Some(" mise install ".into());
+        assert_eq!(command(Some(&s), Phase::Preflight), Some("mise install"));
     }
 
     #[test]
