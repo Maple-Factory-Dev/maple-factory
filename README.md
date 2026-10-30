@@ -27,6 +27,7 @@ npm run gen                 # after editing protocol/schema.ts (gen:check fails 
 scripts/dev-stack.sh up     # server on :8788 (signed in as DEV_LOGIN) + a throwaway runner `dev-mac` in /tmp/mfh
 cd apps/mac && swift run    # then Connect to Another Factory… → localhost:8788 → Continue as @you
 apps/mac/scripts/bundle.sh  # → apps/mac/build/Maple Factory.app (registers maplefactory:// task links; SIGN_IDENTITY to sign)
+apps/mac/scripts/check-ios.sh  # builds MapleKit (protocol, API, sign-in; shared with iOS) for the iOS simulator
 scripts/dev-stack.sh down
 ```
 
