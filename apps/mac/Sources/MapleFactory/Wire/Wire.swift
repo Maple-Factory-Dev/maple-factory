@@ -1046,6 +1046,46 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum McpTransport: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// A local command the runner starts.
+        case stdio
+        /// A server reached by URL (streamable HTTP).
+        case http
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [McpTransport] = [.stdio, .http]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "stdio": self = .stdio
+            case "http": self = .http
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .stdio: "stdio"
+            case .http: "http"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: McpTransport, b: McpTransport) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum PromptChoice: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Allow it once (the menu's 1).
         case yes
@@ -2571,6 +2611,50 @@ public enum Wire {
         }
     }
 
+    /// An MCP server the factory adds to every session, alongside its own `maple` server.
+    public struct McpConnector: Codable, Hashable, Sendable {
+        /// Lowercase letters, digits and dashes; its tools are mcp__<name>__*. Not `maple`.
+        public var name: String
+        public var transport: McpTransport
+        /// stdio: the program to run, e.g. npx.
+        public var command: String?
+        public var args: [String]
+        /// http: the server's URL.
+        public var url: String?
+        /// stdio: its environment. Secret: apps get each key with an empty value (blank on save keeps the stored one).
+        public var env: [String: String]
+        /// http: request headers, e.g. Authorization. Secret, like `env`.
+        public var headers: [String: String]
+        public var enabled: Bool
+        /// Unattended project sessions may use its tools without asking.
+        public var autoAllow: Bool
+
+        public init(name: String, transport: McpTransport, command: String? = nil, args: [String] = [], url: String? = nil, env: [String: String] = [:], headers: [String: String] = [:], enabled: Bool, autoAllow: Bool) {
+            self.name = name
+            self.transport = transport
+            self.command = command
+            self.args = args
+            self.url = url
+            self.env = env
+            self.headers = headers
+            self.enabled = enabled
+            self.autoAllow = autoAllow
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            transport = try c.decode(McpTransport.self, forKey: .transport)
+            command = try c.decodeIfPresent(String.self, forKey: .command)
+            args = try c.decodeIfPresent([String].self, forKey: .args) ?? []
+            url = try c.decodeIfPresent(String.self, forKey: .url)
+            env = try c.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
+            headers = try c.decodeIfPresent([String: String].self, forKey: .headers) ?? [:]
+            enabled = try c.decode(Bool.self, forKey: .enabled)
+            autoAllow = try c.decode(Bool.self, forKey: .autoAllow)
+        }
+    }
+
     /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
     public struct PromptAdditions: Codable, Hashable, Sendable {
         public var planner: String
@@ -3830,8 +3914,10 @@ public enum Wire {
         public var task: TaskStart?
         public var unattended: Unattended?
         public var model: String?
+        /// The factory's enabled MCP connectors, secrets included.
+        public var connectors: [McpConnector]?
 
-        public init(id: String, agent: String, cwd: String, cols: UInt16, rows: UInt16, prompt: String? = nil, resume: Bool, taskId: String? = nil, worktree: WorktreeSpec? = nil, task: TaskStart? = nil, unattended: Unattended? = nil, model: String? = nil) {
+        public init(id: String, agent: String, cwd: String, cols: UInt16, rows: UInt16, prompt: String? = nil, resume: Bool, taskId: String? = nil, worktree: WorktreeSpec? = nil, task: TaskStart? = nil, unattended: Unattended? = nil, model: String? = nil, connectors: [McpConnector]? = nil) {
             self.id = id
             self.agent = agent
             self.cwd = cwd
@@ -3844,6 +3930,7 @@ public enum Wire {
             self.task = task
             self.unattended = unattended
             self.model = model
+            self.connectors = connectors
         }
     }
 
@@ -4463,6 +4550,20 @@ public enum Wire {
         }
     }
 
+    /// Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.
+    public struct ClientMessageConnectorsSave: Codable, Hashable, Sendable {
+        public var connectors: [McpConnector]
+
+        public init(connectors: [McpConnector] = []) {
+            self.connectors = connectors
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            connectors = try c.decodeIfPresent([McpConnector].self, forKey: .connectors) ?? []
+        }
+    }
+
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
         public var name: String
@@ -4900,6 +5001,7 @@ public enum Wire {
         case promptsSave(ClientMessagePromptsSave)
         case adminsGrant(ClientMessageAdminsGrant)
         case adminsRevoke(ClientMessageAdminsRevoke)
+        case connectorsSave(ClientMessageConnectorsSave)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
@@ -4968,6 +5070,7 @@ public enum Wire {
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
             case "admins.grant": self = .adminsGrant(try ClientMessageAdminsGrant(from: decoder))
             case "admins.revoke": self = .adminsRevoke(try ClientMessageAdminsRevoke(from: decoder))
+            case "connectors.save": self = .connectorsSave(try ClientMessageConnectorsSave(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
@@ -5088,6 +5191,9 @@ public enum Wire {
             case .adminsRevoke(let body):
                 try c.encode("admins.revoke", forKey: .type)
                 try body.encode(to: encoder)
+            case .connectorsSave(let body):
+                try c.encode("connectors.save", forKey: .type)
+                try body.encode(to: encoder)
             case .reposRefresh:
                 try c.encode("repos.refresh", forKey: .type)
             case .reposAdd(let body):
@@ -5205,6 +5311,8 @@ public enum Wire {
         public var acceptances: [RiskAcceptance]
         /// The org's prompt additions. None: an older server.
         public var prompts: PromptAdditions?
+        /// The factory's MCP connectors, secret values blank. None: an older server.
+        public var connectors: [McpConnector]?
         public var online: [Presence]
         public var notes: [Note]
         public var follows: [GoalFollow]
@@ -5232,7 +5340,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -5243,6 +5351,7 @@ public enum Wire {
             self.policy = policy
             self.acceptances = acceptances
             self.prompts = prompts
+            self.connectors = connectors
             self.online = online
             self.notes = notes
             self.follows = follows
@@ -5273,6 +5382,7 @@ public enum Wire {
             policy = try c.decode(RiskPolicy.self, forKey: .policy)
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             prompts = try c.decodeIfPresent(PromptAdditions.self, forKey: .prompts)
+            connectors = try c.decodeIfPresent([McpConnector].self, forKey: .connectors)
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
@@ -5516,6 +5626,20 @@ public enum Wire {
         }
     }
 
+    /// Secret values blank.
+    public struct ServerToClientConnectorsUpdated: Codable, Hashable, Sendable {
+        public var connectors: [McpConnector]
+
+        public init(connectors: [McpConnector] = []) {
+            self.connectors = connectors
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            connectors = try c.decodeIfPresent([McpConnector].self, forKey: .connectors) ?? []
+        }
+    }
+
     /// Something worth a passing line in the app.
     public struct ServerToClientToast: Codable, Hashable, Sendable {
         public var text: String
@@ -5579,6 +5703,7 @@ public enum Wire {
         case reposUpdated(ServerToClientReposUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
+        case connectorsUpdated(ServerToClientConnectorsUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
@@ -5612,6 +5737,7 @@ public enum Wire {
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
+            case "connectors.updated": self = .connectorsUpdated(try ServerToClientConnectorsUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
@@ -5685,6 +5811,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .runnerReleased(let body):
                 try c.encode("runner.released", forKey: .type)
+                try body.encode(to: encoder)
+            case .connectorsUpdated(let body):
+                try c.encode("connectors.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .toast(let body):
                 try c.encode("toast", forKey: .type)
