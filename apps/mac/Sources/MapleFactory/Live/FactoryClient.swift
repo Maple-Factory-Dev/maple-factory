@@ -1173,15 +1173,7 @@ extension FactoryClient {
     }
 
     /// Compares release numbers only ("0.2.0" < "0.10.1"); a prerelease counts as its release.
-    static func version(_ a: String, isOlderThan b: String) -> Bool {
-        let parts = { (v: String) in v.split(separator: "-")[0].split(separator: ".").map { Int($0) ?? 0 } }
-        let (x, y) = (parts(a), parts(b))
-        for i in 0..<max(x.count, y.count) {
-            let (p, q) = (i < x.count ? x[i] : 0, i < y.count ? y[i] : 0)
-            if p != q { return p < q }
-        }
-        return false
-    }
+    static func version(_ a: String, isOlderThan b: String) -> Bool { FeedState.version(a, isOlderThan: b) }
 
     /// The releases after `version` up to `through` (the latest, by default), newest first: what an
     /// update from `version` brings. Every release up to `through` when `version` is nil.
