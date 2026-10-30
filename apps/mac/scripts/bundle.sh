@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds Maple Factory.app from the Swift package: the binary, its resource bundles, the icon, an
 # Info.plist that registers maplefactory:// (task links from the factory's /t/<id> pages open the app),
-# and in Contents/Helpers the runner and tmux, universal, which "Add this Mac" installs.
+# and in Contents/Helpers the runner and tmux, which "Add this Mac" installs. Apple silicon only.
 #   apps/mac/scripts/bundle.sh [debug|release]      → apps/mac/build/Maple Factory.app
 # Signs ad hoc unless SIGN_IDENTITY names a Developer ID ("Developer ID Application: …"). The version
 # is version.json's (scripts/release.mjs bumps it); Sparkle checks UPDATES_URL/appcast.xml for newer ones.
@@ -29,14 +29,12 @@ mkdir -p "$app/Contents/Frameworks"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/MapleFactory"
 
-# The runner for both architectures, and a tmux that needs nothing from Homebrew.
+# The runner (Apple silicon, like the app), and a tmux that needs nothing from Homebrew.
 mkdir -p "$app/Contents/Helpers"
-for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  rustup target list --installed | grep -qx "$target" || rustup target add "$target"
-  (cd "$root/runner" && cargo build --release --target "$target" --quiet)
-done
-lipo -create -output "$app/Contents/Helpers/maple-runner" \
-  "$root/runner/target/aarch64-apple-darwin/release/maple-runner" "$root/runner/target/x86_64-apple-darwin/release/maple-runner"
+target=aarch64-apple-darwin
+rustup target list --installed | grep -qx "$target" || rustup target add "$target"
+(cd "$root/runner" && cargo build --release --target "$target" --quiet)
+cp "$root/runner/target/$target/release/maple-runner" "$app/Contents/Helpers/maple-runner"
 cp "$("$here/scripts/build-tmux.sh")" "$app/Contents/Helpers/tmux"
 
 # The icon: every size iconutil wants, from the 1254px source.
