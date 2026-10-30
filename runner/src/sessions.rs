@@ -221,6 +221,7 @@ impl Sessions {
         cwd: &str,
         model: Option<&str>,
         unattended: Option<&agents::Unattended>,
+        connectors: &[wire::McpConnector],
         images: &[String],
         prompt: Option<&str>,
         resume: bool,
@@ -282,7 +283,18 @@ impl Sessions {
             args.extend(["-e".into(), format!("{}={}", agents::PROMPT_FILE_ENV, file.display())]);
         }
         args.extend(["-P".into(), "-F".into(), "#{pane_pid}".into(), "--".into()]);
-        let hook_args = if agent.hooks { self.hooks.agent_args(agent_name) } else { vec![] };
+        let mut hook_args = vec![];
+        if agent.hooks {
+            hook_args = self.hooks.agent_args(agent_name);
+            // The factory's connectors: Claude Code reads them (secrets and all) from a file only this user can read.
+            let config = match agent_name {
+                "claude" => self.hooks.write_session_mcp_config(id, connectors).inspect_err(|_| {
+                    self.ports.lock().unwrap().remove(&id);
+                })?,
+                _ => None,
+            };
+            hook_args.extend(agents::connector_args(agent_name, config.as_deref(), connectors));
+        }
         let argv = if long.is_some() {
             agents::argv_with_prompt_file(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images)
         } else {
@@ -301,6 +313,7 @@ impl Sessions {
             Err(e) => {
                 self.ports.lock().unwrap().remove(&id);
                 remove_secrets_file(id);
+                self.hooks.remove_session_mcp_config(id);
                 return Err(e);
             }
         };
@@ -588,6 +601,7 @@ impl Sessions {
         self.requested.lock().unwrap().remove(&id);
         // Its shell removes its secrets file as it starts; this is for one that never did.
         remove_secrets_file(id);
+        self.hooks.remove_session_mcp_config(id);
         let (cause, detail) = ends::classify(seen);
         let end = SessionEnd {
             id,
@@ -739,6 +753,38 @@ mod tests {
         assert_eq!(parse_ports("52411"), None);
         assert_eq!(parse_ports("a b"), None);
     }
+
+    #[tokio::test]
+    async fn a_sessions_connectors_file_goes_when_it_ends() {
+        // Short: the tmux socket path must stay under 104 bytes.
+        let dir = PathBuf::from(format!("/tmp/mf-test-{}", &Uuid::new_v4().to_string()[..8]));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let tmux = Tmux::new("t", &dir).unwrap();
+        let hooks = Hooks::prepare(&dir, "t").unwrap();
+        let sessions = Sessions::start(tx, tmux, hooks).await.unwrap();
+        let id = Uuid::new_v4();
+        let jira = wire::McpConnector {
+            name: "jira".into(),
+            transport: wire::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec![],
+            url: None,
+            env: [("JIRA_API_TOKEN".to_string(), "secret".to_string())].into(),
+            headers: Default::default(),
+            enabled: true,
+            auto_allow: false,
+        };
+        // As `open` writes it for a Claude Code session; a plain shell stands in for the agent.
+        let file = sessions.hooks.write_session_mcp_config(id, std::slice::from_ref(&jira)).unwrap().unwrap();
+        sessions.open(id, "shell", dir.to_str().unwrap(), None, None, &[jira], &[], None, false, 80, 24, None).await.unwrap();
+        assert!(file.exists() && sessions.is_live(id));
+        sessions.kill(id).await;
+        assert!(!sessions.is_live(id));
+        assert!(!file.exists(), "the session's connectors file is removed when it ends");
+        let _ = sessions.tmux.run(&["kill-server"]).await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -765,4 +811,5 @@ mod paste_tests {
         agent.feed(b"\x1b[2J\x1b[H hello");
         assert!(agent.on);
     }
+
 }

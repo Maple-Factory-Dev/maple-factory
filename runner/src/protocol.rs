@@ -434,6 +434,9 @@ pub enum Inbound {
         /// Reopen: continue the agent's last conversation in `cwd` (Claude Code and Codex; others ignore it).
         #[serde(default)]
         resume: bool,
+        /// The factory's MCP connectors, secrets included (Settings → Connectors), beside `maple`.
+        #[serde(default)]
+        connectors: Option<Vec<crate::wire::McpConnector>>,
     },
     #[serde(rename = "session.resize")]
     SessionResize { id: Uuid, cols: u16, rows: u16 },

@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::wire::{McpConnector, McpTransport};
+
 /// How a first prompt reaches the agent.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PromptMode {
@@ -193,6 +195,54 @@ pub struct Unattended {
     /// The project's setup, test, lint and dev commands; "project" allows each one's program.
     #[serde(default)]
     pub commands: Vec<String>,
+    /// The factory's connectors marked "Allow its tools without asking": "project" allows their
+    /// `mcp__<name>` tools. Set by the runner from `session.open`'s connectors, not the hub's `unattended`.
+    #[serde(skip)]
+    pub allow_mcp: Vec<String>,
+}
+
+impl Unattended {
+    pub fn with_connectors(mut self, connectors: &[McpConnector]) -> Self {
+        self.allow_mcp = connectors.iter().filter(|c| c.auto_allow).map(|c| c.name.clone()).collect();
+        self
+    }
+}
+
+/// The factory's MCP connectors for a session, beside the runner's own `maple` server (`Hooks::agent_args`):
+/// - Claude Code: a second `--mcp-config=<file>`, the session's own file (`Hooks::write_session_mcp_config`).
+/// - Codex: `-c mcp_servers.<name>.…` overrides, TOML values (JSON's string quoting is valid TOML):
+///   `command`, `args` and `env` for stdio, `url` and `http_headers` for http.
+pub fn connector_args(agent: &str, session_config: Option<&std::path::Path>, connectors: &[McpConnector]) -> Vec<String> {
+    match agent {
+        "claude" => session_config.map(|p| format!("--mcp-config={}", p.to_string_lossy())).into_iter().collect(),
+        "codex" => {
+            let toml = |v: &str| serde_json::Value::String(v.into()).to_string();
+            let table = |m: &std::collections::BTreeMap<String, String>| {
+                format!("{{{}}}", m.iter().map(|(k, v)| format!("{}={}", toml(k), toml(v))).collect::<Vec<_>>().join(","))
+            };
+            let mut args = vec![];
+            for c in connectors {
+                let key = |field: &str| format!("mcp_servers.{}.{field}", c.name);
+                let set = match c.transport {
+                    McpTransport::Stdio => {
+                        let Some(command) = &c.command else { continue };
+                        let list = format!("[{}]", c.args.iter().map(|a| toml(a)).collect::<Vec<_>>().join(","));
+                        vec![format!("{}={}", key("command"), toml(command)), format!("{}={list}", key("args")), format!("{}={}", key("env"), table(&c.env))]
+                    }
+                    McpTransport::Http => {
+                        let Some(url) = &c.url else { continue };
+                        vec![format!("{}={}", key("url"), toml(url)), format!("{}={}", key("http_headers"), table(&c.headers))]
+                    }
+                    McpTransport::Other => continue,
+                };
+                for s in set {
+                    args.extend(["-c".to_string(), s]);
+                }
+            }
+            args
+        }
+        _ => vec![],
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -232,7 +282,10 @@ pub fn permission_args(agent: &str, unattended: &Unattended) -> Vec<String> {
             // The runner's own `agents` MCP server too: planners write their card with it and builders
             // prove with it, and the hub already decides what each session may do there (Off/Read/Full,
             // a note or project grant), so asking here would only stop the session at night.
+            // And the factory's connectors an admin marked "Allow its tools without asking"; the rest are
+            // left to the auto classifier.
             let rules = std::iter::once("mcp__agents".to_string())
+                .chain(unattended.allow_mcp.iter().map(|name| format!("mcp__{name}")))
                 .chain(programs(&unattended.commands).iter().map(|p| format!("Bash({p}:*)")))
                 .collect::<Vec<_>>()
                 .join(",");
@@ -383,7 +436,7 @@ mod tests {
     }
 
     fn unattended(mode: UnattendedMode, commands: &[&str]) -> Unattended {
-        Unattended { mode, commands: commands.iter().map(|c| c.to_string()).collect() }
+        Unattended { mode, commands: commands.iter().map(|c| c.to_string()).collect(), allow_mcp: vec![] }
     }
 
     #[test]
@@ -505,6 +558,69 @@ mod tests {
         assert_eq!(argv("/bin/zsh", &get("shell"), false, vec![], None, Some(&skip), &[], None), ["/bin/zsh", "-l"]);
         let aider = Agent { id: "aider".into(), label: "Aider".into(), command: "aider".into(), args: vec![], prompt: PromptMode::None, hooks: false };
         assert_eq!(argv("/bin/sh", &aider, false, vec![], None, Some(&skip), &[], None)[5..], ["aider"]);
+    }
+
+    fn connector(name: &str, transport: McpTransport, auto_allow: bool) -> McpConnector {
+        let stdio = transport == McpTransport::Stdio;
+        McpConnector {
+            name: name.into(),
+            transport,
+            command: stdio.then(|| "npx".into()),
+            args: if stdio { vec!["-y".into(), "mcp-atlassian".into()] } else { vec![] },
+            url: (!stdio).then(|| "https://mcp.example.com/mcp".into()),
+            env: if stdio { [("JIRA_API_TOKEN".to_string(), "t\"ok\"en".to_string())].into() } else { Default::default() },
+            headers: if stdio { Default::default() } else { [("Authorization".to_string(), "Bearer abc".to_string())].into() },
+            enabled: true,
+            auto_allow,
+        }
+    }
+
+    #[test]
+    fn connectors_reach_claude_as_a_second_mcp_config_and_codex_as_overrides() {
+        let connectors = [connector("jira", McpTransport::Stdio, true), connector("docs", McpTransport::Http, false)];
+        let file = std::path::Path::new("/cfg/mcp-session-1.json");
+        // Claude Code: the runner's maple config, then the session's own file, each its own `=` argument.
+        let mut hooks = vec!["--mcp-config=/cfg/mcp-x.json".to_string()];
+        hooks.extend(connector_args("claude", Some(file), &connectors));
+        let claude = argv("/bin/zsh", &get("claude"), false, hooks, None, None, &[], Some("go"));
+        assert_eq!(claude[5..], ["claude", "--mcp-config=/cfg/mcp-x.json", "--mcp-config=/cfg/mcp-session-1.json", "go"]);
+        assert_eq!(claude.iter().filter(|a| a.starts_with("--mcp-config=")).count(), 2);
+        // No connectors, no file: nothing more.
+        assert!(connector_args("claude", None, &[]).is_empty());
+        // Codex: -c overrides per connector, TOML-quoted.
+        assert_eq!(
+            connector_args("codex", None, &connectors),
+            [
+                "-c",
+                "mcp_servers.jira.command=\"npx\"",
+                "-c",
+                "mcp_servers.jira.args=[\"-y\",\"mcp-atlassian\"]",
+                "-c",
+                "mcp_servers.jira.env={\"JIRA_API_TOKEN\"=\"t\\\"ok\\\"en\"}",
+                "-c",
+                "mcp_servers.docs.url=\"https://mcp.example.com/mcp\"",
+                "-c",
+                "mcp_servers.docs.http_headers={\"Authorization\"=\"Bearer abc\"}",
+            ]
+        );
+        // Other agents get nothing.
+        assert!(connector_args("aider", Some(file), &connectors).is_empty());
+    }
+
+    #[test]
+    fn only_auto_allowed_connectors_are_in_allowed_tools() {
+        let connectors = [connector("jira", McpTransport::Stdio, true), connector("docs", McpTransport::Http, false)];
+        let project = unattended(UnattendedMode::Project, &["npm test"]).with_connectors(&connectors);
+        let args = permission_args("claude", &project);
+        assert_eq!(args[0], "--allowedTools=mcp__agents,mcp__jira,Bash(git:*),Bash(npm:*)");
+        assert!(!args[0].contains("mcp__docs"));
+        // None auto-allowed: none listed.
+        let none = unattended(UnattendedMode::Project, &[]).with_connectors(&[connector("docs", McpTransport::Http, false)]);
+        assert_eq!(permission_args("claude", &none)[0], "--allowedTools=mcp__agents,Bash(git:*)");
+        // "ask" and "skip" don't list tools at all.
+        let skip = unattended(UnattendedMode::Skip, &[]).with_connectors(&connectors);
+        assert_eq!(permission_args("claude", &skip), ["--permission-mode", "bypassPermissions"]);
+        assert!(permission_args("claude", &unattended(UnattendedMode::Ask, &[]).with_connectors(&connectors)).is_empty());
     }
 
     #[test]

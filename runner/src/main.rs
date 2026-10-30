@@ -735,7 +735,9 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
         Err(e) => return warn!("bad message from hub: {e}"),
     };
     match msg {
-        Inbound::SessionOpen { id, agent, cwd, prompt, cols, rows, worktree, task, model, unattended, images, resume } => {
+        Inbound::SessionOpen { id, agent, cwd, prompt, cols, rows, worktree, task, model, unattended, images, resume, connectors } => {
+            let connectors = connectors.unwrap_or_default();
+            let unattended = unattended.map(|u| u.with_connectors(&connectors));
             let sessions = sessions.clone();
             tokio::spawn(async move {
                 let opened = async {
@@ -754,7 +756,7 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
                         .as_ref()
                         .zip(worktree.as_ref())
                         .map(|(t, w)| proof::TaskTag { id: t.id.clone(), branch: format!("{}{}", worktrees::BRANCH_PREFIX, w.name) });
-                    sessions.open(id, &agent, &cwd, model.as_deref(), unattended.as_ref(), &images, prompt.as_deref(), resume, cols, rows, tag, secrets.as_ref().map(|(r, e)| (r.as_str(), e.as_slice()))).await
+                    sessions.open(id, &agent, &cwd, model.as_deref(), unattended.as_ref(), &connectors, &images, prompt.as_deref(), resume, cols, rows, tag, secrets.as_ref().map(|(r, e)| (r.as_str(), e.as_slice()))).await
                 };
                 match opened.await {
                     Ok(session) => {
