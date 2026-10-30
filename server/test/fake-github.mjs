@@ -22,12 +22,15 @@
 //   GET  /users/:login                                   a personal account for each --user, otherwise an organization
 //   POST /login/oauth/access_token                       sign-in: code `as-<login>` is <login>'s user token
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
+//   POST /graphql                                        repository.pullRequest.reviewThreads, from /_threads
 //
 // and, for the test driver: GET /_log, POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
 // like a server webhooks can't reach), and POST /_deleteBranch { owner, repo, branch }, after which
 // GitHub won't reopen that branch's closed pull request, and POST /_moveOnMerge { owner, repo, branch }: once
-// that branch's pull request merges, someone pushes another commit to it.
+// that branch's pull request merges, someone pushes another commit to it, and POST /_threads { owner, repo,
+// number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT", resolved?, outdated?, comments: [{ author, body }] }] },
+// the review threads people left on that pull request.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -61,6 +64,7 @@ const tokens = new Map(); // token → { repositories, permissions }
 const pulls = [];
 const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite }]
 const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
+const threads = new Map(); // `${owner}/${repo}#${number}` → [{ path, line, … }]
 let lastNumber = 0;
 let lastRun = 0;
 
@@ -144,6 +148,24 @@ createServer((req, res) => {
     if (req.method === "POST" && url.pathname === "/_moveOnMerge") {
       moveOnMerge.add(`${body.owner}/${body.repo}:${body.branch}`);
       return send(res, 200, {});
+    }
+    if (req.method === "POST" && url.pathname === "/_threads") {
+      threads.set(`${body.owner}/${body.repo}#${body.number}`, body.threads);
+      return send(res, 204);
+    }
+    if (req.method === "POST" && url.pathname === "/graphql") {
+      const { owner, repo, number } = body.variables ?? {};
+      if (!/reviewThreads/.test(body.query ?? "")) return send(res, 200, { errors: [{ message: "The fake only answers reviewThreads." }] });
+      const g = grant(req, repo, "pull_requests", "read");
+      if (g) return deny(g);
+      const pull = pulls.find((p) => p.owner === owner && p.repo === repo && p.number === number);
+      if (!pull) return send(res, 200, { data: { repository: { pullRequest: null } }, errors: [{ message: `Could not resolve to a PullRequest with the number of ${number}.` }] });
+      const nodes = (threads.get(`${owner}/${repo}#${number}`) ?? []).map((t, i) => ({
+        id: `PRRT_${number}_${i}`, path: t.path, line: t.line ?? null, startLine: t.startLine ?? null, diffSide: t.side ?? "RIGHT",
+        isResolved: Boolean(t.resolved), isOutdated: Boolean(t.outdated),
+        comments: { nodes: t.comments.map((c) => ({ author: { login: c.author }, body: c.body, createdAt: c.at ?? new Date().toISOString() })) },
+      }));
+      return send(res, 200, { data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } });
     }
     if (req.method === "POST" && url.pathname === "/_checks") {
       const list = checkRunsFor(body.owner, body.repo, body.sha);

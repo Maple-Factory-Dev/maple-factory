@@ -215,6 +215,13 @@ export class OrgHub extends DurableObject<Env> {
         const events = this.store.statEvents(summary.since).filter((e) => !summary.goal || e.goal === summary.goal);
         return Response.json({ ...summary, events });
       }
+      case "/threads": {
+        try {
+          return Response.json(await this.engine.threads(url.searchParams.get("task") ?? ""));
+        } catch (e) {
+          return new Response(e instanceof Error ? e.message : String(e), { status: 502 });
+        }
+      }
       case "/diff": {
         const patch = this.store.get(`patch:${url.searchParams.get("task")}`);
         return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });

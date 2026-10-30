@@ -7,7 +7,7 @@
 
 import type { Env } from "../env.ts";
 import type {
-  ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
+  ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -22,7 +22,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
-import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
+import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -1257,6 +1257,15 @@ export class Engine {
     if (!priv.gh || !task.pr?.head || task.pr.state !== "open" || task.state === "merged" || task.state === "cancelled") return false;
     if (task.pr.checks.some((c) => c.status === "queued" || c.status === "running")) return true;
     return task.pr.checks.length === 0 && now() - (priv.prOpenedAt ?? 0) < CI_APPEAR_MS;
+  }
+
+  /** The review threads on a task's GitHub pull request; none for a local repo or a task without one. */
+  async threads(id: string): Promise<ReviewThread[]> {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr || !gh) return [];
+    return reviewThreads(app, gh.owner, gh.repo, task.pr.number);
   }
 
   /** Reads CI again for every pull request still waiting on it; the hub's alarm calls this. */

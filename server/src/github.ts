@@ -8,7 +8,7 @@
 // needs. GITHUB_API_URL can point all of it at a fake GitHub for tests; it's only honored on localhost.
 
 import type { Env } from "./env.ts";
-import type { OrgRepo } from "./wire.ts";
+import type { OrgRepo, ReviewThread } from "./wire.ts";
 
 export const API = "https://api.github.com";
 const USER_AGENT = "maple-factory";
@@ -252,6 +252,62 @@ export async function reopenPullRequest(app: GitHubApp, owner: string, repo: str
   const res = await call(app, "PATCH", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth, { state: "open" });
   if (!res.ok) throw await failure(res, `reopen pull request #${number}`);
   await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/issues/${number}/comments`, auth, { body: comment });
+}
+
+/** Permission to read a pull request's review threads. */
+const READ_PULLS = { pull_requests: "read" } as const;
+
+const THREADS_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id path line startLine diffSide isResolved isOutdated
+          comments(first: 100) { nodes { author { login } body createdAt } }
+        }
+      }
+    }
+  }
+}`;
+
+interface ThreadNode {
+  id: string;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  diffSide: "LEFT" | "RIGHT";
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: { nodes: { author: { login: string } | null; body: string; createdAt: string }[] };
+}
+
+/** A pull request's review threads (GraphQL: REST has no notion of a thread). */
+export async function reviewThreads(app: GitHubApp, owner: string, repo: string, number: number): Promise<ReviewThread[]> {
+  const auth = `token ${(await repoToken(app, owner, repo, READ_PULLS)).token}`;
+  const threads: ReviewThread[] = [];
+  for (let after: string | null = null; ; ) {
+    const res = await call(app, "POST", "/graphql", auth, { query: THREADS_QUERY, variables: { owner, repo, number, after } });
+    if (!res.ok) throw await failure(res, `read pull request #${number}'s review threads`);
+    const j = (await res.json()) as { data?: { repository?: { pullRequest?: { reviewThreads: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: ThreadNode[] } } | null } | null }; errors?: { message: string }[] };
+    const page = j.data?.repository?.pullRequest?.reviewThreads;
+    if (!page) throw new GitHubError("api", `GitHub didn't return pull request #${number}'s review threads${j.errors?.length ? `: ${j.errors.map((e) => e.message).join("; ")}` : ""}.`);
+    for (const t of page.nodes) {
+      threads.push({
+        id: t.id,
+        path: t.path,
+        line: t.line ?? null,
+        startLine: t.startLine ?? null,
+        side: t.diffSide === "LEFT" ? "old" : "new",
+        resolved: t.isResolved,
+        outdated: t.isOutdated,
+        comments: t.comments.nodes.map((c) => ({ author: c.author?.login ?? "ghost", body: c.body, at: Date.parse(c.createdAt) || 0 })),
+      });
+    }
+    if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
+    after = page.pageInfo.endCursor;
+  }
+  return threads;
 }
 
 // ---- branches ----
