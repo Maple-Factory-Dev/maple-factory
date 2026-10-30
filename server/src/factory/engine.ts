@@ -823,14 +823,20 @@ export class Engine {
       }
       case "task.mockupChange": {
         const mockup = task.mockups.find((m) => m.id === msg.mockup) ?? fail("That mockup isn't there any more.");
+        // Only while the plan is open: past it, nothing would deliver the change to anyone.
+        if (task.state !== "awaitingApproval" && task.state !== "planning") fail("You can ask for a mockup change while it's being planned or waiting for approval.");
+        const text = msg.text.trim() || fail("Say what to change.");
         mockup.status = "changesRequested";
-        task.changes.push({ id: `C${task.changes.length + 1}`, author: who, text: msg.text, at: now(), anchor: `Mockup: ${mockup.title}`, status: "queued", timing: null });
+        const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: `Mockup: ${mockup.title}`, status: "queued", timing: null };
+        task.changes.push(change);
         this.event(task, who, `asked for a change to the "${mockup.title}" mockup`);
         if (task.state === "awaitingApproval") {
           task.approvals = [];
           this.save(task);
           return this.startPlanning(task, who, true);
         }
+        // Planning: a running planner has it typed in; one yet to start reads it in its prompt.
+        if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) change.status = "applying";
         this.save(task);
         return;
       }

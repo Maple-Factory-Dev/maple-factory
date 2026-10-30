@@ -302,7 +302,7 @@ struct MockupsSection: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textMuted)
                 Spacer()
-                if task.isSteerable {
+                if task.canRequestMockupChange {
                     Text(commenting ? "Cancel" : "Request a change to this mockup")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.State.planning)
@@ -312,7 +312,7 @@ struct MockupsSection: View {
             }
             .padding(.top, 2)
 
-            if commenting {
+            if commenting, task.canRequestMockupChange {
                 HStack(spacing: 8) {
                     TextField("e.g. Put the countdown in the banner, not the button", text: $draft)
                         .textFieldStyle(.plain)

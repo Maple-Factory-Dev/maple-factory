@@ -6,6 +6,11 @@ extension FactoryTask {
         agent != nil && [.planning, .awaitingApproval, .backlog, .building, .reviewing].contains(state)
     }
 
+    /// A mockup change is taken only while the plan is open, the same rule as the server.
+    var canRequestMockupChange: Bool {
+        isSteerable && [.planning, .awaitingApproval].contains(state)
+    }
+
     var activeStep: Int? { plan.firstIndex { $0.progress == .active } }
 
     /// When a new change request will be picked up, phrased for this task's stage.

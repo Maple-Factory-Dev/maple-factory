@@ -1051,9 +1051,10 @@ function mockup(t, m) {
     mockupChange(t, m));
 }
 
-/** Ask for a change to a mockup, as the Mac app does: awaiting approval, the planner revises the plan. */
+/** Ask for a change to a mockup, as the Mac app does: only while the plan is open, the same rule as
+ *  the server. Awaiting approval, the planner revises the plan; planning, the planner takes it now. */
 function mockupChange(t, m) {
-  if (t.state === "merged" || t.state === "cancelled") return null;
+  if (t.state !== "awaitingApproval" && t.state !== "planning") return null;
   const key = `${t.id}:${m.id}`;
   if (!mockupAsking.has(key)) {
     return h("div", { style: "margin-top:8px" },
