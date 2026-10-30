@@ -59,13 +59,14 @@ struct FactoryTopBar: View {
             .padding(.trailing, 6)
 
             AppearanceButton()
-            iconButton("sidebar.right", active: state.showInspector && state.focusedTask == nil, enabled: state.taskPanelEnabled)
-                .onTapGesture { state.toggleTaskPanel() }
-                .help(state.taskPanelEnabled ? "Toggle task panel (⌥⌘I)" : "Task panel is off: turn on 'Peek in the side panel' in Settings")
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Task panel")
-                .accessibilityAddTraits(.isButton)
-                .disabled(!state.taskPanelEnabled)
+            if state.taskPanelEnabled {
+                iconButton("sidebar.right", active: state.showInspector && state.focusedTask == nil)
+                    .onTapGesture { state.toggleTaskPanel() }
+                    .help("Toggle task panel (⌥⌘I)")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Task panel")
+                    .accessibilityAddTraits(.isButton)
+            }
 
             HStack(spacing: 6) {
                 Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
@@ -196,14 +197,12 @@ struct FactoryTopBar: View {
         .padding(.leading, 4)
     }
 
-    /// A disabled button is drawn faint with no active fill.
-    private func iconButton(_ name: String, active: Bool = false, enabled: Bool = true) -> some View {
+    private func iconButton(_ name: String, active: Bool = false) -> some View {
         Image(systemName: name)
             .font(.system(size: 13))
-            .foregroundStyle(!enabled ? Theme.textFaint : active ? Theme.text : Theme.textMuted)
-            .opacity(enabled ? 1 : 0.6)
+            .foregroundStyle(active ? Theme.text : Theme.textMuted)
             .frame(width: 30, height: 30)
-            .background(RoundedRectangle(cornerRadius: 7).fill(active && enabled ? Theme.fill : .clear))
+            .background(RoundedRectangle(cornerRadius: 7).fill(active ? Theme.fill : .clear))
             .contentShape(Rectangle())
     }
 }
