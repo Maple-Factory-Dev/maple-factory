@@ -16,6 +16,7 @@ import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
+import { githubAppInfo } from "./github.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
@@ -405,6 +406,8 @@ export class OrgHub extends DurableObject<Env> {
           intake: this.intake.list(),
           secrets: this.secrets.list(),
           repos: this.store.repos(),
+          repoOwners: this.store.repoOwners(),
+          githubApp: githubAppInfo(this.env),
           scripts: this.store.repoScripts(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),

@@ -3,6 +3,8 @@
 import type { Goal, Task } from "../wire.ts";
 
 export const REPO = /^[\w.-]+\/[\w.-]+$/;
+/** A GitHub account's login: letters, digits and single hyphens, at most 39. */
+export const OWNER = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
 
 /** Every repo a goal's work spans, its `repo` first. */
 export function goalRepos(goal: Goal): string[] {

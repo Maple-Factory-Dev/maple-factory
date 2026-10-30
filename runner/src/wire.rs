@@ -974,6 +974,21 @@ pub struct OrgRepo {
     pub source: RepoSource,
 }
 
+/// The factory's GitHub App, for installing it on another GitHub account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAppInfo {
+    /// Its name in github.com/apps/<slug>.
+    pub slug: String,
+    /// User or Organization: the account that owns it (GITHUB_ORG). None: not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    /// Its advanced settings on GitHub, where it's made public so another account can install it.
+    pub settings_url: String,
+    /// Where an account installs it.
+    pub install_url: String,
+}
+
 /// A secret kept for one of the org's repos: who set it and when, never its value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2160,6 +2175,13 @@ pub enum ClientMessage {
     ReposRemove {
         name: String,
     },
+    /// Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.
+    #[serde(rename = "repos.owners.set")]
+    ReposOwnersSet {
+        /// GitHub logins.
+        #[serde(default)]
+        owners: Vec<String>,
+    },
     /// Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.
     #[serde(rename = "secrets.set")]
     SecretsSet {
@@ -2407,6 +2429,12 @@ pub enum ServerToClient {
         intake: Vec<IntakeRequest>,
         #[serde(default)]
         repos: Vec<OrgRepo>,
+        /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_owners: Option<Vec<String>>,
+        /// The factory's GitHub App. None: no app, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        github_app: Option<GitHubAppInfo>,
         /// Every repo's secrets, names and who changed them only.
         #[serde(default)]
         secrets: Vec<RepoSecret>,
@@ -2513,6 +2541,9 @@ pub enum ServerToClient {
         /// The repos that have worktree scripts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<Vec<RepoWorktreeScripts>>,
+        /// The approved other GitHub accounts. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_owners: Option<Vec<String>>,
     },
     /// Every repo's secrets again (names only), after one changed.
     #[serde(rename = "secrets.updated")]
