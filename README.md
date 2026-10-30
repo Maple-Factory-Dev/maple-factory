@@ -274,6 +274,21 @@ The app needs Contents, Pull requests, Checks and Actions (read & write) and Com
 webhook events Check run, Check suite, Status and Pull request. `server/test/e2e-github.mjs` runs the
 whole path against `server/test/fake-github.mjs`.
 
+### Repos in another GitHub org
+
+Repos come from the app's installations on the factory's own account (`GITHUB_ORG`) and on any other
+account an admin approves. To work in, say, `maple-dev-factory/maple-factory` from a factory on `afomera`:
+
+1. **Make the app public** (once, on GitHub): the app's settings › Advanced › Make public. GitHub only
+   installs a private app on the account that owns it. `/setup` makes new apps public; older ones were
+   private. Anyone can then install it, but their installations add nothing unless they're approved, and
+   sign-in still only lets in `GITHUB_ORG`'s members.
+2. **Approve the org** in the Mac app's Settings › Repositories › Other GitHub accounts (admins only).
+   That card links to the app's settings and its install page.
+3. **Install the app** on the org, picking its repos (you need to be an owner of that org).
+4. **Refresh** the repositories. The org's repos show up as GitHub App repos, ready for goals. Removing an
+   approved account takes its repos out on the next refresh.
+
 ## Repo secrets
 
 Admins keep per-repo secrets in Settings → Secrets. A task's sessions get their repo's values through a
