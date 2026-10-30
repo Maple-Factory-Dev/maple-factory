@@ -20,28 +20,40 @@ export const STALE_MS = 30 * 60_000;
 export const MAX_SCRIPT = 4096;
 
 /** The script commands, in the order the runner uses them. */
-export const SCRIPT_COMMANDS = ["create", "setup", "teardown", "archive"] as const;
+export const SCRIPT_COMMANDS = ["create", "preflight", "setup", "teardown", "archive"] as const;
+
+/** The most files preflightWatch may name. */
+export const MAX_WATCH = 20;
 
 /** The MAPLE_* variables every worktree script gets, and what each holds. */
 export const SCRIPT_VARIABLES: Record<string, string> = {
   MAPLE_REPO: "owner/name",
-  MAPLE_REPO_ROOT: "the repo's main checkout (where the script runs)",
+  MAPLE_REPO_ROOT: "the repo's main checkout (where the script runs, except preflight)",
   MAPLE_WORKTREE: "the task's worktree folder",
   MAPLE_BRANCH: "the task's branch, agent/<task>",
-  MAPLE_BASE: "the branch it starts from (create and setup)",
+  MAPLE_BASE: "the branch it starts from (create, preflight and setup)",
   MAPLE_TASK_ID: "the task, like MF-74",
-  MAPLE_PHASE: "create, setup, teardown or archive",
+  MAPLE_PHASE: "create, preflight, setup, teardown or archive",
 };
 
 const MAX_NOTES = 8;
 const NOTE_CHARS = 300;
 
-/** What's wrong with a repo's worktree scripts, or none: each command at most 4 KB, the timeout 1–3600 seconds. */
+/** preflightWatch's paths: one per line, trimmed, blank lines dropped. */
+function watchPaths(s: WorktreeScripts): string[] {
+  return typeof s.preflightWatch === "string" ? s.preflightWatch.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+}
+
+/** What's wrong with a repo's worktree scripts, or none: each command at most 4 KB, at most 20 repo-relative watch paths, the timeout 1–3600 seconds. */
 export function scriptsProblem(s: WorktreeScripts): string | null {
   for (const f of SCRIPT_COMMANDS) {
     const command = typeof s[f] === "string" ? s[f]!.trim() : "";
     if (new TextEncoder().encode(command).length > MAX_SCRIPT) return `The ${f} script is over 4 KB; put it in a file in the repo and run that.`;
   }
+  const watch = watchPaths(s);
+  if (watch.length > MAX_WATCH) return `Preflight watches at most ${MAX_WATCH} files.`;
+  const outside = watch.find((p) => p.startsWith("/") || p.startsWith("~") || p.split(/[\\/]/).includes(".."));
+  if (outside) return `Preflight's watched file ${outside} isn't inside the repo; use a path relative to its root.`;
   if (s.timeoutSecs != null && (!Number.isSafeInteger(s.timeoutSecs) || s.timeoutSecs < 1 || s.timeoutSecs > 3600)) return "A worktree script's timeout is 1–3600 seconds.";
   return null;
 }
@@ -53,8 +65,10 @@ export function tidyScripts(s: WorktreeScripts): WorktreeScripts | null {
     const command = typeof s[f] === "string" ? s[f]!.trim() : "";
     if (command) out[f] = command;
   }
+  const watch = watchPaths(s);
+  if (watch.length) out.preflightWatch = watch.join("\n");
   if (s.timeoutSecs != null) out.timeoutSecs = s.timeoutSecs;
-  return out.create || out.setup || out.teardown || out.archive ? out : null;
+  return SCRIPT_COMMANDS.some((f) => out[f]) ? out : null;
 }
 
 /** The agent's suggestion from its reply, or why it can't be used. */
@@ -64,6 +78,9 @@ export function parseSetup(output: string): { suggestion: RepoSetupSuggestion } 
   const rawScripts = reply.scripts && typeof reply.scripts === "object" ? (reply.scripts as Record<string, unknown>) : {};
   const scripts: WorktreeScripts = {};
   for (const f of SCRIPT_COMMANDS) if (typeof rawScripts[f] === "string") scripts[f] = rawScripts[f] as string;
+  const watch = rawScripts.preflightWatch;
+  if (typeof watch === "string") scripts.preflightWatch = watch;
+  else if (Array.isArray(watch)) scripts.preflightWatch = watch.filter((w) => typeof w === "string").join("\n");
   const timeout = rawScripts.timeoutSecs ?? rawScripts.timeout;
   if (timeout != null) scripts.timeoutSecs = typeof timeout === "number" ? timeout : Number.NaN;
   const problem = scriptsProblem(scripts);
@@ -188,7 +205,9 @@ Then suggest:
 1. Worktree scripts, run by the runner with \`/bin/sh -c\` in the repo's main checkout, with these in the environment:
 ${vars}
    - create: only if a plain \`git worktree add\` isn't enough (it must leave a git worktree on $MAPLE_BRANCH at $MAPLE_WORKTREE). Usually leave it out.
-   - setup: makes a fresh worktree ready to work in: install dependencies, copy .env files from $MAPLE_REPO_ROOT, generate code, prepare a database. Run things in "$MAPLE_WORKTREE".
+   - preflight: machine-level setup that every worktree shares: install the language runtimes the repo pins (mise install, rbenv install, nvm install), \`brew bundle\`, start services it needs (databases, Redis). It runs in the new worktree before setup, the first time a machine uses the repo, and again when the command or a watched file changes; it should be safe to run again.
+   - preflightWatch: files, one per line, relative to the repo's root, that re-run preflight when they change. Leave it out to watch .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.
+   - setup: makes each fresh worktree ready to work in (per-worktree work, not machine-level): install dependencies, copy .env files from $MAPLE_REPO_ROOT, generate code, prepare a database. Run things in "$MAPLE_WORKTREE".
    - teardown: cleans up what setup made outside the worktree (databases, containers), if anything.
    - archive: only if the repo has its own way of removing worktrees. Usually leave it out.
    - timeoutSecs: how long each may run (1–3600), only if setup needs more than 600.
@@ -197,5 +216,5 @@ ${vars}
 3. Notes for the admin: 1–5 short lines on what you found and anything they should check.${now}
 
 Answer with only a JSON object:
-{"scripts": {"setup": "<command>", "teardown": "<command>"}, "prompts": {"planner": "<markdown>", "builder": "<markdown>", "reviewer": "<markdown>"}, "notes": ["<one line>"]}`;
+{"scripts": {"preflight": "<command>", "setup": "<command>", "teardown": "<command>"}, "prompts": {"planner": "<markdown>", "builder": "<markdown>", "reviewer": "<markdown>"}, "notes": ["<one line>"]}`;
 }
