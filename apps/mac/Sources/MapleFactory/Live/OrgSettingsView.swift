@@ -8,6 +8,8 @@ struct OrgSettingsView: View {
 
     /// The Settings window's size, here and headless.
     static let size = CGSize(width: 860, height: 620)
+    /// A demo script's `ui:settings-row:<pane>`, as a click on that sidebar row would.
+    static let demoPick = Notification.Name("OrgSettingsView.demoPick")
 
     enum Pane: String, CaseIterable {
         case general, account, appearance, repos, secrets, people, prompts, merging, runner, notifications, updates
@@ -104,6 +106,9 @@ struct OrgSettingsView: View {
         }
         .ignoresSafeArea()
         .background(HiddenTitleBar())
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPick)) { note in
+            if let pane = (note.object as? String).flatMap(Pane.init) { tab = pane.rawValue }
+        }
         .navigationTitle(current.title)
         .frame(width: Self.size.width, height: Self.size.height)
     }

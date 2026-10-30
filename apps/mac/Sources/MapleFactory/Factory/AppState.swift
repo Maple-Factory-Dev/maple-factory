@@ -2137,6 +2137,8 @@ final class AppState {
                 // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
                 case "settings-cog": NotificationCenter.default.post(name: SidebarSettings.demo, object: nil)
                 case "settings-pane": NotificationCenter.default.post(name: SidebarSettings.demo, object: parts.count > 2 ? parts[2] : nil)
+                // A row of the Settings window's own sidebar clicked (`ui:settings-row:general`).
+                case "settings-row": NotificationCenter.default.post(name: OrgSettingsView.demoPick, object: parts.count > 2 ? parts[2] : nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
