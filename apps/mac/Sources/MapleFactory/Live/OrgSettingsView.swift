@@ -544,6 +544,8 @@ struct RunnerSettings: View {
 /// and remove the factory's own; GitHub owners stay admins until GitHub says otherwise.
 struct FactoryAdminsCard: View {
     @Environment(FactoryClient.self) private var client
+    /// A demo script's `admin:grant:<login>` (or `admin:revoke:<login>`), as that row's button would.
+    static let demo = Notification.Name("FactoryAdminsCard.demo")
 
     var body: some View {
         SettingsCard {
@@ -561,6 +563,10 @@ struct FactoryAdminsCard: View {
             if !client.isAdmin {
                 Label("Only admins can change who's an admin.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard client.isAdmin, let login = note.userInfo?["login"] as? String else { return }
+            if note.userInfo?["action"] as? String == "revoke" { client.revokeAdmin(login) } else { client.grantAdmin(login) }
         }
     }
 
