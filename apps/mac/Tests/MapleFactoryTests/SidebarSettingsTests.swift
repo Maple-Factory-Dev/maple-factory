@@ -11,6 +11,11 @@ struct SidebarSettingsTests {
         #expect(SidebarSettings.panes(admin: false) == [.account, .runner, .notifications])
     }
 
+    @Test func memberMenuHasNoFactorySection() {
+        #expect(SidebarSettings.sections(admin: true).map(\.title) == ["Factory", "You"])
+        #expect(SidebarSettings.sections(admin: false).map(\.title) == ["You"])
+    }
+
     @Test func clickLandsAdminsOnAFactoryPane() {
         #expect(SidebarSettings.clickTab(current: "secrets", admin: true) == "secrets")
         #expect(SidebarSettings.clickTab(current: "runner", admin: true) == "repos")

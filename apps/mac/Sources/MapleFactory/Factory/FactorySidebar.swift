@@ -325,9 +325,20 @@ enum SidebarSettings {
     static let factoryPanes: [Pane] = [.repos, .secrets, .people, .prompts, .merging]
     static let personalPanes: [Pane] = [.account, .runner, .notifications]
 
-    static func panes(admin: Bool) -> [Pane] {
-        (admin ? factoryPanes : []) + personalPanes
+    /// A demo script's `ui:settings-cog` (a click) or `ui:settings-pane:<pane>` (a pick from the menu).
+    static let demo = Notification.Name("SidebarSettings.demo")
+
+    struct MenuSection: Equatable {
+        let title: String
+        let panes: [Pane]
     }
+
+    /// The cog's right-click menu.
+    static func sections(admin: Bool) -> [MenuSection] {
+        (admin ? [MenuSection(title: "Factory", panes: factoryPanes)] : []) + [MenuSection(title: "You", panes: personalPanes)]
+    }
+
+    static func panes(admin: Bool) -> [Pane] { sections(admin: admin).flatMap(\.panes) }
 
     /// The tab a plain click opens: admins land on their last factory pane (Repositories at first),
     /// everyone else on wherever they last were.
@@ -350,17 +361,21 @@ private struct OpensSettings: ViewModifier {
         content
             .onTapGesture { open(SidebarSettings.clickTab(current: settingsTab, admin: admin)) }
             .contextMenu {
-                if admin {
-                    Section("Factory") { buttons(SidebarSettings.factoryPanes) }
+                ForEach(SidebarSettings.sections(admin: admin), id: \.title) { section in
+                    Section(section.title) {
+                        ForEach(section.panes, id: \.self) { pane in
+                            Button { open(pane.rawValue) } label: { Label(pane.title, systemImage: pane.icon) }
+                        }
+                    }
                 }
-                Section("You") { buttons(SidebarSettings.personalPanes) }
             }
-    }
-
-    private func buttons(_ panes: [SidebarSettings.Pane]) -> some View {
-        ForEach(panes, id: \.self) { pane in
-            Button { open(pane.rawValue) } label: { Label(pane.title, systemImage: pane.icon) }
-        }
+            .onReceive(NotificationCenter.default.publisher(for: SidebarSettings.demo)) { note in
+                if let pane = (note.object as? String).flatMap(SidebarSettings.Pane.init), SidebarSettings.panes(admin: admin).contains(pane) {
+                    open(pane.rawValue)
+                } else {
+                    open(SidebarSettings.clickTab(current: settingsTab, admin: admin))
+                }
+            }
     }
 
     private func open(_ tab: String) {
