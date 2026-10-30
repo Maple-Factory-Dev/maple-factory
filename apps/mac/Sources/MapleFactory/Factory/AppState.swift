@@ -1763,7 +1763,9 @@ final class AppState {
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
     /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
-    /// `findings:back`: Statistics' Review findings view, as its clicks would.
+    /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:select:0` ticks a
+    /// shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
+    /// is Make a task from them.
     static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,

@@ -89,3 +89,8 @@ enum FindingsTask {
         return best
     }
 }
+
+extension Wire.StatsFindingRow {
+    /// Which finding this is, for picking it in the list: its task, round and text.
+    var pickKey: String { "\(task)#\(raisedIn)#\(text)" }
+}
