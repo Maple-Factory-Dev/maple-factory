@@ -240,6 +240,11 @@ struct ContentView: View {
             guard phase == .upToDate else { return }
             state.showToast(UpdatePhase.upToDateToast, icon: "checkmark.circle.fill", color: Theme.approve)
         }
+        // The factory's passing lines ("mac-mini is on the latest runner (0.44.0)."), keyed by when they came.
+        .onChange(of: client.toast?.at) {
+            guard let toast = client.toast else { return }
+            state.showToast(toast.text, icon: "info.circle")
+        }
         .onChange(of: client.notice) { _, notice in
             // A saving goal sheet shows its refusal inside, where it can be seen.
             guard let notice, !client.savingGoal else { return }
