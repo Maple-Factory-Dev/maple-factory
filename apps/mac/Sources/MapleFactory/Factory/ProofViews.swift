@@ -693,6 +693,9 @@ struct ProofLightboxView: View {
         .foregroundStyle(.white.opacity(0.85))
         .frame(height: Self.barHeight - 12)
         .padding(.horizontal, Self.padding)
+        // Clicks in the bar's gaps stay in the bar instead of reaching the backdrop.
+        .contentShape(Rectangle())
+        .onTapGesture {}
     }
 
     private var isVideo: Bool { if case .video = lightbox { true } else { false } }

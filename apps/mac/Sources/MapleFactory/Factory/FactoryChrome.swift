@@ -108,7 +108,8 @@ struct FactoryTopBar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
+            // The proof lightbox owns Esc while it's up.
+            .keyboardShortcut(state.lightbox == nil ? .cancelAction : nil)
             .help("Back (Esc)")
 
             Image(systemName: "chevron.right")
@@ -157,7 +158,7 @@ struct FactoryTopBar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
+            .keyboardShortcut(state.lightbox == nil ? .cancelAction : nil)
 
             Text("Composing in")
                 .font(.system(size: 13))
