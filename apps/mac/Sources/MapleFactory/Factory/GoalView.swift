@@ -730,7 +730,7 @@ struct TaskCard: View {
 
             if mergeButton {
                 // Busy from the click until the server reports it merged, not just until the request returns.
-                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: task.merging || state.isInFlight(task.id, .merge),
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isMerging(task),
                               busyTitle: "Merging…") {
                     state.merge(task.id)
                 }
@@ -793,7 +793,7 @@ struct TaskProgressFooter: View {
     var compact = false
 
     var body: some View {
-        if task.merging || state.isInFlight(task.id, .merge) {
+        if state.isMerging(task) {
             merging(FactoryTask.mergingLog)
         } else if task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt {
             TimelineView(.periodic(from: .now, by: 0.25)) { context in

@@ -1548,7 +1548,7 @@ final class AppState {
 
     /// An approval or merge sent to the factory that the task doesn't show yet.
     struct InFlight {
-        enum Kind { case approvePlan, approveChanges, merge }
+        enum Kind { case approvePlan, approveChanges, merge, holdMerge }
         let kind: Kind
         let startedAt: Date
     }
@@ -1575,7 +1575,16 @@ final class AppState {
         case .approvePlan: return task.approvals.contains { $0.id == me } || (task.state != .awaitingApproval && task.state != .backlog)
         case .approveChanges: return task.reviews.contains { $0.id == me }
         case .merge: return task.state == .merged || task.pr?.state == .merged
+        case .holdMerge: return task.mergeAt == nil
         }
+    }
+
+    /// The factory has its merge: it says Merging…, a merge was sent, or its auto-merge countdown ran out
+    /// (the server says Merging… a moment later). Merge, Hold and Merge now all lock until it lands.
+    func isMerging(_ task: FactoryTask, now: Date = .now) -> Bool {
+        if task.merging || autoMerging.contains(task.id) || isInFlight(task.id, .merge) { return true }
+        guard task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt else { return false }
+        return mergeAt <= now
     }
 
     /// Records `kind` as sent for the task; false when it's already in flight, so a second click sends nothing.
@@ -1980,7 +1989,7 @@ final class AppState {
     /// Stops the auto-merge counting down on a task; a person merges it instead.
     func holdMerge(_ id: String) {
         if let client, isLive {
-            client.send(.taskHoldMerge(.init(id: id)))
+            if beginInFlight(id, .holdMerge) { client.send(.taskHoldMerge(.init(id: id))) }
             return
         }
         withAnimation(.snappy(duration: 0.25)) {
