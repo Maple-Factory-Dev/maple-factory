@@ -155,6 +155,9 @@ impl Sessions {
                 Err(e) => warn!("could not reattach to {}: {e:#}", existing.name),
             }
         }
+        // Connector files of sessions that ended while the runner was down: their secrets go too.
+        let live: HashSet<Uuid> = sessions.inner.lock().unwrap().keys().copied().collect();
+        sessions.hooks.sweep_session_mcp_configs(&live);
         tokio::spawn(sessions.clone().watch_exits());
         Ok(sessions)
     }
@@ -290,6 +293,7 @@ impl Sessions {
             let config = match agent_name {
                 "claude" => self.hooks.write_session_mcp_config(id, connectors).inspect_err(|_| {
                     self.ports.lock().unwrap().remove(&id);
+                    remove_secrets_file(id);
                 })?,
                 _ => None,
             };
@@ -320,7 +324,14 @@ impl Sessions {
 
         let info =
             SessionInfo { id, agent: agent_name.to_string(), cwd: cwd.to_string(), pid: out.lines().next().and_then(|l| l.trim().parse().ok()), started_at };
-        self.adopt(info.clone(), task)?;
+        if let Err(e) = self.adopt(info.clone(), task) {
+            // Untracked, it would run with nobody to end it (or remove its files): stop it now.
+            let _ = self.tmux.run(&["kill-session", "-t", &name]).await;
+            self.ports.lock().unwrap().remove(&id);
+            remove_secrets_file(id);
+            self.hooks.remove_session_mcp_config(id);
+            return Err(e);
+        }
         Ok(info)
     }
 
@@ -777,7 +788,7 @@ mod tests {
         };
         // As `open` writes it for a Claude Code session; a plain shell stands in for the agent.
         let file = sessions.hooks.write_session_mcp_config(id, std::slice::from_ref(&jira)).unwrap().unwrap();
-        sessions.open(id, "shell", dir.to_str().unwrap(), None, None, &[jira], &[], None, false, 80, 24, None).await.unwrap();
+        sessions.open(id, "shell", dir.to_str().unwrap(), None, None, &[jira], &[], None, false, 80, 24, None, None).await.unwrap();
         assert!(file.exists() && sessions.is_live(id));
         sessions.kill(id).await;
         assert!(!sessions.is_live(id));

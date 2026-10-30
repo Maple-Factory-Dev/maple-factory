@@ -109,6 +109,22 @@ impl Hooks {
         let _ = std::fs::remove_file(self.session_mcp_config_path(id));
     }
 
+    /// Removes every session's connectors file but `live` ones'; returns how many went.
+    pub fn sweep_session_mcp_configs(&self, live: &std::collections::HashSet<Uuid>) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return 0 };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_prefix("mcp-session-")?.strip_suffix(".json")).and_then(|s| Uuid::parse_str(s).ok()) else {
+                continue;
+            };
+            if !live.contains(&id) && std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     /// Extra arguments that switch on status hooks and the `agents` MCP server for an agent.
     /// Neither replaces the user's own config: Claude Code merges `--settings` and adds
     /// `--mcp-config` servers to the user's (no `--strict-mcp-config`); Codex's `-c` overrides
@@ -551,6 +567,31 @@ mod tests {
         );
         hooks.remove_session_mcp_config(id);
         assert!(!path.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn startup_sweeps_connectors_files_of_sessions_that_are_gone() {
+        let dir = std::env::temp_dir().join(format!("maple-hooks-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hooks = Hooks::prepare(&dir, "test").unwrap();
+        let jira = McpConnector {
+            name: "jira".into(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec![],
+            url: None,
+            env: [("JIRA_API_TOKEN".to_string(), "secret".to_string())].into(),
+            headers: Default::default(),
+            enabled: true,
+            auto_allow: false,
+        };
+        let (live, gone) = (Uuid::new_v4(), Uuid::new_v4());
+        let kept = hooks.write_session_mcp_config(live, std::slice::from_ref(&jira)).unwrap().unwrap();
+        let stale = hooks.write_session_mcp_config(gone, std::slice::from_ref(&jira)).unwrap().unwrap();
+        assert_eq!(hooks.sweep_session_mcp_configs(&[live].into()), 1);
+        assert!(kept.exists() && !stale.exists());
+        assert!(hooks.mcp_config.exists(), "the runner's own maple config stays");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
