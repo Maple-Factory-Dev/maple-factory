@@ -729,4 +729,38 @@ struct ProofLightboxView: View {
         if !upscale { scale = min(scale, 1) }
         return CGSize(width: (media.width * scale).rounded(), height: (media.height * scale).rounded())
     }
+
+    /// The most a screenshot zooms past fitted, unless its own pixels are bigger still.
+    nonisolated static let maxZoom: CGFloat = 8
+    /// The stops − and + (and ⌘− / ⌘=) step through.
+    nonisolated static let zoomStops: [CGFloat] = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8]
+
+    /// A zoom kept between fitted (1×) and the cap: 8×, or the screenshot's own pixels if that's more.
+    nonisolated static func clampZoom(_ zoom: CGFloat, fitted: CGSize, pixels: CGSize) -> CGFloat {
+        let own = fitted.width > 0 ? pixels.width / fitted.width : 1
+        return min(max(zoom, 1), max(maxZoom, own))
+    }
+
+    /// A pan kept so a zoomed image's edges never come inside the room it's shown in; on an axis where
+    /// it's no bigger than the room, it stays centred.
+    nonisolated static func clampPan(_ offset: CGSize, content: CGSize, room: CGSize) -> CGSize {
+        let slack = CGSize(width: max(0, (content.width - room.width) / 2), height: max(0, (content.height - room.height) / 2))
+        return CGSize(width: min(max(offset.width, -slack.width), slack.width),
+                      height: min(max(offset.height, -slack.height), slack.height))
+    }
+
+    /// The pan after zooming from `old` to `new` about `anchor` (from the frame's centre), so the point
+    /// of the image under the cursor or the pinch stays under it.
+    nonisolated static func zoomAnchored(_ offset: CGSize, from old: CGFloat, to new: CGFloat, at anchor: CGPoint) -> CGSize {
+        guard old > 0 else { return offset }
+        let ratio = new / old
+        return CGSize(width: anchor.x - (anchor.x - offset.width) * ratio, height: anchor.y - (anchor.y - offset.height) * ratio)
+    }
+
+    /// The next stop up or down from `zoom`, within the cap.
+    nonisolated static func zoomStep(from zoom: CGFloat, up: Bool, cap: CGFloat) -> CGFloat {
+        let stops = zoomStops.filter { $0 < cap } + [cap]
+        let next = up ? stops.first { $0 > zoom + 0.001 } : stops.last { $0 < zoom - 0.001 }
+        return next ?? (up ? cap : 1)
+    }
 }
