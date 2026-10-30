@@ -1,7 +1,7 @@
 import Foundation
 
-struct DiffLine {
-    enum Kind { case context, added, removed }
+struct DiffLine: Equatable, Sendable {
+    enum Kind: Sendable { case context, added, removed }
 
     let kind: Kind
     let text: String
