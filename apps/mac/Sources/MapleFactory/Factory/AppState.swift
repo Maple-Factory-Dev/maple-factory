@@ -1847,6 +1847,9 @@ final class AppState {
                 case "goal": goalSheet = .new
                 case "note": newNote()
                 case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
+                // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
+                case "settings-cog": NotificationCenter.default.post(name: SidebarSettings.demo, object: nil)
+                case "settings-pane": NotificationCenter.default.post(name: SidebarSettings.demo, object: parts.count > 2 ? parts[2] : nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
