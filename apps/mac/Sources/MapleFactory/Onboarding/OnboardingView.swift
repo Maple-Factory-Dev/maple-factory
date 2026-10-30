@@ -729,8 +729,10 @@ enum MapleIcon {
     @MainActor static let image: NSImage = Bundle.module.image(forResource: "AppIcon") ?? NSImage()
 
     /// The square artwork inset and masked to the macOS icon shape, for the Dock when running unbundled.
-    @MainActor static var dockImage: NSImage {
-        let artwork = image
+    @MainActor static var dockImage: NSImage { dockImage(image) }
+
+    /// Any square-ish artwork (a factory's icon, say) drawn the same way, filling the shape.
+    static func dockImage(_ artwork: NSImage) -> NSImage {
         let side: CGFloat = 1024
         return NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
             let rect = NSRect(x: 100, y: 100, width: side - 200, height: side - 200)
@@ -744,7 +746,7 @@ enum MapleIcon {
             shape.fill()
             NSGraphicsContext.current?.restoreGraphicsState()
             shape.addClip()
-            artwork.draw(in: rect)
+            artwork.draw(in: FactoryIcon.aspectFill(artwork.size, in: rect), from: .zero, operation: .sourceOver, fraction: 1)
             return true
         }
     }

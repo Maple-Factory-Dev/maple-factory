@@ -75,6 +75,8 @@ import SwiftUI
         // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
         task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state, planned: !t.plan.isEmpty)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
+        task.builder = t.agent
+        task.model = t.model
         task.owner = who(t.owner)
         task.machine = t.machine
         task.pushed = t.pr?.head
@@ -141,6 +143,7 @@ import SwiftUI
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)
         task.queueRank = t.queueRank ?? Double(t.createdAt)
+        task.draftRank = t.draftRank ?? Double(t.createdAt)
         task.startAt = t.startAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         task.mergeAt = t.mergeAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         // The countdown started with the factory's "will auto-merge" event; its time sizes the drain.

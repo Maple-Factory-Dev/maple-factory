@@ -362,8 +362,10 @@ final class AppState {
         set { if !isLive { mockTasks = newValue } }
     }
 
-    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).map { seed in
+    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed
+        // The mockup's drafts keep the order they're seeded in.
+        task.draftRank = Double(at)
         task.autoReview = FactoryData.seedReviews[task.id]
         task.hand = FactoryData.seedHands[task.id]
         task.shareable = FactoryData.seedShareable.contains(task.id)
@@ -430,6 +432,8 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
+    /// Bumped by every New Task, so the composer puts the caret in the title even when it's already open.
+    var composeFocusRequest = 0
     /// Your Scratchpad: the factory's copy when signed in.
     var notes: [Note] {
         get { isLive ? client?.notes ?? [] : mockNotes }
@@ -762,6 +766,7 @@ final class AppState {
             focusedTask = nil
             isComposing = true
         }
+        composeFocusRequest += 1
     }
 
     /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
@@ -915,6 +920,8 @@ final class AppState {
             when: "now"
         )]
 
+        // A new draft goes to the bottom of its goal's drafts.
+        task.draftRank = (draftOrder(draft.goal).map(\.draftRank).max() ?? 0) + 1
         tasks.append(task)
         seenActivityCount[id] = task.activity.count
         LastTaskGoal.store(draft.goal, factory: taskGoalFactory, defaults: taskGoalDefaults)
@@ -969,6 +976,73 @@ final class AppState {
         if selectedNote == id { selectedNote = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id }
         notes = remaining
         showToast("Note deleted", icon: "trash")
+    }
+
+    // MARK: Command palette
+
+    /// The ⌘K palette is up; closing it forgets what was typed.
+    var showPalette = false {
+        didSet { if !showPalette { paletteQuery = ""; paletteSelection = 0 } }
+    }
+    /// What's typed into it; a new query puts the highlight back on the first row.
+    var paletteQuery = "" {
+        didSet { if paletteQuery != oldValue { paletteSelection = 0 } }
+    }
+    /// The highlighted row, an index into `paletteItems`.
+    var paletteSelection = 0
+    /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
+    @ObservationIgnored var openSettings: (() -> Void)? = nil
+
+    /// What the palette shows for the query, from the goals and pages in the sidebar and the actions on offer here.
+    var paletteSections: [PaletteSection] {
+        let goals = FactoryData.goals.filter { !$0.archived }.map(\.name)
+        let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
+        // The task panel can only be toggled with "Peek in the side panel" on.
+        let actions = PaletteAction.allCases.filter { $0 != .toggleTaskPanel || taskPanelEnabled }
+        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, me: FactoryData.me.id)
+    }
+    var paletteItems: [PaletteItem] { CommandPaletteModel.flatten(paletteSections) }
+
+    func togglePalette() {
+        withAnimation(.snappy(duration: 0.18)) { showPalette.toggle() }
+    }
+
+    /// ↑/↓: the highlight moves through every section's rows, wrapping at the ends.
+    func movePaletteSelection(_ delta: Int) {
+        let count = paletteItems.count
+        guard count > 0 else { return }
+        paletteSelection = ((paletteSelection + delta) % count + count) % count
+    }
+
+    /// Return: runs the highlighted row.
+    func runPaletteSelection() {
+        let items = paletteItems
+        guard items.indices.contains(paletteSelection) else { return }
+        perform(items[paletteSelection])
+    }
+
+    /// A row was chosen: the palette closes and its task, goal or page opens, or its action runs.
+    func perform(_ item: PaletteItem) {
+        withAnimation(.snappy(duration: 0.18)) { showPalette = false }
+        switch item {
+        case .task(let id): openFullView(id)
+        case .goal(let name): destination = .goal(name)
+        case .page(let page): destination = page.destination
+        case .action(.newTask): startCompose()
+        case .action(.newGoal): goalSheet = .new
+        case .action(.toggleSidebar): toggleSidebar()
+        case .action(.toggleTaskPanel): toggleTaskPanel()
+        case .action(.settings): openSettings?()
+        }
+    }
+
+    /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.
+    func openFullView(_ id: String) {
+        let goal = Destination.goal(task(id).goal)
+        if destination != goal { destination = goal }
+        isComposing = false
+        selectedTask = id
+        focusedTask = id
     }
 
     // MARK: Navigation actions
@@ -1255,6 +1329,38 @@ final class AppState {
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
     }
 
+    /// Model presets per agent for the task inspector's Model menu; anything else goes in as free text.
+    static func models(for agent: String) -> [String] {
+        switch agent {
+        case "claude": ["opus", "sonnet", "haiku"]
+        case "codex": ["gpt-5", "gpt-5-codex"]
+        default: []
+        }
+    }
+
+    /// Changes what builds a task and the model it asks for (nil or blank: the agent's default).
+    /// A running session keeps going; the change applies from its next one.
+    func setAgent(_ id: String, agent: String, model: String?) {
+        let trimmed = model?.trimmingCharacters(in: .whitespaces) ?? ""
+        let model = trimmed.isEmpty ? nil : trimmed
+        let was = task(id)
+        guard agent != was.builder || model != was.model else { return }
+        let text = agent != was.builder
+            ? "Switched it to \(agent)\(model.map { " · \($0)" } ?? "")"
+            : model.map { "Set its model to \($0)" } ?? "Set its model back to the default"
+        if let client, isLive {
+            client.expect(id) { $0.builder = agent; $0.model = model }
+            client.send(.taskEdit(.init(id: id, agent: agent, model: model ?? "")))
+        } else {
+            update(id) { task in
+                task.builder = agent
+                task.model = model
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: text, when: "now"), at: 0)
+            }
+        }
+        showToast("\(id): \(agentTitle(agent)) · \(model ?? "default model")", icon: "cpu")
+    }
+
     // MARK: Owner
 
     /// Whether you can give `id` to someone else: its owner or an admin can. Anyone can take a task over.
@@ -1377,6 +1483,44 @@ final class AppState {
             task.startAt = nil
             joinQueue(&task)
         }
+    }
+
+    // MARK: Drafts
+
+    /// Moves a draft ahead of `before` among its goal's drafts ("top": the first), or to the bottom. It stays a draft.
+    func rankDraft(_ id: String, before: String?) {
+        guard let task = tasks.first(where: { $0.id == id }), task.state == .drafting else { return }
+        let rank = draftRank(for: task, before: before)
+        if let client, isLive {
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.draftRank = rank } }
+            client.send(.taskRankDraft(.init(id: id, before: before)))
+            return
+        }
+        let text = before == "top" ? "Moved it to the top of the drafts" : before.map { "Moved it ahead of \($0) in the drafts" } ?? "Moved it to the bottom of the drafts"
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.draftRank = rank
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: text, when: "now"), at: 0)
+            }
+        }
+    }
+
+    /// The draftRank that puts `task` ahead of `before` ("top": the first; none: the bottom), as the factory works it out.
+    private func draftRank(for task: FactoryTask, before: String?) -> Double {
+        let line = draftOrder(task.goal).filter { $0.id != task.id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            return at > 0 ? (line[at - 1].draftRank + target.draftRank) / 2 : target.draftRank - 1000
+        }
+        return (line.map(\.draftRank).max() ?? 0) + 1
+    }
+
+    func moveDraftToTop(_ id: String) { rankDraft(id, before: "top") }
+    func moveDraftToBottom(_ id: String) { rankDraft(id, before: nil) }
+
+    /// A goal's drafts, first first.
+    func draftOrder(_ goal: String) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal && $0.state == .drafting }.sorted { $0.draftRank < $1.draftRank }
     }
 
     /// The mockup's queue: a draft goes to planning.
@@ -1896,7 +2040,8 @@ final class AppState {
     /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
     /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:severity:blocker` is a severity chip,
     /// `findings:select:0` ticks a shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
-    /// is Make a task from them.
+    /// is Make a task from them. `findings:hidefixed` toggles Hide fixed, `findings:status:open` is a legend item in What happened
+    /// to them (again to undo), and `findings:clearfilters` is Clear filters.
     static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
@@ -1924,6 +2069,10 @@ final class AppState {
             case "top": moveToTop(parts[1])
             case "bottom": moveToBottom(parts[1])
             case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            // The Drafts column's: a draft dropped on another (`draftdrop:<id>:<before>`, none: the bottom), Move to top / bottom.
+            case "draftdrop": rankDraft(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "drafttop": moveDraftToTop(parts[1])
+            case "draftbottom": moveDraftToBottom(parts[1])
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil
@@ -1953,6 +2102,8 @@ final class AppState {
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
             // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
             case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
+            // The inspector's Agent and Model menus: `model:<id>:<agent>:<model>`, no model for the default.
+            case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
@@ -2009,8 +2160,15 @@ final class AppState {
             // for the first of that kind), and put away (`lightbox:close`).
             case "lightbox":
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
-            // A key pressed in the window, headless: `key:esc`.
+            // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
+            // A left click at a point in the window (`click:<x>:<y>`, points from the top left), or on a card (`click:<task>`).
+            case "click" where parts.count > 2 && Double(parts[1]) != nil:
+                Headless.click(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
+            // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
+            // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
+            case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
+            case "menupick": Headless.pickMenuItem(parts.dropFirst().joined(separator: ":"))
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
@@ -2049,11 +2207,34 @@ final class AppState {
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
+            // The ⌘K palette: `palette:open`, `palette:type:state:reviewing`, `palette:down` (or `up`), `palette:run`, `palette:close`.
+            case "palette":
+                switch parts[1] {
+                case "open": if !showPalette { togglePalette() }
+                case "close": if showPalette { togglePalette() }
+                case "type": paletteQuery = parts.dropFirst(2).joined(separator: ":")
+                case "down": movePaletteSelection(1)
+                case "up": movePaletteSelection(-1)
+                case "run": runPaletteSelection()
+                default: break
+                }
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             // `secret:add` opens Settings › Secrets' Add sheet (with `-window settings-sheet`).
             case "secret" where parts.count > 3 && parts[1] == "save":
                 NotificationCenter.default.post(name: SecretsSettings.demoSave, object: nil, userInfo: ["name": parts[2], "value": parts.dropFirst(3).joined(separator: ":")])
             case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
+            // `icon:<file>` is Settings › Appearance's Choose Image… picking that file; `icon:remove` its Remove.
+            case "icon": NotificationCenter.default.post(name: AppearanceSettings.demoPick, object: parts.dropFirst().joined(separator: ":"))
+            // `name:<text>` types that into Settings › Appearance's Name and clicks Save; `name:clear` is its Use Org Name.
+            case "name": NotificationCenter.default.post(name: FactoryNameCard.demo, object: parts.dropFirst().joined(separator: ":"))
+            // `admin:grant:<login>` is Settings › People's Make admin on that member's row; `admin:revoke:<login>` its Remove admin.
+            case "admin" where parts.count > 2: NotificationCenter.default.post(name: FactoryAdminsCard.demo, object: nil, userInfo: ["action": parts[1], "login": parts[2]])
+            // `factory:<host:port>` picks that saved factory in the factory menu.
+            case "factory":
+                if let client, let factory = client.savedFactories.first(where: { $0.id == parts.dropFirst().joined(separator: ":") }) {
+                    if client.switchTo(factory) { didSwitchFactory() }
+                }
+            case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":

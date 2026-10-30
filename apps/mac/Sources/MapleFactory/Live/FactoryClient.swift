@@ -60,6 +60,10 @@ import Security
     private(set) var secrets: [Wire.RepoSecret] = []
     /// The repos with worktree scripts (Settings › Repositories); empty from an older server.
     private(set) var repoScripts: [Wire.RepoWorktreeScripts] = []
+    /// Other GitHub accounts an admin approved, whose installations of the app add repos; empty from an older server.
+    private(set) var repoOwners: [String] = []
+    /// The factory's GitHub App and its links; nil with no app, or from an older server.
+    private(set) var githubApp: Wire.GitHubAppInfo?
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
     /// Runner releases with their notes, newest first (What's new); empty from an older server.
@@ -67,6 +71,12 @@ import Security
     /// This factory's maple-server version, and a newer one when there is (admins only).
     private(set) var serverVersion: String?
     private(set) var serverUpdate: Wire.ServerUpdate?
+    /// The factory's icon link (`/icon/<id>`), nil when it has none (or the server is older).
+    private(set) var iconLink: String?
+    /// The factory's icon, from this Mac's cache; nil shows the letter tile (and the Maple Dock icon).
+    private(set) var icon: NSImage?
+    /// The name an admin gave the factory (Settings › Appearance), nil when unset (or the server is older).
+    private(set) var displayName: String?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
     var isAdmin: Bool { me?.role == "admin" }
@@ -141,10 +151,15 @@ import Security
 
     var isSignedIn: Bool { server != nil && token != nil }
 
-    /// The org's name, or the mockup's workspace when not signed in.
+    /// The factory's name an admin set, else the org's, or the mockup's workspace when not signed in.
     var workspaceName: String {
         guard isSignedIn else { return "Studio Workspace" }
-        return org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
+        return displayName ?? orgName
+    }
+
+    /// The GitHub org's name (or the server's host), what the factory is called when it has no name of its own.
+    var orgName: String {
+        org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
     }
 
     init() {
@@ -156,6 +171,7 @@ import Security
             server = url
             self.token = token
             org = defaults.string(forKey: "factoryOrg") ?? ""
+            showSavedIcon()
         }
         // A socket can die quietly while the Mac sleeps or the app sits in the background; catch up
         // with a fresh snapshot rather than leave every list as it was.
@@ -210,6 +226,7 @@ import Security
         AppDefaults.set(factory.server.absoluteString, forKey: "factoryURL")
         AppDefaults.set(factory.org, forKey: "factoryOrg")
         remember()
+        showSavedIcon()
         connect()
         return true
     }
@@ -219,6 +236,7 @@ import Security
         if let server {
             Keychain.delete(account: server.absoluteString)
             savedFactories = SavedFactories.remove(server, from: savedFactories)
+            try? FileManager.default.removeItem(at: FactoryIcons.folder(for: server))
         }
         if let next = SavedFactories.fallback(savedFactories), switchTo(next) { return }
         AppDefaults.removeObject(forKey: "factoryURL")
@@ -234,7 +252,8 @@ import Security
     /// Puts the current factory at the front of the saved list, as the last one used.
     private func remember() {
         guard let server else { return }
-        savedFactories = SavedFactories.upsert(SavedFactory(server: server, org: org, name: workspaceName, lastUsed: Date()), into: savedFactories)
+        let kept = savedFactories.first { $0.id == SavedFactory.key(server) }?.icon
+        savedFactories = SavedFactories.upsert(SavedFactory(server: server, org: org, name: workspaceName, lastUsed: Date(), icon: kept), into: savedFactories)
     }
 
     /// Forgets everything the last factory sent, so none of it shows under the next one.
@@ -258,10 +277,15 @@ import Security
         repos = []
         secrets = []
         repoScripts = []
+        repoOwners = []
+        githubApp = nil
         runnerLatest = nil
         runnerReleases = []
         serverVersion = nil
         serverUpdate = nil
+        iconLink = nil
+        icon = nil
+        displayName = nil
         toast = nil
         notice = nil
         viewing = nil
@@ -376,13 +400,17 @@ import Security
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
+            repoOwners = snapshot.repoOwners ?? []
+            githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
+            displayName = snapshot.name
             rebuild()
             hasSnapshot = true
             remember()
+            showIcon(snapshot.icon)
             if let viewing { send(.presence(.init(viewing: viewing))) }
         case .machineUpdated(let update):
             if let index = machines.firstIndex(where: { $0.id == update.machine.id }) {
@@ -444,6 +472,7 @@ import Security
         case .reposUpdated(let update):
             repos = update.repos
             if let scripts = update.scripts { repoScripts = scripts }
+            if let owners = update.repoOwners { repoOwners = owners }
         case .secretsUpdated(let update):
             secrets = update.secrets
         case .runnerReleased(let update):
@@ -452,6 +481,17 @@ import Security
             runnerReleases = update.runnerReleases
         case .promptsUpdated(let update):
             prompts = update.prompts
+        case .membersUpdated(let update):
+            // An admin grant changed: every badge follows, and so do this Mac's admin-only controls when it's about me.
+            members = update.members
+            if let mine = members.first(where: { $0.login == me?.login }) { me = mine }
+            rebuild()
+        case .iconUpdated(let update):
+            showIcon(update.icon)
+        case .nameUpdated(let update):
+            // Every app shows the new name at once, and the factory switcher keeps it.
+            displayName = update.name
+            remember()
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
@@ -562,9 +602,108 @@ import Security
         send(.promptsSave(.init(prompts: prompts)))
     }
 
+    /// Admins only: makes someone who has signed in an admin here; members.updated says it took.
+    func grantAdmin(_ login: String) {
+        send(.adminsGrant(.init(login: login)))
+    }
+
+    /// Admins only: takes back a grant (not a GitHub owner's, nor my own).
+    func revokeAdmin(_ login: String) {
+        send(.adminsRevoke(.init(login: login)))
+    }
+
+    // MARK: Icon
+
+    /// The current factory's cached icon, shown at once on launch or a switch, before its snapshot says whether it changed.
+    private func showSavedIcon() {
+        guard let server else { return }
+        icon = savedFactories.first { $0.id == SavedFactory.key(server) }?.icon.flatMap(FactoryIcons.image)
+    }
+
+    /// Shows the factory's icon from `link`, fetching it into this Mac's cache when it isn't there yet;
+    /// nil clears it (and the cache). The cached file's path goes on the saved factory, for the factory menu.
+    private func showIcon(_ link: String?) {
+        guard let server else { return }
+        iconLink = link
+        let folder = FactoryIcons.folder(for: server)
+        guard let link, let id = FactoryIcons.id(link), let url = URL(string: link, relativeTo: server)?.absoluteURL else {
+            icon = nil
+            try? FileManager.default.removeItem(at: folder)
+            setSavedIcon(nil, for: server)
+            return
+        }
+        let file = folder.appending(path: id)
+        if let image = FactoryIcons.image(file.path) {
+            icon = image
+            setSavedIcon(file.path, for: server)
+            return
+        }
+        let gen = generation
+        Task {
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200, let image = NSImage(data: data),
+                  gen == generation, iconLink == link else { return }
+            // Only the newest image is kept.
+            try? FileManager.default.removeItem(at: folder)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? data.write(to: file)
+            icon = image
+            setSavedIcon(file.path, for: server)
+        }
+    }
+
+    private func setSavedIcon(_ path: String?, for server: URL) {
+        guard let index = savedFactories.firstIndex(where: { $0.id == SavedFactory.key(server) }), savedFactories[index].icon != path else { return }
+        savedFactories[index].icon = path
+    }
+
+    /// The factory's limit for its icon.
+    nonisolated static let maxIcon = 2 * 1024 * 1024
+
+    /// Admins only: makes `data` (PNG, JPEG or WebP) the factory's icon; icon.updated brings it back.
+    func upload(iconData data: Data) async throws {
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        guard data.count <= Self.maxIcon else { throw ClientError.message("The icon can be up to 2 MB.") }
+        var request = URLRequest(url: server.appending(path: "/api/icon"))
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        let _: Empty = try await Self.load(request)
+    }
+
+    /// Admins only: back to the letter tile.
+    func removeIcon() async throws {
+        let _: Empty = try await api("/api/icon", method: "DELETE")
+    }
+
+    /// The factory's limit for its name.
+    nonisolated static let maxName = 60
+
+    /// Admins only: names the factory (blank clears it); name.updated brings it back.
+    func setName(_ name: String) async throws {
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        var request = URLRequest(url: server.appending(path: "/api/name"))
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["name": name])
+        let _: Empty = try await Self.load(request)
+    }
+
+    /// Admins only: back to the GitHub org's name.
+    func clearName() async throws {
+        let _: Empty = try await api("/api/name", method: "DELETE")
+    }
+
     /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
     func save(scripts: Wire.WorktreeScripts, for repo: String) {
         send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    }
+
+    /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.
+    func setRepoOwners(_ owners: [String]) {
+        send(.reposOwnersSet(.init(owners: owners)))
     }
 
     /// `repo`'s worktree scripts, if it has any.
@@ -938,12 +1077,40 @@ struct SavedFactory: Codable, Equatable, Identifiable, Sendable {
     /// The org's name, or the host when it has none.
     var name: String
     var lastUsed: Date
+    /// The factory's icon as this Mac last cached it (a file path); nil shows the letter tile.
+    var icon: String? = nil
 
     var id: String { Self.key(server) }
     var host: String { id }
 
     /// One entry per host and port: http and https to the same place are the same factory.
     static func key(_ url: URL) -> String { "\(url.host() ?? "")\(url.port.map { ":\($0)" } ?? "")" }
+}
+
+/// Where factory icons are cached: Application Support/Maple Factory/Factory Icons/<host:port>/<id>,
+/// one image per factory (a headless run keeps its own, in its temporary folder).
+enum FactoryIcons {
+    static func folder(for server: URL) -> URL {
+        let base = Headless.isOn
+            ? FileManager.default.temporaryDirectory.appending(path: Headless.suiteName)
+            : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Maple Factory")
+        return base.appending(path: "Factory Icons").appending(path: SavedFactory.key(server))
+    }
+
+    /// The id in `/icon/<uuid>`, or nil for anything else.
+    static func id(_ link: String) -> String? {
+        link.wholeMatch(of: /\/icon\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/).map { String($0.1) }
+    }
+
+    @MainActor private static var images: [String: NSImage] = [:]
+
+    /// The cached image at `path`, read once per run.
+    @MainActor static func image(_ path: String) -> NSImage? {
+        if let image = images[path] { return image }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        images[path] = image
+        return image
+    }
 }
 
 /// The saved-factory list's rules, kept pure so they can be tested; stored in defaults under `factories`.

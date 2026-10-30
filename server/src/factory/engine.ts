@@ -14,7 +14,7 @@ import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
-import { goalRepos, REPO, taskRepo } from "./repos.ts";
+import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
@@ -161,6 +161,22 @@ export class Engine {
         await audit(this.env, who, "repo.added", null, { name });
         this.reposUpdated();
         return;
+      }
+      case "repos.owners.set": {
+        if (member.role !== "admin") fail("Only admins can change which GitHub accounts add repos.");
+        const org = (this.env.GITHUB_ORG ?? "").toLowerCase();
+        const owners: string[] = [];
+        for (const raw of msg.owners) {
+          const login = raw.trim().replace(/^@/, "").replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "");
+          if (!login) continue;
+          if (!OWNER.test(login)) fail(`${login} isn't a GitHub account's login.`);
+          if (login.toLowerCase() !== org && !owners.some((o) => o.toLowerCase() === login.toLowerCase())) owners.push(login);
+        }
+        this.store.saveRepoOwners(owners);
+        await audit(this.env, who, "repo.owners_set", null, { owners });
+        this.reposUpdated();
+        // Their repos come in (or the removed ones' go) once the app's installations are read again.
+        return this.refreshRepos(true);
       }
       case "repos.remove": {
         if (member.role !== "admin") fail("Only admins can remove repos.");
@@ -327,6 +343,20 @@ export class Engine {
           if (!unplanned) fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
+        }
+        if (msg.agent != null || msg.model != null) {
+          // Any state until it's done: the change applies from its next session, and one running keeps going.
+          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; there's nothing left to build.`);
+          const agent = msg.agent != null ? msg.agent.trim() : task.agent;
+          if (!["claude", "codex"].includes(agent)) fail(`${agent || "That"} isn't an agent the factory runs: claude or codex.`);
+          const was = task.model ?? null;
+          let model = msg.model != null ? msg.model.trim() || null : was;
+          // A model the old agent knew means nothing to the new one.
+          if (msg.model == null && agent !== task.agent && model && !modelFits(agent, model)) model = null;
+          if (agent !== task.agent) this.event(task, who, `switched it to ${agent}${model ? ` · ${model}` : ""}`);
+          else if (model !== was) this.event(task, who, model ? `set its model to ${model}` : "set its model back to the default");
+          task.agent = agent;
+          task.model = model;
         }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
         const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
@@ -536,6 +566,20 @@ export class Engine {
         task.waiting = null;
         this.save(task);
         await this.pump();
+        return;
+      }
+      case "task.rankDraft": {
+        if (task.state !== "drafting") fail("Only a draft can be reordered among the drafts.");
+        if (msg.before === task.id) fail("It can't go ahead of itself.");
+        const drafts = this.store.drafts(task.goal);
+        let before: Task | null = null;
+        if (msg.before === "top") before = drafts.find((t) => t.id !== task.id) ?? null;
+        else if (msg.before) {
+          before = drafts.find((t) => t.id === msg.before) ?? fail(`${msg.before} isn't a draft in this goal.`);
+        }
+        if (msg.before !== "top" || before) task.draftRank = this.store.draftRankBefore(task.id, before, drafts);
+        this.event(task, who, msg.before === "top" ? "moved it to the top of the drafts" : before ? `moved it ahead of ${before.id} in the drafts` : "moved it to the bottom of the drafts");
+        this.save(task);
         return;
       }
       case "task.retry": {
@@ -760,7 +804,7 @@ export class Engine {
   }
 
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after" | "effort">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort">): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -782,6 +826,7 @@ export class Engine {
       mockups: [],
       followUps: [],
       queueRank: t,
+      draftRank: t,
       ...f,
     };
     this.save(task);
@@ -797,7 +842,7 @@ export class Engine {
     const goal = this.store.goal(task.goal);
     if (!goal) return;
     for (const f of task.followUps.filter((f) => !f.task)) {
-      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
+      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, model: task.model ?? null, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
       f.task = part.id;
       this.event(task, "factory", `made ${part.id} for its ${f.repo} part`);
       await this.startPlanning(part, "factory");
@@ -897,7 +942,7 @@ export class Engine {
       worktree: { name: branchName(task), base: goal.base ?? null, existing },
       task: { id: task.id, repo: taskRepo(task, goal), scripts: this.store.scriptsFor(taskRepo(task, goal)) },
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
-      model: null,
+      model: task.model ?? null,
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
     const now_ = this.store.task(task.id);
@@ -1309,7 +1354,10 @@ export class Engine {
     }
     let granted: OrgRepo[];
     try {
-      granted = await installedRepos(app);
+      // The factory's own account, and the others an admin approved: the app is public, so anyone
+      // can install it, and their installations mustn't add repos here.
+      const owners = new Set([this.env.GITHUB_ORG, ...this.store.repoOwners()].filter(Boolean).map((o) => o.toLowerCase()));
+      granted = await installedRepos(app, (login) => owners.has(login.toLowerCase()));
     } catch (e) {
       if (asked) fail(`Couldn't read the app's repos: ${(e as Error).message}`);
       return;
@@ -2098,7 +2146,7 @@ export class Engine {
   }
 
   private reposUpdated() {
-    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts() });
+    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts(), repoOwners: this.store.repoOwners() });
   }
 
   private event(task: Task, who: string, text: string) {
@@ -2155,6 +2203,14 @@ function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
 /** An effort's name as stored: trimmed and spaces collapsed; blank is none. */
 function effortName(name: string | null | undefined): string | null {
   return name?.trim().replace(/\s+/g, " ") || null;
+}
+
+/** Whether a model name is one the agent takes: Claude's aliases and claude-* ids, or OpenAI's gpt-*, o-series and codex ones. */
+function modelFits(agent: string, model: string): boolean {
+  const m = model.toLowerCase();
+  if (agent === "claude") return /^(opus|sonnet|haiku|default|opusplan)\b|^claude-/.test(m);
+  if (agent === "codex") return /^(gpt-|o\d|codex)/.test(m);
+  return true;
 }
 
 function sourceTitle(r: { source: string; channel?: string | null }) {

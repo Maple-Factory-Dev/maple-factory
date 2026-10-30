@@ -41,6 +41,18 @@ struct BoardColumnsTests {
         }
     }
 
+    @Test func draftsOrderByDraftRank() {
+        let ranks: [(String, Double)] = [("D-1", 3000), ("D-2", 1000), ("D-3", 2500), ("D-4", -500)]
+        let drafts = ranks.map { id, rank in
+            var draft = task(id, state: .drafting, rank: 9000)
+            draft.draftRank = rank
+            return draft
+        }
+        let columns = BoardColumns.columns(tasks: drafts, hideEmpty: true) { _ in false }
+        #expect(columns.map(\.id) == [.task(.drafting)])
+        #expect(columns[0].tasks.map(\.id) == ["D-4", "D-2", "D-3", "D-1"])
+    }
+
     @Test(arguments: [false, true], [1, 12])
     func specialColumnsRouteExactlyOnce(hideEmpty: Bool, count: Int) {
         let queued = (0..<count).map { task("QUEUE-\($0)", state: .reviewing, queued: true, rank: Double(count - $0)) }

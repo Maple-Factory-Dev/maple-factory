@@ -27,6 +27,7 @@ button, textarea, input, select { font: inherit; color: inherit; }
   background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--stroke); }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; }
 .leaf { width: 18px; height: 18px; border-radius: 5px; background: var(--accent); }
+.leaf.icon { background: center / cover no-repeat; }
 .bar nav { display: flex; gap: 4px; }
 .bar nav a { text-decoration: none; color: var(--muted); padding: 4px 10px; border-radius: 7px; font-size: 14px; }
 .bar nav a.on { color: var(--text); background: var(--fill); }

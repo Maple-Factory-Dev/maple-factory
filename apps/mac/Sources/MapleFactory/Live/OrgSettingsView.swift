@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The factory's settings (⌘,): what the org shares, what's yours, and this Mac's runner.
 struct OrgSettingsView: View {
@@ -6,12 +7,13 @@ struct OrgSettingsView: View {
     @AppStorage("settingsTab") private var tab = "repos"
 
     enum Pane: String, CaseIterable {
-        case general, account, repos, secrets, people, prompts, merging, runner, notifications, updates
+        case general, account, appearance, repos, secrets, people, prompts, merging, runner, notifications, updates
 
         var title: String {
             switch self {
             case .general: "General"
             case .account: "Account"
+            case .appearance: "Appearance"
             case .repos: "Repositories"
             case .secrets: "Secrets"
             case .people: "People"
@@ -27,6 +29,7 @@ struct OrgSettingsView: View {
             switch self {
             case .general: "gearshape"
             case .account: "person.crop.circle"
+            case .appearance: "paintpalette"
             case .repos: "shippingbox"
             case .secrets: "key"
             case .people: "person.2"
@@ -48,7 +51,7 @@ struct OrgSettingsView: View {
             List(selection: pane) {
                 row(.general)
                 Section("Factory") {
-                    ForEach([Pane.account, .repos, .secrets, .people, .prompts, .merging], id: \.self) { row($0) }
+                    ForEach([Pane.account, .appearance, .repos, .secrets, .people, .prompts, .merging], id: \.self) { row($0) }
                 }
                 Section("This Mac") { row(.runner); row(.notifications); row(.updates) }
             }
@@ -60,6 +63,7 @@ struct OrgSettingsView: View {
                 switch Pane(rawValue: tab) ?? .repos {
                 case .general: ScrollView { GeneralSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .account: ScrollView { AccountSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
+                case .appearance: ScrollView { AppearanceSettings().frame(maxWidth: .infinity, alignment: .topLeading) }
                 case .repos: RepositoriesSettings()
                 case .secrets: SecretsSettings()
                 case .people: PeopleSettings()
@@ -88,9 +92,10 @@ struct OrgSettingsView: View {
     }
 }
 
-/// How the app behaves on this Mac: what clicking a task opens.
+/// How the app behaves on this Mac: what clicking a task opens, and what the Dock shows.
 struct GeneralSettings: View {
     @Environment(AppState.self) private var state
+    @AppStorage(DockIcon.settingKey) private var dockShowsFactoryIcon = true
 
     var body: some View {
         @Bindable var state = state
@@ -103,6 +108,11 @@ struct GeneralSettings: View {
                 .pickerStyle(.radioGroup)
                 Text("The task panel button in the toolbar (⌥⌘I) appears only with Peek in the side panel.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+            SettingsCard {
+                Toggle("Show the factory's icon in the Dock", isOn: $dockShowsFactoryIcon)
+                Text("When the factory you're in has an icon (Settings › Appearance), the Dock shows it; switching factories changes it. Off, or for a factory without one, the Dock shows Maple's.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
             }
         }
         .font(.system(size: 13))
@@ -147,6 +157,194 @@ struct AccountSettings: View {
         }
         .font(.system(size: 13))
         .padding(20)
+    }
+}
+
+/// The factory's name and icon, for everyone in it: the sidebar, the factory menu and the Dock. Admins
+/// change them; everyone else sees them with the lock note.
+struct AppearanceSettings: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var targeted = false
+
+    private var isAdmin: Bool { client.isAdmin }
+    /// A demo script's `icon:<file>` (or `icon:remove`), as Choose Image… or Remove would.
+    static let demoPick = Notification.Name("AppearanceSettings.demoPick")
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Appearance", detail: "The factory's name and icon, for everyone in it: at the top of the sidebar, in the factory menu, and (the icon) in the Dock on each Mac that shows it (Settings › General).")
+            if !client.isSignedIn {
+                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Connect to a factory to see its name and icon."))
+            } else {
+                FactoryNameCard()
+                SettingsCard {
+                    HStack(alignment: .center, spacing: 28) {
+                        VStack(spacing: 8) {
+                            HStack(spacing: 10) {
+                                FactoryIcon(name: client.workspaceName, image: client.icon, size: 22)
+                                Text(client.workspaceName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(width: 200, height: 44)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke)))
+                            Text("Sidebar").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        }
+                        VStack(spacing: 8) {
+                            Image(nsImage: client.icon.map(MapleIcon.dockImage) ?? MapleIcon.dockImage)
+                                .resizable()
+                                .frame(width: 72, height: 72)
+                            Text("Dock").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(targeted ? Theme.accent : Theme.stroke, style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: isAdmin ? [5, 4] : []))
+                    )
+                    .overlay { if busy { ProgressView().controlSize(.small) } }
+                    .dropDestination(for: URL.self) { urls, _ in
+                        guard isAdmin, let url = urls.first else { return false }
+                        upload(url)
+                        return true
+                    } isTargeted: { targeted = isAdmin && $0 }
+                    Text(isAdmin
+                         ? "Choose an image or drop one on the preview. A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB."
+                         : "A square image of at least 512 × 512 px looks best: PNG, JPEG or WebP, up to 2 MB.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    if !isAdmin {
+                        Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    } else if let problem {
+                        Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.State.cancelled)
+                    }
+                    Spacer()
+                    if isAdmin {
+                        Button("Remove", role: .destructive) { remove() }.disabled(busy || client.iconLink == nil)
+                        Button("Choose Image…") { choose() }.disabled(busy)
+                    }
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPick)) { note in
+            guard isAdmin, let path = note.object as? String else { return }
+            if path == "remove" { remove() } else { upload(URL(fileURLWithPath: path)) }
+        }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .webP]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the factory's icon: a square image of at least 512 × 512 px."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        upload(url)
+    }
+
+    private func upload(_ url: URL) {
+        problem = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let data = try Data(contentsOf: url)
+                guard NSImage(data: data) != nil else { throw FactoryClient.ClientError.message("That isn't an image.") }
+                try await client.upload(iconData: data)
+            } catch {
+                problem = FactoryClient.describe(error)
+            }
+        }
+    }
+
+    private func remove() {
+        problem = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do { try await client.removeIcon() } catch { problem = FactoryClient.describe(error) }
+        }
+    }
+}
+
+/// The factory's name: what an admin calls it in place of the GitHub org. Blank, or Use Org Name, goes back to the org's.
+struct FactoryNameCard: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var draft = ""
+    @State private var busy = false
+    @State private var problem: String?
+
+    private var isAdmin: Bool { client.isAdmin }
+    private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var unchanged: Bool { trimmed == (client.displayName ?? "") }
+    /// A demo script's `name:<text>` (typed in, then Save) or `name:clear` (Use Org Name).
+    static let demo = Notification.Name("FactoryNameCard.demo")
+
+    var body: some View {
+        SettingsCard {
+            LabeledContent("Name") {
+                TextField(client.orgName, text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!isAdmin || busy)
+                    .onSubmit(save)
+            }
+            Text(trimmed.count > FactoryClient.maxName
+                 ? "The name can be up to \(FactoryClient.maxName) characters."
+                 : "Shown instead of \(client.orgName). Leave it blank to use the org's name.")
+                .font(.system(size: 12))
+                .foregroundStyle(trimmed.count > FactoryClient.maxName ? Theme.State.cancelled : Theme.textMuted)
+        }
+        HStack {
+            if !isAdmin {
+                Label("Only admins can change this.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            } else if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.State.cancelled)
+            }
+            Spacer()
+            if isAdmin {
+                Button("Use Org Name") { clear() }.disabled(busy || client.displayName == nil)
+                Button("Save") { save() }.disabled(busy || unchanged || trimmed.count > FactoryClient.maxName)
+            }
+        }
+        .onAppear { draft = client.displayName ?? "" }
+        // Someone else renamed it (name.updated): show theirs.
+        .onChange(of: client.displayName) { _, name in draft = name ?? "" }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard isAdmin, let text = note.object as? String else { return }
+            if text == "clear" { return clear() }
+            Task {
+                draft = ""
+                for character in text {
+                    draft.append(character)
+                    try? await Task.sleep(for: .milliseconds(45))
+                }
+                save()
+            }
+        }
+    }
+
+    private func save() {
+        guard isAdmin, !unchanged, trimmed.count <= FactoryClient.maxName else { return }
+        run { try await client.setName(trimmed) }
+    }
+
+    private func clear() {
+        draft = ""
+        run { try await client.clearName() }
+    }
+
+    private func run(_ work: @escaping () async throws -> Void) {
+        problem = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do { try await work() } catch { problem = FactoryClient.describe(error) }
+        }
     }
 }
 
@@ -339,6 +537,69 @@ struct RunnerSettings: View {
                 self.error = FactoryClient.describe(error)
             }
         }
+    }
+}
+
+/// Who's an admin of this factory: GitHub's org owners, and anyone an admin made one here. Admins make
+/// and remove the factory's own; GitHub owners stay admins until GitHub says otherwise.
+struct FactoryAdminsCard: View {
+    @Environment(FactoryClient.self) private var client
+    /// A demo script's `admin:grant:<login>` (or `admin:revoke:<login>`), as that row's button would.
+    static let demo = Notification.Name("FactoryAdminsCard.demo")
+
+    var body: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Factory admins").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Admins change the factory's settings, secrets and prompts. Owners of the GitHub organization always are; an admin can make anyone else who has signed in one too.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(client.members.enumerated()), id: \.element.login) { index, member in
+                    if index > 0 { Hairline() }
+                    row(member)
+                }
+            }
+            if !client.isAdmin {
+                Label("Only admins can change who's an admin.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard client.isAdmin, let login = note.userInfo?["login"] as? String else { return }
+            if note.userInfo?["action"] as? String == "revoke" { client.revokeAdmin(login) } else { client.grantAdmin(login) }
+        }
+    }
+
+    private func row(_ member: Wire.Member) -> some View {
+        HStack(spacing: 8) {
+            AgentAvatar(agent: LiveAdapter.person(member.login, members: client.members), size: 20)
+            Text(member.name ?? member.login).foregroundStyle(Theme.text).lineLimit(1)
+            Text(member.login == client.me?.login ? "@\(member.login) (you)" : "@\(member.login)").foregroundStyle(Theme.textMuted).lineLimit(1)
+            Spacer(minLength: 8)
+            Text(Self.badge(member))
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(member.role == "admin" ? Theme.text : Theme.textMuted)
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(Capsule().fill(Theme.fill))
+            if client.isAdmin && member.adminSource != "github" && member.login != client.me?.login {
+                if member.role == "admin" {
+                    Button("Remove admin") { client.revokeAdmin(member.login) }.controlSize(.small)
+                } else {
+                    Button("Make admin") { client.grantAdmin(member.login) }.controlSize(.small)
+                }
+            }
+        }
+        .font(.system(size: 12.5))
+        .padding(.vertical, 6)
+    }
+
+    /// GitHub owner, Admin · added by @x, or Member.
+    static func badge(_ member: Wire.Member) -> String {
+        guard member.role == "admin" else { return "Member" }
+        if member.adminSource == "granted" { return member.adminGrantedBy.map { "Admin · added by @\($0)" } ?? "Admin" }
+        // An older server doesn't say why; then GitHub is the only way to be one.
+        return "GitHub owner"
     }
 }
 
@@ -605,6 +866,10 @@ struct RepositoriesSettings: View {
                         .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+
+            if client.isSignedIn, client.githubApp != nil || !client.repoOwners.isEmpty {
+                OtherGitHubAccounts()
+            }
         }
         .padding(20)
     }
@@ -617,12 +882,102 @@ struct RepositoriesSettings: View {
     }
 }
 
+/// Repos from GitHub accounts besides the factory's own: the app has to be public to be installed there,
+/// and an admin approves each account, or its installation adds nothing (anyone can install a public app).
+struct OtherGitHubAccounts: View {
+    @Environment(FactoryClient.self) private var client
+    @State private var adding = ""
+
+    private var isAdmin: Bool { client.me?.role == "admin" }
+
+    var body: some View {
+        SettingsCard {
+            SettingsHeader(title: "Other GitHub accounts",
+                           detail: "Repos in another org (or someone's own account) come in once an admin approves it here and the GitHub App is installed there.")
+
+            if client.repoOwners.isEmpty {
+                Text("None yet: only \(client.org.isEmpty ? "the factory's own account" : client.org)'s installations add repos.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(client.repoOwners, id: \.self) { owner in
+                        HStack(spacing: 8) {
+                            Image(systemName: "building.2").foregroundStyle(Theme.textMuted).frame(width: 16)
+                            Text(owner).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
+                            let count = client.repos.filter { $0.source == .github && $0.name.lowercased().hasPrefix(owner.lowercased() + "/") }.count
+                            Text(count == 1 ? "1 repo" : "\(count) repos")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                            Spacer()
+                            if isAdmin {
+                                Button {
+                                    client.setRepoOwners(client.repoOwners.filter { $0 != owner })
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Stop adding \(owner)'s repos")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if isAdmin {
+                HStack {
+                    TextField("An org or account's GitHub login", text: $adding)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(approve)
+                    Button("Approve", action: approve)
+                        .disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            if let app = client.githubApp {
+                Divider()
+                step(1, "Make the app public", "Once, in the app's Advanced settings on GitHub: GitHub only installs a private app on the account that owns it.",
+                     link: app.settingsUrl, button: "Open \(app.slug)'s settings")
+                step(2, "Install it on the org", "Pick the org and its repos, then Refresh above.",
+                     link: app.installUrl, button: "Install on GitHub")
+            }
+        }
+    }
+
+    private func step(_ n: Int, _ title: String, _ detail: String, link: String, button: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(n)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Theme.fill))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.text)
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if let url = URL(string: link) {
+                Link(button, destination: url).font(.system(size: 12))
+            }
+        }
+    }
+
+    private func approve() {
+        let login = adding.trimmingCharacters(in: .whitespaces)
+        guard !login.isEmpty else { return }
+        if !client.repoOwners.contains(where: { $0.lowercased() == login.lowercased() }) {
+            client.setRepoOwners(client.repoOwners + [login])
+        }
+        adding = ""
+    }
+}
+
 /// Who shows in this person's sidebar: a few teammates, not the whole org.
 struct PeopleSettings: View {
     @Environment(FactoryClient.self) private var client
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if client.isSignedIn { FactoryAdminsCard() }
             VStack(alignment: .leading, spacing: 4) {
                 Text("People in your sidebar")
                     .font(.system(size: 15, weight: .semibold))

@@ -986,6 +986,21 @@ pub struct OrgRepo {
     pub source: RepoSource,
 }
 
+/// The factory's GitHub App, for installing it on another GitHub account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAppInfo {
+    /// Its name in github.com/apps/<slug>.
+    pub slug: String,
+    /// User or Organization: the account that owns it (GITHUB_ORG). None: not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    /// Its advanced settings on GitHub, where it's made public so another account can install it.
+    pub settings_url: String,
+    /// Where an account installs it.
+    pub install_url: String,
+}
+
 /// A secret kept for one of the org's repos: who set it and when, never its value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1143,6 +1158,9 @@ pub struct Task {
     pub shareable: bool,
     /// claude or codex: what builds it.
     pub agent: String,
+    /// The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Where its worktree lives once building started.
@@ -1162,6 +1180,9 @@ pub struct Task {
     /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_rank: Option<f64>,
+    /// Its place among its goal's drafts: lower first. None (from an older server): its createdAt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_rank: Option<f64>,
     /// Don't start its next session before this (ms); cleared once that session starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_at: Option<u64>,
@@ -1455,9 +1476,16 @@ pub struct Member {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
+    /// "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here.
     pub role: String,
     #[serde(default)]
     pub teams: Vec<String>,
+    /// Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_source: Option<String>,
+    /// Who granted it, when `adminSource` is "granted".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_granted_by: Option<String>,
 }
 
 /// A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet.
@@ -2195,6 +2223,16 @@ pub enum ClientMessage {
     PromptsSave {
         prompts: PromptAdditions,
     },
+    /// Admins only: make someone who has signed in an admin of this factory.
+    #[serde(rename = "admins.grant")]
+    AdminsGrant {
+        login: String,
+    },
+    /// Admins only: take back an admin grant (not a GitHub owner's, nor your own).
+    #[serde(rename = "admins.revoke")]
+    AdminsRevoke {
+        login: String,
+    },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]
     ReposRefresh,
@@ -2207,6 +2245,13 @@ pub enum ClientMessage {
     #[serde(rename = "repos.remove")]
     ReposRemove {
         name: String,
+    },
+    /// Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.
+    #[serde(rename = "repos.owners.set")]
+    ReposOwnersSet {
+        /// GitHub logins.
+        #[serde(default)]
+        owners: Vec<String>,
     },
     /// Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.
     #[serde(rename = "secrets.set")]
@@ -2272,6 +2317,12 @@ pub enum ClientMessage {
         /// Put it in this effort; an empty string takes it out.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        /// claude or codex; refused once it's merged or cancelled. Takes effect from its next session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// The model its next sessions use; an empty string goes back to the agent's default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
     #[serde(rename = "task.assign")]
@@ -2376,6 +2427,14 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         force: Option<bool>,
     },
+    /// Reorder a draft among its goal's drafts; it stays a draft.
+    #[serde(rename = "task.rankDraft")]
+    TaskRankDraft {
+        id: String,
+        /// Move it ahead of this draft; "top": the first draft. None moves it to the bottom.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+    },
     /// Run the pull request's failed CI checks again.
     #[serde(rename = "task.rerunChecks")]
     TaskRerunChecks {
@@ -2450,6 +2509,12 @@ pub enum ServerToClient {
         intake: Vec<IntakeRequest>,
         #[serde(default)]
         repos: Vec<OrgRepo>,
+        /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_owners: Option<Vec<String>>,
+        /// The factory's GitHub App. None: no app, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        github_app: Option<GitHubAppInfo>,
         /// Every repo's secrets, names and who changed them only.
         #[serde(default)]
         secrets: Vec<RepoSecret>,
@@ -2468,6 +2533,12 @@ pub enum ServerToClient {
         /// A newer maple-server, when there is one (told to admins only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server_update: Option<ServerUpdate>,
+        /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+        /// The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -2529,6 +2600,26 @@ pub enum ServerToClient {
     PromptsUpdated {
         prompts: PromptAdditions,
     },
+    /// Everyone who has signed in again, after an admin grant changed.
+    #[serde(rename = "members.updated")]
+    MembersUpdated {
+        #[serde(default)]
+        members: Vec<Member>,
+    },
+    /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
+    #[serde(rename = "icon.updated")]
+    IconUpdated {
+        /// Its new path (`/icon/<id>`); none: removed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
+    /// An admin set or cleared the factory's display name (PUT or DELETE /api/name).
+    #[serde(rename = "name.updated")]
+    NameUpdated {
+        /// The new name; none: cleared (back to the GitHub org).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     #[serde(rename = "repos.updated")]
     ReposUpdated {
         #[serde(default)]
@@ -2536,6 +2627,9 @@ pub enum ServerToClient {
         /// The repos that have worktree scripts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<Vec<RepoWorktreeScripts>>,
+        /// The approved other GitHub accounts. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_owners: Option<Vec<String>>,
     },
     /// Every repo's secrets again (names only), after one changed.
     #[serde(rename = "secrets.updated")]

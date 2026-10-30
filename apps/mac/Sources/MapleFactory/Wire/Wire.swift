@@ -2110,6 +2110,25 @@ public enum Wire {
         }
     }
 
+    /// The factory's GitHub App, for installing it on another GitHub account.
+    public struct GitHubAppInfo: Codable, Hashable, Sendable {
+        /// Its name in github.com/apps/<slug>.
+        public var slug: String
+        /// User or Organization: the account that owns it (GITHUB_ORG). None: not known.
+        public var ownerType: String?
+        /// Its advanced settings on GitHub, where it's made public so another account can install it.
+        public var settingsUrl: String
+        /// Where an account installs it.
+        public var installUrl: String
+
+        public init(slug: String, ownerType: String? = nil, settingsUrl: String, installUrl: String) {
+            self.slug = slug
+            self.ownerType = ownerType
+            self.settingsUrl = settingsUrl
+            self.installUrl = installUrl
+        }
+    }
+
     /// A secret kept for one of the org's repos: who set it and when, never its value.
     public struct RepoSecret: Codable, Hashable, Sendable {
         /// GitHub owner/name.
@@ -2287,6 +2306,8 @@ public enum Wire {
         public var shareable: Bool
         /// claude or codex: what builds it.
         public var agent: String
+        /// The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine.
+        public var model: String?
         public var branch: String?
         /// Where its worktree lives once building started.
         public var machine: String?
@@ -2299,6 +2320,8 @@ public enum Wire {
         public var followUps: [FollowUp]
         /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
         public var queueRank: Double?
+        /// Its place among its goal's drafts: lower first. None (from an older server): its createdAt.
+        public var draftRank: Double?
         /// Don't start its next session before this (ms); cleared once that session starts.
         public var startAt: UInt64?
         /// Its next session skips the wait for a free slot; cleared once it starts.
@@ -2308,7 +2331,7 @@ public enum Wire {
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2343,6 +2366,7 @@ public enum Wire {
             self.tickets = tickets
             self.shareable = shareable
             self.agent = agent
+            self.model = model
             self.branch = branch
             self.machine = machine
             self.splitFrom = splitFrom
@@ -2350,6 +2374,7 @@ public enum Wire {
             self.after = after
             self.followUps = followUps
             self.queueRank = queueRank
+            self.draftRank = draftRank
             self.startAt = startAt
             self.force = force
             self.effort = effort
@@ -2392,6 +2417,7 @@ public enum Wire {
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             shareable = try c.decode(Bool.self, forKey: .shareable)
             agent = try c.decode(String.self, forKey: .agent)
+            model = try c.decodeIfPresent(String.self, forKey: .model)
             branch = try c.decodeIfPresent(String.self, forKey: .branch)
             machine = try c.decodeIfPresent(String.self, forKey: .machine)
             splitFrom = try c.decodeIfPresent(String.self, forKey: .splitFrom)
@@ -2399,6 +2425,7 @@ public enum Wire {
             after = try c.decodeIfPresent([String].self, forKey: .after) ?? []
             followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
             queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
+            draftRank = try c.decodeIfPresent(Double.self, forKey: .draftRank)
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
@@ -2843,15 +2870,22 @@ public enum Wire {
         public var login: String
         public var name: String?
         public var avatarUrl: String?
+        /// "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here.
         public var role: String
         public var teams: [String]
+        /// Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server.
+        public var adminSource: String?
+        /// Who granted it, when `adminSource` is "granted".
+        public var adminGrantedBy: String?
 
-        public init(login: String, name: String? = nil, avatarUrl: String? = nil, role: String, teams: [String] = []) {
+        public init(login: String, name: String? = nil, avatarUrl: String? = nil, role: String, teams: [String] = [], adminSource: String? = nil, adminGrantedBy: String? = nil) {
             self.login = login
             self.name = name
             self.avatarUrl = avatarUrl
             self.role = role
             self.teams = teams
+            self.adminSource = adminSource
+            self.adminGrantedBy = adminGrantedBy
         }
 
         public init(from decoder: Decoder) throws {
@@ -2861,6 +2895,8 @@ public enum Wire {
             avatarUrl = try c.decodeIfPresent(String.self, forKey: .avatarUrl)
             role = try c.decode(String.self, forKey: .role)
             teams = try c.decodeIfPresent([String].self, forKey: .teams) ?? []
+            adminSource = try c.decodeIfPresent(String.self, forKey: .adminSource)
+            adminGrantedBy = try c.decodeIfPresent(String.self, forKey: .adminGrantedBy)
         }
     }
 
@@ -4290,6 +4326,24 @@ public enum Wire {
         }
     }
 
+    /// Admins only: make someone who has signed in an admin of this factory.
+    public struct ClientMessageAdminsGrant: Codable, Hashable, Sendable {
+        public var login: String
+
+        public init(login: String) {
+            self.login = login
+        }
+    }
+
+    /// Admins only: take back an admin grant (not a GitHub owner's, nor your own).
+    public struct ClientMessageAdminsRevoke: Codable, Hashable, Sendable {
+        public var login: String
+
+        public init(login: String) {
+            self.login = login
+        }
+    }
+
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
         public var name: String
@@ -4305,6 +4359,21 @@ public enum Wire {
 
         public init(name: String) {
             self.name = name
+        }
+    }
+
+    /// Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.
+    public struct ClientMessageReposOwnersSet: Codable, Hashable, Sendable {
+        /// GitHub logins.
+        public var owners: [String]
+
+        public init(owners: [String] = []) {
+            self.owners = owners
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            owners = try c.decodeIfPresent([String].self, forKey: .owners) ?? []
         }
     }
 
@@ -4409,14 +4478,20 @@ public enum Wire {
         public var repo: String?
         /// Put it in this effort; an empty string takes it out.
         public var effort: String?
+        /// claude or codex; refused once it's merged or cancelled. Takes effect from its next session.
+        public var agent: String?
+        /// The model its next sessions use; an empty string goes back to the agent's default.
+        public var model: String?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
             self.shareable = shareable
             self.repo = repo
             self.effort = effort
+            self.agent = agent
+            self.model = model
         }
     }
 
@@ -4600,6 +4675,18 @@ public enum Wire {
         }
     }
 
+    /// Reorder a draft among its goal's drafts; it stays a draft.
+    public struct ClientMessageTaskRankDraft: Codable, Hashable, Sendable {
+        public var id: String
+        /// Move it ahead of this draft; "top": the first draft. None moves it to the bottom.
+        public var before: String?
+
+        public init(id: String, before: String? = nil) {
+            self.id = id
+            self.before = before
+        }
+    }
+
     /// Run the pull request's failed CI checks again.
     public struct ClientMessageTaskRerunChecks: Codable, Hashable, Sendable {
         public var id: String
@@ -4691,9 +4778,12 @@ public enum Wire {
         case runnerCheck(ClientMessageRunnerCheck)
         case policySave(ClientMessagePolicySave)
         case promptsSave(ClientMessagePromptsSave)
+        case adminsGrant(ClientMessageAdminsGrant)
+        case adminsRevoke(ClientMessageAdminsRevoke)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
+        case reposOwnersSet(ClientMessageReposOwnersSet)
         case secretsSet(ClientMessageSecretsSet)
         case secretsDelete(ClientMessageSecretsDelete)
         case reposScriptsSet(ClientMessageReposScriptsSet)
@@ -4716,6 +4806,7 @@ public enum Wire {
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
         case taskQueue(ClientMessageTaskQueue)
+        case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
         case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
@@ -4754,9 +4845,12 @@ public enum Wire {
             case "runner.check": self = .runnerCheck(try ClientMessageRunnerCheck(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
+            case "admins.grant": self = .adminsGrant(try ClientMessageAdminsGrant(from: decoder))
+            case "admins.revoke": self = .adminsRevoke(try ClientMessageAdminsRevoke(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
+            case "repos.owners.set": self = .reposOwnersSet(try ClientMessageReposOwnersSet(from: decoder))
             case "secrets.set": self = .secretsSet(try ClientMessageSecretsSet(from: decoder))
             case "secrets.delete": self = .secretsDelete(try ClientMessageSecretsDelete(from: decoder))
             case "repos.scripts.set": self = .reposScriptsSet(try ClientMessageReposScriptsSet(from: decoder))
@@ -4779,6 +4873,7 @@ public enum Wire {
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
+            case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
@@ -4863,6 +4958,12 @@ public enum Wire {
             case .promptsSave(let body):
                 try c.encode("prompts.save", forKey: .type)
                 try body.encode(to: encoder)
+            case .adminsGrant(let body):
+                try c.encode("admins.grant", forKey: .type)
+                try body.encode(to: encoder)
+            case .adminsRevoke(let body):
+                try c.encode("admins.revoke", forKey: .type)
+                try body.encode(to: encoder)
             case .reposRefresh:
                 try c.encode("repos.refresh", forKey: .type)
             case .reposAdd(let body):
@@ -4870,6 +4971,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .reposRemove(let body):
                 try c.encode("repos.remove", forKey: .type)
+                try body.encode(to: encoder)
+            case .reposOwnersSet(let body):
+                try c.encode("repos.owners.set", forKey: .type)
                 try body.encode(to: encoder)
             case .secretsSet(let body):
                 try c.encode("secrets.set", forKey: .type)
@@ -4937,6 +5041,9 @@ public enum Wire {
             case .taskQueue(let body):
                 try c.encode("task.queue", forKey: .type)
                 try body.encode(to: encoder)
+            case .taskRankDraft(let body):
+                try c.encode("task.rankDraft", forKey: .type)
+                try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
                 try body.encode(to: encoder)
@@ -4979,6 +5086,10 @@ public enum Wire {
         public var follows: [GoalFollow]
         public var intake: [IntakeRequest]
         public var repos: [OrgRepo]
+        /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
+        public var repoOwners: [String]?
+        /// The factory's GitHub App. None: no app, or an older server.
+        public var githubApp: GitHubAppInfo?
         /// Every repo's secrets, names and who changed them only.
         public var secrets: [RepoSecret]
         /// The repos that have worktree scripts. None: an older server.
@@ -4991,9 +5102,13 @@ public enum Wire {
         public var serverVersion: String?
         /// A newer maple-server, when there is one (told to admins only).
         public var serverUpdate: ServerUpdate?
+        /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
+        public var icon: String?
+        /// The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server.
+        public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -5009,12 +5124,16 @@ public enum Wire {
             self.follows = follows
             self.intake = intake
             self.repos = repos
+            self.repoOwners = repoOwners
+            self.githubApp = githubApp
             self.secrets = secrets
             self.scripts = scripts
             self.runnerLatest = runnerLatest
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
             self.serverUpdate = serverUpdate
+            self.icon = icon
+            self.name = name
             self.protocolVersion = protocolVersion
         }
 
@@ -5035,12 +5154,16 @@ public enum Wire {
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
+            repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
+            githubApp = try c.decodeIfPresent(GitHubAppInfo.self, forKey: .githubApp)
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
             serverUpdate = try c.decodeIfPresent(ServerUpdate.self, forKey: .serverUpdate)
+            icon = try c.decodeIfPresent(String.self, forKey: .icon)
+            name = try c.decodeIfPresent(String.self, forKey: .name)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
         }
     }
@@ -5170,20 +5293,58 @@ public enum Wire {
         }
     }
 
+    /// Everyone who has signed in again, after an admin grant changed.
+    public struct ServerToClientMembersUpdated: Codable, Hashable, Sendable {
+        public var members: [Member]
+
+        public init(members: [Member] = []) {
+            self.members = members
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            members = try c.decodeIfPresent([Member].self, forKey: .members) ?? []
+        }
+    }
+
+    /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
+    public struct ServerToClientIconUpdated: Codable, Hashable, Sendable {
+        /// Its new path (`/icon/<id>`); none: removed.
+        public var icon: String?
+
+        public init(icon: String? = nil) {
+            self.icon = icon
+        }
+    }
+
+    /// An admin set or cleared the factory's display name (PUT or DELETE /api/name).
+    public struct ServerToClientNameUpdated: Codable, Hashable, Sendable {
+        /// The new name; none: cleared (back to the GitHub org).
+        public var name: String?
+
+        public init(name: String? = nil) {
+            self.name = name
+        }
+    }
+
     public struct ServerToClientReposUpdated: Codable, Hashable, Sendable {
         public var repos: [OrgRepo]
         /// The repos that have worktree scripts. None: an older server.
         public var scripts: [RepoWorktreeScripts]?
+        /// The approved other GitHub accounts. None: an older server.
+        public var repoOwners: [String]?
 
-        public init(repos: [OrgRepo] = [], scripts: [RepoWorktreeScripts]? = nil) {
+        public init(repos: [OrgRepo] = [], scripts: [RepoWorktreeScripts]? = nil, repoOwners: [String]? = nil) {
             self.repos = repos
             self.scripts = scripts
+            self.repoOwners = repoOwners
         }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
+            repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
         }
     }
 
@@ -5276,6 +5437,9 @@ public enum Wire {
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case promptsUpdated(ServerToClientPromptsUpdated)
+        case membersUpdated(ServerToClientMembersUpdated)
+        case iconUpdated(ServerToClientIconUpdated)
+        case nameUpdated(ServerToClientNameUpdated)
         case reposUpdated(ServerToClientReposUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
@@ -5305,6 +5469,9 @@ public enum Wire {
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
+            case "members.updated": self = .membersUpdated(try ServerToClientMembersUpdated(from: decoder))
+            case "icon.updated": self = .iconUpdated(try ServerToClientIconUpdated(from: decoder))
+            case "name.updated": self = .nameUpdated(try ServerToClientNameUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
@@ -5360,6 +5527,15 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .promptsUpdated(let body):
                 try c.encode("prompts.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .membersUpdated(let body):
+                try c.encode("members.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .iconUpdated(let body):
+                try c.encode("icon.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .nameUpdated(let body):
+                try c.encode("name.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .reposUpdated(let body):
                 try c.encode("repos.updated", forKey: .type)

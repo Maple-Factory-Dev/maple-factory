@@ -3,7 +3,7 @@
 //
 //   node server/test/fake-github.mjs --port 18803 --public-key app.pub.pem --installed acme/greeter \
 //     --remotes '/tmp/mfgh/remotes/{owner}/{repo}.git' --webhook-url http://localhost:8788/integrations/github \
-//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice]
+//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice] [--owner acme:alice]
 //
 // Point the server at it with GITHUB_API_URL=http://localhost:18803 (only honored on localhost) and
 // the runner's pushes at the bare repos with MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL. It checks
@@ -12,7 +12,9 @@
 //
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
 //   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
-//   GET  /app/installations, GET /installation/repositories   the app's installations, and an installation's repos
+//   GET  /app/installations, GET /installation/repositories   the app's installations (one per account, with its
+//                                                        login), and an installation's repos
+//   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
@@ -22,15 +24,16 @@
 //   GET  /users/:login                                   a personal account for each --user, otherwise an organization
 //   POST /login/oauth/access_token                       sign-in: code `as-<login>` is <login>'s user token
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
+//                                                        (its admin, for each --owner org:login)
 //   POST /graphql                                        repository.pullRequest.reviewThreads, from /_threads
 //
 // and, for the test driver: GET /_log, POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
 // like a server webhooks can't reach), and POST /_deleteBranch { owner, repo, branch }, after which
 // GitHub won't reopen that branch's closed pull request, and POST /_moveOnMerge { owner, repo, branch }: once
-// that branch's pull request merges, someone pushes another commit to it, and POST /_threads { owner, repo,
-// number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT", resolved?, outdated?, comments: [{ author, body }] }] },
-// the review threads people left on that pull request.
+// that branch's pull request merges, someone pushes another commit to it, POST /_leave { org, login }: they
+// leave the org, and POST /_threads { owner, repo, number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT",
+// resolved?, outdated?, comments: [{ author, body }] }] }, the review threads people left on that pull request.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -51,14 +54,19 @@ const { values } = parseArgs({
     ci: { type: "string", multiple: true, default: [] },
     user: { type: "string", multiple: true, default: [] },
     member: { type: "string", multiple: true, default: [] },
+    owner: { type: "string", multiple: true, default: [] },
   },
 });
 
 const publicKey = createPublicKey(readFileSync(values["public-key"], "utf8"));
 const users = new Set(values.user.map((u) => u.toLowerCase()));
 const ownerType = (login) => (users.has(login.toLowerCase()) ? "User" : "Organization");
-const members = new Set(values.member.map((m) => m.toLowerCase()));
-const installed = new Map(values.installed.map((r, i) => [r.toLowerCase(), 1000 + i]));
+const owners = new Set(values.owner.map((m) => m.toLowerCase()));
+const members = new Set([...values.member.map((m) => m.toLowerCase()), ...owners]);
+// One installation per account, as on GitHub: --installed acme/api --installed acme/web --installed other/x
+// is acme's installation (both repos) and other's.
+const accounts = [...new Set(values.installed.map((r) => r.split("/")[0].toLowerCase()))];
+const installed = new Map(values.installed.map((r) => [r.toLowerCase(), 1000 + accounts.indexOf(r.split("/")[0].toLowerCase())]));
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
 const pulls = [];
@@ -167,6 +175,12 @@ createServer((req, res) => {
       }));
       return send(res, 200, { data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } });
     }
+    if (req.method === "POST" && url.pathname === "/_leave") {
+      const key = `${body.org}:${body.login}`.toLowerCase();
+      members.delete(key);
+      owners.delete(key);
+      return send(res, 200, {});
+    }
     if (req.method === "POST" && url.pathname === "/_checks") {
       const list = checkRunsFor(body.owner, body.repo, body.sha);
       for (const r of body.runs) {
@@ -194,7 +208,8 @@ createServer((req, res) => {
       return me ? send(res, 200, { id: me.length, login: me, name: me, avatar_url: null }) : send(res, 401, { message: "Bad credentials" });
     }
     if (req.method === "GET" && me && (m = url.pathname.match(/^\/user\/memberships\/orgs\/([\w-]+)$/))) {
-      return members.has(`${m[1]}:${me}`.toLowerCase()) ? send(res, 200, { state: "active", role: "member" }) : send(res, 404, { message: "Not Found" });
+      const key = `${m[1]}:${me}`.toLowerCase();
+      return members.has(key) ? send(res, 200, { state: "active", role: owners.has(key) ? "admin" : "member" }) : send(res, 404, { message: "Not Found" });
     }
     if (req.method === "GET" && me && url.pathname === "/user/teams") return send(res, 200, []);
     if (req.method === "GET" && (m = url.pathname.match(/^\/users\/([\w-]+)$/))) {
@@ -206,10 +221,23 @@ createServer((req, res) => {
       const id = installed.get(`${m[1]}/${m[2]}`.toLowerCase());
       return id ? send(res, 200, { id }) : send(res, 404, { message: "Not Found" });
     }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/orgs\/([\w-]+)\/installation$/))) {
+      const why = verifyJwt(req.headers.authorization);
+      if (why) return send(res, 401, { message: why });
+      const i = accounts.indexOf(m[1].toLowerCase());
+      return i < 0 ? send(res, 404, { message: "Not Found" }) : send(res, 200, { id: 1000 + i });
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/orgs\/([\w-]+)\/members\/([\w-]+)$/))) {
+      const t = /^token (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+      const g = t && tokens.get(t);
+      if (!g) return send(res, 401, { message: "Bad credentials" });
+      if (!g.permissions?.members || g.installation !== 1000 + accounts.indexOf(m[1].toLowerCase())) return send(res, 403, { message: "Resource not accessible by integration (needs members:read)" });
+      return members.has(`${m[1]}:${m[2]}`.toLowerCase()) ? send(res, 204) : send(res, 404, { message: "Not Found" });
+    }
     if (req.method === "GET" && url.pathname === "/app/installations") {
       const why = verifyJwt(req.headers.authorization);
       if (why) return send(res, 401, { message: why });
-      return send(res, 200, [...new Set(installed.values())].map((id) => ({ id, account: { login: [...installed].find(([, i]) => i === id)[0].split("/")[0] } })));
+      return send(res, 200, accounts.map((login, i) => ({ id: 1000 + i, account: { login, type: ownerType(login) } })));
     }
     if (req.method === "GET" && url.pathname === "/installation/repositories") {
       const t = /^token (.+)$/.exec(req.headers.authorization ?? "")?.[1];

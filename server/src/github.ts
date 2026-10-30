@@ -8,7 +8,7 @@
 // needs. GITHUB_API_URL can point all of it at a fake GitHub for tests; it's only honored on localhost.
 
 import type { Env } from "./env.ts";
-import type { OrgRepo, ReviewThread } from "./wire.ts";
+import type { GitHubAppInfo, OrgRepo, ReviewThread } from "./wire.ts";
 
 export const API = "https://api.github.com";
 const USER_AGENT = "maple-factory";
@@ -35,6 +35,25 @@ export function githubApp(env: Env): GitHubApp | null {
   const privateKey = env.GITHUB_APP_PRIVATE_KEY?.trim();
   if (!issuer || !privateKey) return null;
   return { issuer, privateKey, api: apiBase(env.GITHUB_API_URL) };
+}
+
+/** The app's settings page on GitHub (under the org, or the personal account that owns it). */
+export function appSettingsUrl(env: Env, slug: string): string {
+  return env.GITHUB_OWNER_TYPE === "User"
+    ? `https://github.com/settings/apps/${encodeURIComponent(slug)}`
+    : `https://github.com/organizations/${encodeURIComponent(env.GITHUB_ORG)}/settings/apps/${encodeURIComponent(slug)}`;
+}
+
+/** The app's links for the apps, when /setup recorded its slug: where it's made public, and installed. */
+export function githubAppInfo(env: Env): GitHubAppInfo | null {
+  const slug = env.GITHUB_APP_SLUG?.trim();
+  if (!slug || !env.GITHUB_ORG) return null;
+  return {
+    slug,
+    ownerType: env.GITHUB_OWNER_TYPE ?? null,
+    settingsUrl: `${appSettingsUrl(env, slug)}/advanced`,
+    installUrl: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`,
+  };
 }
 
 /** The API base: GITHUB_API_URL only when it's a local test server, else api.github.com. */
@@ -144,13 +163,15 @@ async function failure(res: Response, what: string): Promise<GitHubError> {
 const seg = (s: string) => encodeURIComponent(s);
 
 /** The app's installation on owner/repo. A 404 means the app isn't installed there. */
-/** Every repo the app is installed on, across its installations. */
-export async function installedRepos(app: GitHubApp): Promise<OrgRepo[]> {
+/** The repos of the app's installations on the accounts `allowed` says yes to. A public app can be
+ *  installed by anyone, so the others are skipped without a token being made for them. */
+export async function installedRepos(app: GitHubApp, allowed: (login: string) => boolean): Promise<OrgRepo[]> {
   const jwt = `Bearer ${await appJwt(app)}`;
   const res = await call(app, "GET", "/app/installations?per_page=100", jwt);
   if (!res.ok) throw await failure(res, "listing the app's installations");
   const repos: OrgRepo[] = [];
-  for (const installation of (await res.json()) as { id: number }[]) {
+  for (const installation of (await res.json()) as { id: number; account?: { login?: string } | null }[]) {
+    if (!allowed(installation.account?.login ?? "")) continue;
     const tokenRes = await call(app, "POST", `/app/installations/${installation.id}/access_tokens`, jwt, { permissions: { metadata: "read" } });
     if (!tokenRes.ok) throw await failure(tokenRes, "reading an installation's repos");
     const { token } = (await tokenRes.json()) as { token: string };
@@ -173,6 +194,22 @@ export async function installationId(app: GitHubApp, owner: string, repo: string
   const { id } = (await res.json()) as { id?: number };
   if (!id) throw new GitHubError("api", "GitHub didn't say which installation covers this repository.");
   return id;
+}
+
+/** Whether `login` is in `org` now, asked as the app on the org's installation (it reads members there). */
+export async function orgMember(app: GitHubApp, org: string, login: string): Promise<boolean> {
+  const jwt = `Bearer ${await appJwt(app)}`;
+  const inst = await call(app, "GET", `/orgs/${seg(org)}/installation`, jwt);
+  if (inst.status === 404) throw new GitHubError("not_installed", `The GitHub App isn't installed on ${org}.`, 404);
+  if (!inst.ok) throw await failure(inst, `find the app's installation on ${org}`);
+  const { id } = (await inst.json()) as { id: number };
+  const tokenRes = await call(app, "POST", `/app/installations/${id}/access_tokens`, jwt, { permissions: { members: "read" } });
+  if (!tokenRes.ok) throw await failure(tokenRes, `give a token to read ${org}'s members`);
+  const { token } = (await tokenRes.json()) as { token: string };
+  const res = await call(app, "GET", `/orgs/${seg(org)}/members/${seg(login)}`, `token ${token}`);
+  if (res.status === 204) return true;
+  if (res.status === 404 || res.status === 302) return false;
+  throw await failure(res, `say whether ${login} is in ${org}`);
 }
 
 /** What each job may do with its token. */

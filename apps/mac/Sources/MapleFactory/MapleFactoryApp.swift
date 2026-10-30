@@ -34,6 +34,8 @@ struct MapleFactoryApp: App {
     var body: some Scene {
         WindowGroup("Maple Factory") {
             ContentView()
+                // Inside the environment it reads the client from.
+                .modifier(DockIconFollower())
                 .environment(state)
                 .environment(client)
                 // A maplefactory:// link opens in the window that's there rather than a new one.
@@ -54,6 +56,11 @@ struct MapleFactoryApp: App {
                     .disabled(!Updater.shared.canCheck)
             }
             CommandGroup(after: .sidebar) {
+                // Jump to any task, goal or page, or run a common action.
+                Button("Command Menu…") { state.togglePalette() }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .disabled(state.showOnboarding)
+
                 Button(state.showInspector ? "Hide Task Panel" : "Show Task Panel") {
                     state.toggleTaskPanel()
                 }
@@ -72,7 +79,7 @@ struct MapleFactoryApp: App {
                 .keyboardShortcut(.return, modifiers: .command)
 
                 Button(state.sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { state.toggleSidebar() }
-                    .keyboardShortcut("s", modifiers: [.command, .control])
+                    .keyboardShortcut("b", modifiers: .command)
 
                 Button("Add New Factory…") { state.startOnboarding() }
                 if client.isSignedIn {
@@ -135,6 +142,7 @@ struct ContentView: View {
     @AppStorage("appearance") private var appearance = Appearance.system
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         if state.showOnboarding {
@@ -148,11 +156,7 @@ struct ContentView: View {
                 .onOpenURL { url in
                     // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it).
                     guard url.scheme == "maplefactory", url.host() == "task", let id = url.pathComponents.dropFirst().first else { return }
-                    let goal = Destination.goal(state.task(id).goal)
-                    if state.destination != goal { state.destination = goal }
-                    state.isComposing = false
-                    state.selectedTask = id
-                    state.focusedTask = id
+                    state.openFullView(id)
                 }
                 .onChange(of: Notifier.shared.opening?.id) {
                     // A clicked banner: its task, in the list that holds it.
@@ -232,6 +236,13 @@ struct ContentView: View {
             .padding(.leading, state.sidebarSpace)
             .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
+        // ⌘K: above the sidebar, the slab and the toasts, below a proof shown large.
+        .overlay {
+            if state.showPalette {
+                CommandPalette()
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
         // A proof shown large: above the sidebar, the slab and the toasts.
         .overlay {
             if let lightbox = state.lightbox {
@@ -241,8 +252,19 @@ struct ContentView: View {
             }
         }
         .background(VisualEffect(material: .sidebar))
+        // ⌃⌘S was the sidebar chord before ⌘B; it still works, but only ⌘B shows in the View menu.
+        .background {
+            Button("Toggle Sidebar") { state.toggleSidebar() }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
         .ignoresSafeArea()
-        .onAppear { NSApp.appearance = appearance.nsAppearance }
+        .onAppear {
+            NSApp.appearance = appearance.nsAppearance
+            // The palette's Settings… opens the window this environment can.
+            state.openSettings = { openSettings() }
+        }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: state.destination) { if state.sidebarFloating { state.toggleSidebar() } }
         // Only checks you start reach up to date (Sparkle's showUpdateNotFound), so background checks stay quiet.

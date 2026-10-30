@@ -227,6 +227,9 @@ struct FactoryTask: Identifiable {
         let session: String
     }
     var worker: Worker? = nil
+    /// What builds it, claude or codex, and the model its sessions ask for (nil: the agent's own default).
+    var builder = "claude"
+    var model: String? = nil
     /// The machine its worktree is on, once it has one (live only).
     var machine: String? = nil
     /// Its last pushed commit (live only).
@@ -267,6 +270,8 @@ struct FactoryTask: Identifiable {
     var queued = false
     /// Its place in the queue: lower starts first.
     var queueRank: Double = 0
+    /// Its place among its goal's drafts: lower first.
+    var draftRank: Double = 0
     /// Held until then, when it was scheduled.
     var startAt: Date? = nil
     /// The factory auto-merges it then unless someone holds it; and when that countdown started.

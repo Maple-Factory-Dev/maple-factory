@@ -8,7 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
@@ -16,6 +16,7 @@ import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
+import { githubAppInfo } from "./github.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
@@ -171,6 +172,21 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
+      case "/icon": {
+        // The Worker stored (or is removing) the image and checked it's an admin; this keeps the id and tells the apps.
+        const { id } = (await request.json()) as { id: string | null };
+        const previous = this.store.icon();
+        this.store.saveIcon(id);
+        this.broadcast({ type: "icon.updated", icon: id ? `/icon/${id}` : null });
+        return Response.json({ previous });
+      }
+      case "/name": {
+        // The Worker checked it's an admin and the name's length; this keeps it and tells the apps.
+        const { name } = (await request.json()) as { name: string | null };
+        this.store.saveName(name);
+        this.broadcast({ type: "name.updated", name });
+        return new Response(null, { status: 204 });
+      }
       case "/dev/alarm": {
         // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
         if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete("runner:checkedAt");
@@ -228,6 +244,12 @@ export class OrgHub extends DurableObject<Env> {
       }
     }
     return new Response("Not found.", { status: 404 });
+  }
+
+  /** The factory icon's link, if it has one. */
+  private iconPath(): string | null {
+    const id = this.store.icon();
+    return id ? `/icon/${id}` : null;
   }
 
   /** The statistics over the last `days` (7, 30 or 90; anything else reads as 30). */
@@ -303,6 +325,45 @@ export class OrgHub extends DurableObject<Env> {
   private async members(): Promise<Member[]> {
     const { results } = await this.env.DB.prepare("SELECT * FROM members ORDER BY login").all<MemberRow>();
     return results.map(toMember);
+  }
+
+  /** Grants or takes back an admin grant; GitHub's owners stay admins whatever happens here. The reason it's refused, if it is. */
+  private async setAdmin(by: Member, login: string, grant: boolean): Promise<string | null> {
+    if (by.role !== "admin") return "Only admins can change who's an admin.";
+    const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ? COLLATE NOCASE").bind(login).first<MemberRow>();
+    if (!row) return `${login} hasn't signed in to this factory yet.`;
+    const target = toMember(row);
+    if (grant && target.role === "admin") return `${target.login} is already an admin.`;
+    if (grant) {
+      // A grant to someone who's left can't let them back in, but it shouldn't look as if it does.
+      let allowed: boolean;
+      try {
+        allowed = await maySignIn(this.env, target.login);
+      } catch (e) {
+        return `Couldn't check with GitHub that ${target.login} may still sign in: ${(e as Error).message}`;
+      }
+      if (!allowed) {
+        const gone = this.env.GITHUB_OWNER_TYPE === "User" ? "isn't on GITHUB_ALLOWED_LOGINS any more" : `isn't in ${this.env.GITHUB_ORG} any more`;
+        return `${target.login} ${gone}, so they can't sign in to this factory.`;
+      }
+    }
+    if (!grant) {
+      if (target.adminSource === "github") return `${target.login} owns the GitHub organization, so they're an admin there; change it on GitHub.`;
+      if (target.role !== "admin") return `${target.login} isn't an admin.`;
+      if (target.login === by.login) return "You can't take back your own admin; ask another admin.";
+    }
+    await this.env.DB.prepare("UPDATE members SET admin_granted_by = ?, admin_granted_at = ? WHERE login = ?")
+      .bind(grant ? by.login : null, grant ? Date.now() : null, row.login).run();
+    await audit(this.env, by.login, grant ? "admin.granted" : "admin.revoked", row.login);
+    const members = await this.members();
+    const updated = members.find((m) => m.login === row.login)!;
+    // Their open apps act with the new role straight away, without reconnecting.
+    for (const ws of this.ctx.getWebSockets("client")) {
+      const c = ws.deserializeAttachment() as Client;
+      if (c.member.login === row.login) ws.serializeAttachment({ ...c, member: updated });
+    }
+    this.broadcast({ type: "members.updated", members });
+    return null;
   }
 
   private async recentEnds(): Promise<EndedSession[]> {
@@ -391,11 +452,15 @@ export class OrgHub extends DurableObject<Env> {
           intake: this.intake.list(),
           secrets: this.secrets.list(),
           repos: this.store.repos(),
+          repoOwners: this.store.repoOwners(),
+          githubApp: githubAppInfo(this.env),
           scripts: this.store.repoScripts(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
           serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
+          icon: this.iconPath(),
+          name: this.store.name(),
           protocolVersion: PROTOCOL_VERSION,
         });
         // The app's repos change on GitHub's side; read them again when they're an hour old.
@@ -494,6 +559,12 @@ export class OrgHub extends DurableObject<Env> {
       case "stats.get": {
         if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
         this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
+        return;
+      }
+      case "admins.grant":
+      case "admins.revoke": {
+        const error = await this.setAdmin(client.member, msg.login, msg.type === "admins.grant");
+        if (error) this.send(ws, { type: "error", message: error, requestId: null });
         return;
       }
       case "session.attach":
