@@ -14,6 +14,7 @@
 //   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
 //   GET  /app/installations, GET /installation/repositories   the app's installations (one per account, with its
 //                                                        login), and an installation's repos
+//   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
@@ -29,7 +30,8 @@
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
 // like a server webhooks can't reach), and POST /_deleteBranch { owner, repo, branch }, after which
 // GitHub won't reopen that branch's closed pull request, and POST /_moveOnMerge { owner, repo, branch }: once
-// that branch's pull request merges, someone pushes another commit to it.
+// that branch's pull request merges, someone pushes another commit to it, and POST /_leave { org, login }: they
+// leave the org.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -152,6 +154,12 @@ createServer((req, res) => {
       moveOnMerge.add(`${body.owner}/${body.repo}:${body.branch}`);
       return send(res, 200, {});
     }
+    if (req.method === "POST" && url.pathname === "/_leave") {
+      const key = `${body.org}:${body.login}`.toLowerCase();
+      members.delete(key);
+      owners.delete(key);
+      return send(res, 200, {});
+    }
     if (req.method === "POST" && url.pathname === "/_checks") {
       const list = checkRunsFor(body.owner, body.repo, body.sha);
       for (const r of body.runs) {
@@ -191,6 +199,19 @@ createServer((req, res) => {
       if (why) return send(res, 401, { message: `A JSON web token could not be decoded (${why})` });
       const id = installed.get(`${m[1]}/${m[2]}`.toLowerCase());
       return id ? send(res, 200, { id }) : send(res, 404, { message: "Not Found" });
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/orgs\/([\w-]+)\/installation$/))) {
+      const why = verifyJwt(req.headers.authorization);
+      if (why) return send(res, 401, { message: why });
+      const i = accounts.indexOf(m[1].toLowerCase());
+      return i < 0 ? send(res, 404, { message: "Not Found" }) : send(res, 200, { id: 1000 + i });
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/orgs\/([\w-]+)\/members\/([\w-]+)$/))) {
+      const t = /^token (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+      const g = t && tokens.get(t);
+      if (!g) return send(res, 401, { message: "Bad credentials" });
+      if (!g.permissions?.members || g.installation !== 1000 + accounts.indexOf(m[1].toLowerCase())) return send(res, 403, { message: "Resource not accessible by integration (needs members:read)" });
+      return members.has(`${m[1]}:${m[2]}`.toLowerCase()) ? send(res, 204) : send(res, 404, { message: "Not Found" });
     }
     if (req.method === "GET" && url.pathname === "/app/installations") {
       const why = verifyJwt(req.headers.authorization);

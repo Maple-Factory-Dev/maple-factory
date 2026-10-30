@@ -8,7 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
@@ -327,6 +327,19 @@ export class OrgHub extends DurableObject<Env> {
     if (!row) return `${login} hasn't signed in to this factory yet.`;
     const target = toMember(row);
     if (grant && target.role === "admin") return `${target.login} is already an admin.`;
+    if (grant) {
+      // A grant to someone who's left can't let them back in, but it shouldn't look as if it does.
+      let allowed: boolean;
+      try {
+        allowed = await maySignIn(this.env, target.login);
+      } catch (e) {
+        return `Couldn't check with GitHub that ${target.login} may still sign in: ${(e as Error).message}`;
+      }
+      if (!allowed) {
+        const gone = this.env.GITHUB_OWNER_TYPE === "User" ? "isn't on GITHUB_ALLOWED_LOGINS any more" : `isn't in ${this.env.GITHUB_ORG} any more`;
+        return `${target.login} ${gone}, so they can't sign in to this factory.`;
+      }
+    }
     if (!grant) {
       if (target.adminSource === "github") return `${target.login} owns the GitHub organization, so they're an admin there; change it on GitHub.`;
       if (target.role !== "admin") return `${target.login} isn't an admin.`;

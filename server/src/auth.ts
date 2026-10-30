@@ -5,7 +5,7 @@
 // can also make someone admin here (members.admin_granted_by), which raises their role but never lets them in.
 
 import type { Env } from "./env.ts";
-import { API, apiBase } from "./github.ts";
+import { API, apiBase, githubApp, GitHubError, orgMember } from "./github.ts";
 import type { Member } from "./wire.ts";
 import { audit, isLocal, randomToken, sha256, sign, text, verify } from "./util.ts";
 
@@ -78,6 +78,15 @@ function allowedLogins(env: Env): Set<string> {
 function stillAllowed(env: Env, login: string): boolean {
   if (env.GITHUB_OWNER_TYPE !== "User") return true;
   return login.toLowerCase() === env.GITHUB_ORG.toLowerCase() || allowedLogins(env).has(login.toLowerCase());
+}
+
+/** Whether `login` could sign in today: on the list, the personal account's owner, or (asked of GitHub) in the org. */
+export async function maySignIn(env: Env, login: string): Promise<boolean> {
+  if (env.GITHUB_OWNER_TYPE === "User") return stillAllowed(env, login);
+  if (allowedLogins(env).has(login.toLowerCase())) return true;
+  const app = githubApp(env);
+  if (!app) throw new GitHubError("no_app", "The factory has no GitHub App to ask who's in the org.");
+  return orgMember(app, env.GITHUB_ORG, login);
 }
 
 async function memberRow(env: Env, login: string) {

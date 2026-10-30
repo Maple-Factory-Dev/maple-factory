@@ -1,11 +1,12 @@
 // Factory admins against the fake GitHub: an org owner makes a plain member admin, the grant takes at once
-// and survives signing in again, and is taken back; who may change it is checked.
-//   node server/test/e2e-admins.mjs http://localhost:8788
-// The fake runs with --owner acme:alice --member acme:bob --member acme:carol; the server with
-// GITHUB_ORG=acme, GITHUB_API_URL pointing at the fake, GitHub App client id/secret and SESSION_SECRET
-// set (or /setup done), no DEV_LOGIN, on a fresh local D1.
+// and survives signing in again, and is taken back; who may change it is checked, and nobody who has left the
+// org can be made admin.
+//   node server/test/e2e-admins.mjs http://localhost:8788 [fake GitHub URL]
+// The fake runs with --owner acme:alice --member acme:bob --member acme:carol --member acme:dave --installed acme/greeter;
+// the server with GITHUB_ORG=acme, GITHUB_API_URL pointing at the fake, the GitHub App's id, key, client id/secret
+// and SESSION_SECRET set (or /setup done), no DEV_LOGIN, on a fresh local D1.
 
-const [base = "http://localhost:8788"] = process.argv.slice(2);
+const [base = "http://localhost:8788", gh = "http://localhost:18803"] = process.argv.slice(2);
 let failures = 0;
 const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) failures++; };
 const get = (path, cookie) => fetch(`${base}${path}`, { redirect: "manual", headers: cookie ? { cookie } : {} });
@@ -53,18 +54,23 @@ async function connect(session) {
 const memberIn = (msg, login) => msg?.type === "members.updated" ? msg.members.find((m) => m.login === login) : null;
 
 const [aliceSession, bobSession, carolSession] = [await signIn("alice"), await signIn("bob"), await signIn("carol")];
+await signIn("dave");
+await fetch(`${gh}/_leave`, { method: "POST", body: JSON.stringify({ org: "acme", login: "dave" }) });
 const alice = await connect(aliceSession);
 const bob = await connect(bobSession);
 const carol = await connect(carolSession);
 check(alice.snapshot.me.role === "admin" && alice.snapshot.me.adminSource === "github", `alice, an owner of acme, is admin from GitHub (${JSON.stringify(alice.snapshot.me)})`);
 check(bob.snapshot.me.role === "member" && !bob.snapshot.me.adminSource, `bob, a member of acme, is a member (${bob.snapshot.me.role})`);
-check(alice.snapshot.members.length === 3, `everyone who has signed in is listed: ${alice.snapshot.members.map((m) => `${m.login} (${m.role})`).join(", ")}`);
+check(alice.snapshot.members.length === 4, `everyone who has signed in is listed: ${alice.snapshot.members.map((m) => `${m.login} (${m.role})`).join(", ")}`);
 
 const before = await bob.ask({ type: "prompts.save", prompts: { planner: "bob, before", builder: "", reviewer: "" } }, "bob's refusal", () => false);
 check(before.type === "error", `before the grant, bob's prompts.save is refused: "${before.message}"`);
 
 const denied = await carol.ask({ type: "admins.grant", login: "carol" }, "carol's refusal", (m) => m.type === "members.updated");
 check(denied.type === "error", `carol, not an admin, can't grant: "${denied.message}"`);
+
+const left = await alice.ask({ type: "admins.grant", login: "dave" }, "dave's refusal", (m) => m.type === "members.updated");
+check(left.type === "error", `dave has left acme, so he can't be made admin: "${left.message}"`);
 
 const granted = await alice.ask({ type: "admins.grant", login: "bob" }, "the grant", (m) => memberIn(m, "bob"));
 const grantedBob = memberIn(granted, "bob");
