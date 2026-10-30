@@ -128,6 +128,28 @@ step(`${c.id}: Request changes sent it back to building with mergeAt null`);
 t = await wait(`${c.id} merged`, () => tasks.get(c.id)?.state === "merged" && tasks.get(c.id), 240000);
 if (counting(t).length !== 2 || !autoMerged(t)) throw new Error(`${c.id}: ${t.events.map((e) => e.text).join(" / ")}`);
 step(`its next round counted down again and the factory ${autoMerged(t).text}`);
+
+// (d) Turning auto-merge off mid-countdown clears it, even on a head that already said it's waiting for a
+// person; turning it back on counts down afresh instead of merging at once.
+send({ type: "policy.save", policy: { ...policy, autoMerges: false } });
+await wait("auto-merge off", () => policy.autoMerges === false);
+const d = `${prefix}-4`;
+send({ type: "task.create", goal: goal.id, title: "Say hello, policy flipped", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+await wait(`${d} plan`, () => tasks.get(d)?.state === "awaitingApproval", 60000);
+send({ type: "task.approvePlan", id: d });
+await wait(`${d} waiting for a person`, () => tasks.get(d)?.events.some((e) => e.text.startsWith("is ready; waiting for a person")), 180000);
+const on = () => send({ type: "policy.save", policy: { ...policy, autoMerges: true } });
+on();
+await wait(`${d} countdown`, () => tasks.get(d)?.mergeAt);
+send({ type: "policy.save", policy: { ...policy, autoMerges: false } });
+t = await wait(`${d} countdown cleared`, () => policy.autoMerges === false && tasks.get(d)?.mergeAt == null && tasks.get(d));
+if (t.state !== "reviewing" || autoMerged(t)) throw new Error(`${d}: ${t.state}, ${t.events.map((e) => e.text).join(" / ")}`);
+step(`${d}: auto-merge off mid-countdown cleared mergeAt (the head had already said it's waiting for a person)`);
+on();
+t = await wait(`${d} counts down again`, () => policy.autoMerges !== false && tasks.get(d)?.mergeAt && tasks.get(d));
+if (counting(t).length !== 2 || autoMerged(t)) throw new Error(`${d}: ${t.events.map((e) => e.text).join(" / ")}`);
+t = await wait(`${d} merged`, () => tasks.get(d)?.state === "merged" && tasks.get(d), 30000);
+step(`back on, it counted down afresh and the factory ${autoMerged(t).text}`);
 console.log(`\n${tasks.get(b.id).events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
 
 send({ type: "policy.save", policy: original });

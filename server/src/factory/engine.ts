@@ -1642,7 +1642,9 @@ export class Engine {
   /** Merges on the factory's own say-so when the policy (or the goal's accepted risk) allows it, after
    *  counting down `mergeAt` so a person can hold it. */
   private async autoMerge(task: Task) {
-    if (!this.mergeReady(task)) return;
+    // A gate that dropped stops a countdown even when nothing else here saves the task.
+    const stop = () => { if (task.mergeAt != null) this.save(task); };
+    if (!this.mergeReady(task)) return stop();
     const a = this.assessment(task);
     const priv = this.store.private(task.id);
     const head = task.pr!.head ?? task.pr!.branch;
@@ -1654,9 +1656,9 @@ export class Engine {
         this.save(task);
         this.hooks.broadcast({ type: "toast", text: `${task.id} is ready to merge; it's waiting for you.`, taskId: task.id });
       }
-      return;
+      return stop();
     }
-    if (priv.mergeHeld === head) return; // a person held this head's auto-merge
+    if (priv.mergeHeld === head) return stop(); // a person held this head's auto-merge
     if (task.mergeAt == null) {
       const grace = this.mergeGraceMs();
       task.mergeAt = now() + grace;

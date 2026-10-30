@@ -704,7 +704,8 @@ function decisions(t) {
 /** The auto-merge counting down on a task: the whole window and what's left of it (ms), or null. The
  *  window starts at the factory's "will auto-merge" event; without one it's taken as the default 10s. */
 function mergeCountdown(t) {
-  if (t.state !== "reviewing" || !t.mergeAt) return null;
+  // Long past due, it isn't merging after all: show the plain Merge button again.
+  if (t.state !== "reviewing" || !t.mergeAt || Date.now() - t.mergeAt > 15_000) return null;
   const started = t.events.findLast((e) => e.who === "factory" && e.text.startsWith("will auto-merge"))?.at;
   const left = Math.max(0, t.mergeAt - Date.now());
   return { total: Math.max(started ? t.mergeAt - started : 10_000, left, 1), left };
