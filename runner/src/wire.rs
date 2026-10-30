@@ -1978,6 +1978,9 @@ pub enum RunnerMessage {
         commit: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
     },
     /// How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed.
     #[serde(rename = "task.merge_check")]
@@ -2200,6 +2203,9 @@ pub enum ServerToRunner {
         /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<WorktreeScripts>,
+        /// Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delete_remote: Option<bool>,
     },
     /// The answer to `task.token_request`.
     #[serde(rename = "task.token")]

@@ -37,6 +37,8 @@ export interface TaskPrivate {
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
   mergedAs?: string | null;
   cleaned?: boolean;
+  /** What became of its branch on origin after the factory merged it: unknown (unset) or failed gets a retry at cleanup. */
+  remoteBranch?: "deleted" | "kept" | "failed" | null;
   /// A hand-off (`task.handoff`) was sent and hasn't been answered; who asked for it.
   handingOff?: string | null;
   /// Where it was moved from, and the commit it carries on from, until its next session starts.

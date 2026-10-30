@@ -1509,10 +1509,14 @@ export class Engine {
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base} (${msg.commit?.slice(0, 7) ?? ""})`);
+    // The runner's merge (no GitHub App) deleted the branch on origin, or says why not.
+    const branch = msg.branch ? branchNote(task.pr.branch, msg.branch) : null;
+    if (branch) this.event(task, "factory", branch.text);
     this.intake.forTask(task, `${task.id} is merged into ${task.pr.base}. Thanks for asking!`);
     this.save(task);
     this.hooks.broadcast({ type: "toast", text: `${task.id} merged into ${task.pr.base}.`, taskId: task.id });
-    this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null, mergeFixes: 0 });
+    const priv = this.store.private(task.id);
+    this.store.savePrivate(task.id, { ...priv, mergedAs: msg.commit ?? null, mergeFixes: 0, remoteBranch: branch?.outcome ?? priv.remoteBranch ?? null });
     this.hooks.waitUntil(this.cleanup(task));
     // What it overlapped may not merge any more: each of those still in review gets a dry-run merge now,
     // rather than finding out when its own merge fails.
@@ -1581,8 +1585,19 @@ export class Engine {
     const machine = (await this.hooks.machines()).find((m) => m.id === task.machine);
     if (machine?.sessions.some((s) => s.session.taskId === task.id)) return; // its last end calls this again
     this.store.savePrivate(task.id, { ...priv, cleaned: true });
+    // The factory merged it, and its branch may still be on origin (a delete that failed, or no word
+    // of one): one more try, through the GitHub App here or by the runner with the cleanup.
+    let deleteRemote = false;
+    if (task.state === "merged" && priv.mergeBy && task.pr) {
+      const app = githubApp(this.env);
+      if (app && priv.gh && task.pr.url) {
+        await this.branchDeletes.get(task.id);
+        await this.deleteMergedBranch(task.id, app, priv.gh, task.pr);
+      } else deleteRemote = priv.remoteBranch !== "deleted" && priv.remoteBranch !== "kept";
+    }
     await this.toRunner(task.machine, {
       type: "task.cleanup",
+      deleteRemote,
       taskId: task.id,
       cwd: priv.worktree,
       repoDir: priv.repoDir,
@@ -1985,22 +2000,35 @@ export class Engine {
   }
 
   /** After the factory merged a pull request: deletes its agent/ branch on GitHub, if it's still the head
-   *  that merged. Best-effort: the merge stands whatever happens here. */
-  private async deleteMergedBranch(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
+   *  that merged. Best-effort: the merge stands whatever happens here. One already under way is joined,
+   *  and one that's settled (deleted or kept) isn't tried again. */
+  private deleteMergedBranch(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>): Promise<void> {
+    const running = this.branchDeletes.get(taskId);
+    if (running) return running;
+    const settled = this.store.private(taskId).remoteBranch;
+    if (settled === "deleted" || settled === "kept") return Promise.resolve();
+    const deleting = this.deleteBranchOnGitHub(taskId, app, gh, pr).finally(() => this.branchDeletes.delete(taskId));
+    this.branchDeletes.set(taskId, deleting);
+    return deleting;
+  }
+
+  private async deleteBranchOnGitHub(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
     const branch = pr.branch;
     if (!branch.startsWith("agent/") || branch === pr.base) return;
     let text: string;
-    if (!pr.head) text = `kept branch ${branch} on GitHub (its merged head isn't known)`;
+    let outcome: "deleted" | "kept" | "failed";
+    if (!pr.head) [text, outcome] = [`kept branch ${branch} on GitHub (its merged head isn't known)`, "kept"];
     else {
       try {
         const r = await deleteBranch(app, gh.owner, gh.repo, branch, pr.head);
-        text = r === "moved" ? `kept branch ${branch} on GitHub (it moved after the merge)` : `deleted branch ${branch} on GitHub`;
+        [text, outcome] = r === "moved" ? [`kept branch ${branch} on GitHub (it moved after the merge)`, "kept"] : [`deleted branch ${branch} on GitHub`, "deleted"];
       } catch (e) {
-        text = `couldn't delete branch ${branch} on GitHub: ${(e as Error).message}`;
+        [text, outcome] = [`couldn't delete branch ${branch} on GitHub: ${(e as Error).message}`, "failed"];
       }
     }
     const task = this.store.task(taskId);
     if (!task) return;
+    this.store.savePrivate(taskId, { ...this.store.private(taskId), remoteBranch: outcome });
     this.event(task, "factory", text);
     this.save(task, false);
   }
@@ -2308,6 +2336,8 @@ export class Engine {
 
   /** Sessions already sent a kill by `reap`, so a slow one isn't killed on every report. */
   private reaped = new Set<string>();
+  /** Merged branches being deleted on GitHub, by task, so cleanup waits for (and doesn't repeat) one. */
+  private branchDeletes = new Map<string, Promise<void>>();
 
   /** Types into the task's live session, as if at its keyboard. False when nothing's running. */
   private async type(task: Task, text: string): Promise<boolean> {
@@ -2435,4 +2465,14 @@ function pullBody(task: Task): string {
     .filter(Boolean)
     .join("\n\n")
     .slice(0, 60_000);
+}
+
+/** A runner's `task.merged` branch note (deleted, gone, moved or `failed: <why>`) as a timeline line,
+ *  worded like the GitHub App's, and what it settles. */
+export function branchNote(branch: string, note: string): { text: string; outcome: "deleted" | "kept" | "failed" } {
+  if (note === "deleted") return { text: `deleted branch ${branch} on origin`, outcome: "deleted" };
+  if (note === "gone") return { text: `branch ${branch} was already gone on origin`, outcome: "deleted" };
+  if (note === "moved") return { text: `kept branch ${branch} on origin (it moved after the merge)`, outcome: "kept" };
+  const why = note.replace(/^failed:\s*/, "") || "no reason given";
+  return { text: `couldn't delete branch ${branch} on origin: ${why}`.slice(0, 2000), outcome: "failed" };
 }
