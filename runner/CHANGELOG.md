@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.60.0 — 2026-10-30
+
+The runner is built with the latest protocol, which adds Set up with AI for repos; it runs through the same read-only draft sessions as before.
+
 ## 0.59.0 — 2026-10-30
 
 The runner is built with the latest protocol, which adds revoking a member's access; nothing else changes on the runner.
