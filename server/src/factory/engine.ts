@@ -17,6 +17,7 @@ import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPromp
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
+import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
@@ -89,6 +90,7 @@ const fail = (message: string): never => {
 
 export class Engine {
   private drafts: Drafts;
+  private scout: Scout;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
@@ -97,6 +99,14 @@ export class Engine {
       hasAgent: (m, agent) => this.hasAgent(m, agent),
       paused: (m) => this.store.settings(m.id).paused,
       toRunner: (machine, command) => this.toRunner(machine, command),
+    });
+    this.scout = new Scout(store, {
+      broadcast: (message) => hooks.broadcast(message),
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      toRunner: (machine, command) => this.toRunner(machine, command),
+      make: (goal, by, picks, shown) => this.scouted(goal, by, picks, shown),
     });
   }
 
@@ -114,6 +124,13 @@ export class Engine {
           if (msg.type === "draft.start") await this.drafts.start(who, msg.id, msg.idea, msg.goal ?? null, msg.agent ?? null);
           else if (msg.type === "draft.goal") await this.drafts.pickGoal(who, msg.id, msg.goal);
           else await this.drafts.cancel(who, msg.id);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
+      case "goal.scout":
+        try {
+          await this.scout.start(who, msg.goal);
         } catch (e) {
           fail((e as Error).message);
         }
@@ -864,6 +881,34 @@ export class Engine {
     return task;
   }
 
+  /** A Scout run's picks: a backlog task is picked up, a finding becomes a task; all go to planning. */
+  private async scouted(goal: Goal, by: string, picks: ScoutPick[], shown: Candidate[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const pick of picks) {
+      const c = shown.find((x) => x.from === pick.from);
+      const source = c && this.store.task(c.task);
+      if (!c || !source) continue;
+      if (c.kind === "backlog") {
+        if (source.state !== "backlog") continue;
+        this.event(source, "factory", `Scout picked it up from the backlog for @${by}`);
+        await this.startPlanning(source, by, source.plan.length > 0);
+        ids.push(source.id);
+        continue;
+      }
+      // Made since by someone else (or a run that overlapped): don't make it twice.
+      if (this.store.tasks().some((t) => t.scoutedFrom === pick.from)) continue;
+      const checks = pick.doneWhen.map((d) => `- ${d}`).join("\n");
+      const brief = checks ? `${pick.brief}\n\n## Done when\n${checks}` : pick.brief;
+      const task = this.newTask(goal, by, { title: pick.title, brief, tickets: [], shareable: source.shareable, agent: source.agent, model: source.model ?? null, intake: null, repo: source.repo ?? null, after: [], effort: source.effort ?? null });
+      task.scoutedFrom = pick.from;
+      this.event(task, "factory", `Scouted from ${source.id}`);
+      await audit(this.env, by, "task.created", task.id, { title: task.title, scoutedFrom: pick.from });
+      await this.startPlanning(task, by);
+      ids.push(task.id);
+    }
+    return ids;
+  }
+
   /** A plan just got its approvals: it builds, and its other repos' parts become tasks that wait on it. */
   private async approved(task: Task, why: string) {
     task.state = "building";
@@ -1044,10 +1089,12 @@ export class Engine {
     switch (msg.type) {
       case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
       case "draft.progress":
-        this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        // A Scout run only reports what it picked, at the end.
+        if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
         return null;
       case "draft.done":
-        await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        if (msg.id.startsWith(SCOUT_PREFIX)) await this.scout.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        else await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         return null;
       case "session.opened": {
         const s = msg.session.taskId ? this.store.session(msg.session.id) : null;
@@ -1156,9 +1203,10 @@ export class Engine {
           this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
-        if (this.drafts.forRun(msg.taskId, machine)) {
-          // Draft with AI reads its goal's code: a fetch of one of that goal's repos, nothing more.
-          if (msg.purpose !== "fetch" || !this.drafts.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`)) {
+        if (this.drafts.forRun(msg.taskId, machine) || this.scout.forRun(msg.taskId, machine)) {
+          // Draft with AI and Scout read their goal's code: a fetch of one of that goal's repos, nothing more.
+          const mayFetch = msg.taskId.startsWith(SCOUT_PREFIX) ? this.scout.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`) : this.drafts.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`);
+          if (msg.purpose !== "fetch" || !mayFetch) {
             return await reply(null, "A draft can only fetch its goal's repos.", "api"), null;
           }
           try {
