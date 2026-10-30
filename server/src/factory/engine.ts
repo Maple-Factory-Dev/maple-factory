@@ -8,7 +8,7 @@
 import type { Env } from "../env.ts";
 import type {
   ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  McpConnector, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  McpConnector, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
@@ -19,6 +19,7 @@ import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from 
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
+import { RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
@@ -229,15 +230,7 @@ export class Engine {
       }
       case "repos.scripts.set": {
         if (member.role !== "admin") fail("Only admins can change a repo's worktree scripts.");
-        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name
-          ?? fail(`${msg.repo} isn't one of the org's repos.`);
-        const scripts = cleanScripts(msg.scripts);
-        const before = this.store.scriptsFor(repo) ?? {};
-        const changed = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
-        this.store.saveRepoScripts(repo, scripts, who);
-        // Which ones changed, not the commands (they can carry hosts and paths).
-        await audit(this.env, who, "repo.scripts", repo, { repo, changed });
-        this.reposUpdated();
+        await this.saveRepoSetup(who, msg.repo, msg.scripts, msg.prompts, null);
         return;
       }
       case "policy.save": {
@@ -1657,6 +1650,27 @@ export class Engine {
     });
   }
 
+  /** A repo's worktree scripts and prompt additions, saved by an admin (from an app, or an admin's
+   *  own agent session through the maple MCP, `via`). No prompts (an older app) keeps the stored ones. */
+  private async saveRepoSetup(who: string, name: string, raw: WorktreeScripts, rawPrompts: PromptAdditions | null | undefined, via: string | null) {
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === name.trim().toLowerCase())?.name
+      ?? fail(`${name} isn't one of the org's repos.`);
+    const scripts = cleanScripts(raw);
+    const beforePrompts = this.store.repoPrompts(repo);
+    let prompts = rawPrompts ? cleanPrompts(rawPrompts) : beforePrompts;
+    if (prompts && !prompts.planner && !prompts.builder && !prompts.reviewer) prompts = null;
+    const before = this.store.scriptsFor(repo) ?? {};
+    const changed: string[] = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
+    for (const role of ["planner", "builder", "reviewer"] as const) {
+      if ((prompts?.[role] ?? "") !== (beforePrompts?.[role] ?? "")) changed.push(`prompts.${role}`);
+    }
+    this.store.saveRepoScripts(repo, scripts, who, prompts);
+    // Which ones changed, not the commands or prompts (they can carry hosts and paths).
+    await audit(this.env, who, "repo.scripts", repo, { repo, changed, ...(via ? { via } : {}) });
+    this.reposUpdated();
+    return repo;
+  }
+
   // ---------------------------------------------------------------------------
   // Agents' tools
 
@@ -2448,23 +2462,11 @@ export class Engine {
 }
 
 const SCRIPT_FIELDS = ["create", "setup", "teardown", "archive", "timeoutSecs"] as const;
-/** The longest command kept for one worktree script. */
-const MAX_SCRIPT = 4096;
-
 /** A repo's worktree scripts as stored: commands trimmed, blank ones dropped, none when nothing's left. */
 function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
-  const out: WorktreeScripts = {};
-  for (const f of ["create", "setup", "teardown", "archive"] as const) {
-    const command = typeof s[f] === "string" ? s[f]!.trim() : "";
-    if (!command) continue;
-    if (new TextEncoder().encode(command).length > MAX_SCRIPT) fail(`The ${f} script is over 4 KB; put it in a file in the repo and run that.`);
-    out[f] = command;
-  }
-  if (s.timeoutSecs != null) {
-    if (!Number.isSafeInteger(s.timeoutSecs) || s.timeoutSecs < 1 || s.timeoutSecs > 3600) fail("A worktree script's timeout is 1–3600 seconds.");
-    out.timeoutSecs = s.timeoutSecs;
-  }
-  return out.create || out.setup || out.teardown || out.archive ? out : null;
+  const problem = scriptsProblem(s);
+  if (problem) fail(problem);
+  return tidyScripts(s);
 }
 
 /** An effort's name as stored: trimmed and spaces collapsed; blank is none. */

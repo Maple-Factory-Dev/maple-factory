@@ -117,6 +117,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS session_costs_updated ON session_costs (updated);
       CREATE TABLE IF NOT EXISTS repo_scripts (repo TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL);
     `);
+    // A repo's prompt additions came later: added once, to a table made before them.
+    if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
+      this.sql.exec("ALTER TABLE repo_scripts ADD COLUMN prompts TEXT");
+    }
     this.backfillStats();
   }
 
@@ -463,23 +467,38 @@ export class Store {
     this.set("reposAt", String(Date.now()));
   }
 
-  /** Every repo's worktree scripts, by repo name. */
+  /** Every repo's worktree scripts and prompt additions, by repo name. */
   repoScripts(): RepoWorktreeScripts[] {
-    return this.sql.exec<{ repo: string; doc: string; updated_by: string; updated_at: number }>("SELECT * FROM repo_scripts ORDER BY repo")
-      .toArray().map((r) => ({ repo: r.repo, scripts: JSON.parse(r.doc), updatedBy: r.updated_by, updatedAt: r.updated_at }));
+    return this.sql.exec<{ repo: string; doc: string; prompts: string | null; updated_by: string; updated_at: number }>("SELECT * FROM repo_scripts ORDER BY repo")
+      .toArray().map((r) => ({ repo: r.repo, scripts: JSON.parse(r.doc), prompts: r.prompts ? JSON.parse(r.prompts) : null, updatedBy: r.updated_by, updatedAt: r.updated_at }));
+  }
+
+  /** One repo's row (its name in any case), if it has scripts or prompts. */
+  repoSetup(repo: string | null | undefined): RepoWorktreeScripts | null {
+    return repo ? this.repoScripts().find((r) => r.repo.toLowerCase() === repo.toLowerCase()) ?? null : null;
+  }
+
+  /** One repo's prompt additions, if it has any. */
+  repoPrompts(repo: string | null | undefined): PromptAdditions | null {
+    if (!repo) return null;
+    const row = this.sql.exec<{ prompts: string | null }>("SELECT prompts FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo).toArray()[0];
+    return row?.prompts ? JSON.parse(row.prompts) : null;
   }
 
   /** One repo's worktree scripts (its name in any case), if it has any. */
   scriptsFor(repo: string | null | undefined): WorktreeScripts | null {
     if (!repo) return null;
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo).toArray()[0];
-    return row ? JSON.parse(row.doc) : null;
+    // A row with only prompt additions has no scripts.
+    return row && row.doc !== "{}" ? JSON.parse(row.doc) : null;
   }
 
-  /** None removes them. */
-  saveRepoScripts(repo: string, scripts: WorktreeScripts | null, by: string) {
+  /** Both none removes the row. */
+  saveRepoScripts(repo: string, scripts: WorktreeScripts | null, by: string, prompts: PromptAdditions | null = null) {
     this.sql.exec("DELETE FROM repo_scripts WHERE repo = ? COLLATE NOCASE", repo);
-    if (scripts) this.sql.exec("INSERT INTO repo_scripts (repo, doc, updated_by, updated_at) VALUES (?, ?, ?, ?)", repo, JSON.stringify(scripts), by, Date.now());
+    if (scripts || prompts) {
+      this.sql.exec("INSERT INTO repo_scripts (repo, doc, prompts, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)", repo, JSON.stringify(scripts ?? {}), prompts ? JSON.stringify(prompts) : null, by, Date.now());
+    }
   }
 
   reposAt(): number {
