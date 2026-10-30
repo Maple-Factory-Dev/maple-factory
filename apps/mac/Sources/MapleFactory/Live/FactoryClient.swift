@@ -881,7 +881,9 @@ import Security
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+        // A big patch takes a moment to parse; keep it off the main thread.
+        let files = await Task.detached { DiffFile.parse(String(decoding: data, as: UTF8.self)) }.value
+        diffs[id] = (key, files)
     }
 
     /// Each task's GitHub review threads as last fetched, and the change they were fetched for.
