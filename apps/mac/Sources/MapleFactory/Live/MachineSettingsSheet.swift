@@ -61,7 +61,7 @@ struct MachineSettingsSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: embedded ? 22 : 20) {
             if !embedded {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Factory work on \(machine.name)")
@@ -274,7 +274,21 @@ struct MachineSettingsSheet: View {
         .foregroundStyle(Theme.text)
     }
 
+    @ViewBuilder
     private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        if embedded {
+            // In Settings, one of its sections.
+            SettingsSection(title) {
+                SettingsBlock(spacing: 12) { content() }
+            }
+            .font(.system(size: 12.5))
+            .foregroundStyle(Theme.text)
+        } else {
+            sheetGroup(title, content: content)
+        }
+    }
+
+    private func sheetGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(title: title)
             VStack(alignment: .leading, spacing: 12) { content() }
