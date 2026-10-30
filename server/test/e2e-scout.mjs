@@ -38,6 +38,17 @@ feed.onmessage = (e) => {
   if (m.type === "error") errors.push(m.message);
 };
 await new Promise((r) => (feed.onopen = r));
+/** The snapshot a newly connected app gets. */
+async function snapshotOf() {
+  const other = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `Bearer ${token}` } });
+  const got = await new Promise((resolve, reject) => {
+    other.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === "snapshot") resolve(m); };
+    other.onerror = reject;
+    other.onopen = () => other.send(JSON.stringify({ type: "subscribe" }));
+  });
+  other.close();
+  return got;
+}
 const send = (m) => feed.send(JSON.stringify(m));
 send({ type: "subscribe" });
 await until("the snapshot", () => policy);
@@ -162,7 +173,14 @@ async function scenario(folder) {
   }
 
   tokenReply = null;
+  draftRun = null;
   send({ type: "goal.scout", goal: goal.id });
+  // An app that connects while it runs finds it in its snapshot, running.
+  await until("the draft.run", () => draftRun);
+  const later = await snapshotOf();
+  const inSnapshot = (later.scoutRuns ?? []).find((r) => r.goal === goal.id);
+  if (inSnapshot?.state !== "running") throw new Error(`a new app's snapshot has ${JSON.stringify(later.scoutRuns)}`);
+  step(`a new app's snapshot has the run in scoutRuns: ${inSnapshot.state}, by ${inSnapshot.by}`);
   await until("the Scout run", () => runs.some((r) => r.goal === goal.id && r.state !== "running"), 20_000);
   if (!draftRun?.id.startsWith("scout-")) throw new Error(`no scout- draft.run: ${draftRun?.id}`);
   const shown = [...draftRun.prompt.matchAll(/^- from (\S+)/gm)].map((x) => x[1]);

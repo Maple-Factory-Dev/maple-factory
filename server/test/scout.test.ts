@@ -141,6 +141,35 @@ test("a second run skips what the first made, and a backlog task is picked up in
   assert.equal(f.store.tasks().length, 5);
 });
 
+test("scoutRuns: a run on a machine is in what a new subscriber's snapshot gets, running", async () => {
+  const f = factory();
+  await f.scout();
+  assert.ok(f.sent.some((c) => c.type === "draft.run"));
+  const got = f.engine.scoutRuns();
+  assert.equal(got.length, 1);
+  assert.equal(got[0].goal, "g");
+  assert.equal(got[0].state, "running");
+  assert.equal(got[0].error, null);
+});
+
+test("scoutRuns: a running run older than 30 minutes comes back failed, and the goal can be scouted again", async () => {
+  const f = factory();
+  await f.scout();
+  const saved = JSON.parse(f.store.get("scout:g")!);
+  saved.run.startedAt = Date.now() - 31 * 60_000;
+  f.store.set("scout:g", JSON.stringify(saved));
+  const [run] = f.engine.scoutRuns();
+  assert.equal(run.state, "failed");
+  assert.equal(run.error, "Its agent stopped answering.");
+  assert.equal(JSON.parse(f.store.get("scout:g")!).run.state, "running", "only reported as failed, not rewritten");
+  await f.scout();
+  assert.equal(f.engine.scoutRuns()[0].state, "running");
+});
+
+test("scoutRuns: goals never scouted aren't in it", () => {
+  assert.deepEqual(factory().engine.scoutRuns(), []);
+});
+
 test("nothing left over: done straight away, no machine used", async () => {
   const f = factory();
   f.store.saveTask(task("T-1", { autoReview: review([]) }));
