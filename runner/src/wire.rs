@@ -2428,6 +2428,9 @@ pub enum ServerToClient {
         /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+        /// The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -2495,6 +2498,13 @@ pub enum ServerToClient {
         /// Its new path (`/icon/<id>`); none: removed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+    },
+    /// An admin set or cleared the factory's display name (PUT or DELETE /api/name).
+    #[serde(rename = "name.updated")]
+    NameUpdated {
+        /// The new name; none: cleared (back to the GitHub org).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
     #[serde(rename = "repos.updated")]
     ReposUpdated {

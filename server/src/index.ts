@@ -5,6 +5,7 @@ import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload 
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
+import { remove as removeName, set as setName } from "./name.ts";
 import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
@@ -114,6 +115,9 @@ export default {
     // The factory's icon (src/icon.ts).
     if (path === "/api/icon" && request.method === "PUT") return uploadIcon(request, env, me);
     if (path === "/api/icon" && request.method === "DELETE") return removeIcon(env, me);
+    // The factory's display name (src/name.ts).
+    if (path === "/api/name" && request.method === "PUT") return setName(request, env, me);
+    if (path === "/api/name" && request.method === "DELETE") return removeName(env, me);
 
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;

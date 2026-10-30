@@ -179,6 +179,13 @@ export class OrgHub extends DurableObject<Env> {
         this.broadcast({ type: "icon.updated", icon: id ? `/icon/${id}` : null });
         return Response.json({ previous });
       }
+      case "/name": {
+        // The Worker checked it's an admin and the name's length; this keeps it and tells the apps.
+        const { name } = (await request.json()) as { name: string | null };
+        this.store.saveName(name);
+        this.broadcast({ type: "name.updated", name });
+        return new Response(null, { status: 204 });
+      }
       case "/dev/alarm": {
         // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
         if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete("runner:checkedAt");
@@ -404,6 +411,7 @@ export class OrgHub extends DurableObject<Env> {
           serverVersion: SERVER_VERSION,
           serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
           icon: this.iconPath(),
+          name: this.store.name(),
           protocolVersion: PROTOCOL_VERSION,
         });
         // The app's repos change on GitHub's side; read them again when they're an hour old.

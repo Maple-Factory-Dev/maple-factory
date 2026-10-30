@@ -1733,6 +1733,8 @@ export interface ServerToClient_Snapshot {
   serverUpdate?: ServerUpdate | null;
   /** The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server. */
   icon?: string | null;
+  /** The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server. */
+  name?: string | null;
   protocolVersion: number;
 }
 
@@ -1812,6 +1814,13 @@ export interface ServerToClient_IconUpdated {
   icon?: string | null;
 }
 
+/** An admin set or cleared the factory's display name (PUT or DELETE /api/name). */
+export interface ServerToClient_NameUpdated {
+  type: "name.updated";
+  /** The new name; none: cleared (back to the GitHub org). */
+  name?: string | null;
+}
+
 export interface ServerToClient_ReposUpdated {
   type: "repos.updated";
   repos: OrgRepo[];
@@ -1860,5 +1869,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_IconUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","icon.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","error"] as const;

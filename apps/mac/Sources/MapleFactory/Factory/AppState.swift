@@ -2111,6 +2111,8 @@ final class AppState {
             case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
             // `icon:<file>` is Settings › Appearance's Choose Image… picking that file; `icon:remove` its Remove.
             case "icon": NotificationCenter.default.post(name: AppearanceSettings.demoPick, object: parts.dropFirst().joined(separator: ":"))
+            // `name:<text>` types that into Settings › Appearance's Name and clicks Save; `name:clear` is its Use Org Name.
+            case "name": NotificationCenter.default.post(name: FactoryNameCard.demo, object: parts.dropFirst().joined(separator: ":"))
             // `factory:<host:port>` picks that saved factory in the factory menu.
             case "factory":
                 if let client, let factory = client.savedFactories.first(where: { $0.id == parts.dropFirst().joined(separator: ":") }) {
