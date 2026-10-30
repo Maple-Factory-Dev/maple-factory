@@ -6,6 +6,7 @@
 
 import type { Goal, Machine, RiskPolicy, ScoutRun, ServerToClient, ServerToRunner, Task } from "../wire.ts";
 import { lastJson } from "./drafts.ts";
+import { goalMayFetch } from "./repos.ts";
 import type { Store } from "./store.ts";
 
 /** The id a Scout run goes by on the runner (its token requests and its worktree's name). */
@@ -100,11 +101,11 @@ export class Scout {
     return null;
   }
 
-  /** Whether a run may have a read-only token for owner/repo: only its goal's repos, while it runs. */
+  /** Whether a run may have a read-only token for owner/repo: only its goal's (`goalMayFetch`), while it runs. */
   mayFetch(runId: string, machine: string, repo: string): boolean {
     const saved = this.forRun(runId, machine);
     const goal = saved ? this.store.goal(saved.run.goal) : null;
-    return Boolean(saved && saved.run.state === "running" && goal?.repos.some((r) => r.toLowerCase() === repo.toLowerCase()));
+    return Boolean(saved && saved.run.state === "running" && goal && goalMayFetch(goal, repo));
   }
 
   async start(by: string, goalId: string) {

@@ -12,6 +12,14 @@ export function goalRepos(goal: Goal): string[] {
   return all.filter((r, i) => all.findIndex((x) => x.toLowerCase() === r.toLowerCase()) === i);
 }
 
+/** Whether a read-only fetch of owner/repo is a goal's: one of its repos, or, for a goal that names a
+ *  folder and lists no repos, any repo the app reaches (the folder's origin; tasks on it get tokens alike). */
+export function goalMayFetch(goal: Goal, repo: string): boolean {
+  const repos = goalRepos(goal);
+  if (!repos.length) return !!goal.folder;
+  return repos.some((r) => r.toLowerCase() === repo.toLowerCase());
+}
+
 /** The repo a task changes: its own pick, else its goal's. */
 export function taskRepo(task: Task, goal: Goal | null): string | null {
   return task.repo ?? goal?.repo ?? null;
