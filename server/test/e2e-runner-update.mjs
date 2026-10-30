@@ -1,7 +1,8 @@
 // A runner update's state on its machine, against `wrangler dev` and a talking-only runner enrolled here
 // (like test/fake-runner.mjs) that plays the update itself:
 //   node server/test/e2e-runner-update.mjs http://localhost:8788
-// Checks: the snapshot carries runnerReleases; machine.update puts the machine at checking; the runner's
+// Checks: the snapshot carries runnerReleases; runner.check reads the feed past its cache and answers with
+// runner.released and a toast, leaving the machine's update alone and sending the runner nothing; machine.update puts the machine at checking; the runner's
 // update.status notices move it to installing (with the version) and restarting, and it stays restarting
 // while the runner is offline; reconnecting on that version marks it updated, in a fresh snapshot too.
 // A second update that fails shows failed with the runner's reason (and a toast), and up_to_date shows as upToDate.
@@ -23,6 +24,7 @@ const wait = async (what, test, ms = 10000) => {
   }
 };
 const step = (text) => console.log(`✓ ${text}`);
+const publish = (path, body) => fetch(`${base}/dev/releases/${path}`, { method: "PUT", body: JSON.stringify(body) });
 
 // The runner: says hello on `version`, and records what the hub asks of it.
 const runnerId = `update-${Date.now() % 100000}`;
@@ -72,6 +74,26 @@ await wait("the machine online", () => app.machine?.online && app.machine.versio
 if (!Array.isArray(app.snapshot.runnerReleases)) throw new Error(`snapshot.runnerReleases is ${JSON.stringify(app.snapshot.runnerReleases)}`);
 step(`snapshot has runnerReleases (${app.snapshot.runnerReleases.length}${app.snapshot.runnerReleases[0] ? `, newest ${app.snapshot.runnerReleases[0].version}` : ""})`);
 
+// A check only looks: a newer release comes back as runner.released and a toast, and nothing installs.
+const available = `8.${Date.now() % 100000}.0`;
+await publish("maple-runner/latest.json", { version: available });
+await publish("maple-runner/changes.json", { releases: [{ version: available, publishedAt: new Date().toISOString(), notes: "- A checked release." }] });
+app.sock.send(JSON.stringify({ type: "runner.check", machine: runnerId }));
+await wait("runner.released from the check", () => app.released.find((m) => m.runnerLatest === available));
+const offered = await wait("the check's toast", () => app.toasts.find((t) => t.includes(available)));
+if (offered !== `Runner ${available} is available for ${app.machine.name}.`) throw new Error(`the check toasted "${offered}"`);
+step(`runner.check → runner.released ${available} past the cache, and "${offered}"`);
+await publish("maple-runner/latest.json", { version: "0.1.0" });
+app.sock.send(JSON.stringify({ type: "runner.check", machine: runnerId }));
+const current = await wait("the up-to-date toast", () => app.toasts.find((t) => t.includes("latest runner")));
+if (current !== `${app.machine.name} is on the latest runner (0.1.0).`) throw new Error(`the check toasted "${current}"`);
+step(`runner.check on the latest → "${current}"`);
+await new Promise((r) => setTimeout(r, 500));
+if (app.machine.update != null) throw new Error(`a check set the machine's update to ${JSON.stringify(app.machine.update)}`);
+if (asked.length) throw new Error(`a check sent the runner ${asked.length} runner.update`);
+step("a check leaves the machine's update null and sends the runner no runner.update");
+app.toasts.length = 0;
+
 app.sock.send(JSON.stringify({ type: "machine.update", machine: runnerId }));
 await wait("runner.update reaching the runner", () => asked.length === 1);
 await wait("checking", () => app.machine.update?.state === "checking");
@@ -113,7 +135,6 @@ await wait("upToDate", () => app.machine.update?.state === "upToDate");
 step("up_to_date → upToDate");
 
 const newer = `9.${Date.now() % 100000}.0`;
-const publish = (path, body) => fetch(`${base}/dev/releases/${path}`, { method: "PUT", body: JSON.stringify(body) });
 await publish("maple-runner/latest.json", { version: newer });
 await publish("maple-runner/changes.json", { releases: [{ version: newer, publishedAt: new Date().toISOString(), notes: "- A test release." }] });
 const fired = await (await fetch(`${base}/dev/alarm?stale`, { method: "POST" })).json();
