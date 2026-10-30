@@ -710,6 +710,13 @@ final class AppState {
         }
     }
 
+    /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
+    /// in (else the usual one), a title, and a brief listing each finding with the task it came from.
+    func composeFromFindings(_ rows: [Wire.StatsFindingRow]) {
+        guard !rows.isEmpty else { return }
+        startCompose(goal: FindingsTask.goal(rows, tasks: tasks), title: FindingsTask.title(rows), body: FindingsTask.body(rows))
+    }
+
     /// Closes the composer. A Draft with AI that's running keeps going, to come back to; one that
     /// failed while open has been seen, so it isn't brought back.
     func cancelCompose() {
@@ -1756,7 +1763,9 @@ final class AppState {
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
     /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
-    /// `findings:back`: Statistics' Review findings view, as its clicks would.
+    /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:severity:blocker` is a severity chip,
+    /// `findings:select:0` ticks a shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
+    /// is Make a task from them.
     static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
