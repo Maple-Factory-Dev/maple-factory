@@ -368,6 +368,19 @@ mod tests {
     }
 
     #[test]
+    fn preflight_watches_the_repos_files_or_the_usual_pins() {
+        let mut s = scripts("x", None);
+        assert_eq!(watched(&s), DEFAULT_WATCH);
+        s.preflight_watch = Some(" Gemfile.lock \n\n/etc/hosts\n../up\n~/.zshrc\nconfig/.tool-versions\n".into());
+        assert_eq!(watched(&s), ["Gemfile.lock", "config/.tool-versions"]);
+        s.preflight_watch = Some("/only/outside".into());
+        assert_eq!(watched(&s), DEFAULT_WATCH);
+        assert_eq!(command(Some(&s), Phase::Preflight), None);
+        s.preflight = Some(" mise install ".into());
+        assert_eq!(command(Some(&s), Phase::Preflight), Some("mise install"));
+    }
+
+    #[test]
     fn timeouts_and_blank_commands() {
         assert_eq!(timeout(None), DEFAULT_TIMEOUT);
         assert_eq!(timeout(Some(&scripts("x", Some(0)))), DEFAULT_TIMEOUT);
