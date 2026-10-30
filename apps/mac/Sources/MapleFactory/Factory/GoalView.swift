@@ -298,10 +298,7 @@ struct BoardColumns: View {
         let isDraft = { (id: String) in drafts.contains { $0.id == id } }
         return shell(icon: TaskState.drafting.icon, title: TaskState.drafting.title, color: TaskState.drafting.color, tasks: drafts) {
             ForEach(drafts) { task in
-                BoardCard(task: task, draggable: true, accepts: isDraft, onDrop: { dropped in
-                    guard dropped != task.id else { return }
-                    state.rankDraft(dropped, before: task.id)
-                })
+                BoardCard(task: task, draggable: true, drop: .draftAhead)
             }
         }
         .overlay {
@@ -320,10 +317,7 @@ struct BoardColumns: View {
     private func queueColumn(_ queued: [FactoryTask]) -> some View {
         return shell(icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) {
             ForEach(Array(queued.enumerated()), id: \.element.id) { index, task in
-                BoardCard(task: task, position: index + 1, draggable: true, onDrop: { dropped in
-                    guard dropped != task.id else { return }
-                    state.queue(dropped, before: task.id)
-                })
+                BoardCard(task: task, position: index + 1, draggable: true, drop: .queueAhead)
             }
             // An empty queue keeps a roomy box to drop a draft into.
             if queued.isEmpty {
@@ -387,10 +381,16 @@ private struct BoardCard: View {
     var draggable = false
     /// Pending merge's cards: Merge right on the card.
     var mergeButton = false
-    /// Which dropped cards it takes; none: any.
-    var accepts: ((String) -> Bool)? = nil
-    /// A card dropped on this one, to go ahead of it.
-    var onDrop: ((String) -> Void)? = nil
+    /// What a card dropped on this one does: goes ahead of it. A value, not a closure, so a card whose
+    /// task didn't change isn't drawn again on every update to another.
+    var drop: Drop? = nil
+
+    enum Drop {
+        /// Drafts' cards take another draft of the goal, ranked ahead.
+        case draftAhead
+        /// Queued's cards take any card, queued ahead.
+        case queueAhead
+    }
     @State private var confirmCancel = false
     @State private var rename = false
     @State private var scheduling = false
@@ -414,12 +414,19 @@ private struct BoardCard: View {
                 }
             }
         if draggable {
-            if let onDrop {
+            if let drop {
                 card
                     .draggable(task.id) { TaskCard(task: task, selected: false, position: position).frame(width: 224) }
                     .dropDestination(for: String.self) { ids, _ in
-                        guard let id = ids.first, accepts?(id) ?? true else { return false }
-                        onDrop(id)
+                        guard let id = ids.first else { return false }
+                        switch drop {
+                        case .draftAhead:
+                            let dropped = state.task(id)
+                            guard dropped.id == id, dropped.state == .drafting, !dropped.queued, dropped.goal == task.goal else { return false }
+                            if id != task.id { state.rankDraft(id, before: task.id) }
+                        case .queueAhead:
+                            if id != task.id { state.queue(id, before: task.id) }
+                        }
                         return true
                     } isTargeted: { targeted = $0 }
             } else {
