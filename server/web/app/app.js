@@ -688,7 +688,7 @@ function decisions(t) {
   const me = state.me?.login;
   const buttons = [];
   if (t.state === "awaitingApproval") {
-    buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => send({ type: "task.approvePlan", id: t.id }) },
+    buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => approvePlan(t) },
       t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
@@ -697,7 +697,7 @@ function decisions(t) {
   }
   if (t.state === "backlog") {
     // Nothing runs on it until it's picked up: its plan approved, or planned (again).
-    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => send({ type: "task.approvePlan", id: t.id }) }, "Approve & build"));
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, "Approve & build"));
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
   }
@@ -743,10 +743,30 @@ function decisions(t) {
     backlog: ["Ask for a change to the plan; it's planned again…", "Request change"],
     reviewing: ["What should change before it merges? The builder picks it up.", "Request changes"],
   }[t.state] ?? ["Steer it: what should change?", "Request change"];
+  const renaming = t.suggestedTitle && (t.state === "backlog" || (t.state === "awaitingApproval" && !t.approvals.includes(me)));
   return h("div", {},
+    renaming && renameRow(t),
     buttons.length > 0 && h("div", { class: "actions" }, buttons),
     cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && cancelCard(t),
     steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
+}
+
+/** The planner's proposed title: taken once the plan is approved, unless the approver keeps the current one. */
+function renameRow(t) {
+  const keep = keepingTitle.has(t.id);
+  return h("div", { class: `rename${keep ? " keep" : ""}` },
+    h("span", { class: "muted" }, "Renames to"),
+    h("b", { class: "to" }, t.suggestedTitle),
+    h("s", { class: "from" }, t.title),
+    h("label", {},
+      h("input", { type: "checkbox", checked: keep, onchange: (e) => { e.target.checked ? keepingTitle.add(t.id) : keepingTitle.delete(t.id); render(); } }),
+      " Keep current title"));
+}
+
+function approvePlan(t) {
+  const keepTitle = !!t.suggestedTitle && keepingTitle.has(t.id);
+  keepingTitle.delete(t.id);
+  send({ type: "task.approvePlan", id: t.id, ...(keepTitle ? { keepTitle } : {}) });
 }
 
 /** The auto-merge counting down on a task: the whole window and what's left of it (ms), or null. The
@@ -769,6 +789,7 @@ setInterval(() => {
   for (const el of document.querySelectorAll("[data-merge-at]")) el.textContent = countdownLabel(Number(el.dataset.mergeAt));
 }, 250);
 
+const keepingTitle = new Set(); // ids whose approver ticked "Keep current title"
 const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
 
 /** Asks before cancelling, saying what it stops. */
