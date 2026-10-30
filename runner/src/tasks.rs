@@ -793,10 +793,10 @@ pub async fn open(
         let (prompt, images) = crate::images::hand(&task.id, images, p.prompt).await;
         return Ok(Opened { worktree, prompt, images, secrets: repo.map(|r| (r, env)) });
     }
-    // The repo's create and setup scripts run with its secrets, so they're fetched first then.
+    // The repo's create, preflight and setup scripts run with its secrets, so they're fetched first then.
     let scripts = task.scripts.as_ref().filter(|s| {
         use crate::worktree_scripts::{Phase, command};
-        command(Some(s), Phase::Create).is_some() || command(Some(s), Phase::Setup).is_some()
+        [Phase::Create, Phase::Preflight, Phase::Setup].into_iter().any(|p| command(Some(s), p).is_some())
     });
     let early = match scripts {
         Some(_) => Some(crate::secrets::for_task(&emit, &task.id, task.repo.as_deref()).await),
