@@ -4088,6 +4088,15 @@ public enum Wire {
         }
     }
 
+    /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
+    public struct ClientMessageRunnerCheck: Codable, Hashable, Sendable {
+        public var machine: String
+
+        public init(machine: String) {
+            self.machine = machine
+        }
+    }
+
     /// Admins only.
     public struct ClientMessagePolicySave: Codable, Hashable, Sendable {
         public var policy: RiskPolicy
@@ -4473,6 +4482,7 @@ public enum Wire {
         case machineSettings(ClientMessageMachineSettings)
         case machineRename(ClientMessageMachineRename)
         case machineUpdate(ClientMessageMachineUpdate)
+        case runnerCheck(ClientMessageRunnerCheck)
         case policySave(ClientMessagePolicySave)
         case promptsSave(ClientMessagePromptsSave)
         case reposRefresh
@@ -4533,6 +4543,7 @@ public enum Wire {
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "machine.rename": self = .machineRename(try ClientMessageMachineRename(from: decoder))
             case "machine.update": self = .machineUpdate(try ClientMessageMachineUpdate(from: decoder))
+            case "runner.check": self = .runnerCheck(try ClientMessageRunnerCheck(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
             case "repos.refresh": self = .reposRefresh
@@ -4632,6 +4643,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .machineUpdate(let body):
                 try c.encode("machine.update", forKey: .type)
+                try body.encode(to: encoder)
+            case .runnerCheck(let body):
+                try c.encode("runner.check", forKey: .type)
                 try body.encode(to: encoder)
             case .policySave(let body):
                 try c.encode("policy.save", forKey: .type)

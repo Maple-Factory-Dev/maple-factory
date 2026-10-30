@@ -15,7 +15,7 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
-import { fromNotice, onReport, shown } from "./runner-update.ts";
+import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
@@ -86,17 +86,23 @@ export class OrgHub extends DurableObject<Env> {
     if (!this.ctx.getWebSockets("client").length) return;
     let checked = (await this.ctx.storage.get<number>("runner:checkedAt")) ?? 0;
     if (Date.now() - checked >= RUNNER_CHECK_EVERY) {
-      const runnerLatest = await this.runnerLatest(true);
-      const runnerReleases = await this.runnerReleases(true);
-      const seen = JSON.stringify({ runnerLatest, runnerReleases });
-      if (seen !== (await this.ctx.storage.get<string>("runner:seen"))) {
-        await this.ctx.storage.put("runner:seen", seen);
-        this.broadcast({ type: "runner.released", runnerLatest, runnerReleases });
-      }
+      await this.refreshRunnerRelease();
       checked = Date.now();
       await this.ctx.storage.put("runner:checkedAt", checked);
     }
     await this.armRunnerCheck(checked);
+  }
+
+  /** Reads the runner releases again, past the cache, and tells the apps if they changed. */
+  private async refreshRunnerRelease() {
+    const runnerLatest = await this.runnerLatest(true);
+    const runnerReleases = await this.runnerReleases(true);
+    const seen = JSON.stringify({ runnerLatest, runnerReleases });
+    if (seen !== (await this.ctx.storage.get<string>("runner:seen"))) {
+      await this.ctx.storage.put("runner:seen", seen);
+      this.broadcast({ type: "runner.released", runnerLatest, runnerReleases });
+    }
+    return runnerLatest;
   }
 
   /** The next runner release check: an hour after the last one, never later than an hour from now. */
@@ -442,6 +448,18 @@ export class OrgHub extends DurableObject<Env> {
         await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), from: machine.version ?? null, message: null, at: Date.now() }, true);
         await audit(this.env, client.member.login, "runner.update", msg.machine);
         return;
+      }
+      case "runner.check": {
+        // Only looks: no command reaches the runner and its update state is left alone.
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        const latest = await this.refreshRunnerRelease();
+        const text = !latest
+          ? "Couldn't read the runner releases."
+          : machine.version && olderThan(machine.version, latest)
+            ? `Runner ${latest} is available for ${machine.name}.`
+            : `${machine.name} is on the latest runner (${latest}).`;
+        return this.send(ws, { type: "toast", text, taskId: null });
       }
       case "note.save": {
         const existing = this.store.note(msg.note.id);

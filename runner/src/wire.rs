@@ -2080,6 +2080,11 @@ pub enum ClientMessage {
     MachineUpdate {
         machine: String,
     },
+    /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
+    #[serde(rename = "runner.check")]
+    RunnerCheck {
+        machine: String,
+    },
     /// Admins only.
     #[serde(rename = "policy.save")]
     PolicySave {

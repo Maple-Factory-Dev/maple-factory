@@ -1948,10 +1948,16 @@ final class AppState {
                 NotificationCenter.default.post(name: SecretsSettings.demoSave, object: nil, userInfo: ["name": parts[2], "value": parts.dropFirst(3).joined(separator: ":")])
             case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
-            // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), and its What's New sheet.
+            // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":
                 for _ in 0..<300 {
                     if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.send(.machineUpdate(.init(machine: machine.id))); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            // Its ⋯ › Check for Runner Update (or Update Runner to X, when one's out), as the menu runs it.
+            case "runnercheck":
+                for _ in 0..<300 {
+                    if let client, let machine = client.machines.first(where: { $0.id == parts[1] }) { client.perform(client.runnerAction(machine), on: machine); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
