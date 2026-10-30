@@ -2070,6 +2070,25 @@ public enum Wire {
         }
     }
 
+    /// The factory's GitHub App, for installing it on another GitHub account.
+    public struct GitHubAppInfo: Codable, Hashable, Sendable {
+        /// Its name in github.com/apps/<slug>.
+        public var slug: String
+        /// User or Organization: the account that owns it (GITHUB_ORG). None: not known.
+        public var ownerType: String?
+        /// Its advanced settings on GitHub, where it's made public so another account can install it.
+        public var settingsUrl: String
+        /// Where an account installs it.
+        public var installUrl: String
+
+        public init(slug: String, ownerType: String? = nil, settingsUrl: String, installUrl: String) {
+            self.slug = slug
+            self.ownerType = ownerType
+            self.settingsUrl = settingsUrl
+            self.installUrl = installUrl
+        }
+    }
+
     /// A secret kept for one of the org's repos: who set it and when, never its value.
     public struct RepoSecret: Codable, Hashable, Sendable {
         /// GitHub owner/name.
@@ -4205,6 +4224,21 @@ public enum Wire {
         }
     }
 
+    /// Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.
+    public struct ClientMessageReposOwnersSet: Codable, Hashable, Sendable {
+        /// GitHub logins.
+        public var owners: [String]
+
+        public init(owners: [String] = []) {
+            self.owners = owners
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            owners = try c.decodeIfPresent([String].self, forKey: .owners) ?? []
+        }
+    }
+
     /// Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.
     public struct ClientMessageSecretsSet: Codable, Hashable, Sendable {
         public var repo: String
@@ -4589,6 +4623,7 @@ public enum Wire {
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
+        case reposOwnersSet(ClientMessageReposOwnersSet)
         case secretsSet(ClientMessageSecretsSet)
         case secretsDelete(ClientMessageSecretsDelete)
         case reposScriptsSet(ClientMessageReposScriptsSet)
@@ -4652,6 +4687,7 @@ public enum Wire {
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
+            case "repos.owners.set": self = .reposOwnersSet(try ClientMessageReposOwnersSet(from: decoder))
             case "secrets.set": self = .secretsSet(try ClientMessageSecretsSet(from: decoder))
             case "secrets.delete": self = .secretsDelete(try ClientMessageSecretsDelete(from: decoder))
             case "repos.scripts.set": self = .reposScriptsSet(try ClientMessageReposScriptsSet(from: decoder))
@@ -4766,6 +4802,9 @@ public enum Wire {
             case .reposRemove(let body):
                 try c.encode("repos.remove", forKey: .type)
                 try body.encode(to: encoder)
+            case .reposOwnersSet(let body):
+                try c.encode("repos.owners.set", forKey: .type)
+                try body.encode(to: encoder)
             case .secretsSet(let body):
                 try c.encode("secrets.set", forKey: .type)
                 try body.encode(to: encoder)
@@ -4874,6 +4913,10 @@ public enum Wire {
         public var follows: [GoalFollow]
         public var intake: [IntakeRequest]
         public var repos: [OrgRepo]
+        /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
+        public var repoOwners: [String]?
+        /// The factory's GitHub App. None: no app, or an older server.
+        public var githubApp: GitHubAppInfo?
         /// Every repo's secrets, names and who changed them only.
         public var secrets: [RepoSecret]
         /// The repos that have worktree scripts. None: an older server.
@@ -4892,7 +4935,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -4908,6 +4951,8 @@ public enum Wire {
             self.follows = follows
             self.intake = intake
             self.repos = repos
+            self.repoOwners = repoOwners
+            self.githubApp = githubApp
             self.secrets = secrets
             self.scripts = scripts
             self.runnerLatest = runnerLatest
@@ -4936,6 +4981,8 @@ public enum Wire {
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
+            repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
+            githubApp = try c.decodeIfPresent(GitHubAppInfo.self, forKey: .githubApp)
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
@@ -5097,16 +5144,20 @@ public enum Wire {
         public var repos: [OrgRepo]
         /// The repos that have worktree scripts. None: an older server.
         public var scripts: [RepoWorktreeScripts]?
+        /// The approved other GitHub accounts. None: an older server.
+        public var repoOwners: [String]?
 
-        public init(repos: [OrgRepo] = [], scripts: [RepoWorktreeScripts]? = nil) {
+        public init(repos: [OrgRepo] = [], scripts: [RepoWorktreeScripts]? = nil, repoOwners: [String]? = nil) {
             self.repos = repos
             self.scripts = scripts
+            self.repoOwners = repoOwners
         }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
+            repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
         }
     }
 
