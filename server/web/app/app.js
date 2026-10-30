@@ -123,6 +123,7 @@ function receive(m) {
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
+      mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
     case "machine.updated":
@@ -154,6 +155,7 @@ function receive(m) {
       // The task being created didn't take; let the composer try again. Errors carry no request id, so
       // take one that comes back soon after the create to be about it; any later one leaves it alone.
       if (creating && Date.now() - creating.at < 5_000) createFailed();
+      mergeSent.clear(); // a refused Merge or Hold gives its buttons back
       toast(m.message);
       break;
     default: return;
@@ -732,18 +734,21 @@ function decisions(t) {
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
-    if (countdown) {
+    if (merging(t)) {
+      // The factory has it (or a click is on its way): nothing to click until it lands.
+      buttons.push(h("button", { class: "btn go", disabled: true }, "Merging…"));
+    } else if (countdown) {
       // The factory merges when the fill drains: its delay is the part of the window already gone,
       // so a re-render (or a reload) carries on from where it is.
       buttons.push(h("button", {
-        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt,
+        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.holdMerge", id: t.id }) }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.merge", id: t.id }) }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
-      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
+      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
@@ -800,18 +805,43 @@ function mergeCountdown(t) {
   return { total: Math.max(started ? t.mergeAt - started : 10_000, left, 1), left };
 }
 
+/** Merging, as far as its buttons go: the server says so, a Merge or Hold is on its way, or its
+ *  countdown ran out (the server says Merging… a moment later). */
+function merging(t) {
+  if (t.state !== "reviewing") return false;
+  if (t.liveLog === "Merging…" || mergeSent.has(t.id)) return true;
+  const countdown = !t.hand && mergeCountdown(t);
+  return !!countdown && countdown.left === 0;
+}
+
+/** Sends a Merge or Hold and locks its buttons until the task's next update (or 30s, if none comes). */
+function sendMerge(t, type) {
+  if (mergeSent.has(t.id) || !send({ type, id: t.id })) return;
+  const at = Date.now();
+  mergeSent.set(t.id, at);
+  setTimeout(() => { if (mergeSent.get(t.id) === at) { mergeSent.delete(t.id); render(); } }, 30_000);
+  render();
+}
+
 function countdownLabel(mergeAt) {
   const left = Math.ceil((mergeAt - Date.now()) / 1000);
   return left > 0 ? `Merging in ${left}s` : "Merging…";
 }
 
 // A countdown's label ticks on its own, between the renders that updates bring.
+// A countdown button that reaches 0 redraws once, so Hold and Merge now drop out at once.
 setInterval(() => {
-  for (const el of document.querySelectorAll("[data-merge-at]")) el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+  let due = false;
+  for (const el of document.querySelectorAll("[data-merge-at]")) {
+    el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+    if (el.hasAttribute("data-locks") && Number(el.dataset.mergeAt) <= Date.now()) due = true;
+  }
+  if (due) render();
 }, 250);
 
 const keepingTitle = new Set(); // ids whose approver ticked "Keep current title"
 const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
+const mergeSent = new Map(); // id → when its Merge or Hold was sent, until the task's next update
 
 /** Asks before cancelling, saying what it stops. */
 function cancelCard(t) {
