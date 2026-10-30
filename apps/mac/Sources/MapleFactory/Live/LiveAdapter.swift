@@ -147,6 +147,10 @@ import SwiftUI
         task.draftRank = t.draftRank ?? Double(t.createdAt)
         task.startAt = t.startAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         task.mergeAt = t.mergeAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        task.mergeForecast = t.mergeForecast.map { f in
+            MergeForecast(overlaps: f.overlaps.map { .init(task: $0.task, files: $0.files) }, conflicts: f.conflicts, since: f.since,
+                          checkedAt: f.checkedAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }, base: f.base)
+        }
         // The countdown started with the factory's "will auto-merge" event; its time sizes the drain.
         if task.mergeAt != nil, let started = t.events.last(where: { $0.who == "factory" && $0.text.hasPrefix("will auto-merge") }) {
             task.mergeFrom = Date(timeIntervalSince1970: Double(started.at) / 1000)

@@ -149,6 +149,54 @@ pub async fn run_diff(sessions: Sessions, d: DiffRequest) {
     });
 }
 
+/// `task.merge_check` from the hub: would the task's branch still merge into its base, now that
+/// something else merged there?
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeCheck {
+    pub task_id: String,
+    /// The worktree, `~`-abbreviated.
+    pub cwd: String,
+    pub base: String,
+}
+
+/// Answers with `task.merge_check`: clean, or the paths that conflict.
+pub async fn run_merge_check(sessions: Sessions, c: MergeCheck) {
+    let checked = merge_check(&expand_home(&c.cwd), &c.base).await;
+    sessions.emit(Outbound::Wire(match checked {
+        Ok(conflicts) => crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: true, clean: conflicts.is_empty(), conflicts, message: None },
+        Err(e) => crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: false, clean: false, conflicts: vec![], message: Some(format!("{e:#}")) },
+    }));
+}
+
+/// Fetches `origin/<base>` and dry-runs merging HEAD into it with `git merge-tree`, which writes
+/// only objects: the index, the checkout and HEAD are left as they are. The conflicting paths, or none.
+async fn merge_check(dir: &Path, base: &str) -> Result<Vec<String>> {
+    if base.starts_with('-') || valid_name(base).is_err() {
+        bail!("{base} isn't a branch name.");
+    }
+    git(dir, &["fetch", "--quiet", "origin", base], None).await?;
+    let theirs = format!("origin/{base}");
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(dir).args(["merge-tree", "--write-tree", "--name-only", "--no-messages", &theirs, "HEAD"]);
+    cmd.env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null()).kill_on_drop(true);
+    let out = tokio::time::timeout(GIT_TIMEOUT, cmd.output()).await.map_err(|_| anyhow!("git merge-tree timed out"))??;
+    match out.status.code() {
+        Some(0) => Ok(vec![]),
+        // The tree's id, then each conflicted path.
+        Some(1) => {
+            let mut paths: Vec<String> = Vec::new();
+            for l in String::from_utf8_lossy(&out.stdout).lines().skip(1).map(str::trim).filter(|l| !l.is_empty()) {
+                if !paths.iter().any(|p| p == l) {
+                    paths.push(l.to_string());
+                }
+            }
+            Ok(paths)
+        }
+        _ => bail!("git merge-tree failed: {}", String::from_utf8_lossy(&out.stderr).trim().trim_start_matches("fatal: ")),
+    }
+}
+
 /// `task.merge` from the hub, for a repo with no GitHub App to merge its pull request: merge the
 /// task's branch into its base on origin, with the machine's own credentials, as a merge commit.
 #[derive(Debug, Clone, Deserialize)]
@@ -1298,6 +1346,34 @@ mod tests {
         sh(&bare, &["update-ref", "-d", "refs/heads/agent/fix-1a2b"]);
         let (_, branch) = merge_and_switch_back(&wt, &Merge { title: "Fix it once more".into(), ..m }).await.unwrap();
         assert_eq!(branch, BranchDeletion::Gone);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The dry-run merge: clean while main hasn't touched the task's files, the conflicting path once
+    /// it has, and the worktree (HEAD, index, files) exactly as it was both times.
+    #[tokio::test]
+    async fn a_merge_check_reports_conflicts_and_touches_nothing() {
+        let root = tmp("merge-check");
+        let bare = root.join("remotes/widgets.git");
+        let (_cwd, wt) = worktree(&root, &bare).await;
+        commit(&wt, "a.txt", "the task's line\n", "the builder changes a.txt");
+        let head = sh(&wt, &["rev-parse", "HEAD"]);
+
+        // main moves on elsewhere, in a file the task didn't touch.
+        let other = root.join("other");
+        sh(&root, &["clone", "--quiet", bare.to_str().unwrap(), other.to_str().unwrap()]);
+        commit(&other, "c.txt", "unrelated\n", "another task merges");
+        sh(&other, &["push", "--quiet", "origin", "main"]);
+        assert_eq!(merge_check(&wt, "main").await.unwrap(), Vec::<String>::new());
+        assert_eq!((sh(&wt, &["rev-parse", "HEAD"]), sh(&wt, &["status", "--porcelain"])), (head.clone(), String::new()));
+
+        // Then in the same line of a.txt.
+        commit(&other, "a.txt", "main's line\n", "another task changes a.txt");
+        sh(&other, &["push", "--quiet", "origin", "main"]);
+        assert_eq!(merge_check(&wt, "main").await.unwrap(), vec!["a.txt".to_string()]);
+        assert_eq!((sh(&wt, &["rev-parse", "HEAD"]), sh(&wt, &["status", "--porcelain"])), (head, String::new()));
+        assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "the task's line\n");
+        assert!(merge_check(&wt, "--upload-pack=x").await.is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

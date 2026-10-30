@@ -52,3 +52,16 @@ test("saved additions are trimmed and capped", () => {
   assert.equal(p.planner, "hi");
   assert.equal(p.builder.length, 4000);
 });
+
+test("planner and builder prompts list the work in flight in the same repo, with its files", () => {
+  const others = [
+    { id: "MF-2", title: "Rework the engine", state: "reviewing", files: ["src/engine.ts", "src/store.ts"] },
+    { id: "MF-3", title: "Just started", state: "building", files: [] },
+  ];
+  for (const p of [plannerPrompt(task, goal(null), null, others), builderPrompt(task, goal(null), null, null, others)]) {
+    assert.ok(p.includes("## Work in flight in this repo"));
+    assert.ok(p.includes("- MF-2 · Rework the engine (reviewing): src/engine.ts, src/store.ts"));
+    assert.ok(p.includes("- MF-3 · Just started (building): no files pushed yet"));
+  }
+  assert.ok(!plannerPrompt(task, goal(null)).includes("## Work in flight"));
+});
