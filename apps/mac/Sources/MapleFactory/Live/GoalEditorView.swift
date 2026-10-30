@@ -34,6 +34,8 @@ struct GoalEditorView: View {
     @State private var prompts = LiveAdapter.noPrompts
     /// Org instructions shown in full, by role.
     @State private var expandedOrg: Set<PromptLayers.Role> = []
+    /// The section a demo script scrolls to (`goalfill:section:prompts`).
+    @State private var jumpTo: Section?
 
     enum Source: String, CaseIterable { case folder = "A folder on my machines", repo = "A GitHub repo" }
     enum Field { case name, prefix, code }
@@ -144,6 +146,13 @@ struct GoalEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            // A refusal (a prefix in use) shows where it's seen, whatever section you're in; the form stays.
+            if let failure {
+                failureLine(failure)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+            }
             Hairline()
             ScrollViewReader { scroller in
                 HStack(alignment: .top, spacing: 0) {
@@ -156,7 +165,6 @@ struct GoalEditorView: View {
                             ForEach(Section.allCases) { section in
                                 sectionView(section).id(section)
                             }
-                            if let failure { failureLine(failure) }
                             Color.clear.frame(height: 40)
                         }
                         .frame(maxWidth: 680, alignment: .leading)
@@ -164,6 +172,11 @@ struct GoalEditorView: View {
                         .padding(.top, 24)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                }
+                .onChange(of: jumpTo) { _, section in
+                    guard let section else { return }
+                    scroller.scrollTo(section, anchor: .top)
+                    jumpTo = nil
                 }
             }
         }
@@ -200,6 +213,7 @@ struct GoalEditorView: View {
                     color = GoalColors.choice(for: value)
                 }
             case "builder": prompts.builder = value
+            case "section": jumpTo = Section.allCases.first { "\($0)" == value }
             case "create": save()
             default: break
             }
