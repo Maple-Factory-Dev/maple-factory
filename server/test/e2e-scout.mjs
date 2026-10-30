@@ -97,6 +97,7 @@ runner.onmessage = async (e) => {
     return;
   }
   if (m.type === "task.finish") return toHub({ type: "task.finished", taskId: m.taskId, ok: true, pushed: "fallback", owner: null, repo: null, branch: m.branch, base: "main", commit: "abc1234def", reason: null, message: null });
+  if (m.type === "task.merge_check") return toHub({ type: "task.merge_check", taskId: m.taskId, ok: true, clean: true, conflicts: [], message: null });
   if (m.type === "task.merge") return toHub({ type: "task.merged", taskId: m.taskId, ok: true, commit: "fedcba9", message: null });
   if (m.type === "draft.run") {
     draftRun = m;
