@@ -97,14 +97,15 @@ export default {
       return orgHub(env).fetch(new Request("https://org/connect", forward));
     }
     if (path === "/client/terminal") {
-      if (!isUpgrade(request)) return text("Expected a WebSocket.", 426);
       const machine = url.searchParams.get("machine") ?? "";
       const session = url.searchParams.get("session") ?? "";
       if (!MACHINE_ID.test(machine) || !/^[0-9a-f-]{36}$/.test(session)) return text("Expected machine and session.", 400);
       // A terminal can type into a task's session, which has its repo's secrets: the machine's owner and admins only.
       const row = await machineRow(env, machine);
       if (!row) return text("No such machine.", 404);
+      // Checked before the upgrade, so an app whose socket got a 403 can GET the same URL to say why.
       if (row.owner !== me.login && me.role !== "admin") return text(`Only ${row.owner} or an admin can open terminals on ${row.name ?? row.id}.`, 403);
+      if (!isUpgrade(request)) return text("Expected a WebSocket.", 426);
       const target = new URL("https://hub/view");
       target.searchParams.set("session", session);
       target.searchParams.set("login", me.login);

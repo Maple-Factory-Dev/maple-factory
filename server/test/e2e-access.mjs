@@ -129,6 +129,8 @@ const carolTerm = await handshake(terminal, carol);
 check(carolTerm.status === 403 && carolTerm.body === "Only bob or an admin can open terminals on bobs-mac.", `carol, a member, is refused bob's terminal: ${carolTerm.status} "${carolTerm.body}"`);
 await sleep(500);
 check(replays.length === asked, `and no session.replay reached the runner (${replays.length - asked})`);
+const plain = await get(terminal, carol);
+check(plain.status === 403 && (await plain.text()) === carolTerm.body, `a plain GET of the same URL gives the apps the same reason (${plain.status})`);
 const unknown = await handshake(`/client/terminal?machine=nobodys-mac&session=${session}`, alice);
 check(unknown.status === 404, `an unknown machine is a 404 (${unknown.status})`);
 

@@ -658,6 +658,11 @@ import Security
         send(.adminsRevoke(.init(login: login)))
     }
 
+    /// Admins only: signs someone out everywhere now (not a GitHub owner, nor me); members.updated says it took.
+    func revokeAccess(_ login: String) {
+        send(.membersRevoke(.init(login: login)))
+    }
+
     // MARK: Icon
 
     /// The current factory's cached icon, shown at once on launch or a switch, before its snapshot says whether it changed.
@@ -851,6 +856,21 @@ import Security
         var request = URLRequest(url: components.url!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
+    }
+
+    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
+    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
+    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    nonisolated static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
+        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
+        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
+              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        request.url = components.url
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 403,
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
+        return text
     }
 
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
