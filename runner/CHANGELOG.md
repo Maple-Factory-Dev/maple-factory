@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.51.0 — 2026-10-29
+
+The protocol carries factory-granted admins.
+
 ## 0.50.0 — 2026-10-29
 
 The protocol carries the GitHub accounts an admin approved for repos.
