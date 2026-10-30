@@ -1566,8 +1566,19 @@ export class Engine {
     const machine = (await this.hooks.machines()).find((m) => m.id === task.machine);
     if (machine?.sessions.some((s) => s.session.taskId === task.id)) return; // its last end calls this again
     this.store.savePrivate(task.id, { ...priv, cleaned: true });
+    // The factory merged it, and its branch may still be on origin (a delete that failed, or no word
+    // of one): one more try, through the GitHub App here or by the runner with the cleanup.
+    let deleteRemote = false;
+    if (task.state === "merged" && priv.mergeBy && task.pr) {
+      const app = githubApp(this.env);
+      if (app && priv.gh && task.pr.url) {
+        await this.branchDeletes.get(task.id);
+        await this.deleteMergedBranch(task.id, app, priv.gh, task.pr);
+      } else deleteRemote = priv.remoteBranch !== "deleted" && priv.remoteBranch !== "kept";
+    }
     await this.toRunner(task.machine, {
       type: "task.cleanup",
+      deleteRemote,
       taskId: task.id,
       cwd: priv.worktree,
       repoDir: priv.repoDir,
