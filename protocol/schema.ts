@@ -497,6 +497,7 @@ export const structs: Record<string, Struct> = {
       after: "string[]",
       followUps: "FollowUp[]",
       queueRank: "f64?",
+      draftRank: "f64?",
       startAt: "u64?",
       force: "bool?",
       effort: "string?",
@@ -507,6 +508,7 @@ export const structs: Record<string, Struct> = {
       effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
       queueRank: "Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.",
+      draftRank: "Its place among its goal's drafts: lower first. None (from an older server): its createdAt.",
       startAt: "Don't start its next session before this (ms); cleared once that session starts.",
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
       after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
@@ -1037,6 +1039,11 @@ export const unions: Record<string, Union> = {
           clearSchedule: "Start it as soon as there's room.",
           force: "Start its next session now, over the machine's slot count.",
         },
+      },
+      "task.rankDraft": {
+        doc: "Reorder a draft among its goal's drafts; it stays a draft.",
+        fields: { id: "string", before: "string?" },
+        fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
       "task.split": {

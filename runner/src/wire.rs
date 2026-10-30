@@ -1153,6 +1153,9 @@ pub struct Task {
     /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_rank: Option<f64>,
+    /// Its place among its goal's drafts: lower first. None (from an older server): its createdAt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_rank: Option<f64>,
     /// Don't start its next session before this (ms); cleared once that session starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_at: Option<u64>,
@@ -2321,6 +2324,14 @@ pub enum ClientMessage {
         /// Start its next session now, over the machine's slot count.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         force: Option<bool>,
+    },
+    /// Reorder a draft among its goal's drafts; it stays a draft.
+    #[serde(rename = "task.rankDraft")]
+    TaskRankDraft {
+        id: String,
+        /// Move it ahead of this draft; "top": the first draft. None moves it to the bottom.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
     },
     /// Run the pull request's failed CI checks again.
     #[serde(rename = "task.rerunChecks")]

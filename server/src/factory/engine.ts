@@ -554,6 +554,20 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.rankDraft": {
+        if (task.state !== "drafting") fail("Only a draft can be reordered among the drafts.");
+        if (msg.before === task.id) fail("It can't go ahead of itself.");
+        const drafts = this.store.drafts(task.goal);
+        let before: Task | null = null;
+        if (msg.before === "top") before = drafts.find((t) => t.id !== task.id) ?? null;
+        else if (msg.before) {
+          before = drafts.find((t) => t.id === msg.before) ?? fail(`${msg.before} isn't a draft in this goal.`);
+        }
+        if (msg.before !== "top" || before) task.draftRank = this.store.draftRankBefore(task.id, before, drafts);
+        this.event(task, who, msg.before === "top" ? "moved it to the top of the drafts" : before ? `moved it ahead of ${before.id} in the drafts` : "moved it to the bottom of the drafts");
+        this.save(task);
+        return;
+      }
       case "task.retry": {
         if (task.state === "merged") fail("It's already merged.");
         if (task.state === "drafting") fail("It hasn't started yet; send it to planning.");
@@ -798,6 +812,7 @@ export class Engine {
       mockups: [],
       followUps: [],
       queueRank: t,
+      draftRank: t,
       ...f,
     };
     this.save(task);

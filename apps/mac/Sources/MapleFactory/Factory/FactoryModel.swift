@@ -270,6 +270,8 @@ struct FactoryTask: Identifiable {
     var queued = false
     /// Its place in the queue: lower starts first.
     var queueRank: Double = 0
+    /// Its place among its goal's drafts: lower first.
+    var draftRank: Double = 0
     /// Held until then, when it was scheduled.
     var startAt: Date? = nil
     /// The factory auto-merges it then unless someone holds it; and when that countdown started.

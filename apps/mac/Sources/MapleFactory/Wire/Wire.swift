@@ -2261,6 +2261,8 @@ public enum Wire {
         public var followUps: [FollowUp]
         /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
         public var queueRank: Double?
+        /// Its place among its goal's drafts: lower first. None (from an older server): its createdAt.
+        public var draftRank: Double?
         /// Don't start its next session before this (ms); cleared once that session starts.
         public var startAt: UInt64?
         /// Its next session skips the wait for a free slot; cleared once it starts.
@@ -2270,7 +2272,7 @@ public enum Wire {
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2313,6 +2315,7 @@ public enum Wire {
             self.after = after
             self.followUps = followUps
             self.queueRank = queueRank
+            self.draftRank = draftRank
             self.startAt = startAt
             self.force = force
             self.effort = effort
@@ -2363,6 +2366,7 @@ public enum Wire {
             after = try c.decodeIfPresent([String].self, forKey: .after) ?? []
             followUps = try c.decodeIfPresent([FollowUp].self, forKey: .followUps) ?? []
             queueRank = try c.decodeIfPresent(Double.self, forKey: .queueRank)
+            draftRank = try c.decodeIfPresent(Double.self, forKey: .draftRank)
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
@@ -4479,6 +4483,18 @@ public enum Wire {
         }
     }
 
+    /// Reorder a draft among its goal's drafts; it stays a draft.
+    public struct ClientMessageTaskRankDraft: Codable, Hashable, Sendable {
+        public var id: String
+        /// Move it ahead of this draft; "top": the first draft. None moves it to the bottom.
+        public var before: String?
+
+        public init(id: String, before: String? = nil) {
+            self.id = id
+            self.before = before
+        }
+    }
+
     /// Run the pull request's failed CI checks again.
     public struct ClientMessageTaskRerunChecks: Codable, Hashable, Sendable {
         public var id: String
@@ -4594,6 +4610,7 @@ public enum Wire {
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
         case taskQueue(ClientMessageTaskQueue)
+        case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
         case taskSplit(ClientMessageTaskSplit)
         case taskMove(ClientMessageTaskMove)
@@ -4656,6 +4673,7 @@ public enum Wire {
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
+            case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
             case "task.move": self = .taskMove(try ClientMessageTaskMove(from: decoder))
@@ -4810,6 +4828,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskQueue(let body):
                 try c.encode("task.queue", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRankDraft(let body):
+                try c.encode("task.rankDraft", forKey: .type)
                 try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)

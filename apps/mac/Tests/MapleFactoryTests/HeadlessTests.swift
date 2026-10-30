@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import MapleFactory
@@ -64,5 +65,16 @@ struct HeadlessTests {
         #expect(Keychain.isDev("http://localhost:8787", headless: false))
         #expect(!Keychain.isDev("https://factory.example.com", headless: false))
         #expect(Keychain.isDev("https://factory.example.com", headless: true))
+    }
+
+    /// `key:cmd+b` presses ⌘B, so a script can drive menu shortcuts; plain keys stay as they were.
+    @Test func keyParsesModifierChords() {
+        let chord = Headless.keyStroke("cmd+b")
+        #expect(chord.characters == "b" && chord.code == 11 && chord.modifiers == .command)
+        let alias = Headless.keyStroke("ctrl+cmd+s")
+        #expect(alias.characters == "s" && alias.code == 1 && alias.modifiers == [.control, .command])
+        #expect(Headless.keyStroke("opt+shift+n").modifiers == [.option, .shift])
+        let esc = Headless.keyStroke("esc")
+        #expect(esc.characters == "\u{1b}" && esc.code == 53 && esc.modifiers.isEmpty)
     }
 }

@@ -222,6 +222,22 @@ export class Store {
     return prev ? (prev.queueRank! + before.queueRank!) / 2 : before.queueRank! - 1000;
   }
 
+  /** A goal's drafts, first first. */
+  drafts(goal: string): Task[] {
+    return this.tasks()
+      .filter((t) => t.goal === goal && t.state === "drafting")
+      .sort(byDraftRank);
+  }
+
+  /** The draftRank that puts a draft just ahead of `before` (the bottom, when none), among `drafts` without it. */
+  draftRankBefore(id: string, before: Task | null, drafts: Task[]): number {
+    const rest = drafts.filter((t) => t.id !== id);
+    if (!before) return rest.length ? Math.max(...rest.map((t) => t.draftRank!)) + 1 : Date.now();
+    const at = rest.findIndex((t) => t.id === before.id);
+    const prev = at > 0 ? rest[at - 1] : null;
+    return prev ? (prev.draftRank! + before.draftRank!) / 2 : before.draftRank! - 1000;
+  }
+
   task(id: string): Task | null {
     const row = this.sql.exec<{ doc: string }>("SELECT doc FROM tasks WHERE id = ?", id).toArray()[0];
     return row ? taskDoc(row.doc) : null;
@@ -460,11 +476,14 @@ function goalDoc(doc: string): Goal {
 /** A stored task, with fields added since it was saved. Tasks from before the queue keep their order. */
 function taskDoc(doc: string): Task {
   const task = JSON.parse(doc) as Task;
-  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], queueRank: task.queueRank ?? task.createdAt };
+  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
 }
 
 /** Front of the queue first; ties by age. */
 export const byRank = (a: Task, b: Task) => a.queueRank! - b.queueRank! || a.createdAt - b.createdAt;
+
+/** First draft first; ties by age. */
+export const byDraftRank = (a: Task, b: Task) => a.draftRank! - b.draftRank! || a.createdAt - b.createdAt;
 
 /** Whether its state calls for a session: planning, building (not finishing), or a review round in progress. */
 export function needsSession(task: Task, priv: TaskPrivate): boolean {
