@@ -1159,6 +1159,9 @@ pub struct Task {
     /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_at: Option<u64>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -2123,6 +2126,11 @@ pub enum ClientMessage {
     MachineUpdate {
         machine: String,
     },
+    /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
+    #[serde(rename = "runner.check")]
+    RunnerCheck {
+        machine: String,
+    },
     /// Admins only.
     #[serde(rename = "policy.save")]
     PolicySave {
@@ -2273,6 +2281,11 @@ pub enum ClientMessage {
     },
     #[serde(rename = "task.merge")]
     TaskMerge {
+        id: String,
+    },
+    /// Stop the auto-merge counting down on a task; a person merges it instead.
+    #[serde(rename = "task.holdMerge")]
+    TaskHoldMerge {
         id: String,
     },
     #[serde(rename = "task.cancel")]

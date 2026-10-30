@@ -499,8 +499,10 @@ export const structs: Record<string, Struct> = {
       startAt: "u64?",
       force: "bool?",
       effort: "string?",
+      mergeAt: "u64?",
     },
     fieldDocs: {
+      mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
       effort: "The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.",
       force: "Its next session skips the wait for a free slot; cleared once it starts.",
       queueRank: "Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.",
@@ -969,6 +971,10 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", name: "string" },
       },
       "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
+      "runner.check": {
+        doc: "Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.",
+        fields: { machine: "string" },
+      },
       "policy.save": { doc: "Admins only.", fields: { policy: "RiskPolicy" } },
       "prompts.save": { doc: "Admins only: the org's prompt additions.", fields: { prompts: "PromptAdditions" } },
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
@@ -1013,6 +1019,7 @@ export const unions: Record<string, Union> = {
       "task.resolveHand": { fields: { id: "string", option: "string?", note: "string" } },
       "task.approveChanges": { fields: { id: "string" } },
       "task.merge": { fields: { id: "string" } },
+      "task.holdMerge": { doc: "Stop the auto-merge counting down on a task; a person merges it instead.", fields: { id: "string" } },
       "task.cancel": { fields: { id: "string" } },
       "task.retry": { fields: { id: "string" } },
       "task.queue": {

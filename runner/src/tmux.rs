@@ -121,27 +121,6 @@ impl Tmux {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
-    /// Like `run`, but the command goes to tmux on its stdin (`source-file -`) rather than in its
-    /// argv, which anyone on the machine can read with `ps`: for a session with secrets in its `-e`s.
-    pub async fn run_hidden<S: AsRef<str>>(&self, args: &[S]) -> Result<String> {
-        let mut child = self
-            .command()
-            .args(["start-server", ";", "source-file", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("running tmux")?;
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(format!("{}\n", script(args)).as_bytes()).await.context("writing to tmux")?;
-        drop(stdin);
-        let out = child.wait_with_output().await.context("running tmux")?;
-        if !out.status.success() {
-            bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    }
-
     /// Sessions this runner created, found by their `maple-` prefix.
     pub async fn list(&self) -> Result<Vec<Existing>> {
         let format = "#{session_name}\t#{@maple_agent}\t#{@maple_cwd}\t#{@maple_started}\t#{pane_pid}\t#{@maple_ports}\t#{@maple_task}";
@@ -467,42 +446,9 @@ pub fn parse_signal(field: &str) -> Option<u32> {
     })
 }
 
-/// An argv as one line of tmux's command language: each argument double-quoted (so nothing in it
-/// is expanded), and a lone `;` left bare, where it separates commands as it does in argv.
-fn script<S: AsRef<str>>(args: &[S]) -> String {
-    let quote = |arg: &str| {
-        let mut out = String::with_capacity(arg.len() + 2);
-        out.push('"');
-        for c in arg.chars() {
-            match c {
-                '"' | '\\' | '$' => {
-                    out.push('\\');
-                    out.push(c);
-                }
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-                c => out.push(c),
-            }
-        }
-        out.push('"');
-        out
-    };
-    args.iter().map(|a| if a.as_ref() == ";" { ";".to_string() } else { quote(a.as_ref()) }).collect::<Vec<_>>().join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn scripts_quote_everything_but_separators() {
-        assert_eq!(
-            script(&["new-session", "-e", "A=it's \"q\" $HOME \\ x\ny", ";", "kill-server"]),
-            r#""new-session" "-e" "A=it's \"q\" \$HOME \\ x\ny" ; "kill-server""#
-        );
-    }
 
     #[test]
     fn dead_pane_signals_by_number_or_name() {

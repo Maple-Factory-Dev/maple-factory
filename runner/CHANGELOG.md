@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.44.0 — 2026-10-29
+
+Repo secrets: a task's sessions get its repo's secrets in their environment, scrubbed from what the runner sends, and `maple-runner secrets pull|list` for your own checkout.
+
 ## 0.43.0 — 2026-10-29
 
 The runner checks for its own updates hourly instead of every six hours.

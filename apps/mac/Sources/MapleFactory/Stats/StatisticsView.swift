@@ -8,6 +8,8 @@ struct StatisticsView: View {
     @AppStorage("statsDays") private var days = 30
     /// A section pushed over the overview, in the same scroll view: "findings".
     @State private var section: String?
+    /// The review findings ticked in Review findings' list, to make a task from.
+    @State private var pickedFindings: Set<String> = []
 
     private var narrow: Bool { state.contentWidth < 920 }
     private var isAdmin: Bool { !state.isLive || client.me?.role == "admin" }
@@ -25,7 +27,7 @@ struct StatisticsView: View {
                                 .foregroundStyle(Theme.textMuted)
                         }
                     } else if let summary, section == "findings" {
-                        FindingsView(summary: summary, narrow: narrow) { section = nil }
+                        FindingsView(summary: summary, narrow: narrow, picked: $pickedFindings) { section = nil }
                     } else if let summary {
                         content(summary)
                     } else {
@@ -39,6 +41,13 @@ struct StatisticsView: View {
                 .id("top")
             }
             .defaultScrollAnchor(.top)
+            .safeAreaInset(edge: .bottom) {
+                if section == "findings", !pickedFindings.isEmpty, let findings = summary?.findings {
+                    FindingsPickBar(findings: findings, picked: $pickedFindings)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: pickedFindings.isEmpty)
             .onReceive(NotificationCenter.default.publisher(for: AppState.demoFindings)) { note in
                 switch (note.object as? [String])?.first {
                 case "open": section = "findings"

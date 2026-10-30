@@ -2,11 +2,13 @@ import SwiftUI
 
 /// The review findings behind the Statistics page's "Review findings by kind" card: where they land, what
 /// happened to them and which agent's work drew them, with a list to dig into. Pick a grid cell or a
-/// folder to filter the list; tap a finding to open its task.
+/// folder to filter the list; tap a finding to open its task, or tick some to make a task from them.
 struct FindingsView: View {
     @Environment(AppState.self) private var state
     let summary: Wire.StatsSummary
     let narrow: Bool
+    /// The findings ticked in the list, by `pickKey`; StatisticsView pins the bar that makes a task from them.
+    @Binding var picked: Set<String>
     let back: () -> Void
 
     @State private var kind: Wire.FindingKind?
@@ -31,7 +33,12 @@ struct FindingsView: View {
                 kind = Wire.FindingKind(rawValue: parts[1])
                 severity = Wire.Severity(rawValue: parts[2])
             case "area": area = area == arg ? nil : arg
+            case "severity": severity = severity?.rawValue == arg ? nil : Wire.Severity(rawValue: arg)
             case "row": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { open(r.task) }
+            case "select": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { toggle(r) }
+            case "selectall": selectAll(visible(f))
+            case "clear": picked = []
+            case "compose": compose(f)
             default: break
             }
         }
@@ -283,11 +290,26 @@ struct FindingsView: View {
                         .frame(maxWidth: 200)
                 }
                 .padding(.bottom, 10)
-                if kind != nil || severity != nil || area != nil || !needle.isEmpty {
+                let filtered = kind != nil || severity != nil || area != nil || !needle.isEmpty
+                if filtered || !rows.isEmpty {
                     HStack(spacing: 8) {
-                        Text("\(counted(rows.count, "finding")) shown")
-                        Button("Clear filters") { withAnimation(.snappy(duration: 0.2)) { kind = nil; severity = nil; area = nil; query = "" } }
+                        if filtered {
+                            Text("\(counted(rows.count, "finding")) shown")
+                            Button("Clear filters") { withAnimation(.snappy(duration: 0.2)) { kind = nil; severity = nil; area = nil; query = "" } }
+                                .buttonStyle(.link)
+                        }
+                        Spacer()
+                        if !rows.isEmpty {
+                            let all = rows.allSatisfy { picked.contains($0.pickKey) }
+                            Button(all ? "Deselect shown" : "Select all shown") {
+                                withAnimation(.snappy(duration: 0.2)) { if all { picked.subtract(rows.map(\.pickKey)) } else { selectAll(rows) } }
+                            }
                             .buttonStyle(.link)
+                        }
+                        if !picked.isEmpty {
+                            Button("Clear selection") { withAnimation(.snappy(duration: 0.2)) { picked = [] } }
+                                .buttonStyle(.link)
+                        }
                     }
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textFaint)
@@ -308,7 +330,17 @@ struct FindingsView: View {
     }
 
     private func row(_ r: Wire.StatsFindingRow) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        let on = picked.contains(r.pickKey)
+        return HStack(alignment: .top, spacing: 12) {
+            Button { withAnimation(.snappy(duration: 0.15)) { toggle(r) } } label: {
+                Image(systemName: on ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 14))
+                    .foregroundStyle(on ? Theme.accent : Theme.textFaint)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(on ? "Deselect" : "Select, to make a task from it")
             Circle()
                 .fill(severityColor(r.severity))
                 .frame(width: 8, height: 8)
@@ -340,9 +372,35 @@ struct FindingsView: View {
             status(r.status)
         }
         .padding(.vertical, 10)
+        .padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 7).fill(on ? Theme.fillSelected : .clear))
         .contentShape(Rectangle())
         .onTapGesture { open(r.task) }
         .help("Open \(r.task)")
+        .contextMenu {
+            Button("Make a task from this finding") { picked.remove(r.pickKey); state.composeFromFindings([r]) }
+            Button("Open \(r.task)") { open(r.task) }
+        }
+    }
+
+    private func toggle(_ r: Wire.StatsFindingRow) {
+        if picked.contains(r.pickKey) { picked.remove(r.pickKey) } else { picked.insert(r.pickKey) }
+    }
+
+    private func selectAll(_ rows: [Wire.StatsFindingRow]) { picked.formUnion(rows.map(\.pickKey)) }
+
+    /// The ticked findings, made into a New Task; the selection is done with then.
+    private func compose(_ f: Wire.StatsFindings) {
+        let rows = Self.picked(picked, in: f)
+        guard !rows.isEmpty else { return }
+        state.composeFromFindings(rows)
+        picked = []
+    }
+
+    /// The ticked findings, in the list's order.
+    static func picked(_ keys: Set<String>, in f: Wire.StatsFindings) -> [Wire.StatsFindingRow] {
+        var seen = Set<String>()
+        return f.recent.filter { keys.contains($0.pickKey) && seen.insert($0.pickKey).inserted }
     }
 
     @ViewBuilder private func status(_ s: Wire.FindingStatus?) -> some View {
@@ -421,5 +479,42 @@ struct FindingsView: View {
     /// "1 round", "2 rounds".
     private func counted(_ n: Int, _ noun: String) -> String {
         "\(n) \(noun)\(n == 1 ? "" : "s")"
+    }
+}
+
+/// Pinned under Review findings while some are ticked: how many, and Make a task from them.
+struct FindingsPickBar: View {
+    @Environment(AppState.self) private var state
+    let findings: Wire.StatsFindings
+    @Binding var picked: Set<String>
+
+    var body: some View {
+        let rows = FindingsView.picked(picked, in: findings)
+        HStack(spacing: 14) {
+            Image(systemName: "checkmark.square.fill").foregroundStyle(Theme.accent)
+            Text("\(rows.count) selected")
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.text)
+            Spacer(minLength: 8)
+            Button("Clear") { withAnimation(.snappy(duration: 0.2)) { picked = [] } }
+                .buttonStyle(.link)
+                .font(.system(size: 12.5))
+            PrimaryButton(title: "Make a task from \(rows.count == 1 ? "1 finding" : "\(rows.count) findings")", icon: "plus", color: Theme.accent) {
+                state.composeFromFindings(rows)
+                withAnimation(.snappy(duration: 0.2)) { picked = [] }
+            }
+            .fixedSize()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 720)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Theme.cardBG)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        )
+        .padding(.horizontal, 24)
+        .padding(.bottom, 16)
     }
 }

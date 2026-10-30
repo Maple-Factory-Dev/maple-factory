@@ -106,7 +106,7 @@ final class AppState {
         }
     }
 
-    /// The task panel exists only with "Peek in the side panel"; otherwise its toolbar button and menu item are off.
+    /// The task panel exists only with "Peek in the side panel"; otherwise its toolbar button is hidden and its menu item is off.
     var taskPanelEnabled: Bool { taskOpening == .panel }
 
     nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
@@ -383,6 +383,10 @@ final class AppState {
     var keptWhole: Set<String> = []
     /// Tasks the factory has picked up for auto-merge and is about to land.
     var autoMerging: Set<String> = []
+    /// Mockup: tasks whose auto-merge someone held, so the countdown doesn't start again.
+    var heldMerges: Set<String> = []
+    /// Mockup: how long an auto-merge counts down, like the factory's MERGE_GRACE_MS.
+    var mergeGrace: Duration = .seconds(10)
     var dismissedMentions: Set<String> = []
     var toast: Toast?
 
@@ -708,6 +712,13 @@ final class AppState {
             focusedTask = nil
             isComposing = true
         }
+    }
+
+    /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
+    /// in (else the usual one), a title, and a brief listing each finding with the task it came from.
+    func composeFromFindings(_ rows: [Wire.StatsFindingRow]) {
+        guard !rows.isEmpty else { return }
+        startCompose(goal: FindingsTask.goal(rows, tasks: tasks), title: FindingsTask.title(rows), body: FindingsTask.body(rows))
     }
 
     /// Closes the composer. A Draft with AI that's running keeps going, to come back to; one that
@@ -1525,6 +1536,7 @@ final class AppState {
             if !byFactory, beginInFlight(id, .merge) { client.send(.taskMerge(.init(id: id))) }
             return
         }
+        if !byFactory { update(id) { $0.mergeAt = nil } }
         if !byFactory, afterDemoDelay(id, .merge, { self.mergeInMockup(id, byFactory: false) }) { return }
         mergeInMockup(id, byFactory: byFactory)
     }
@@ -1664,22 +1676,56 @@ final class AppState {
         withAnimation(.snappy(duration: 0.25)) { _ = keptWhole.insert(id) }
     }
 
-    /// Finds reviewing tasks that now meet every gate and are allowed to auto-merge, and lands them.
+    /// Stops the auto-merge counting down on a task; a person merges it instead.
+    func holdMerge(_ id: String) {
+        if let client, isLive {
+            client.send(.taskHoldMerge(.init(id: id)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.25)) {
+            heldMerges.insert(id)
+            update(id) { task in
+                task.mergeAt = nil
+                task.mergeFrom = nil
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Held the auto-merge", when: "now"), at: 0)
+            }
+        }
+        showToast("Held the auto-merge on \(id); merge it when you're ready", icon: "hand.raised.fill")
+    }
+
+    /// Finds reviewing tasks that now meet every gate and are allowed to auto-merge, and counts each
+    /// down (`mergeAt`, as the factory does) before landing it, unless someone holds it first.
     func sweepForAutoMerge() {
         guard !isLive else { return }
-        for task in tasks where task.state == .reviewing && !autoMerging.contains(task.id) {
+        // A hold lasts while it waits to merge; sent back to build, it counts down again next time.
+        heldMerges = heldMerges.filter { id in tasks.contains { $0.id == id && $0.state == .reviewing } }
+        for task in tasks where task.state == .reviewing && task.hand == nil && task.mergeAt == nil && !autoMerging.contains(task.id) && !heldMerges.contains(task.id) {
             let gate = mergeGate(for: task)
             guard gate.canMerge, gate.autoMerge else { continue }
             let id = task.id
-            withAnimation(.snappy(duration: 0.25)) { _ = autoMerging.insert(id) }
+            let from = Date()
+            withAnimation(.snappy(duration: 0.25)) {
+                update(id) { task in
+                    task.mergeFrom = from
+                    task.mergeAt = from.addingTimeInterval(Double(mergeGrace.components.seconds) + Double(mergeGrace.components.attoseconds) / 1e18)
+                }
+            }
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1.8))
+                try? await Task.sleep(for: self.mergeGrace)
                 let current = self.task(id)
                 let gate = self.mergeGate(for: current)
-                guard self.autoMerging.contains(id), current.state == .reviewing, gate.canMerge, gate.autoMerge else {
-                    self.autoMerging.remove(id)
+                guard current.mergeAt != nil, current.state == .reviewing, current.hand == nil, gate.canMerge, gate.autoMerge else {
+                    self.update(id) { task in
+                        task.mergeAt = nil
+                        task.mergeFrom = nil
+                    }
                     return
                 }
+                self.update(id) { task in
+                    task.mergeAt = nil
+                    task.mergeFrom = nil
+                }
+                self.autoMerging.insert(id)
                 self.merge(id, byFactory: true)
             }
         }
@@ -1756,7 +1802,9 @@ final class AppState {
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
     /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
-    /// `findings:back`: Statistics' Review findings view, as its clicks would.
+    /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:severity:blocker` is a severity chip,
+    /// `findings:select:0` ticks a shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
+    /// is Make a task from them.
     static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
@@ -1774,6 +1822,7 @@ final class AppState {
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
+            case "hold": holdMerge(parts[1])
             // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
@@ -1838,6 +1887,9 @@ final class AppState {
                 case "goal": goalSheet = .new
                 case "note": newNote()
                 case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
+                // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
+                case "settings-cog": NotificationCenter.default.post(name: SidebarSettings.demo, object: nil)
+                case "settings-pane": NotificationCenter.default.post(name: SidebarSettings.demo, object: parts.count > 2 ? parts[2] : nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -1899,15 +1951,42 @@ final class AppState {
                 NotificationCenter.default.post(name: SecretsSettings.demoSave, object: nil, userInfo: ["name": parts[2], "value": parts.dropFirst(3).joined(separator: ":")])
             case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
-            // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), and its What's New sheet.
+            // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":
                 for _ in 0..<300 {
                     if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.send(.machineUpdate(.init(machine: machine.id))); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // Its ⋯ › Check for Runner Update (or Update Runner to X, when one's out), as the menu runs it.
+            case "runnercheck":
+                for _ in 0..<300 {
+                    if let client, let machine = client.machines.first(where: { $0.id == parts[1] }) { client.perform(client.runnerAction(machine), on: machine); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // `reviews:low:1`: the policy's final reviews for a level; `green:<id>` proves all its Done when items and passes its checks.
+            // `area:Auth:off`: a sensitive area switched off (or on) in the policy.
+            case "area":
+                if let index = policy.sensitiveAreas.firstIndex(where: { $0.name == parts[1] }) {
+                    policy.sensitiveAreas[index].enabled = parts.count < 3 || ["yes", "on", "true"].contains(parts[2].lowercased())
+                }
+            case "reviews":
+                if let level = RiskLevel.allCases.first(where: { $0.title.lowercased() == parts[1].lowercased() }) {
+                    policy.finalReviews[level] = parts.count > 2 ? Int(parts[2]) ?? 1 : 1
+                }
+            case "green":
+                withAnimation(.snappy(duration: 0.3)) {
+                    update(parts[1]) { task in
+                        for index in task.doneWhen.indices { task.doneWhen[index].status = .proven }
+                        guard var pr = task.pr else { return }
+                        for index in pr.checks.indices { pr.checks[index].status = .passed }
+                        task.pr = pr
+                        task.checksFailing = false
+                    }
+                }
+                sweepForAutoMerge()
             case "accept":
                 let level = RiskLevel.allCases.first { $0.title.lowercased() == parts.last?.lowercased() } ?? .low
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")

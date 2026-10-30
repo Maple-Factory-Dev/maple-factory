@@ -594,6 +594,8 @@ async fn connect(
     });
     sink.send(Message::text(serde_json::to_string(&hello)?)).await?;
     mcp::set_connected(true);
+    // Adopted sessions' secrets, to scrub them again.
+    sessions.refetch_secrets();
     // Share link requests from before a reconnect went with the old connection.
     proxy::reset();
     // The hub says again which thumbnails its browsers want.
@@ -735,20 +737,20 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, text: &str) {
                 let opened = async {
                     // In a worktree, the session's directory is the worktree. A task's comes from
                     // GitHub's copy of its branch, and its prompt gets its project's settings and its card's images.
-                    let (cwd, prompt, images, env) = match (&task, &worktree) {
+                    let (cwd, prompt, images, secrets) = match (&task, &worktree) {
                         (Some(t), w) => {
                             let o = tasks::open(&sessions, t, &cwd, w.as_ref(), prompt.as_deref(), &images).await?;
-                            (o.worktree, o.prompt, o.images, o.env)
+                            (o.worktree, o.prompt, o.images, o.secrets)
                         }
-                        (None, Some(w)) => (worktrees::create(&cwd, w).await?, prompt, vec![], vec![]),
-                        (None, None) => (cwd.clone(), prompt, vec![], vec![]),
+                        (None, Some(w)) => (worktrees::create(&cwd, w).await?, prompt, vec![], None),
+                        (None, None) => (cwd.clone(), prompt, vec![], None),
                     };
                     // A task's session can attach evidence to it (`prove`), from its own proof folder.
                     let tag = task
                         .as_ref()
                         .zip(worktree.as_ref())
                         .map(|(t, w)| proof::TaskTag { id: t.id.clone(), branch: format!("{}{}", worktrees::BRANCH_PREFIX, w.name) });
-                    sessions.open(id, &agent, &cwd, model.as_deref(), unattended.as_ref(), &images, prompt.as_deref(), resume, cols, rows, tag, &env).await
+                    sessions.open(id, &agent, &cwd, model.as_deref(), unattended.as_ref(), &images, prompt.as_deref(), resume, cols, rows, tag, secrets.as_ref().map(|(r, e)| (r.as_str(), e.as_slice()))).await
                 };
                 match opened.await {
                     Ok(session) => {

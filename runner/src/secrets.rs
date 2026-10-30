@@ -2,17 +2,18 @@
 //! gitignored `.env.local` in the owner's own checkout (`maple-runner secrets pull`).
 //!
 //! The hub hands a repo's values (`secrets.request` / `secrets.reply`) only to the machine a task on
-//! that repo is assigned to, or, with no task, to a machine whose owner is one of the org's members.
-//! A task's session gets them in its tmux session's environment (`new-session -e`), never as a file,
-//! so nothing lands in the worktree where it could be committed. The session's `@maple_secrets`
-//! option names them, so a restarted runner can find their values again.
+//! that repo is assigned to, or, with no task, to a machine whose owner is an org admin.
+//! A task's session gets them through a one-shot file (`env_file`, 0600, in the runner's config
+//! folder, never the worktree) that its pane's shell sources and deletes before it starts the agent
+//! (`source_first`). So they're only in the pane's processes, not tmux's session environment, which
+//! any client of the tmux server can read with `show-environment`. The session's `@maple_secrets`
+//! and `@maple_secrets_repo` options name them and their repo, so a restarted runner can ask the hub
+//! for them again with the session's task (`recover`, `refetch`).
 //!
 //! Every value the runner has been given is remembered for `scrub`: it's replaced by `***` in
 //! everything the runner sends the hub (agents' MCP calls and proofs, session ends' last output,
-//! activity) and in git's error messages (`tasks::scrub`).
-//!
-//! The tmux command that starts such a session goes to tmux on its stdin, not in its argv, which
-//! any user on the machine can read with `ps`.
+//! activity, terminal output through a `Scrubber`, replays) and in git's error messages
+//! (`tasks::scrub`). Values shorter than `MIN_SCRUB`, and encoded forms of a value, aren't scrubbed.
 //!
 //! The CLI can't open a second hub connection (the hub keeps the newest runner with a name), so
 //! `secrets pull` and `secrets list` ask the running runner over its local hook socket, one line
@@ -21,7 +22,7 @@
 //! sessions (found by walking up from the socket peer's pid): an agent, prompt-injected or not,
 //! can't use the owner's pull to read another repo's values. A process that detaches itself from
 //! its session (double-forks to launchd/init) gets past that check; the socket is only as private
-//! as the user account it runs under.
+//! as the user account it runs under, which is why the hub only answers an admin's machine.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -40,11 +41,12 @@ use crate::tasks::Emit;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Shorter values aren't scrubbed: replacing every "abc" in a log would mangle it and hide nothing.
 const MIN_SCRUB: usize = 6;
-/// tmux sends a whole command to its server as one message (16 KB at most), so the `-e`s of a
-/// session's secrets have to fit in what's left of it; any that don't are left out with a warning.
-pub const ENV_BUDGET: usize = 12 * 1024;
-/// The session option naming the secrets in its environment.
+/// The session option naming the secrets its pane was given.
 pub const OPTION: &str = "@maple_secrets";
+/// The session option naming the repo they came from, so an adopting runner can ask for them again.
+pub const REPO_OPTION: &str = "@maple_secrets_repo";
+/// Names the one-shot file (`env_file`) a session's shell reads its secrets from.
+pub const FILE_ENV: &str = "MAPLE_SECRETS_FILE";
 
 /// The hub's answer.
 pub struct Reply {
@@ -121,6 +123,79 @@ pub fn scrub(text: &str) -> String {
     values.into_iter().fold(text.to_string(), |t, v| t.replace(v.as_str(), "***"))
 }
 
+/// The remembered values as bytes, longest first.
+fn known_bytes() -> Vec<Vec<u8>> {
+    let mut values: Vec<Vec<u8>> = KNOWN.read().unwrap().iter().map(|v| v.as_bytes().to_vec()).collect();
+    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    values
+}
+
+/// `data` with every one of `values` (longest first) replaced by `***`, in one pass.
+fn replace_bytes(data: &[u8], values: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        match values.iter().find(|v| data[i..].starts_with(v)) {
+            Some(v) => {
+                out.extend_from_slice(b"***");
+                i += v.len();
+            }
+            None => {
+                out.push(data[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// `scrub` on bytes, for something sent whole (a session's replay).
+pub fn scrub_bytes(data: &[u8]) -> Vec<u8> {
+    let values = known_bytes();
+    if values.is_empty() { data.to_vec() } else { replace_bytes(data, &values) }
+}
+
+/// Scrubs a stream (a session's terminal output) that comes in pieces: a value split between two
+/// pieces is still replaced. It holds back only the end of a piece that could be the start of a
+/// remembered value (at most the longest value's length less one), until the next piece or `flush`.
+/// It reads the remembered values on every piece, so ones remembered later count too.
+#[derive(Default)]
+pub struct Scrubber {
+    held: Vec<u8>,
+}
+
+impl Scrubber {
+    /// What of `held` + `chunk` can go out now, scrubbed.
+    pub fn feed(&mut self, chunk: &[u8]) -> Vec<u8> {
+        let mut buf = std::mem::take(&mut self.held);
+        buf.extend_from_slice(chunk);
+        let values = known_bytes();
+        if values.is_empty() {
+            return buf;
+        }
+        let mut out = replace_bytes(&buf, &values);
+        let longest = values[0].len();
+        let keep = (1..longest.min(out.len() + 1)).rev().find(|&n| {
+            let tail = &out[out.len() - n..];
+            values.iter().any(|v| v.len() > n && v.starts_with(tail))
+        });
+        if let Some(n) = keep {
+            self.held = out.split_off(out.len() - n);
+        }
+        out
+    }
+
+    /// Whether it's holding anything back.
+    pub fn holding(&self) -> bool {
+        !self.held.is_empty()
+    }
+
+    /// What it held back: only ever the start of a value, never a whole one.
+    pub fn flush(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.held)
+    }
+}
+
 /// Whether anything is remembered (so a message needs scrubbing at all).
 pub fn any() -> bool {
     !KNOWN.read().unwrap().is_empty()
@@ -141,33 +216,16 @@ pub fn scrub_json(value: &mut Value) {
     }
 }
 
-/// The `-e NAME=value` pairs for a session, within `ENV_BUDGET`, and the names left out.
-pub fn session_env(values: &BTreeMap<String, String>) -> (Vec<(String, String)>, Vec<String>) {
-    let (mut env, mut skipped, mut used) = (vec![], vec![], 0);
-    for (name, value) in values {
-        let size = name.len() + value.len() + 8;
-        if used + size > ENV_BUDGET {
-            skipped.push(name.clone());
-            continue;
-        }
-        used += size;
-        env.push((name.clone(), value.clone()));
-    }
-    (env, skipped)
-}
-
-/// A task's secrets for its session's environment. Never fails the task: anything that goes wrong
-/// is a warning in the runner's log, and the session starts without them.
+/// A task's secrets for its session. Never fails the task: anything that goes wrong is a warning in
+/// the runner's log, and the session starts without them.
 pub async fn for_task(emit: Emit<'_>, task_id: &str, repo: Option<&str>) -> Vec<(String, String)> {
     let Some(repo) = repo.filter(|r| r.contains('/')) else { return vec![] };
     match request(emit, repo, Some(task_id)).await {
-        Ok(values) if values.is_empty() => vec![],
         Ok(values) => {
-            let (env, skipped) = session_env(&values);
-            if !skipped.is_empty() {
-                tracing::warn!("task {task_id}: {} too big for the session's environment, left out", skipped.join(", "));
+            let env: Vec<(String, String)> = values.into_iter().filter(|(name, _)| usable_name(name)).collect();
+            if !env.is_empty() {
+                tracing::info!("task {task_id}: {} secret{} from {repo} for its session", env.len(), if env.len() == 1 { "" } else { "s" });
             }
-            tracing::info!("task {task_id}: {} secret{} from {repo} in its session's environment", env.len(), if env.len() == 1 { "" } else { "s" });
             env
         }
         // A repo the factory doesn't list has none to give.
@@ -179,16 +237,95 @@ pub async fn for_task(emit: Emit<'_>, task_id: &str, repo: Option<&str>) -> Vec<
     }
 }
 
-/// After a restart: the values in an adopted session's environment, remembered for `scrub` again.
-pub async fn recover(tmux: &crate::tmux::Tmux, session: &str) {
-    let Ok(names) = tmux.run(&["show-options", "-v", "-t", session, OPTION]).await else { return };
-    let names: HashSet<&str> = names.split_whitespace().collect();
-    if names.is_empty() {
-        return;
+/// A name a shell can take as a variable (the hub only allows those, but the file is sourced).
+fn usable_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Where session `id`'s one-shot secrets file goes: in the runner's config folder, never the worktree.
+pub fn env_path(id: Uuid) -> Result<PathBuf> {
+    Ok(crate::config::dir()?.join("secrets").join(format!("{id}.env")))
+}
+
+/// Writes `values` as `NAME='value'` lines for session `id`'s shell to source and remove (`source_first`),
+/// readable only by this user.
+pub fn env_file(id: Uuid, values: &[(String, String)]) -> Result<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let path = env_path(id)?;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(path.parent().unwrap())?;
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
+    let mut text = String::new();
+    for (name, value) in values.iter().filter(|(n, _)| usable_name(n)) {
+        text.push_str(&format!("{name}='{}'\n", value.replace('\'', r"'\''")));
     }
-    let Ok(env) = tmux.run(&["show-environment", "-t", session]).await else { return };
-    let values: Vec<String> = env.lines().filter_map(|l| l.split_once('=')).filter(|(k, _)| names.contains(k)).map(|(_, v)| v.to_string()).collect();
+    f.write_all(text.as_bytes())?;
+    Ok(path)
+}
+
+/// `argv` (a login shell starting an agent, `agents::argv`) made to read the file `MAPLE_SECRETS_FILE`
+/// names into its environment, and remove it, before anything else runs: the values are then only in
+/// the pane's processes, not in tmux's session environment where any client of the server can read them.
+pub fn source_first(mut argv: Vec<String>) -> Vec<String> {
+    let prefix = format!(
+        r#"if [ -n "${FILE_ENV}" ]; then set -a; . "${FILE_ENV}"; set +a; rm -f -- "${FILE_ENV}"; fi; unset {FILE_ENV}; "#
+    );
+    if argv.len() > 4 && argv[3] == "-c" {
+        argv[4] = format!("{prefix}{}", argv[4]);
+        return argv;
+    }
+    // A bare shell (`[shell, -l]`): a short script that reads the file, then becomes that shell.
+    let shell = argv.remove(0);
+    let mut wrapped = vec![shell.clone(), "-c".into(), format!(r#"{prefix}exec "$0" "$@""#), shell];
+    wrapped.extend(argv);
+    wrapped
+}
+
+/// What an adopted session's secrets need from the hub again: the task they were released to, and its repo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pending {
+    pub task: String,
+    pub repo: String,
+}
+
+/// After a restart: an adopted session's secrets, remembered for `scrub` again. A session an older
+/// runner started still has them in tmux's environment: they're read from there whole (a value can
+/// span lines) and then taken out of it. A newer one's are only in its pane, so the hub is asked
+/// again with its task (`refetch`), once connected; that's what's returned.
+pub async fn recover(tmux: &crate::tmux::Tmux, session: &str, task: Option<&str>) -> Option<Pending> {
+    let names = tmux.run(&["show-options", "-v", "-t", session, OPTION]).await.ok()?;
+    let names: Vec<&str> = names.split_whitespace().collect();
+    if names.is_empty() {
+        return None;
+    }
+    let mut values = vec![];
+    for name in &names {
+        let Ok(line) = tmux.run(&["show-environment", "-t", session, name]).await else { continue };
+        // `NAME=value\n`; a removed one shows as `-NAME`.
+        let Some(value) = line.strip_prefix(&format!("{name}=")) else { continue };
+        values.push(value.strip_suffix('\n').unwrap_or(value).to_string());
+        let _ = tmux.run(&["set-environment", "-u", "-t", session, name]).await;
+    }
     remember(values.iter());
+    let repo = tmux.run(&["show-options", "-v", "-t", session, REPO_OPTION]).await.ok()?;
+    let (task, repo) = (task?, repo.trim());
+    (!repo.is_empty()).then(|| Pending { task: task.to_string(), repo: repo.to_string() })
+}
+
+/// Asks the hub again for an adopted session's secrets (`recover`), so they're scrubbed. Whether it answered.
+pub async fn refetch(emit: Emit<'_>, pending: &Pending) -> bool {
+    match request(emit, &pending.repo, Some(&pending.task)).await {
+        Ok(_) => true,
+        Err(e) if e.downcast_ref::<Refused>().is_some() => {
+            tracing::info!("task {}: the factory won't release {}'s secrets again: {e:#}", pending.task, pending.repo);
+            true
+        }
+        Err(e) => {
+            tracing::warn!("task {}: couldn't get {}'s secrets again: {e:#}", pending.task, pending.repo);
+            false
+        }
+    }
 }
 
 /// A `{"secrets":{"repo"}}` line from the hook socket: the CLI's pull, for the machine's owner.
@@ -356,15 +493,72 @@ mod tests {
         assert_eq!(crate::tasks::scrub("fatal: sk-live-abcdef123", None), "fatal: ***");
     }
 
+    /// Everything a scrubber lets out for `chunks`, then its flush.
+    fn stream(chunks: &[&[u8]]) -> Vec<u8> {
+        let mut scrubber = Scrubber::default();
+        let mut out: Vec<u8> = chunks.iter().flat_map(|c| scrubber.feed(c)).collect();
+        out.extend(scrubber.flush());
+        out
+    }
+
     #[test]
-    fn env_fits_tmux() {
-        let mut values = BTreeMap::new();
-        values.insert("A_KEY".to_string(), "x".repeat(100));
-        values.insert("B_BIG".to_string(), "y".repeat(ENV_BUDGET));
-        values.insert("C_KEY".to_string(), "z".repeat(100));
-        let (env, skipped) = session_env(&values);
-        assert_eq!(env.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["A_KEY", "C_KEY"]);
-        assert_eq!(skipped, ["B_BIG"]);
+    fn scrubber_catches_a_value_split_anywhere() {
+        let value = "sk-split-0123456789";
+        remember([&value.to_string()]);
+        let text = format!("token: {value}\r\n$ ");
+        let bytes = text.as_bytes();
+        let want = b"token: ***\r\n$ ".to_vec();
+        for i in 0..=bytes.len() {
+            assert_eq!(stream(&[&bytes[..i], &bytes[i..]]), want, "split at {i}");
+            for j in i..=bytes.len() {
+                assert_eq!(stream(&[&bytes[..i], &bytes[i..j], &bytes[j..]]), want, "split at {i} and {j}");
+            }
+        }
+        // One byte at a time.
+        assert_eq!(stream(&bytes.chunks(1).collect::<Vec<_>>()), want);
+        // It holds back the start of the value until the rest comes, and no more than that.
+        let mut scrubber = Scrubber::default();
+        assert_eq!(scrubber.feed(b"key=sk-split-01"), b"key=");
+        assert!(scrubber.holding());
+        assert_eq!(scrubber.feed(b"23456789!"), b"***!");
+        assert!(!scrubber.holding());
+        // A start that never finishes goes out as it was.
+        assert_eq!(scrubber.feed(b"sk-split"), b"");
+        assert_eq!(scrubber.flush(), b"sk-split");
+    }
+
+    #[test]
+    fn scrubber_leaves_other_output_alone() {
+        remember([&"sk-other-0123456789".to_string()]);
+        // Bytes that aren't UTF-8, escapes, and a near miss, split every way: out byte for byte.
+        let text: &[u8] = b"\x1b[1;32mok\x1b[0m \xff\xfe sk-other-012345678X done\r\n";
+        for i in 0..=text.len() {
+            assert_eq!(stream(&[&text[..i], &text[i..]]), text, "split at {i}");
+        }
+        assert_eq!(scrub_bytes(text), text);
+        assert_eq!(scrub_bytes(b"a sk-other-0123456789 b"), b"a *** b");
+    }
+
+    #[test]
+    fn env_file_quotes_for_the_shell() {
+        let id = Uuid::new_v4();
+        let values = vec![("API_KEY".to_string(), "it's \"p$w\\d\"\nline 2".to_string()), ("bad name".to_string(), "x".to_string())];
+        let path = env_file(id, &values).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        let out = std::process::Command::new("sh")
+            .args(["-c", r#"set -a; . "$F"; set +a; printf %s "$API_KEY""#])
+            .env("F", &path)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), values[0].1);
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("bad name"));
+        std::fs::remove_file(&path).unwrap();
+        // A shell agent's argv gets a script in front; an agent's `-c` script gets it prepended.
+        assert_eq!(source_first(vec!["/bin/zsh".into(), "-l".into()])[..2], ["/bin/zsh", "-c"]);
+        assert_eq!(source_first(vec!["/bin/zsh".into(), "-l".into()])[3..], ["/bin/zsh", "-l"]);
+        let agent = source_first(vec!["/bin/zsh".into(), "-l".into(), "-i".into(), "-c".into(), r#"exec "$0" "$@""#.into(), "claude".into()]);
+        assert!(agent[4].starts_with("if [ -n \"$MAPLE_SECRETS_FILE\" ]") && agent[4].ends_with(r#"exec "$0" "$@""#), "{}", agent[4]);
     }
 
     #[test]
@@ -437,10 +631,26 @@ mod tests {
         assert_eq!(sent.lock().unwrap().len(), 2);
     }
 
-    /// A task session's secrets are in its environment (the shell sees them) and named on the tmux
-    /// session, the worktree gets no file, and a restarted runner finds them again for `scrub`.
+    /// Output from the session, as the hub would get it, until `want` shows up.
+    async fn output_until(rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::sessions::Event>, id: Uuid, want: &str) -> String {
+        let mut seen = vec![];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !String::from_utf8_lossy(&seen).contains(want) {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(crate::sessions::Event::Output(from, data))) if from == id => seen.extend(data),
+                Ok(Some(_)) => {}
+                _ => break,
+            }
+        }
+        String::from_utf8_lossy(&seen).into_owned()
+    }
+
+    /// A task session's secrets reach its pane's shell through a one-shot file outside the worktree:
+    /// not tmux's environment (any client of the server could read that), not the worktree. Once
+    /// remembered, they're scrubbed from its terminal output and replays, and a restarted runner
+    /// asks the hub for them again with the session's task.
     #[tokio::test]
-    async fn a_task_session_gets_them_in_its_environment_only() {
+    async fn a_task_session_gets_them_in_its_pane_only() {
         let tag = &Uuid::new_v4().to_string()[..8];
         // Short: the tmux socket path must stay under 104 bytes.
         let home = PathBuf::from(format!("/tmp/mfs-{tag}"));
@@ -452,21 +662,20 @@ mod tests {
         let before = git(&wt, &["status", "--porcelain", "--ignored", "--untracked-files=all"]).unwrap();
 
         let value = format!("sk-env-{tag}-value");
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let tmux = crate::tmux::Tmux::new(&format!("t{tag}"), &home).unwrap();
         let hooks = crate::hooks::Hooks::prepare(&home, &format!("t{tag}")).unwrap();
         let sessions = crate::sessions::Sessions::start(tx, tmux, hooks).await.unwrap();
         let id = Uuid::new_v4();
-        // Sent on tmux's stdin in its command language, so quotes, `$`, `\` and newlines must survive.
+        // Sourced by the shell, so quotes, `$`, `\` and newlines must survive.
         let tricky = "it's \"p$w\\d\"\nline 2 #{x};";
         let env = vec![("API_KEY".to_string(), value.clone()), ("DB_URL".to_string(), tricky.to_string())];
-        let info = sessions.open(id, "shell", wt.to_str().unwrap(), None, None, &[], None, false, 120, 30, None, &env).await.unwrap();
+        let info = sessions.open(id, "shell", wt.to_str().unwrap(), None, None, &[], None, false, 120, 30, None, Some(("acme/web", &env))).await.unwrap();
 
         let tmux = crate::tmux::Tmux::new(&format!("t{tag}"), &home).unwrap();
         let name = format!("maple-{id}");
-        assert_eq!(tmux.run(&["show-environment", "-t", &name, "API_KEY"]).await.unwrap().trim(), format!("API_KEY={value}"));
-        assert_eq!(tmux.run(&["show-environment", "-t", &name, "DB_URL"]).await.unwrap(), format!("DB_URL={tricky}\n"));
         assert_eq!(tmux.run(&["show-options", "-v", "-t", &name, OPTION]).await.unwrap().trim(), "API_KEY DB_URL");
+        assert_eq!(tmux.run(&["show-options", "-v", "-t", &name, REPO_OPTION]).await.unwrap().trim(), "acme/web");
         // The hook socket won't hand a session (its pane, or anything under it) the owner's pull.
         let pane = info.pid.unwrap();
         assert!(sessions.hosts(pane).await);
@@ -474,27 +683,94 @@ mod tests {
         let refused = serve(&sessions, Some(pane), &json!({ "repo": "acme/other" })).await;
         assert!(refused["error"].as_str().unwrap().contains("inside a factory session"), "{refused}");
         assert!(serve(&sessions, None, &json!({ "repo": "acme/other" })).await.get("error").is_some());
-        // The shell in the session has it: the typed line says `$API_KEY`, only its output has the value.
-        tmux.run(&["send-keys", "-t", &name, "echo \"got:$API_KEY\"", "Enter"]).await.unwrap();
+        // The shell in the session has them: the typed line says `$API_KEY`, only its output has the value.
+        tmux.run(&["send-keys", "-t", &name, r#"echo "got:$API_KEY"; [ "$DB_URL" = "$(printf 'it'"'"'s "p$w\\d"\nline 2 #{x};')" ] && echo db:ok"#, "Enter"]).await.unwrap();
         let mut screen = String::new();
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             screen = tmux.run(&["capture-pane", "-p", "-t", &name]).await.unwrap();
-            if screen.contains(&format!("got:{value}")) {
+            // The typed line has "db:ok" in it too; only the output has it as a line of its own.
+            if screen.contains(&format!("got:{value}")) && screen.lines().any(|l| l == "db:ok") {
                 break;
             }
         }
         assert!(screen.contains(&format!("got:{value}")), "{screen}");
-        // Nothing new in the worktree, not even an ignored file.
+        assert!(screen.lines().any(|l| l == "db:ok"), "{screen}");
+        // …but tmux's environment, which any client of its server can read, has neither them nor their names.
+        for scope in [["show-environment", "-t", &name], ["show-environment", "-g", ""]] {
+            let shown = tmux.run(&scope.iter().filter(|a| !a.is_empty()).collect::<Vec<_>>()).await.unwrap();
+            for gone in ["API_KEY", "DB_URL", value.as_str(), "line 2"] {
+                assert!(!shown.contains(gone), "{scope:?} shows {gone}: {shown}");
+            }
+        }
+        // The one-shot file is gone, and nothing new is in the worktree, not even an ignored file.
+        assert!(!env_path(id).unwrap().exists());
         assert_eq!(git(&wt, &["status", "--porcelain", "--ignored", "--untracked-files=all"]).unwrap(), before);
 
-        // A restarted runner reads them back from the session, so it keeps scrubbing them.
+        // A restarted runner finds nothing in tmux to read, so it asks the hub again with the task's id.
         assert_eq!(scrub(&value), value);
-        recover(&tmux, &name).await;
+        let pending = recover(&tmux, &name, Some("MF-9")).await.unwrap();
+        assert_eq!(pending, Pending { task: "MF-9".into(), repo: "acme/web".into() });
+        assert_eq!(scrub(&value), value);
+        let asked = Mutex::new(vec![]);
+        let hub = |m: Outbound| {
+            if let Outbound::SecretsRequest { req_id, task_id, repo } = m {
+                asked.lock().unwrap().push((task_id.clone(), repo));
+                resolve(&req_id, Reply { values: Some(BTreeMap::from([("API_KEY".into(), value.clone())])), error: None, code: None });
+            }
+        };
+        assert!(refetch(&hub, &pending).await);
+        assert_eq!(*asked.lock().unwrap(), [(Some("MF-9".to_string()), "acme/web".to_string())]);
         assert_eq!(scrub(&format!("leaked {value}")), "leaked ***");
+
+        // Remembered, it's scrubbed from the terminal's bytes on their way to the hub…
+        while rx.try_recv().is_ok() {}
+        tmux.run(&["send-keys", "-t", &name, "echo \"again=${API_KEY}=end\"", "Enter"]).await.unwrap();
+        let out = output_until(&mut rx, id, "again=***=end").await;
+        assert!(out.contains("again=***=end") && !out.contains(&value), "{out:?}");
+        // …and from a replay, before it's base64'd.
+        sessions.replay(id, "n1".into());
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let replay = loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await.unwrap().unwrap() {
+                crate::sessions::Event::Text(Outbound::SessionReplay { id: from, data, .. }) if from == id => break data,
+                _ => {}
+            }
+        };
+        use base64::Engine;
+        let replay = String::from_utf8_lossy(&base64::engine::general_purpose::STANDARD.decode(replay).unwrap()).into_owned();
+        assert!(replay.contains("got:***") && replay.contains("again=***=end") && !replay.contains(&value), "{replay:?}");
 
         let _ = tmux.run(&["kill-server"]).await;
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&wt);
+    }
+
+    /// A session an older runner started holds its secrets in tmux's environment: a restarted runner
+    /// reads them back whole, multi-line ones too, then takes them out of it.
+    #[tokio::test]
+    async fn recover_reads_an_older_session_whole_and_unsets_it() {
+        let tag = &Uuid::new_v4().to_string()[..8];
+        let home = PathBuf::from(format!("/tmp/mfo-{tag}"));
+        std::fs::create_dir_all(&home).unwrap();
+        let tmux = crate::tmux::Tmux::new(&format!("o{tag}"), &home).unwrap();
+        let name = format!("maple-{}", Uuid::new_v4());
+        let key = format!("-----BEGIN KEY {tag}-----\nline=two\n-----END KEY-----");
+        let short = format!("sk-old-{tag}");
+        tmux.run(&["new-session", "-d", "-s", &name, "-e", &format!("PEM={key}"), "-e", &format!("API_KEY={short}"), "sh"]).await.unwrap();
+        tmux.run(&["set-option", "-t", &name, OPTION, "PEM API_KEY MISSING"]).await.unwrap();
+        assert_eq!(scrub(&key), key);
+
+        // No repo named: nothing to ask the hub for.
+        assert_eq!(recover(&tmux, &name, Some("MF-3")).await, None);
+        assert_eq!(scrub(&format!("cat: {key}\nok")), "cat: ***\nok");
+        // Not its lines one by one: "line=two" alone is left alone.
+        assert_eq!(scrub("line=two"), "line=two");
+        assert_eq!(scrub(&short), "***");
+        let shown = tmux.run(&["show-environment", "-t", &name]).await.unwrap();
+        assert!(!shown.contains("BEGIN KEY") && !shown.contains(&short), "{shown}");
+
+        let _ = tmux.run(&["kill-server"]).await;
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

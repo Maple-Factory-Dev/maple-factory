@@ -69,8 +69,9 @@ import Security
     private(set) var serverUpdate: Wire.ServerUpdate?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
+    var isAdmin: Bool { me?.role == "admin" }
     /// Admins see Statistics; signed out, the mockup shows it.
-    var canSeeStats: Bool { !isSignedIn || me?.role == "admin" }
+    var canSeeStats: Bool { !isSignedIn || isAdmin }
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
@@ -1059,6 +1060,29 @@ extension FactoryClient {
     /// The release a machine runs, when the changelog has it.
     func release(_ version: String?) -> Wire.RunnerRelease? {
         version.flatMap { v in runnerReleases.first { $0.version == v } }
+    }
+
+    /// What the runner menu item does: install a newer release the app knows of, or only look for one.
+    enum RunnerAction: Equatable {
+        case check
+        case update(String)
+    }
+
+    func runnerAction(_ machine: Wire.Machine) -> RunnerAction {
+        Self.runnerAction(machine, latest: runnerLatest)
+    }
+
+    static func runnerAction(_ machine: Wire.Machine, latest: String?) -> RunnerAction {
+        guard let version = machine.version, let latest, Self.version(version, isOlderThan: latest) else { return .check }
+        return .update(latest)
+    }
+
+    /// Runs the runner menu item: a check never installs anything, so it doesn't need the machine online.
+    func perform(_ action: RunnerAction, on machine: Wire.Machine) {
+        switch action {
+        case .check: send(.runnerCheck(.init(machine: machine.id)))
+        case .update: send(.machineUpdate(.init(machine: machine.id)))
+        }
     }
 
     /// Where a machine's runner update is, as its card and Settings › Runner show it.

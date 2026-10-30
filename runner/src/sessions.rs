@@ -116,6 +116,8 @@ pub struct Sessions {
     /// `PORT` and `MAPLE_API_PORT` of each live session, claimed before its tmux session starts so
     /// two opens at once can't pick the same ones.
     ports: Arc<Mutex<HashMap<Uuid, (u16, u16)>>>,
+    /// Adopted sessions whose secrets the hub has to be asked for again (`secrets::recover`).
+    refetch: Arc<Mutex<Vec<crate::secrets::Pending>>>,
 }
 
 impl Sessions {
@@ -129,6 +131,7 @@ impl Sessions {
             tmux: Arc::new(tmux),
             hooks: Arc::new(hooks),
             ports: Arc::default(),
+            refetch: Arc::default(),
         };
         // A server that lost its socket while the runner was down still has its sessions.
         if sessions.tmux.recover_socket() {
@@ -138,12 +141,15 @@ impl Sessions {
         for existing in sessions.tmux.list().await? {
             let Some(id) = existing.name.strip_prefix("maple-").and_then(|s| Uuid::parse_str(s).ok()) else { continue };
             let info = SessionInfo { id, agent: existing.agent, cwd: existing.cwd, pid: existing.pid, started_at: existing.started_at };
+            let task = existing.task.as_ref().map(|t| t.id.clone());
             match sessions.adopt(info, existing.task) {
                 Ok(()) => {
                     if let Some(ports) = existing.ports {
                         sessions.ports.lock().unwrap().insert(id, ports);
                     }
-                    crate::secrets::recover(&sessions.tmux, &existing.name).await;
+                    if let Some(p) = crate::secrets::recover(&sessions.tmux, &existing.name, task.as_deref()).await {
+                        sessions.refetch.lock().unwrap().push(p);
+                    }
                     info!("reattached to session {id}")
                 }
                 Err(e) => warn!("could not reattach to {}: {e:#}", existing.name),
@@ -161,6 +167,21 @@ impl Sessions {
             roots.extend(out.trim().parse::<u32>().ok());
         }
         crate::ports::descends_from(pid, &roots).await
+    }
+
+    /// Once connected: asks the hub again for adopted sessions' secrets (`secrets::recover`), so
+    /// they're scrubbed. Any it doesn't answer are asked for on the next connection.
+    pub fn refetch_secrets(&self) {
+        let pending = std::mem::take(&mut *self.refetch.lock().unwrap());
+        for p in pending {
+            let sessions = self.clone();
+            tokio::spawn(async move {
+                let emit = |m: Outbound| sessions.emit(m);
+                if !crate::secrets::refetch(&emit, &p).await {
+                    sessions.refetch.lock().unwrap().push(p);
+                }
+            });
+        }
     }
 
     pub fn emit(&self, msg: Outbound) {
@@ -206,7 +227,7 @@ impl Sessions {
         cols: u16,
         rows: u16,
         task: Option<TaskTag>,
-        env: &[(String, String)],
+        secrets: Option<(&str, &[(String, String)])>,
     ) -> Result<SessionInfo> {
         let agent = crate::agent_config::find(agent_name).ok_or_else(|| anyhow!("unknown agent {agent_name:?}"))?;
         let dir = expand_home(cwd);
@@ -243,12 +264,16 @@ impl Sessions {
         if let Some(t) = &task {
             meta.push(("@maple_task", t.to_meta()));
         }
-        // A task's repo secrets: in the session's environment only, never a file in its worktree.
-        for (name, value) in env {
-            args.extend(["-e".into(), format!("{name}={value}")]);
-        }
-        if !env.is_empty() {
+        // A task's repo secrets: in a one-shot file outside its worktree that the pane's shell reads
+        // and removes, so they're only ever in the pane's processes, not tmux's session environment.
+        let secrets = secrets.filter(|(_, env)| !env.is_empty());
+        if let Some((repo, env)) = secrets {
+            let file = crate::secrets::env_file(id, env).inspect_err(|_| {
+                self.ports.lock().unwrap().remove(&id);
+            })?;
+            args.extend(["-e".into(), format!("{}={}", crate::secrets::FILE_ENV, file.display())]);
             meta.push((crate::secrets::OPTION, env.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(" ")));
+            meta.push((crate::secrets::REPO_OPTION, repo.to_string()));
         }
         // A long prompt goes through a file the shell reads (and removes): tmux refuses a long command.
         let long = prompt.filter(|p| !p.trim().is_empty() && p.len() > PROMPT_IN_FILE && agent.takes_prompt());
@@ -258,11 +283,12 @@ impl Sessions {
         }
         args.extend(["-P".into(), "-F".into(), "#{pane_pid}".into(), "--".into()]);
         let hook_args = if agent.hooks { self.hooks.agent_args(agent_name) } else { vec![] };
-        if long.is_some() {
-            args.extend(agents::argv_with_prompt_file(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images));
+        let argv = if long.is_some() {
+            agents::argv_with_prompt_file(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images)
         } else {
-            args.extend(agents::argv(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images, prompt));
-        }
+            agents::argv(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images, prompt)
+        };
+        args.extend(if secrets.is_some() { crate::secrets::source_first(argv) } else { argv });
         // The browser decides the size; an SSH client attaching later doesn't resize it.
         // (Set per window: `window-size manual` in the startup config crashes tmux 3.6a.)
         args.extend([";".into(), "set-option".into(), "-w".into(), "-t".into(), name.clone(), "window-size".into(), "manual".into()]);
@@ -270,11 +296,11 @@ impl Sessions {
         for (key, value) in meta {
             args.extend([";".into(), "set-option".into(), "-t".into(), name.clone(), key.into(), value]);
         }
-        // With secrets in its `-e`s the command goes on tmux's stdin: argv is public to `ps`.
-        let out = match if env.is_empty() { self.tmux.run(&args).await } else { self.tmux.run_hidden(&args).await } {
+        let out = match self.tmux.run(&args).await {
             Ok(out) => out,
             Err(e) => {
                 self.ports.lock().unwrap().remove(&id);
+                remove_secrets_file(id);
                 return Err(e);
             }
         };
@@ -320,21 +346,42 @@ impl Sessions {
         let paste = Mutex::new(PasteMode::new(matches!(info.agent.as_str(), "claude" | "codex")));
         let output = Arc::new(AtomicU64::new(0));
         let counter = output.clone();
+        // Remembered secrets are taken out of the terminal's bytes too (`secrets::Scrubber`). It holds
+        // back the end of a piece that could be the start of one; `flush_after` lets it go if nothing follows.
+        let scrubber: Arc<Mutex<(crate::secrets::Scrubber, u64)>> = Arc::default();
         let control = self.tmux.control(&name, move |event| match event {
             ControlEvent::Output(data) => {
                 counter.fetch_add(1, Ordering::Relaxed);
                 paste.lock().unwrap().feed(&data);
-                let _ = outbox.send(Event::Output(id, data));
+                let mut held = scrubber.lock().unwrap();
+                if !crate::secrets::any() && !held.0.holding() {
+                    let _ = outbox.send(Event::Output(id, data));
+                    return;
+                }
+                let clean = held.0.feed(&data);
+                if !clean.is_empty() {
+                    let _ = outbox.send(Event::Output(id, clean));
+                }
+                if held.0.holding() {
+                    held.1 += 1;
+                    tokio::spawn(flush_after(scrubber.clone(), held.1, outbox.clone(), id));
+                }
             }
-            ControlEvent::Replay { nonce, mut data } => {
+            ControlEvent::Replay { nonce, data } => {
                 // The replay repaints a fresh terminal; tell it the paste mode too.
                 let mode: &[u8] = if paste.lock().unwrap().on { BRACKETED_ON } else { BRACKETED_OFF };
+                let mut data = if crate::secrets::any() { crate::secrets::scrub_bytes(&data) } else { data };
                 data.splice(0..0, mode.iter().copied());
                 let data = base64::engine::general_purpose::STANDARD.encode(data);
                 let _ = outbox.send(Event::Text(Outbound::SessionReplay { id, nonce, data }));
             }
             // Exits are picked up by `watch_exits`, which also reads the status.
-            ControlEvent::Exit => {}
+            ControlEvent::Exit => {
+                let rest = scrubber.lock().unwrap().0.flush();
+                if !rest.is_empty() {
+                    let _ = outbox.send(Event::Output(id, rest));
+                }
+            }
         })?;
         self.inner.lock().unwrap().insert(id, Session { info, name, control, output, agent: None, task });
         Ok(())
@@ -539,6 +586,8 @@ impl Sessions {
         let _ = self.tmux.run(&["kill-session", "-t", name]).await;
         self.ports.lock().unwrap().remove(&id);
         self.requested.lock().unwrap().remove(&id);
+        // Its shell removes its secrets file as it starts; this is for one that never did.
+        remove_secrets_file(id);
         let (cause, detail) = ends::classify(seen);
         let end = SessionEnd {
             id,
@@ -559,6 +608,29 @@ impl Sessions {
             exits.push_back(end.clone());
         }
         self.emit(Outbound::Wire(wire::RunnerMessage::SessionEnded { end }));
+    }
+}
+
+/// How long a scrubber holds the start of what could be a secret before letting it go: short, so a
+/// prompt that happens to end that way isn't left off the screen.
+const SCRUB_HOLD: Duration = Duration::from_millis(50);
+
+/// Sends what a session's scrubber holds back if no more output came in `SCRUB_HOLD` (the count is
+/// still `generation`).
+async fn flush_after(scrubber: Arc<Mutex<(crate::secrets::Scrubber, u64)>>, generation: u64, outbox: Outbox, id: Uuid) {
+    tokio::time::sleep(SCRUB_HOLD).await;
+    let mut held = scrubber.lock().unwrap();
+    if held.1 == generation {
+        let rest = held.0.flush();
+        if !rest.is_empty() {
+            let _ = outbox.send(Event::Output(id, rest));
+        }
+    }
+}
+
+fn remove_secrets_file(id: Uuid) {
+    if let Ok(path) = crate::secrets::env_path(id) {
+        let _ = std::fs::remove_file(path);
     }
 }
 

@@ -129,6 +129,15 @@ The app needs Contents, Pull requests, Checks and Actions (read & write) and Com
 webhook events Check run, Check suite, Status and Pull request. `server/test/e2e-github.mjs` runs the
 whole path against `server/test/fake-github.mjs`.
 
+## Repo secrets
+
+Admins keep per-repo secrets in Settings → Secrets. A task's sessions get their repo's values through a
+one-shot file their shell reads and deletes, so they're only in the pane's processes (not tmux's
+environment, not the worktree), and `maple-runner secrets pull` works only on an admin's machine. The runner
+scrubs values from everything it sends the factory, terminal output included, but not values under 6
+characters or encoded ones. Changing or losing `SECRETS_KEY` makes every stored value unreadable, so they'd
+all need setting again. See server/README.md.
+
 ## How sessions end
 
 Every end carries a cause (`EndCause` in protocol/schema.ts) and the last 30 lines of screen, stored in

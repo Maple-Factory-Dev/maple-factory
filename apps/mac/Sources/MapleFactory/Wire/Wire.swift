@@ -2265,8 +2265,10 @@ public enum Wire {
         public var force: Bool?
         /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
         public var effort: String?
+        /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
+        public var mergeAt: UInt64?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2311,6 +2313,7 @@ public enum Wire {
             self.startAt = startAt
             self.force = force
             self.effort = effort
+            self.mergeAt = mergeAt
         }
 
         public init(from decoder: Decoder) throws {
@@ -2359,6 +2362,7 @@ public enum Wire {
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
+            mergeAt = try c.decodeIfPresent(UInt64.self, forKey: .mergeAt)
         }
     }
 
@@ -4148,6 +4152,15 @@ public enum Wire {
         }
     }
 
+    /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
+    public struct ClientMessageRunnerCheck: Codable, Hashable, Sendable {
+        public var machine: String
+
+        public init(machine: String) {
+            self.machine = machine
+        }
+    }
+
     /// Admins only.
     public struct ClientMessagePolicySave: Codable, Hashable, Sendable {
         public var policy: RiskPolicy
@@ -4410,6 +4423,15 @@ public enum Wire {
         }
     }
 
+    /// Stop the auto-merge counting down on a task; a person merges it instead.
+    public struct ClientMessageTaskHoldMerge: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     public struct ClientMessageTaskCancel: Codable, Hashable, Sendable {
         public var id: String
 
@@ -4535,6 +4557,7 @@ public enum Wire {
         case machineSettings(ClientMessageMachineSettings)
         case machineRename(ClientMessageMachineRename)
         case machineUpdate(ClientMessageMachineUpdate)
+        case runnerCheck(ClientMessageRunnerCheck)
         case policySave(ClientMessagePolicySave)
         case promptsSave(ClientMessagePromptsSave)
         case reposRefresh
@@ -4557,6 +4580,7 @@ public enum Wire {
         case taskResolveHand(ClientMessageTaskResolveHand)
         case taskApproveChanges(ClientMessageTaskApproveChanges)
         case taskMerge(ClientMessageTaskMerge)
+        case taskHoldMerge(ClientMessageTaskHoldMerge)
         case taskCancel(ClientMessageTaskCancel)
         case taskRetry(ClientMessageTaskRetry)
         case taskQueue(ClientMessageTaskQueue)
@@ -4595,6 +4619,7 @@ public enum Wire {
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "machine.rename": self = .machineRename(try ClientMessageMachineRename(from: decoder))
             case "machine.update": self = .machineUpdate(try ClientMessageMachineUpdate(from: decoder))
+            case "runner.check": self = .runnerCheck(try ClientMessageRunnerCheck(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
             case "repos.refresh": self = .reposRefresh
@@ -4617,6 +4642,7 @@ public enum Wire {
             case "task.resolveHand": self = .taskResolveHand(try ClientMessageTaskResolveHand(from: decoder))
             case "task.approveChanges": self = .taskApproveChanges(try ClientMessageTaskApproveChanges(from: decoder))
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
+            case "task.holdMerge": self = .taskHoldMerge(try ClientMessageTaskHoldMerge(from: decoder))
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
             case "task.retry": self = .taskRetry(try ClientMessageTaskRetry(from: decoder))
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
@@ -4695,6 +4721,9 @@ public enum Wire {
             case .machineUpdate(let body):
                 try c.encode("machine.update", forKey: .type)
                 try body.encode(to: encoder)
+            case .runnerCheck(let body):
+                try c.encode("runner.check", forKey: .type)
+                try body.encode(to: encoder)
             case .policySave(let body):
                 try c.encode("policy.save", forKey: .type)
                 try body.encode(to: encoder)
@@ -4759,6 +4788,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskMerge(let body):
                 try c.encode("task.merge", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskHoldMerge(let body):
+                try c.encode("task.holdMerge", forKey: .type)
                 try body.encode(to: encoder)
             case .taskCancel(let body):
                 try c.encode("task.cancel", forKey: .type)

@@ -44,3 +44,14 @@ export function shown(update: MachineUpdate | undefined, now = Date.now()): Mach
   }
   return now - update.at < UPDATE_SHOWN_MS ? update : null;
 }
+
+/** Compares release numbers only ("0.2.0" < "0.10.1"); a prerelease counts as its release. */
+export function olderThan(a: string, b: string): boolean {
+  const parts = (v: string) => v.split("-")[0].split(".").map((n) => Number(n) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const [p, q] = [x[i] ?? 0, y[i] ?? 0];
+    if (p !== q) return p < q;
+  }
+  return false;
+}

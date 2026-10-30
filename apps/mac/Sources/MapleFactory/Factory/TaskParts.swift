@@ -571,7 +571,10 @@ struct ReviewActions: View {
                 }
             }
 
-            if autoMerging {
+            if let mergeAt = countdown(gate) {
+                CountdownMergeButton(number: task.pr?.number ?? 0, mergeAt: mergeAt, from: task.mergeFrom,
+                                     hold: { state.holdMerge(task.id) }, mergeNow: { state.merge(task.id) })
+            } else if autoMerging {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Factory is merging #\(task.pr?.number ?? 0)…")
@@ -618,8 +621,22 @@ struct ReviewActions: View {
                 }
             }
 
-            statusLine(gate)
+            if let mergeAt = countdown(gate) {
+                TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                    let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
+                    statusRow("bolt.fill", "Auto-merging in \(left)s — Hold to merge it yourself.", Theme.State.merged)
+                }
+            } else {
+                statusLine(gate)
+            }
         }
+    }
+
+    /// When the factory auto-merges it, while that's counting down and every gate still holds.
+    private func countdown(_ gate: MergeGate) -> Date? {
+        guard task.state == .reviewing, let mergeAt = task.mergeAt, gate.canMerge, gate.autoMerge,
+              task.hand == nil, !state.isInFlight(task.id, .merge) else { return nil }
+        return mergeAt
     }
 
     private func gateRow(_ label: String, ready: Bool, failed: Bool, detail: String) -> some View {
@@ -666,13 +683,64 @@ struct ReviewActions: View {
             }
             return ("lock", "Merge unlocks when proofs, CI and reviews are all green.", Theme.textMuted)
         }()
+        return statusRow(icon, text, color)
+    }
 
-        return HStack(alignment: .firstTextBaseline, spacing: 5) {
+    private func statusRow(_ icon: String, _ text: String, _ color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
             Image(systemName: icon).font(.system(size: 10.5))
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
         .font(.system(size: 11.5))
         .foregroundStyle(color)
+    }
+}
+
+/// The auto-merge counting down: a green button whose fill drains to empty by `mergeAt`, when the
+/// factory merges, with Hold (a person merges it instead) and Merge now beside it.
+struct CountdownMergeButton: View {
+    let number: Int
+    let mergeAt: Date
+    /// When the countdown started; unknown, it's taken as the factory's default 10s.
+    var from: Date?
+    var hold: () -> Void
+    var mergeNow: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            TimelineView(.animation) { context in
+                let total = max(mergeAt.timeIntervalSince(from ?? mergeAt.addingTimeInterval(-10)), 0.001)
+                let left = max(0, mergeAt.timeIntervalSince(context.date))
+                let fraction = min(1, left / total)
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold))
+                    Text("Merging #\(number) in \(Int(left.rounded(.up)))s")
+                        .monospacedDigit()
+                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
+                .background {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(Theme.approve.opacity(0.4))
+                            Rectangle().fill(Theme.approve).frame(width: geo.size.width * fraction)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Merging #\(number) in \(Int(left.rounded(.up))) seconds")
+            }
+            DecisionButtons {
+                SecondaryButton(title: "Hold", action: hold)
+                SecondaryButton(title: "Merge now", action: mergeNow)
+            }
+        }
+        .transition(.opacity)
     }
 }
 
