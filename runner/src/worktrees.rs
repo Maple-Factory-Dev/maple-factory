@@ -786,6 +786,8 @@ pub type Deleting = tokio::task::JoinHandle<()>;
 
 /// How long `git worktree remove` may take when the folder can't be moved aside.
 const REMOVE_LIMIT: Duration = Duration::from_secs(600);
+/// Looking at, fetching from or pushing to origin.
+const REMOTE_LIMIT: Duration = Duration::from_secs(60);
 
 /// Marks a worktree folder moved aside to be deleted: `<name>.maple-removing-<hex>`.
 const ASIDE: &str = ".maple-removing-";
@@ -914,8 +916,8 @@ fn short(sha: &str) -> &str {
 /// request. HEAD must be one of `heads` (the PR's head, the commit the task pushed) or an ancestor of
 /// one; for a merged PR it's also enough that every commit is on a remote or the default branch.
 /// The branch goes with `git branch -d`, or `-D` only when HEAD matched what's on GitHub, and with it
-/// its `origin/` tracking ref. Remote branches are never touched. A worktree that's already gone is
-/// fine (the branch still goes).
+/// its `origin/` tracking ref. A worktree that's already gone is fine (the branch still goes). The
+/// branch on origin is left alone, unless `delete_remote` asks for it (see `delete_remote`).
 pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Removed> {
     let name = w.branch.strip_prefix(BRANCH_PREFIX).ok_or_else(|| anyhow!("`{}` isn't a task branch.", w.branch))?;
     valid_name(name)?;
@@ -966,6 +968,9 @@ pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Rem
         let mut message = format!("{} and {} were already gone", w.cwd, w.branch);
         if let Some(dropped) = drop_tracking_ref(&root, w.branch).await {
             message = format!("{message}, {dropped}");
+        }
+        if w.merged && w.delete_remote {
+            message = format!("{message}, {}", delete_remote(&root, &main, &w).await);
         }
         poke(true);
         return Ok(Removed { message, branch_deleted: false, deleting: None });
@@ -1026,12 +1031,41 @@ pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Rem
             }
         }
     }
-    poke(true);
-    let mut message = done.join(", ");
-    if message.is_empty() {
-        message = format!("{} was already gone", w.cwd);
+    if done.is_empty() {
+        done.push(format!("{} was already gone", w.cwd));
     }
-    Ok(Removed { message, branch_deleted, deleting })
+    if w.merged && w.delete_remote {
+        done.push(delete_remote(&root, &main, &w).await);
+    }
+    poke(true);
+    Ok(Removed { message: done.join(", "), branch_deleted, deleting })
+}
+
+/// A merged task's branch off origin, for a merge whose own delete didn't happen (the hub asks with
+/// `deleteRemote`): only while its tip there is one of `heads` or already in the default branch, and
+/// with a lease on that tip, so a branch with work that didn't merge is kept. Says what it did.
+async fn delete_remote(root: &Path, main: &Listed, w: &TaskWork<'_>) -> String {
+    let branch_ref = format!("refs/heads/{}", w.branch);
+    let listed = match git_within(root, &["ls-remote", "origin", &branch_ref], REMOTE_LIMIT).await {
+        Ok(listed) => listed,
+        Err(e) => return format!("couldn't look for {} on origin ({e})", w.branch),
+    };
+    let Some(tip) = listed.split_whitespace().next() else { return format!("{} was already gone on origin", w.branch) };
+    let mut merged = w.heads.iter().any(|h| h == tip);
+    let mut into = "the pull request".to_string();
+    if !merged && let Some((name, _)) = default_branch(root, main).await {
+        let _ = git_within(root, &["fetch", "--quiet", "origin", &name], REMOTE_LIMIT).await;
+        merged = git(root, &["merge-base", "--is-ancestor", tip, &format!("refs/remotes/origin/{name}")]).await.is_ok();
+        into = format!("the pull request or {name}");
+    }
+    if !merged {
+        return format!("kept branch {} on origin (its tip {} isn't in {into})", w.branch, short(tip));
+    }
+    let lease = format!("--force-with-lease={branch_ref}:{tip}");
+    match git_within(root, &["push", "--quiet", &lease, "origin", "--delete", w.branch], REMOTE_LIMIT).await {
+        Ok(_) => format!("deleted branch {} on origin", w.branch),
+        Err(e) => format!("couldn't delete branch {} on origin ({e})", w.branch),
+    }
 }
 
 /// Deletes the stale `origin/<branch>` ref a deleted task branch leaves behind, if it's there.
@@ -1176,6 +1210,47 @@ mod tests {
         assert!(done.branch_deleted && !wt.exists(), "{}", done.message);
         finish(done.deleting).await;
         assert!(asides(&repo.join("x")).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `delete_remote` after a merge whose own delete didn't happen: a branch on origin with work that
+    /// didn't merge is kept; once that work is in the default branch it's deleted; then it's gone.
+    #[tokio::test]
+    async fn cleanup_deletes_a_merged_leftover_on_origin_but_never_unmerged_work() {
+        let (root, repo, wt, head) = repo_with_task("remote");
+        let (wts, repos) = (wt.to_string_lossy().into_owned(), repo.to_string_lossy().into_owned());
+        let bare = root.join("origin.git");
+        sh(&root, &["init", "--quiet", "--bare", "-b", "main", bare.to_str().unwrap()]);
+        sh(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        sh(&repo, &["push", "--quiet", "origin", "main", "agent/fix"]);
+        sh(&repo, &["remote", "set-head", "origin", "main"]);
+        // Someone else pushed to the branch: that commit isn't in the PR or in main.
+        let other = sh(&bare, &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", "agent/fix^{tree}", "-p", "agent/fix", "-m", "someone else's push"]);
+        sh(&bare, &["update-ref", "refs/heads/agent/fix", &other]);
+        let heads = [head];
+        let w = TaskWork { delete_remote: true, ..work(&wts, &repos, true, &heads) };
+
+        let done = remove_task(&[], w).await.unwrap();
+        assert!(done.branch_deleted && !wt.exists(), "{}", done.message);
+        finish(done.deleting).await;
+        assert!(done.message.ends_with(&format!("kept branch agent/fix on origin (its tip {} isn't in the pull request or main)", &other[..7])), "{}", done.message);
+        assert_eq!(sh(&bare, &["rev-parse", "agent/fix"]), other);
+
+        // That commit merged into main after all: now the leftover goes (the local branch already has).
+        sh(&bare, &["update-ref", "refs/heads/main", &other]);
+        let done = remove_task(&[], w).await.unwrap();
+        assert!(done.message.ends_with("deleted branch agent/fix on origin"), "{}", done.message);
+        assert_eq!(sh(&bare, &["branch", "--list", "agent/*"]), "");
+
+        let done = remove_task(&[], w).await.unwrap();
+        assert!(done.message.ends_with("agent/fix was already gone on origin"), "{}", done.message);
+        // Without delete_remote (or for a closed PR), origin isn't asked at all.
+        sh(&bare, &["update-ref", "refs/heads/agent/fix", &other]);
+        for w in [work(&wts, &repos, true, &heads), TaskWork { delete_remote: true, ..work(&wts, &repos, false, &heads) }] {
+            let done = remove_task(&[], w).await.unwrap();
+            assert!(!done.message.contains("on origin"), "{}", done.message);
+        }
+        assert_eq!(sh(&bare, &["rev-parse", "agent/fix"]), other);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
