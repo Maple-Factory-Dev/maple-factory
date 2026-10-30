@@ -14,29 +14,33 @@ struct TaskRefHover: ViewModifier {
     let known: Set<String>
 
     @Environment(AppState.self) private var appState: AppState?
-    @State private var width: CGFloat = 0
+    @State private var frame: CGRect = .zero
+    private var width: CGFloat { frame.width }
     /// The reference under the pointer, and the card that's showing (they differ while the delays run).
     @State private var hovered: Hovered?
     @State private var shown: Hovered?
     @State private var cardHovered = false
     @State private var pending: Task<Void, Never>?
     @State private var pointing = false
+    /// A demoHover is showing the card: the real pointer, nowhere near an off-screen window, is ignored.
+    @State private var demo = false
 
     struct Hovered: Identifiable, Equatable {
         let id: String
         let rect: CGRect
     }
 
-    /// `-actions "hoverref:MF-116"` (AppState.play): hovers that reference, for recordings; `hoverref:`
-    /// with no ID moves away.
+    /// `-actions "hoverref:MF-116"` (AppState.play): hovers that reference, for recordings; `hoverref:none`
+    /// moves away.
     static let demoHover = Notification.Name("TaskRefHover.demoHover")
     static let openDelay = Duration.milliseconds(350)
     static let closeGrace = Duration.milliseconds(150)
 
     func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
             .onContinuousHover(coordinateSpace: .local) { phase in
+                guard !demo else { return }
                 switch phase {
                 case let .active(point): hover(reference(at: point))
                 case .ended: hover(nil)
@@ -46,6 +50,7 @@ struct TaskRefHover: ViewModifier {
                 if let task = appState?.tasks.first(where: { $0.id == ref.id }) {
                     TaskHovercard(task: task)
                         .onHover { inside in
+                            guard !demo else { return }
                             cardHovered = inside
                             if !inside, hovered == nil { schedule(nil) }
                         }
@@ -56,12 +61,21 @@ struct TaskRefHover: ViewModifier {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Self.demoHover)) { note in
-                let id = note.userInfo?["id"] as? String ?? ""
-                guard !id.isEmpty else { return hover(nil) }
+                let id = note.userInfo?["id"] as? String ?? "none"
+                guard id != "none" else {
+                    // The real pointer may sit where AppKit put the off-screen popover; it doesn't hold the card.
+                    if demo { demo = false; cardHovered = false; hover(nil) }
+                    return
+                }
                 // The first rendered Text that links the ID takes it, so only one card opens.
                 guard let claim = note.object as? DemoClaim, !claim.taken, let rect = rect(of: id) else { return }
                 claim.taken = true
+                demo = true
                 hover(Hovered(id: id, rect: rect))
+            }
+            .onChange(of: shown) { _, ref in
+                guard Headless.isOn else { return }
+                Headless.popoverAnchor = ref.map { $0.rect.offsetBy(dx: frame.minX, dy: frame.minY) }
             }
             .onDisappear {
                 pending?.cancel()
