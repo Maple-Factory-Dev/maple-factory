@@ -401,6 +401,17 @@ export class Store {
     else this.sql.exec("DELETE FROM kv WHERE key = 'icon'");
   }
 
+  /** The factory's display name, set by an admin, if it has one (the apps fall back to the GitHub org). */
+  name(): string | null {
+    return this.get("name");
+  }
+
+  /** None clears it. */
+  saveName(name: string | null) {
+    if (name) this.set("name", name);
+    else this.sql.exec("DELETE FROM kv WHERE key = 'name'");
+  }
+
   /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */
   repos(): OrgRepo[] {
     return (JSON.parse(this.get("repos") ?? "[]") as (OrgRepo & { private?: boolean })[]).map(({ private: hidden, ...r }) => ({ ...r, isPrivate: r.isPrivate ?? hidden ?? false }));
