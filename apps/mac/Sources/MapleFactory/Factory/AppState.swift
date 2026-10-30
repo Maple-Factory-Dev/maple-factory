@@ -195,7 +195,7 @@ final class AppState {
     }
     /// The machine being set up or edited in the sheet; "new" for this Mac.
     var machineSheet: MachineSheet? = nil
-    /// The goal being made or edited in the sheet (a live goal's id for .edit).
+    /// The goal being made or edited, full page in place of the content (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
     var queue = FactoryData.seedQueue
 
@@ -296,7 +296,7 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -789,7 +789,7 @@ final class AppState {
     var aiDraftID: String? = nil
     /// The draft whose result is already in the composer.
     private var appliedAIDraft: String? = nil
-    /// A goal Draft with AI suggested, for the goal sheet to start from.
+    /// A goal Draft with AI suggested, for the goal editor to start from.
     var goalPrefill: Wire.NewGoalIdea? = nil
 
     /// Whether the Draft with AI card shows what the agent has said and done.
@@ -2146,8 +2146,8 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
-            // The goal sheet's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
-            case "goalfill": NotificationCenter.default.post(name: GoalSheet.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
+            // The goal editor's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
+            case "goalfill": NotificationCenter.default.post(name: GoalEditorView.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
             // Edit Goal… on a goal, by its name or task prefix: `editgoal:MF`. Signing in, it waits for the goal to arrive.
             case "editgoal":
                 for _ in 0..<300 {

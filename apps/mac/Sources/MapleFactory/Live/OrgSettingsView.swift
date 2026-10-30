@@ -694,7 +694,7 @@ struct FactoryAdminsCard: View {
 }
 
 /// What the org adds to every planning, building and review session's prompt. Admins edit it; a goal
-/// can add its own on top (the goal sheet's Agent instructions).
+/// can add its own on top (the goal editor's Agent instructions).
 struct PromptSettings: View {
     @Environment(FactoryClient.self) private var client
     @State private var draft = LiveAdapter.noPrompts
