@@ -689,7 +689,8 @@ mod tests {
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             screen = tmux.run(&["capture-pane", "-p", "-t", &name]).await.unwrap();
-            if screen.contains(&format!("got:{value}")) && screen.contains("db:ok") {
+            // The typed line has "db:ok" in it too; only the output has it as a line of its own.
+            if screen.contains(&format!("got:{value}")) && screen.lines().any(|l| l == "db:ok") {
                 break;
             }
         }
