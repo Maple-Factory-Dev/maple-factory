@@ -7,6 +7,8 @@ import SwiftUI
 struct LiveTerminal: NSViewRepresentable {
     let request: (Int, Int) -> URLRequest?
     @Binding var state: TerminalLink.State
+    /// Watching a session shared with you: keystrokes and resizes aren't sent (the server drops them anyway).
+    var readOnly = false
 
     func makeCoordinator() -> TerminalLink { TerminalLink(request: request, state: $state) }
 
@@ -19,12 +21,15 @@ struct LiveTerminal: NSViewRepresentable {
         view.caretColor = Term.nsCaret
         view.optionAsMetaKey = true
         context.coordinator.view = view
+        context.coordinator.readOnly = readOnly
         // Connect once SwiftUI has sized the view, so the runner gets the real cols × rows.
         DispatchQueue.main.async { context.coordinator.connect() }
         return view
     }
 
-    func updateNSView(_ view: TerminalView, context: Context) {}
+    func updateNSView(_ view: TerminalView, context: Context) {
+        context.coordinator.readOnly = readOnly
+    }
 
     static func dismantleNSView(_ view: TerminalView, coordinator: TerminalLink) {
         coordinator.close()
@@ -40,6 +45,7 @@ struct LiveTerminal: NSViewRepresentable {
     }
 
     weak var view: TerminalView?
+    var readOnly = false
     private let request: (Int, Int) -> URLRequest?
     private let state: Binding<State>
     private var socket: URLSessionWebSocketTask?
@@ -117,10 +123,12 @@ struct LiveTerminal: NSViewRepresentable {
 
 extension TerminalLink: @preconcurrency TerminalViewDelegate {
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        guard !readOnly else { return }
         socket?.send(.data(Data(data))) { _ in }
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        guard !readOnly else { return }
         let json = "{\"type\":\"session.resize\",\"cols\":\(newCols),\"rows\":\(newRows)}"
         socket?.send(.string(json)) { _ in }
     }

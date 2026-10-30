@@ -509,6 +509,29 @@ pub struct LiveSession {
     pub session: SessionInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<Activity>,
+    /// Teammates its machine's owner (or an admin) let into its terminal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shares: Option<Vec<SessionShare>>,
+}
+
+/// A teammate let into a session's terminal: to watch it, or with `canType` to type into it too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionShare {
+    pub login: String,
+    pub can_type: bool,
+    /// Who shared it.
+    pub by: String,
+    /// When it was shared or last changed.
+    pub at: u64,
+}
+
+/// One teammate in a `session.share`: the server fills in who and when.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareGrant {
+    pub login: String,
+    pub can_type: bool,
 }
 
 /// How a session ended, kept with the task so its card can say why and recovery can decide what to do.
@@ -2387,6 +2410,14 @@ pub enum ClientMessage {
     SessionKill {
         machine: String,
         id: Uuid,
+    },
+    /// The machine's owner or an admin: who else may open this session's terminal, the whole list (empty unshares it).
+    #[serde(rename = "session.share")]
+    SessionShare {
+        machine: String,
+        id: Uuid,
+        #[serde(default)]
+        shares: Vec<ShareGrant>,
     },
     #[serde(rename = "goal.save")]
     GoalSave {

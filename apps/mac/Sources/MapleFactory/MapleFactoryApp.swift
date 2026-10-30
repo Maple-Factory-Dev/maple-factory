@@ -162,9 +162,16 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
                 .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
                 .onOpenURL { url in
-                    // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it).
-                    guard url.scheme == "maplefactory", url.host() == "task", let id = url.pathComponents.dropFirst().first else { return }
-                    state.openFullView(id)
+                    // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it),
+                    // or maplefactory://session/<machine>/<id>, a shared session's.
+                    guard url.scheme == "maplefactory" else { return }
+                    let path = Array(url.pathComponents.dropFirst())
+                    if url.host() == "session", path.count == 2 {
+                        state.destination = .machines
+                        state.openingLiveSession = .init(machine: path[0], id: path[1])
+                    } else if url.host() == "task", let id = path.first {
+                        state.openFullView(id)
+                    }
                 }
                 .onChange(of: Notifier.shared.opening?.id) {
                     // A clicked banner: its task, in the list that holds it.

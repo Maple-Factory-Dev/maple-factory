@@ -5,10 +5,10 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { maySignIn, recheckEvery, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
@@ -569,6 +569,37 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        return;
+      }
+      case "session.share": {
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (machine.owner !== client.member.login && client.member.role !== "admin") {
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} or an admin can share sessions on ${machine.name}.`, requestId: null });
+        }
+        const live = machine.sessions.find((s) => s.session.id === msg.id);
+        if (!live) return this.send(ws, { type: "error", message: "That session has ended.", requestId: null });
+        const { results } = await this.env.DB.prepare("SELECT * FROM members").all<MemberRow>();
+        const before = live.shares ?? [];
+        const shares: SessionShare[] = [];
+        for (const grant of msg.shares) {
+          const row = results.find((r) => r.login.toLowerCase() === grant.login.toLowerCase());
+          if (!row || revoked(row)) return this.send(ws, { type: "error", message: `${grant.login} isn't a member of this factory.`, requestId: null });
+          if (row.login === machine.owner) return this.send(ws, { type: "error", message: `${row.login} owns ${machine.name}; it's theirs already.`, requestId: null });
+          if (shares.some((s) => s.login === row.login)) continue;
+          const was = before.find((s) => s.login === row.login);
+          shares.push(was && was.canType === grant.canType ? was : { login: row.login, canType: grant.canType, by: client.member.login, at: Date.now() });
+        }
+        const res = await machineHub(this.env, machine.id).fetch("https://hub/share", { method: "POST", body: JSON.stringify({ session: msg.id, shares }) });
+        if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        for (const share of shares) {
+          if (!before.some((s) => s.login === share.login && s.canType === share.canType)) {
+            await audit(this.env, client.member.login, "session.shared", machine.id, { id: msg.id, with: share.login, canType: share.canType });
+          }
+        }
+        for (const was of before) {
+          if (!shares.some((s) => s.login === was.login)) await audit(this.env, client.member.login, "session.unshared", machine.id, { id: msg.id, with: was.login });
+        }
         return;
       }
       case "machine.rename": {

@@ -3,6 +3,8 @@
 // loses their session cookie, app token and open apps (by the org hub's sweep, or at their next request); an admin's "Revoke access" (members.revoke) does the same at once, and they can sign in again.
 // Only the owner and admins resize a machine's sessions; a revoked owner's machines go offline until they sign in
 // again; and an owner GitHub demotes stops being an admin at the next re-check.
+// Sharing a session lets a teammate in: watch-only input is dropped, "can type" input reaches the runner, unsharing
+// closes their terminal with 4003, only the owner (or an admin) shares, and leaving the org closes a shared terminal too.
 //   node server/test/e2e-access.mjs http://localhost:8788 [fake GitHub URL] [wrangler --persist-to folder]
 // The fake runs with --owner acme:alice --member acme:bob --member acme:carol --member acme:dave --installed acme/greeter;
 // the server with GITHUB_ORG=acme, GITHUB_API_URL pointing at the fake, the GitHub App's id, key, client id/secret,
@@ -113,12 +115,15 @@ const enrolled = await (await fetch(`${base}/runner/enroll`, {
 check(!!enrolled.token, "bob enrolls bobs-mac");
 const replays = [];
 const resizes = [];
-/** bobs-mac's runner: answers replays and keeps the resizes it's sent. */
+const inputs = [];
+const session = randomUUID();
+/** bobs-mac's runner, with one session open: answers replays and keeps the resizes and keystrokes it's sent. */
 async function connectRunner() {
   const ws = new WebSocket(`${wsBase}/runner/connect?runner=bobs-mac`, { headers: { authorization: `Bearer ${enrolled.token}` } });
   const r = { ws, closed: null };
+  ws.binaryType = "arraybuffer";
   ws.onmessage = (e) => {
-    if (typeof e.data !== "string") return;
+    if (typeof e.data !== "string") return void inputs.push(new TextDecoder().decode(new Uint8Array(e.data).subarray(16)));
     const m = JSON.parse(e.data);
     if (m.type === "session.resize") resizes.push(m);
     if (m.type !== "session.replay") return;
@@ -127,17 +132,18 @@ async function connectRunner() {
   };
   ws.onclose = (e) => (r.closed = { code: e.code, reason: e.reason });
   await new Promise((ok, j) => { ws.onopen = ok; ws.onerror = j; });
-  ws.send(JSON.stringify({ type: "hello", runnerId: "bobs-mac", hostname: "bobs-mac", os: "macos", arch: "arm64", version: "0.0.0-e2e", sessions: [], ended: [] }));
+  ws.send(JSON.stringify({ type: "hello", runnerId: "bobs-mac", hostname: "bobs-mac", os: "macos", arch: "arm64", version: "0.0.0-e2e", ended: [],
+    sessions: [{ session: { id: session, agent: "claude", cwd: "/tmp", startedAt: Date.now() }, activity: null }] }));
   await sleep(300);
   return r;
 }
 let runner = await connectRunner();
 
-const session = randomUUID();
 const terminal = `/client/terminal?machine=bobs-mac&session=${session}`;
 const asked = replays.length;
 const carolTerm = await handshake(terminal, carol);
-check(carolTerm.status === 403 && carolTerm.body === "Only bob or an admin can open terminals on bobs-mac.", `carol, a member, is refused bob's terminal: ${carolTerm.status} "${carolTerm.body}"`);
+const refusal = "Only bob or an admin can open terminals on bobs-mac; ask bob to share this session with you.";
+check(carolTerm.status === 403 && carolTerm.body === refusal, `carol, a member, is refused bob's terminal: ${carolTerm.status} "${carolTerm.body}"`);
 await sleep(500);
 check(replays.length === asked, `and no session.replay reached the runner (${replays.length - asked})`);
 const plain = await get(terminal, carol);
@@ -153,6 +159,77 @@ for (const [who, auth] of [["bob (owner)", bob], ["alice (admin)", alice]]) {
   check(status === 101 && replays.length > before && replay === `replay for ${replays.at(-1).nonce}`, `${who} gets ${status} and the runner's replay ("${replay}")`);
   term.ws.close();
 }
+
+// ---- 1b. Sharing a session: watch, then type, then taken back ---------------------------------------------
+
+const shared = async (auth) => (await (await get("/api/machines", auth)).json()).find((m) => m.id === "bobs-mac").sessions.find((s) => s.session.id === session)?.shares ?? [];
+const typed = async (term, keys) => {
+  const from = inputs.length;
+  term.ws.send(new TextEncoder().encode(keys));
+  await sleep(600);
+  return inputs.slice(from).join("");
+};
+const bobShares = await feed(bob);
+const carolShares = await feed(carol);
+const daveRefused = async (when) => {
+  const t = await handshake(terminal, dave);
+  check(t.status === 403 && t.body === refusal, `dave, not shared with, is refused ${when} (${t.status})`);
+};
+await daveRefused("before any share");
+
+const notOwner = await carolShares.ask({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "carol", canType: true }] }, "carol's share refused", () => false);
+check(notOwner.message === "Only bob or an admin can share sessions on bobs-mac.", `carol can't share bob's session (with herself): "${notOwner.message}"`);
+check((await shared(bob)).length === 0, "and nothing is shared");
+const toOwner = await bobShares.ask({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "bob", canType: true }] }, "sharing with the owner refused", () => false);
+check(toOwner.type === "error", `bob can't share with himself, the owner: "${toOwner.message}"`);
+const toStranger = await bobShares.ask({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "mallory", canType: false }] }, "sharing with a stranger refused", () => false);
+check(toStranger.type === "error", `or with someone who isn't a member: "${toStranger.message}"`);
+
+const sharedWith = (canType) => (m) => m.type === "machine.updated" && m.machine.id === "bobs-mac" &&
+  m.machine.sessions.find((s) => s.session.id === session)?.shares?.some((x) => x.login === "carol" && x.canType === canType);
+bobShares.send({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "carol", canType: false }] });
+const watch = await until("carol's feed seeing the share", () => carolShares.seen.find(sharedWith(false)));
+check(!!watch, "bob shares the session with carol to watch, and her app sees it on the machine");
+const share = (await shared(carol)).find((x) => x.login === "carol");
+check(share?.canType === false && share.by === "bob" && share.at > 0, `the session's shares say carol, watch-only, by bob (${JSON.stringify(share)})`);
+const carolStatus = (await handshake(terminal, carol)).status;
+const carolTerm2 = await open(terminal, carol);
+const carolReplay = await until("carol's replay", () => carolTerm2.seen.find((x) => typeof x === "string" && x.startsWith("replay for ")));
+check(carolStatus === 101 && !!carolReplay, `carol opens it now (${carolStatus}) and gets the replay`);
+runner.ws.send(Buffer.concat([Buffer.from(session.replace(/-/g, ""), "hex"), Buffer.from("live output")]));
+await until("carol seeing live output", () => carolTerm2.seen.includes("live output"));
+check(true, "and live output reaches her");
+check(await typed(carolTerm2, "echo watching\r") === "", "her keystrokes never reach the runner while she can only watch");
+const resizesNow = resizes.length;
+carolTerm2.ws.send(JSON.stringify({ type: "session.resize", cols: 40, rows: 10 }));
+await sleep(500);
+check(resizes.length === resizesNow, "nor do her resizes");
+await daveRefused("while it's shared with carol");
+
+bobShares.send({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "carol", canType: true }] });
+await until("carol's upgrade", () => carolShares.seen.find(sharedWith(true)));
+const carolTyped = await typed(carolTerm2, "ls\r");
+check(carolTyped === "ls\r", `upgraded to "can type", her open terminal's keystrokes arrive (${JSON.stringify(carolTyped)})`);
+check(!carolTerm2.closed, "without reconnecting");
+await daveRefused("while carol can type");
+
+bobShares.send({ type: "session.share", machine: "bobs-mac", id: session, shares: [] });
+const unshared = await until("carol's terminal closing", () => carolTerm2.closed);
+check(unshared.code === 4003 && unshared.reason === "no longer shared", `bob unshares it: her terminal closes (${unshared.code} ${unshared.reason})`);
+const again = await handshake(terminal, carol);
+check(again.status === 403 && again.body === refusal, `and reconnecting gets ${again.status}`);
+check((await shared(bob)).length === 0, "the session's shares are empty again");
+await daveRefused("after the unshare");
+const audits = d1("SELECT action, target, detail FROM audit WHERE action LIKE 'session.%shared' ORDER BY rowid").map((r) => `${r.action}:${JSON.parse(r.detail).canType ?? "-"}`);
+check(JSON.stringify(audits) === JSON.stringify(["session.shared:false", "session.shared:true", "session.unshared:-"]), `each change is audited (${audits.join(", ")})`);
+
+// Shared once more, to watch: leaving the org (below) must close this one too.
+bobShares.send({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "carol", canType: false }] });
+await until("the share again", () => carolShares.seen.filter(sharedWith(false)).length >= 2);
+const carolWatching = await open(terminal, carol);
+await until("carol's replay", () => carolWatching.seen.find((x) => typeof x === "string" && x.startsWith("replay for ")));
+bobShares.ws.close();
+carolShares.ws.close();
 
 // ---- 2. Leaving the org: cut off by the org hub's sweep, before she makes another request -------------------
 
@@ -170,6 +247,11 @@ check(cookieAfter === 401 && tokenAfter === 401, `her cookie and app token get $
 check(d1("SELECT count(*) AS n FROM app_tokens WHERE login = 'carol'")[0].n === 0, "her app_tokens rows are gone");
 const revokedRow = d1("SELECT revoked_at FROM members WHERE login = 'carol'")[0];
 check(revokedRow.revoked_at > 0, `members.revoked_at is set (${revokedRow.revoked_at})`);
+const watchingClosed = await until("carol's shared terminal closing", () => carolWatching.closed);
+check(watchingClosed.code === 4003, `the terminal bob shared with her closes too (${watchingClosed.code} ${watchingClosed.reason})`);
+runner.ws.send(JSON.stringify({ type: "session.activity", id: session, activity: { state: "working", at: Date.now() } }));
+await until("carol's share pruned", async () => (await shared(bob)).length === 0);
+check(true, "and at bobs-mac's next report the session isn't shared with her any more");
 
 // A stale check is claimed before GitHub is asked, so a burst of requests from one member asks it far fewer times.
 const asks = async () => (await (await fetch(`${gh}/_log`)).json()).log.filter((e) => e.path === "/orgs/acme/memberships/bob").length;

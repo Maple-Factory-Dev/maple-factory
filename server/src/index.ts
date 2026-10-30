@@ -10,7 +10,7 @@ import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
 import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
-import { PROTOCOL_VERSION } from "./wire.ts";
+import { PROTOCOL_VERSION, type Machine, type SessionShare } from "./wire.ts";
 import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
@@ -100,18 +100,29 @@ export default {
       const machine = url.searchParams.get("machine") ?? "";
       const session = url.searchParams.get("session") ?? "";
       if (!MACHINE_ID.test(machine) || !/^[0-9a-f-]{36}$/.test(session)) return text("Expected machine and session.", 400);
-      // A terminal can type into a task's session, which has its repo's secrets: the machine's owner and admins only.
+      // A terminal can type into a task's session, which has its repo's secrets: the machine's owner and admins,
+      // and teammates they shared that session with (to watch, or to type too).
       const row = await machineRow(env, machine);
       if (!row) return text("No such machine.", 404);
-      // Checked before the upgrade, so an app whose socket got a 403 can GET the same URL to say why.
-      if (row.owner !== me.login && me.role !== "admin") return text(`Only ${row.owner} or an admin can open terminals on ${row.name ?? row.id}.`, 403);
+      const hub = machineHub(env, machine);
+      let share: SessionShare | undefined;
+      if (row.owner !== me.login && me.role !== "admin") {
+        const state = (await (await hub.fetch("https://hub/state")).json()) as Machine;
+        share = state.sessions.find((s) => s.session.id === session)?.shares?.find((s) => s.login === me.login);
+        // Checked before the upgrade, so an app whose socket got a 403 can GET the same URL to say why.
+        if (!share) return text(`Only ${row.owner} or an admin can open terminals on ${row.name ?? row.id}; ask ${row.owner} to share this session with you.`, 403);
+      }
       if (!isUpgrade(request)) return text("Expected a WebSocket.", 426);
       const target = new URL("https://hub/view");
       target.searchParams.set("session", session);
       target.searchParams.set("login", me.login);
       target.searchParams.set("role", me.role);
+      if (share) {
+        target.searchParams.set("shared", "1");
+        target.searchParams.set("canType", share.canType ? "1" : "0");
+      }
       for (const key of ["cols", "rows"]) if (url.searchParams.has(key)) target.searchParams.set(key, url.searchParams.get(key)!);
-      return machineHub(env, machine).fetch(new Request(target, request));
+      return hub.fetch(new Request(target, request));
     }
 
     // Files pasted or dropped into briefs and notes (src/attachments.ts).
