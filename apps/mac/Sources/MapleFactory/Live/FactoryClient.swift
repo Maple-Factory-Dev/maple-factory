@@ -70,7 +70,10 @@ import Security
     /// The factory's icon link (`/icon/<id>`), nil when it has none (or the server is older).
     private(set) var iconLink: String?
     /// The factory's icon, from this Mac's cache; nil shows the letter tile (and the Maple Dock icon).
-    private(set) var icon: NSImage?
+    /// The Dock follows it on every change: launch, sign-in, a switch, icon.updated and sign-out.
+    private(set) var icon: NSImage? {
+        didSet { if icon !== oldValue { DockIcon.apply(icon) } }
+    }
     /// The name an admin gave the factory (Settings › Appearance), nil when unset (or the server is older).
     private(set) var displayName: String?
     /// The last statistics asked for (admins only).
