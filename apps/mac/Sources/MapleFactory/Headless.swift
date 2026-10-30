@@ -110,6 +110,36 @@ enum Headless {
         "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
     ]
 
+    /// The context menu a right-click at `point` (window points, from the top left) brings up, as SwiftUI builds it
+    /// (`rightclick:<x>:<y>`): kept, and drawn into the shots, until an item is picked (`menupick:<title>`) or it's
+    /// put away (`menupick:none`). Its items are logged.
+    @MainActor static func rightClick(at point: CGPoint) {
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow, let content = window.contentView else { return }
+        let location = CGPoint(x: point.x, y: content.bounds.height - point.y)
+        guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        else { return }
+        var view = content.hitTest(location)
+        while let current = view {
+            if let menu = current.menu(for: event) {
+                shownMenu = (menu, point)
+                print("headless: context menu at \(point): \(menu.items.map { $0.isSeparatorItem ? "—" : $0.title })")
+                return
+            }
+            view = current.superview
+        }
+        print("headless: no context menu at \(point)")
+    }
+
+    /// Picks the shown context menu's item titled `title`, as a click on it would, and puts the menu away.
+    @MainActor static func pickMenuItem(_ title: String) {
+        defer { shownMenu = nil }
+        guard let menu = shownMenu?.menu, let index = menu.items.firstIndex(where: { $0.title == title }) else { return }
+        menu.performActionForItem(at: index)
+    }
+
+    @MainActor static var shownMenu: (menu: NSMenu, at: CGPoint)?
+
     /// Waits until `busy` is false (polling every 50ms), or `timeout` passes; false on timeout.
     @MainActor static func untilIdle(timeout: Duration, _ busy: () -> Bool) async -> Bool {
         let clock = ContinuousClock()
@@ -336,7 +366,69 @@ enum Headless {
                 drawSheet(content, over: rep, in: view.bounds)
             }
         }
+        if target === window, let (menu, point) = Headless.shownMenu {
+            (window?.appearance ?? NSApp.effectiveAppearance).performAsCurrentDrawingAppearance {
+                drawMenu(menu, at: point, over: rep, in: view.bounds)
+            }
+        }
         return rep
+    }
+
+    /// A context menu is its own window too: its items drawn as macOS shows them, its top left at the click.
+    private func drawMenu(_ menu: NSMenu, at point: CGPoint, over rep: NSBitmapImageRep, in bounds: CGRect) {
+        guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+        let font = NSFont.menuFont(ofSize: 13)
+        let rowHeight: CGFloat = 22, separatorHeight: CGFloat = 11, inset: CGFloat = 5
+        let items = menu.items.filter { !$0.isHidden }
+        let titleWidth = items.map { ($0.title as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        let width = max(180, titleWidth + 60)
+        let height = items.reduce(inset * 2) { $0 + ($1.isSeparatorItem ? separatorHeight : rowHeight) }
+        // Bitmap coordinates have their origin at the bottom left.
+        let frame = CGRect(x: point.x, y: bounds.height - point.y - height, width: width, height: height)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let shape = NSBezierPath(roundedRect: frame, xRadius: 8, yRadius: 8)
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 16
+        shadow.shadowOffset = CGSize(width: 0, height: -4)
+        shadow.shadowColor = .black.withAlphaComponent(0.35)
+        shadow.set()
+        NSColor.windowBackgroundColor.blended(withFraction: 0.08, of: .labelColor)?.setFill()
+        shape.fill()
+        NSShadow().set()
+        NSColor.separatorColor.setStroke()
+        shape.lineWidth = 0.5
+        shape.stroke()
+        var y = frame.maxY - inset
+        for item in items {
+            if item.isSeparatorItem {
+                y -= separatorHeight
+                NSColor.separatorColor.setFill()
+                CGRect(x: frame.minX + 10, y: y + separatorHeight / 2, width: width - 20, height: 1).fill()
+                continue
+            }
+            y -= rowHeight
+            let color: NSColor = item.isEnabled ? .labelColor : .tertiaryLabelColor
+            if let image = item.image {
+                // A template symbol, filled with the item's text color.
+                let size = image.size.width > 0 ? image.size : CGSize(width: 14, height: 14)
+                let tinted = NSImage(size: size, flipped: false) { rect in
+                    image.draw(in: rect)
+                    color.set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                let icon = CGRect(x: frame.minX + 12 + (16 - size.width) / 2, y: y + (rowHeight - size.height) / 2, width: size.width, height: size.height)
+                tinted.draw(in: icon)
+            }
+            let text = NSAttributedString(string: item.title, attributes: [.font: font, .foregroundColor: color])
+            text.draw(at: CGPoint(x: frame.minX + 34, y: y + (rowHeight - text.size().height) / 2))
+            if item.hasSubmenu {
+                NSAttributedString(string: "›", attributes: [.font: font, .foregroundColor: color])
+                    .draw(at: CGPoint(x: frame.maxX - 18, y: y + (rowHeight - text.size().height) / 2))
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// A sheet is its own window, so the content view's bitmap lacks it: drawn on top, dimming what's

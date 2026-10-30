@@ -181,7 +181,7 @@ struct BoardColumns: View {
     }
 
     /// Assign each card exactly once before deciding visibility. Queue membership takes precedence
-    /// over merge readiness; only Queued sorts cards by rank, and every column keeps its fixed place.
+    /// over merge readiness; Queued sorts cards by queue rank, Drafts by draft rank, and every column keeps its fixed place.
     static func columns(tasks: [FactoryTask], hideEmpty: Bool, pendingMerge: (FactoryTask) -> Bool) -> [Column] {
         var members: [Column.ID: [FactoryTask]] = [:]
         for task in tasks {
@@ -189,6 +189,7 @@ struct BoardColumns: View {
             members[id, default: []].append(task)
         }
         members[.queued]?.sort { $0.queueRank < $1.queueRank }
+        members[.task(.drafting)]?.sort { $0.draftRank < $1.draftRank }
         return Column.ID.ordered.compactMap { id in
             let tasks = members[id] ?? []
             return hideEmpty && tasks.isEmpty ? nil : Column(id: id, tasks: tasks)
@@ -199,6 +200,8 @@ struct BoardColumns: View {
     @State private var moreTrailing = false
     /// A card dragged over the Queued column's empty space, to go to the back.
     @State private var queueTargeted = false
+    /// A draft dragged over the Drafts column's empty space, to go to the bottom.
+    @State private var draftsTargeted = false
 
     var body: some View {
         let columns = Self.columns(tasks: tasks, hideEmpty: state.boardHidesEmptyColumns, pendingMerge: state.pendingMerge)
@@ -207,6 +210,7 @@ struct BoardColumns: View {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(columns) { entry in
                     switch entry.id {
+                    case .task(.drafting) where !entry.tasks.isEmpty: draftsColumn(entry.tasks).transition(.opacity)
                     case .task(let taskState): column(taskState, tasks: entry.tasks)
                     case .queued: queueColumn(entry.tasks).transition(.opacity)
                     case .pendingMerge: pendingColumn(entry.tasks)
@@ -288,15 +292,38 @@ struct BoardColumns: View {
         .transition(.opacity)
     }
 
+    /// The goal's drafts, first first. Drag a draft onto another to put it ahead of that one, or below
+    /// the cards to send it to the bottom; only drafts land here, so nothing turns back into a draft.
+    private func draftsColumn(_ drafts: [FactoryTask]) -> some View {
+        let isDraft = { (id: String) in drafts.contains { $0.id == id } }
+        return shell(icon: TaskState.drafting.icon, title: TaskState.drafting.title, color: TaskState.drafting.color, tasks: drafts) {
+            ForEach(drafts) { task in
+                BoardCard(task: task, draggable: true, accepts: isDraft, onDrop: { dropped in
+                    guard dropped != task.id else { return }
+                    state.rankDraft(dropped, before: task.id)
+                })
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Theme.State.drafting.opacity(draftsTargeted ? 0.6 : 0), lineWidth: 1.5)
+        }
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first, isDraft(id) else { return false }
+            state.rankDraft(id, before: nil)
+            return true
+        } isTargeted: { draftsTargeted = $0 }
+    }
+
     /// Every task waiting for a session, front of the queue first. Drag a card onto another to put
     /// it ahead of that one, or below the cards to send it to the back; a draft dragged in joins.
     private func queueColumn(_ queued: [FactoryTask]) -> some View {
         return shell(icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) {
             ForEach(Array(queued.enumerated()), id: \.element.id) { index, task in
-                BoardCard(task: task, position: index + 1, draggable: true) { dropped in
+                BoardCard(task: task, position: index + 1, draggable: true, onDrop: { dropped in
                     guard dropped != task.id else { return }
                     state.queue(dropped, before: task.id)
-                }
+                })
             }
             // An empty queue keeps a roomy box to drop a draft into.
             if queued.isEmpty {
@@ -360,6 +387,8 @@ private struct BoardCard: View {
     var draggable = false
     /// Pending merge's cards: Merge right on the card.
     var mergeButton = false
+    /// Which dropped cards it takes; none: any.
+    var accepts: ((String) -> Bool)? = nil
     /// A card dropped on this one, to go ahead of it.
     var onDrop: ((String) -> Void)? = nil
     @State private var confirmCancel = false
@@ -389,7 +418,7 @@ private struct BoardCard: View {
                 card
                     .draggable(task.id) { TaskCard(task: task, selected: false, position: position).frame(width: 224) }
                     .dropDestination(for: String.self) { ids, _ in
-                        guard let id = ids.first else { return false }
+                        guard let id = ids.first, accepts?(id) ?? true else { return false }
                         onDrop(id)
                         return true
                     } isTargeted: { targeted = $0 }

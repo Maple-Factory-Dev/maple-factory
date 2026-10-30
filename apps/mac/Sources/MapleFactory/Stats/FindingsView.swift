@@ -14,6 +14,10 @@ struct FindingsView: View {
     @State private var kind: Wire.FindingKind?
     @State private var severity: Wire.Severity?
     @State private var area: String?
+    /// A legend item clicked in What happened to them: only findings of that status.
+    @State private var status: Wire.FindingStatus?
+    /// The list's Hide fixed chip: what's left to deal with.
+    @State private var hideFixed = false
     @State private var query = ""
 
     private static let severities: [Wire.Severity] = [.blocker, .major, .minor]
@@ -34,6 +38,9 @@ struct FindingsView: View {
                 severity = Wire.Severity(rawValue: parts[2])
             case "area": area = area == arg ? nil : arg
             case "severity": severity = severity?.rawValue == arg ? nil : Wire.Severity(rawValue: arg)
+            case "hidefixed": setHideFixed(!hideFixed)
+            case "status": setStatus(status?.rawValue == arg ? nil : Wire.FindingStatus(rawValue: arg))
+            case "clearfilters": kind = nil; severity = nil; area = nil; status = nil; hideFixed = false; query = ""
             case "row": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { open(r.task) }
             case "select": if let r = visible(f).dropFirst(Int(arg) ?? 0).first { toggle(r) }
             case "selectall": selectAll(visible(f))
@@ -158,12 +165,13 @@ struct FindingsView: View {
     // MARK: What happened to them
 
     private func outcomes(_ o: Wire.StatsFindingOutcomes) -> some View {
-        let parts: [(String, UInt32, Color)] = [("Fixed", o.fixed, Theme.State.merged), ("Disputed", o.disputed, Theme.State.awaitingApproval),
-                                                ("Open", o.open, Theme.State.cancelled), ("Unknown", o.unknown, Theme.textFaint)]
+        let parts: [(String, UInt32, Color, Wire.FindingStatus?)] = [("Fixed", o.fixed, Theme.State.merged, .fixed),
+                                                                     ("Disputed", o.disputed, Theme.State.awaitingApproval, .disputed),
+                                                                     ("Open", o.open, Theme.State.cancelled, .open), ("Unknown", o.unknown, Theme.textFaint, nil)]
         let total = max(1, parts.reduce(0) { $0 + $1.1 })
         return StatsCard {
             VStack(alignment: .leading, spacing: 12) {
-                cardTitle("What happened to them", note: o.roundsToFixMedian.map { "fixed in \(rounds($0)) (median)" })
+                cardTitle("What happened to them", note: (o.roundsToFixMedian.map { "fixed in \(rounds($0)) (median) · " } ?? "") + "click to filter")
                 GeometryReader { geo in
                     HStack(spacing: 2) {
                         ForEach(parts.filter { $0.1 > 0 }, id: \.0) { p in
@@ -173,14 +181,24 @@ struct FindingsView: View {
                     .clipShape(Capsule())
                 }
                 .frame(height: 8)
-                HStack(spacing: 14) {
-                    ForEach(parts.filter { $0.1 > 0 || $0.0 != "Unknown" }, id: \.0) { p in
+                HStack(spacing: 6) {
+                    ForEach(parts.filter { $0.1 > 0 || $0.3 != nil }, id: \.0) { p in
+                        let selected = p.3 != nil && status == p.3
                         HStack(spacing: 5) {
                             Circle().fill(p.2).frame(width: 7, height: 7)
-                            Text(p.0).foregroundStyle(Theme.textMuted)
+                            Text(p.0).foregroundStyle(selected ? Theme.text : Theme.textMuted)
                             Text("\(p.1)").foregroundStyle(Theme.text).monospacedDigit()
                         }
-                        .help(p.0 == "Unknown" ? "Findings of tasks that are gone, whose status wasn't kept" : "\(p.0): \(p.1)")
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.fillSelected : .clear))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard let s = p.3 else { return }
+                            withAnimation(.snappy(duration: 0.2)) { setStatus(selected ? nil : s) }
+                        }
+                        .help(p.3 == nil ? "Findings of tasks that are gone, whose status wasn't kept"
+                              : selected ? "Show every finding again" : "\(p.0): \(p.1) · click to show only these")
                     }
                 }
                 .font(.system(size: 12))
@@ -255,9 +273,16 @@ struct FindingsView: View {
 
     /// The list's findings under the filters and search.
     private func visible(_ f: Wire.StatsFindings) -> [Wire.StatsFindingRow] {
+        Self.visible(f.recent, kind: kind, severity: severity, area: area, status: status, hideFixed: hideFixed, query: query)
+    }
+
+    /// The rows the filters keep. A status filter never matches a finding whose task is gone (no status).
+    static func visible(_ rows: [Wire.StatsFindingRow], kind: Wire.FindingKind?, severity: Wire.Severity?, area: String?,
+                        status: Wire.FindingStatus?, hideFixed: Bool, query: String) -> [Wire.StatsFindingRow] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return f.recent.filter { r in
+        return rows.filter { r in
             (kind == nil || r.kind == kind) && (severity == nil || r.severity == severity) && (area == nil || r.area == area)
+                && (status == nil || r.status == status) && !(hideFixed && r.status == .fixed)
                 && (needle.isEmpty || [r.text, r.file ?? "", r.task, r.title].contains { $0.lowercased().contains(needle) })
         }
     }
@@ -266,6 +291,7 @@ struct FindingsView: View {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         let rows = visible(f)
         let kinds = Wire.FindingKind.allCases.filter { k in f.recent.contains { $0.kind == k } }
+        let fixed = f.recent.filter { $0.status == .fixed }.count
 
         return StatsCard {
             VStack(alignment: .leading, spacing: 0) {
@@ -279,6 +305,13 @@ struct FindingsView: View {
                     ForEach(Self.severities, id: \.self) { s in
                         chip(severityTitle(s), dot: severityColor(s), active: severity == s) { severity = severity == s ? nil : s }
                     }
+                    Divider().frame(height: 16).padding(.horizontal, 4)
+                    chip("Hide fixed · \(fixed)", icon: "eye.slash", active: hideFixed) { setHideFixed(!hideFixed) }
+                        .help(hideFixed ? "Show fixed findings again" : "Hide the findings that were fixed, to see what's left")
+                    if let status {
+                        let (title, color) = Self.statusStyle(status)
+                        chip(title, dot: color, active: true, removable: true) { setStatus(nil) }
+                    }
                     if let area {
                         Divider().frame(height: 16).padding(.horizontal, 4)
                         chip(area, icon: "folder", active: true) { self.area = nil }
@@ -290,12 +323,12 @@ struct FindingsView: View {
                         .frame(maxWidth: 200)
                 }
                 .padding(.bottom, 10)
-                let filtered = kind != nil || severity != nil || area != nil || !needle.isEmpty
+                let filtered = kind != nil || severity != nil || area != nil || status != nil || hideFixed || !needle.isEmpty
                 if filtered || !rows.isEmpty {
                     HStack(spacing: 8) {
                         if filtered {
                             Text("\(counted(rows.count, "finding")) shown")
-                            Button("Clear filters") { withAnimation(.snappy(duration: 0.2)) { kind = nil; severity = nil; area = nil; query = "" } }
+                            Button("Clear filters") { withAnimation(.snappy(duration: 0.2)) { kind = nil; severity = nil; area = nil; status = nil; hideFixed = false; query = "" } }
                                 .buttonStyle(.link)
                         }
                         Spacer()
@@ -369,7 +402,7 @@ struct FindingsView: View {
                 .foregroundStyle(Theme.textFaint)
             }
             Spacer(minLength: 8)
-            status(r.status)
+            statusBadge(r.status)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 6)
@@ -403,14 +436,39 @@ struct FindingsView: View {
         return f.recent.filter { keys.contains($0.pickKey) && seen.insert($0.pickKey).inserted }
     }
 
-    @ViewBuilder private func status(_ s: Wire.FindingStatus?) -> some View {
-        let (title, color): (String, Color) = switch s {
+    /// Hide fixed, on or off; it and a Fixed status filter never both hold.
+    private func setHideFixed(_ on: Bool) {
+        hideFixed = on
+        if on, status == .fixed { status = nil }
+        unpickHidden()
+    }
+
+    /// A status filter, or none; Fixed turns Hide fixed off.
+    private func setStatus(_ s: Wire.FindingStatus?) {
+        status = s
+        if s == .fixed { hideFixed = false }
+        unpickHidden()
+    }
+
+    /// Unticks the findings Hide fixed or the status filter just hid, so the pick bar counts what's on screen.
+    private func unpickHidden() {
+        guard let f = summary.findings else { return }
+        let hidden = f.recent.filter { r in (hideFixed && r.status == .fixed) || (status != nil && r.status != status) }
+        picked.subtract(hidden.map(\.pickKey))
+    }
+
+    static func statusStyle(_ s: Wire.FindingStatus?) -> (String, Color) {
+        switch s {
         case .fixed: ("Fixed", Theme.State.merged)
         case .disputed: ("Disputed", Theme.State.awaitingApproval)
         case .open: ("Open", Theme.State.cancelled)
         case .other(let v): (v.capitalized, Theme.textMuted)
         case nil: ("Task gone", Theme.textFaint)
         }
+    }
+
+    @ViewBuilder private func statusBadge(_ s: Wire.FindingStatus?) -> some View {
+        let (title, color) = Self.statusStyle(s)
         Text(title)
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(color)
@@ -442,12 +500,12 @@ struct FindingsView: View {
         .frame(height: 6)
     }
 
-    private func chip(_ title: String, dot: Color? = nil, icon: String? = nil, active: Bool, action: @escaping () -> Void) -> some View {
+    private func chip(_ title: String, dot: Color? = nil, icon: String? = nil, active: Bool, removable: Bool = false, action: @escaping () -> Void) -> some View {
         HStack(spacing: 5) {
             if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
             if let icon { Image(systemName: icon).font(.system(size: 10)) }
             Text(title).lineLimit(1)
-            if active && icon != nil { Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textMuted) }
+            if active && (icon != nil || removable) { Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textMuted) }
         }
         .font(.system(size: 12, weight: active ? .medium : .regular))
         .foregroundStyle(Theme.text)
