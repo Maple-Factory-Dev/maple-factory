@@ -1183,6 +1183,59 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where an agent sign-in (`codex login --device-auth`) on a machine is.
+    public enum AgentLoginState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Asked the machine; the login is starting.
+        case starting
+        /// Showing a link and one-time code: waiting for its owner to finish in the browser.
+        case waiting
+        /// Signed in.
+        case done
+        /// It couldn't; `message` says why.
+        case failed
+        /// Someone cancelled it, or the code expired.
+        case cancelled
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [AgentLoginState] = [.starting, .waiting, .done, .failed, .cancelled]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "starting": self = .starting
+            case "waiting": self = .waiting
+            case "done": self = .done
+            case "failed": self = .failed
+            case "cancelled": self = .cancelled
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .starting: "starting"
+            case .waiting: "waiting"
+            case .done: "done"
+            case .failed: "failed"
+            case .cancelled: "cancelled"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: AgentLoginState, b: AgentLoginState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// What a session's agent is doing, from its hooks.
     public enum AgentState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Running a turn.
@@ -1593,6 +1646,29 @@ public enum Wire {
             self.from = from
             self.message = message
             self.at = at
+        }
+    }
+
+    /// An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only.
+    public struct AgentLoginStatus: Codable, Hashable, Sendable {
+        public var agent: String
+        public var state: AgentLoginState
+        /// The page to enter the code on.
+        public var url: String?
+        /// The one-time code.
+        public var code: String?
+        /// When the code expires (ms).
+        public var expiresAt: UInt64?
+        /// Why it failed.
+        public var message: String?
+
+        public init(agent: String, state: AgentLoginState, url: String? = nil, code: String? = nil, expiresAt: UInt64? = nil, message: String? = nil) {
+            self.agent = agent
+            self.state = state
+            self.url = url
+            self.code = code
+            self.expiresAt = expiresAt
+            self.message = message
         }
     }
 
@@ -3369,6 +3445,15 @@ public enum Wire {
         }
     }
 
+    /// How an `agent.login` is going.
+    public struct RunnerMessageAgentLoginStatus: Codable, Hashable, Sendable {
+        public var status: AgentLoginStatus
+
+        public init(status: AgentLoginStatus) {
+            self.status = status
+        }
+    }
+
     /// Plan usage readings that changed (all of them again on reconnect).
     public struct RunnerMessageUsage: Codable, Hashable, Sendable {
         public var agents: [AgentUsage]
@@ -3603,6 +3688,7 @@ public enum Wire {
         case sessionActivity(RunnerMessageSessionActivity)
         case sessionReplay(RunnerMessageSessionReplay)
         case updateStatus(RunnerMessageUpdateStatus)
+        case agentLoginStatus(RunnerMessageAgentLoginStatus)
         case usage(RunnerMessageUsage)
         case sessionCost(RunnerMessageSessionCost)
         case mcpRequest(RunnerMessageMcpRequest)
@@ -3633,6 +3719,7 @@ public enum Wire {
             case "session.activity": self = .sessionActivity(try RunnerMessageSessionActivity(from: decoder))
             case "session.replay": self = .sessionReplay(try RunnerMessageSessionReplay(from: decoder))
             case "update.status": self = .updateStatus(try RunnerMessageUpdateStatus(from: decoder))
+            case "agent.login_status": self = .agentLoginStatus(try RunnerMessageAgentLoginStatus(from: decoder))
             case "usage": self = .usage(try RunnerMessageUsage(from: decoder))
             case "session.cost": self = .sessionCost(try RunnerMessageSessionCost(from: decoder))
             case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
@@ -3677,6 +3764,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .updateStatus(let body):
                 try c.encode("update.status", forKey: .type)
+                try body.encode(to: encoder)
+            case .agentLoginStatus(let body):
+                try c.encode("agent.login_status", forKey: .type)
                 try body.encode(to: encoder)
             case .usage(let body):
                 try c.encode("usage", forKey: .type)
@@ -3786,6 +3876,17 @@ public enum Wire {
         public init(id: String, nonce: String) {
             self.id = id
             self.nonce = nonce
+        }
+    }
+
+    /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
+    public struct ServerToRunnerAgentLogin: Codable, Hashable, Sendable {
+        public var agent: String
+        public var cancel: Bool
+
+        public init(agent: String, cancel: Bool) {
+            self.agent = agent
+            self.cancel = cancel
         }
     }
 
@@ -3983,6 +4084,7 @@ public enum Wire {
         case sessionKill(ServerToRunnerSessionKill)
         case sessionReplay(ServerToRunnerSessionReplay)
         case runnerUpdate
+        case agentLogin(ServerToRunnerAgentLogin)
         case runnerRestart
         case mcpResponse(ServerToRunnerMcpResponse)
         case taskFinish(ServerToRunnerTaskFinish)
@@ -4007,6 +4109,7 @@ public enum Wire {
             case "session.kill": self = .sessionKill(try ServerToRunnerSessionKill(from: decoder))
             case "session.replay": self = .sessionReplay(try ServerToRunnerSessionReplay(from: decoder))
             case "runner.update": self = .runnerUpdate
+            case "agent.login": self = .agentLogin(try ServerToRunnerAgentLogin(from: decoder))
             case "runner.restart": self = .runnerRestart
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
             case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
@@ -4039,6 +4142,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .runnerUpdate:
                 try c.encode("runner.update", forKey: .type)
+            case .agentLogin(let body):
+                try c.encode("agent.login", forKey: .type)
+                try body.encode(to: encoder)
             case .runnerRestart:
                 try c.encode("runner.restart", forKey: .type)
             case .mcpResponse(let body):
@@ -4296,6 +4402,19 @@ public enum Wire {
 
         public init(machine: String) {
             self.machine = machine
+        }
+    }
+
+    /// Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.
+    public struct ClientMessageMachineAgentLogin: Codable, Hashable, Sendable {
+        public var machine: String
+        public var agent: String
+        public var cancel: Bool?
+
+        public init(machine: String, agent: String, cancel: Bool? = nil) {
+            self.machine = machine
+            self.agent = agent
+            self.cancel = cancel
         }
     }
 
@@ -4775,6 +4894,7 @@ public enum Wire {
         case machineSettings(ClientMessageMachineSettings)
         case machineRename(ClientMessageMachineRename)
         case machineUpdate(ClientMessageMachineUpdate)
+        case machineAgentLogin(ClientMessageMachineAgentLogin)
         case runnerCheck(ClientMessageRunnerCheck)
         case policySave(ClientMessagePolicySave)
         case promptsSave(ClientMessagePromptsSave)
@@ -4842,6 +4962,7 @@ public enum Wire {
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
             case "machine.rename": self = .machineRename(try ClientMessageMachineRename(from: decoder))
             case "machine.update": self = .machineUpdate(try ClientMessageMachineUpdate(from: decoder))
+            case "machine.agent_login": self = .machineAgentLogin(try ClientMessageMachineAgentLogin(from: decoder))
             case "runner.check": self = .runnerCheck(try ClientMessageRunnerCheck(from: decoder))
             case "policy.save": self = .policySave(try ClientMessagePolicySave(from: decoder))
             case "prompts.save": self = .promptsSave(try ClientMessagePromptsSave(from: decoder))
@@ -4948,6 +5069,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .machineUpdate(let body):
                 try c.encode("machine.update", forKey: .type)
+                try body.encode(to: encoder)
+            case .machineAgentLogin(let body):
+                try c.encode("machine.agent_login", forKey: .type)
                 try body.encode(to: encoder)
             case .runnerCheck(let body):
                 try c.encode("runner.check", forKey: .type)
@@ -5181,6 +5305,17 @@ public enum Wire {
 
         public init(id: String) {
             self.id = id
+        }
+    }
+
+    /// How a sign-in on your machine is going, to its owner's apps only.
+    public struct ServerToClientMachineAgentLogin: Codable, Hashable, Sendable {
+        public var machine: String
+        public var status: AgentLoginStatus
+
+        public init(machine: String, status: AgentLoginStatus) {
+            self.machine = machine
+            self.status = status
         }
     }
 
@@ -5426,6 +5561,7 @@ public enum Wire {
         case snapshot(ServerToClientSnapshot)
         case machineUpdated(ServerToClientMachineUpdated)
         case machineRemoved(ServerToClientMachineRemoved)
+        case machineAgentLogin(ServerToClientMachineAgentLogin)
         case taskUpdated(ServerToClientTaskUpdated)
         case taskRemoved(ServerToClientTaskRemoved)
         case goalUpdated(ServerToClientGoalUpdated)
@@ -5458,6 +5594,7 @@ public enum Wire {
             case "snapshot": self = .snapshot(try ServerToClientSnapshot(from: decoder))
             case "machine.updated": self = .machineUpdated(try ServerToClientMachineUpdated(from: decoder))
             case "machine.removed": self = .machineRemoved(try ServerToClientMachineRemoved(from: decoder))
+            case "machine.agent_login": self = .machineAgentLogin(try ServerToClientMachineAgentLogin(from: decoder))
             case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
@@ -5494,6 +5631,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .machineRemoved(let body):
                 try c.encode("machine.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .machineAgentLogin(let body):
+                try c.encode("machine.agent_login", forKey: .type)
                 try body.encode(to: encoder)
             case .taskUpdated(let body):
                 try c.encode("task.updated", forKey: .type)
