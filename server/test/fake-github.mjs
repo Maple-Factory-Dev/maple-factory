@@ -431,6 +431,8 @@ createServer((req, res) => {
       return;
     }
     if (req.method === "GET" && (m = url.pathname.match(/^\/_blob\/job-logs\/([^/]+)\/([^/]+)\/(\d+)$/))) {
+      // Like Azure Blob behind GitHub's real redirect: a signed URL that refuses any other credentials.
+      if (req.headers.authorization) return send(res, 400, { message: "Authorization header not allowed on a signed URL." });
       const found = findRun(m[1], m[2], Number(m[3]));
       if (!found) return send(res, 404, { message: "Not Found" });
       return res.writeHead(200, { "content-type": "text/plain" }).end(jobLog(found.r));

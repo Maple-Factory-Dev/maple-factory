@@ -136,9 +136,10 @@ export async function appJwt(app: Pick<GitHubApp, "issuer" | "privateKey">, now 
 
 // ---- calls ----
 
-async function call(app: GitHubApp, method: string, path: string, auth: string, body?: unknown): Promise<Response> {
+async function call(app: GitHubApp, method: string, path: string, auth: string, body?: unknown, redirect?: "follow" | "manual"): Promise<Response> {
   return fetch(`${app.api}${path}`, {
     method,
+    redirect,
     headers: {
       authorization: auth,
       accept: "application/vnd.github+json",
@@ -493,8 +494,11 @@ export function trimLog(text: string, limit = LOG_LIMIT): CheckLog {
 export async function checkLog(app: GitHubApp, owner: string, repo: string, c: Check): Promise<CheckLog> {
   const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.checks)).token}`;
   if (c.job) {
-    // Answered with a redirect to the plain text log; fetch follows it (and drops the token on the way).
-    const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/actions/jobs/${c.job}/logs`, auth);
+    // Answered with a redirect to a signed blob URL holding the plain text log. Follow it by hand, without
+    // the token: the blob store refuses a request that carries an Authorization header it didn't sign.
+    let res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/actions/jobs/${c.job}/logs`, auth, undefined, "manual");
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (location) res = await fetch(location, { headers: { "user-agent": USER_AGENT } });
     if (res.status === 404 || res.status === 410) throw new GitHubError("api", `GitHub has no log for ${c.name} (it may have expired)${c.url ? `: see ${c.url}` : ""}.`, res.status);
     if (!res.ok) throw await failure(res, `read ${c.name}'s log`);
     return trimLog(cleanLog(await res.text()));

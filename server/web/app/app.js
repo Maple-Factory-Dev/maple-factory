@@ -11,7 +11,6 @@ import { markdownEditor } from "./editor.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
-let awaitingLog = null;
 let socket = null;
 let retry = 1000;
 
@@ -119,14 +118,15 @@ function receive(m) {
     case "toast": toast(m.text); break;
     case "checkLog": {
       const key = `${m.id}/${m.check}`;
-      state.checkLogs.set(key, { text: m.text, truncated: m.truncated, failedStep: m.failedStep ?? null, url: m.url ?? null });
-      if (awaitingLog === key) awaitingLog = null;
+      // Only into a panel still waiting for it: one closed (or re-run) since doesn't open again.
+      if (state.checkLogs.get(key)?.loading) state.checkLogs.set(key, { text: m.text, truncated: m.truncated, failedStep: m.failedStep ?? null, url: m.url ?? null });
       break;
     }
     case "error":
-      if (awaitingLog) {
-        state.checkLogs.set(awaitingLog, { error: m.message });
-        awaitingLog = null;
+      // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its panel.
+      if (m.requestId?.startsWith("checkLog:")) {
+        const key = m.requestId.slice(9);
+        if (state.checkLogs.get(key)?.loading) state.checkLogs.set(key, { error: m.message });
         break;
       }
       // The task being created didn't take; let the composer try again. Errors carry no request id, so
@@ -893,10 +893,14 @@ function ciCheck(t, c) {
   const href = c.url || (pr.url && `${pr.url}/checks`);
   const toggleLog = () => {
     if (log && !log.loading) state.checkLogs.delete(key);
-    else if (!log && send({ type: "task.checkLog", id: t.id, check: c.name })) {
-      state.checkLogs.set(key, { loading: true });
-      awaitingLog = key;
-    }
+    else if (!log && send({ type: "task.checkLog", id: t.id, check: c.name })) state.checkLogs.set(key, { loading: true });
+    render();
+  };
+  // The log shown is the old run's; a new run has its own, so close it.
+  const rerun = () => {
+    if (!send({ type: "task.rerunCheck", id: t.id, check: c.name })) return;
+    state.checkLogs.delete(key);
+    toast(`Running ${c.name} again`);
     render();
   };
   return h("div", { class: "check ci-check" },
@@ -908,7 +912,7 @@ function ciCheck(t, c) {
         h("span", { class: "muted" }, c.duration ?? c.status),
         pr.url && c.status !== "queued" && h("button", { class: "btn small", onclick: toggleLog }, log && !log.loading ? "Hide log" : "Log"),
         pr.url && finished && (pr.state === "open" || pr.state === "draft") && t.state !== "merged" && t.state !== "cancelled" &&
-          h("button", { class: "btn small", onclick: () => send({ type: "task.rerunCheck", id: t.id, check: c.name }) && toast(`Running ${c.name} again`) }, "Re-run"),
+          h("button", { class: "btn small", onclick: rerun }, "Re-run"),
         href && h("a", { class: "btn small", href, target: "_blank", rel: "noopener" }, "GitHub ↗")),
       log && checkLogPanel(log)));
 }

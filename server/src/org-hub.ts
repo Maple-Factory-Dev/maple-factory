@@ -563,11 +563,12 @@ export class OrgHub extends DurableObject<Env> {
       }
       case "task.checkLog": {
         // A log can be large and goes stale: read from GitHub for whoever asked, never broadcast or kept.
+        // A refusal carries `checkLog:<task>/<check>` as its requestId so the app ties it to that log.
         try {
           this.send(ws, await this.engine.checkLog(msg.id, msg.check));
         } catch (e) {
           if (!(e instanceof FactoryError)) console.error("factory:", e);
-          this.send(ws, { type: "error", message: e instanceof FactoryError ? e.message : "Something went wrong reading that log.", requestId: null });
+          this.send(ws, { type: "error", message: e instanceof FactoryError ? e.message : "Something went wrong reading that log.", requestId: `checkLog:${msg.id}/${msg.check}` });
         }
         return;
       }

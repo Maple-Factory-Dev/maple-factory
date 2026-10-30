@@ -84,8 +84,6 @@ import Security
     private(set) var stats: Wire.StatsSummary?
     /// CI check logs asked for (`task.checkLog`), by CheckLogRequest.id. Logs are never broadcast or kept by the server.
     private(set) var checkLogs: [String: CheckLogLoad] = [:]
-    /// The log still on its way: a refusal meanwhile is its answer, shown in the log sheet.
-    private var awaitingCheckLog: String?
     var isAdmin: Bool { me?.role == "admin" }
     /// Admins see Statistics; signed out, the mockup shows it.
     var canSeeStats: Bool { !isSignedIn || isAdmin }
@@ -507,14 +505,17 @@ import Security
             stats = reply.summary
         case .checkLog(let reply):
             let key = CheckLogRequest(taskID: reply.id, check: reply.check).id
-            checkLogs[key] = .loaded(CheckLog(text: reply.text, truncated: reply.truncated, failedStep: reply.failedStep, url: reply.url.flatMap(URL.init(string:))))
-            if awaitingCheckLog == key { awaitingCheckLog = nil }
+            // Only into a sheet still waiting for it: a log forgotten since (the check re-run) stays forgotten.
+            if checkLogs[key] == .loading {
+                checkLogs[key] = .loaded(CheckLog(text: reply.text, truncated: reply.truncated, failedStep: reply.failedStep, url: reply.url.flatMap(URL.init(string:))))
+            }
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
-            if let key = awaitingCheckLog {
-                awaitingCheckLog = nil
-                checkLogs[key] = .failed(error.message)
+            // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
+            if let id = error.requestId, id.hasPrefix("checkLog:") {
+                let key = String(id.dropFirst("checkLog:".count))
+                if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
             } else {
                 notice = error.message
             }
@@ -826,8 +827,12 @@ import Security
     /// Reads a CI check's log from GitHub again; the answer (or a refusal) lands in `checkLogs`.
     func loadCheckLog(_ request: CheckLogRequest) {
         checkLogs[request.id] = .loading
-        awaitingCheckLog = request.id
         send(.taskCheckLog(.init(id: request.taskID, check: request.check)))
+    }
+
+    /// Drops a check's log once it's run again: the one held is the old run's.
+    func forgetCheckLog(_ request: CheckLogRequest) {
+        checkLogs[request.id] = nil
     }
 
     /// Each task's diff as last fetched, and the change it was fetched for.

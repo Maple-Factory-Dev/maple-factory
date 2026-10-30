@@ -1826,11 +1826,14 @@ final class AppState {
 
     /// Runs one of the pull request's checks again (a GitHub Actions job, or the check run).
     func rerunCheck(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
         if let client, isLive {
             client.send(.taskRerunCheck(.init(id: id, check: check)))
+            client.forgetCheckLog(request)
             showToast("Running \(check) again", icon: "arrow.clockwise")
             return
         }
+        mockCheckLogs[request.id] = nil
         withAnimation(.snappy(duration: 0.25)) {
             update(id) { task in
                 guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }) else { return }

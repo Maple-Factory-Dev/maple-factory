@@ -19,6 +19,7 @@ const feed = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `
 const tasks = new Map();
 let goals = [];
 let errors = [];
+let errorIds = [];
 let poke = null;
 let checkLogs = [];
 feed.onmessage = (e) => {
@@ -26,7 +27,7 @@ feed.onmessage = (e) => {
   if (m.type === "snapshot") { goals = m.goals; for (const t of m.tasks) tasks.set(t.id, t); }
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
-  if (m.type === "error") errors.push(m.message);
+  if (m.type === "error") errors.push(m.message), errorIds.push(m.requestId ?? null);
   if (m.type === "checkLog") checkLogs.push(m);
   poke?.();
 };
@@ -135,12 +136,14 @@ const got = await wait("check log", () => checkLogs.find((l) => l.id === id3));
 if (got.check !== "test" || got.url !== failedCheck.url) throw new Error(`checkLog for ${got.check} at ${got.url}`);
 if (got.failedStep !== "Process completed with exit code 1.") throw new Error(`failed step: ${got.failedStep}`);
 if (!got.text.includes("not ok 1 - says hello") || /^\d{4}-\d\d-\d\dT/m.test(got.text) || got.text.startsWith("\uFEFF")) throw new Error(`log text: ${JSON.stringify(got.text.slice(0, 200))}`);
-step(`task.checkLog read test's job log (${got.text.split("\n").length} lines, timestamps stripped), failed step "${got.failedStep}"`);
+step(`task.checkLog read test's job log from the redirect, without the token (${got.text.split("\n").length} lines, timestamps stripped), failed step "${got.failedStep}"`);
 send({ type: "task.checkLog", id: id3, check: "lint" });
 await wait("no such check", () => errors.length).catch(() => {});
 if (!/no check lint/.test(errors[0] ?? "")) throw new Error(`asking for a missing check's log: ${errors[0]}`);
+// Tagged with the log it's about, so the apps show it there and not as some other command's refusal.
+if (errorIds.at(-1) !== `checkLog:${id3}/lint`) throw new Error(`the refusal's requestId: ${errorIds.at(-1)}`);
 errors = [];
-step(`asking for a check that isn't there is refused`);
+step(`asking for a check that isn't there is refused (requestId checkLog:${id3}/lint)`);
 const before3 = (await fake()).log.length;
 send({ type: "task.rerunCheck", id: id3, check: "test" });
 t3 = await wait("check queued", () => tasks.get(id3)?.pr.checks.find((c) => c.name === "test")?.status === "queued" && tasks.get(id3));
