@@ -7,7 +7,7 @@ publishes it, with the sections of earlier releases, to the feed's `maple-runner
 
 ## 0.47.0 — 2026-10-29
 
-The protocol carries the factory's icon.
+Codex sessions get their whole prompt, trailing newlines and all, so they start without someone pressing Enter. The protocol carries the factory's icon.
 
 ## 0.46.0 — 2026-10-29
 
