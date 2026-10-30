@@ -56,12 +56,12 @@ struct RepoScriptsDetail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header.padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 10)
+            header.padding(.horizontal, 36).padding(.top, 18).padding(.bottom, 10)
             ScrollView {
-                content.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 20)
+                content.padding(.horizontal, 36).padding(.top, 8).padding(.bottom, 20)
             }
             Divider()
-            footer.padding(.horizontal, 28).padding(.vertical, 12)
+            footer.padding(.horizontal, 36).padding(.vertical, 12)
         }
         .font(.system(size: 13))
         .onAppear { draft = current }
