@@ -379,6 +379,12 @@ export interface Check {
   /** How to ask for it again: a check suite, or (GitHub Actions) a workflow run. */
   suite: number | null;
   run: number | null;
+  /** The check run (none for a commit status). */
+  id?: number | null;
+  /** The GitHub Actions job: for Actions the check run's id is the job's. */
+  job?: number | null;
+  /** Its page on GitHub: the job's, or where a commit status points. */
+  url?: string | null;
 }
 
 const RUN_FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
@@ -401,12 +407,17 @@ export async function checks(app: GitHubApp, owner: string, repo: string, sha: s
     if (typeof r?.name !== "string" || out.has(r.name)) continue;
     const done = r.status === "completed";
     const run = /\/actions\/runs\/(\d+)/.exec(String(r.details_url ?? ""))?.[1];
+    const id = typeof r.id === "number" ? r.id : null;
+    const actions = r.app?.slug === "github-actions" || run !== undefined;
     out.set(r.name, {
       name: r.name,
       status: !done ? (r.status === "in_progress" ? "running" : "queued") : RUN_FAILED.has(r.conclusion) ? "failed" : "passed",
       duration: done ? duration(r.started_at, r.completed_at) : null,
       suite: typeof r.check_suite?.id === "number" ? r.check_suite.id : null,
       run: run ? Number(run) : null,
+      id,
+      job: actions ? id : null,
+      url: str(r.html_url) ?? str(r.details_url),
     });
   }
   const statuses = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(sha)}/status?per_page=100`, auth);
@@ -419,6 +430,9 @@ export async function checks(app: GitHubApp, owner: string, repo: string, sha: s
         duration: null,
         suite: null,
         run: null,
+        id: null,
+        job: null,
+        url: str(s.target_url),
       });
     }
   }
@@ -441,6 +455,72 @@ export async function rerunFailed(app: GitHubApp, owner: string, repo: string, f
     asked.add(path);
   }
   return asked.size;
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+
+/** How much of a job's log is kept: its end, where a failure usually is. */
+export const LOG_LIMIT = 200_000;
+
+/** A check's log: the job's (GitHub Actions), or the check run's output for another app. */
+export interface CheckLog {
+  text: string;
+  truncated: boolean;
+  /** The first line GitHub marked `##[error]`, without the marker. */
+  failedStep: string | null;
+}
+
+/** A job log's lines without the timestamp GitHub puts in front of each, and its byte-order mark. */
+export function cleanLog(raw: string): string {
+  return raw.replace(/^\uFEFF/, "").replace(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z ?/gm, "");
+}
+
+/** The log's last `limit` characters, cut at a line, and the first error in it. */
+export function trimLog(text: string, limit = LOG_LIMIT): CheckLog {
+  let out = text;
+  let truncated = false;
+  if (out.length > limit) {
+    out = out.slice(out.length - limit);
+    const nl = out.indexOf("\n");
+    if (nl >= 0 && nl < 2000) out = out.slice(nl + 1);
+    truncated = true;
+  }
+  const failed = /^.*##\[error\](.*)$/m.exec(out);
+  return { text: out, truncated, failedStep: failed ? failed[1].trim() || "Error" : null };
+}
+
+/** Reads a check's log. Throws a GitHubError when there's none (a commit status, or an expired log). */
+export async function checkLog(app: GitHubApp, owner: string, repo: string, c: Check): Promise<CheckLog> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.checks)).token}`;
+  if (c.job) {
+    // Answered with a redirect to the plain text log; fetch follows it (and drops the token on the way).
+    const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/actions/jobs/${c.job}/logs`, auth);
+    if (res.status === 404 || res.status === 410) throw new GitHubError("api", `GitHub has no log for ${c.name} (it may have expired)${c.url ? `: see ${c.url}` : ""}.`, res.status);
+    if (!res.ok) throw await failure(res, `read ${c.name}'s log`);
+    return trimLog(cleanLog(await res.text()));
+  }
+  if (c.id) {
+    const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/check-runs/${c.id}`, auth);
+    if (!res.ok) throw await failure(res, `read ${c.name}`);
+    const out = ((await res.json()) as { output?: { title?: string | null; summary?: string | null; text?: string | null } }).output ?? {};
+    const text = [out.title, out.summary, out.text].filter((x): x is string => typeof x === "string" && x.trim() !== "").join("\n\n");
+    if (!text) throw new GitHubError("api", `${c.name} didn't report any output${c.url ? `: see ${c.url}` : ""}.`);
+    return trimLog(text);
+  }
+  throw new GitHubError("api", `${c.name} is a commit status, with no log on GitHub${c.url ? `: see ${c.url}` : ""}.`);
+}
+
+/** Asks for one check again: its GitHub Actions job, or its check run. */
+export async function rerunCheck(app: GitHubApp, owner: string, repo: string, c: Check): Promise<void> {
+  const path = c.job
+    ? `/repos/${seg(owner)}/${seg(repo)}/actions/jobs/${c.job}/rerun`
+    : c.id
+      ? `/repos/${seg(owner)}/${seg(repo)}/check-runs/${c.id}/rerequest`
+      : null;
+  if (!path) throw new GitHubError("api", `${c.name} is a commit status; GitHub can't run it again from here${c.url ? `: see ${c.url}` : ""}.`);
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.checks)).token}`;
+  const res = await call(app, "POST", path, auth);
+  if (!res.ok) throw await failure(res, `run ${c.name} again`);
 }
 
 // ---- webhooks ----
