@@ -36,6 +36,7 @@ const TOOLS: Tool[] = [
     inputSchema: obj(
       {
         summary: str("The approach in two or three sentences."),
+        title: str("A clearer title for the task, only if its current one is vague or misleading; it takes this name once the plan is approved."),
         steps: list(obj({ text: str("What this step does."), file: str("The main file it touches.") }, ["text", "file"]), "3–8 steps in order."),
         doneWhen: list(
           obj({ text: str("A check that proves the change works."), proof: oneOf(["tests", "terminal", "screenshot", "video"], "What evidence the builder produces.") }, ["text", "proof"]),

@@ -82,6 +82,7 @@ import SwiftUI
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
+        task.suggestedTitle = t.suggestedTitle
         task.effort = t.effort
         let goal = goals.first { $0.id == t.goal }
         if let goal, goal.repos.count > 1 { task.repo = t.repo ?? goal.repo }

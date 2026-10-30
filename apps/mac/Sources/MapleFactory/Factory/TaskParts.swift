@@ -450,10 +450,51 @@ struct SecondaryButton: View {
     }
 }
 
+/// The planner's proposed rename: taken when the plan is approved, unless the approver keeps the current title.
+struct SuggestedTitleRow: View {
+    let task: FactoryTask
+    let suggested: String
+    @Binding var keep: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "character.cursor.ibeam")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Renames to")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textMuted)
+                    Text(suggested)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(keep ? Theme.textFaint : Theme.text)
+                        .strikethrough(keep, color: Theme.textFaint)
+                    Text(task.title)
+                        .font(.system(size: 12))
+                        .foregroundStyle(keep ? Theme.text : Theme.textFaint)
+                        .strikethrough(!keep, color: Theme.textFaint)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Toggle("Keep current title", isOn: $keep)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.leading, 19)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+        .animation(.snappy(duration: 0.2), value: keep)
+    }
+}
+
 struct ApprovalBlock: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var keepTitle = false
 
     var body: some View {
         let needed = state.risk(for: task)?.approvals ?? task.approvalsNeeded
@@ -476,9 +517,12 @@ struct ApprovalBlock: View {
             }
             if !iApproved {
                 let approving = state.isInFlight(task.id, .approvePlan)
+                if let suggested = task.suggestedTitle {
+                    SuggestedTitleRow(task: task, suggested: suggested, keep: $keepTitle)
+                }
                 DecisionButtons {
                     PrimaryButton(title: "Approve plan", icon: "checkmark", busy: approving, busyTitle: "Approving…") {
-                        state.approvePlan(task.id)
+                        state.approvePlan(task.id, keepTitle: keepTitle)
                     }
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
@@ -497,6 +541,7 @@ struct BacklogBlock: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var keepTitle = false
 
     var body: some View {
         let planned = !task.plan.isEmpty
@@ -519,9 +564,12 @@ struct BacklogBlock: View {
                 }
             }
             if planned {
+                if let suggested = task.suggestedTitle {
+                    SuggestedTitleRow(task: task, suggested: suggested, keep: $keepTitle)
+                }
                 DecisionButtons {
                     PrimaryButton(title: "Approve & build", icon: "hammer", busy: approving, busyTitle: "Approving…") {
-                        state.approvePlan(task.id)
+                        state.approvePlan(task.id, keepTitle: keepTitle)
                     }
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }

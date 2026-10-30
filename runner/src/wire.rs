@@ -1168,6 +1168,9 @@ pub struct Task {
     pub plan_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_summary: Option<String>,
+    /// The planner's proposed title, taken when the plan is approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_title: Option<String>,
     #[serde(default)]
     pub done_when: Vec<DoneItem>,
     #[serde(default)]
@@ -2477,6 +2480,9 @@ pub enum ClientMessage {
     #[serde(rename = "task.approvePlan")]
     TaskApprovePlan {
         id: String,
+        /// Turn down the plan's suggested title and keep the current one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        keep_title: Option<bool>,
     },
     /// Answer the agent's question.
     #[serde(rename = "task.answer")]

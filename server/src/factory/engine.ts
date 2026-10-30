@@ -347,7 +347,11 @@ export class Engine {
         // A backlog task without a plan is still a draft, just parked.
         const unplanned = task.state === "drafting" || (task.state === "backlog" && !task.plan.length);
         if (!unplanned && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
-        if (msg.title != null && msg.title.trim()) task.title = msg.title.trim();
+        if (msg.title != null && msg.title.trim()) {
+          task.title = msg.title.trim();
+          // The person named it; the planner's suggestion is moot.
+          task.suggestedTitle = null;
+        }
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
         if (msg.repo != null && msg.repo !== task.repo) {
@@ -446,6 +450,10 @@ export class Engine {
         }
         if (task.state !== "awaitingApproval") fail("There's no plan waiting for approval.");
         if (task.approvals.includes(who)) fail("You've already approved it.");
+        if (msg.keepTitle && task.suggestedTitle) {
+          task.suggestedTitle = null;
+          this.event(task, who, "kept the title");
+        }
         task.approvals.push(who);
         for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
         this.event(task, who, "approved the plan");
@@ -731,6 +739,7 @@ export class Engine {
             machine: null,
             intake: null,
             splitFrom: task.id,
+            suggestedTitle: null,
             followUps: [],
           };
           this.save(part);
@@ -868,6 +877,12 @@ export class Engine {
   private async approved(task: Task, why: string) {
     task.state = "building";
     task.waiting = null;
+    if (task.suggestedTitle) {
+      const old = task.title;
+      task.title = task.suggestedTitle;
+      task.suggestedTitle = null;
+      this.event(task, "factory", `renamed it from "${old}"`);
+    }
     this.event(task, "factory", why);
     this.stat(task, "plan.approved", { version: task.planVersion, approvals: task.approvals.length }, task.approvals.at(-1) ?? "factory");
     const goal = this.store.goal(task.goal);
@@ -1619,6 +1634,9 @@ export class Engine {
         });
         task.doneWhen = done.map((d) => ({ text: str(d.text, "doneWhen[].text"), proof: proofKind(d.proof), status: "pending", evidence: null }));
         task.planSummary = str(a.summary, "summary");
+        // A revised plan replaces (or drops) the earlier suggestion.
+        const title = typeof a.title === "string" ? a.title.trim().slice(0, 120).trim() : "";
+        task.suggestedTitle = title && title !== task.title ? title : null;
         task.planVersion += 1;
         this.stat(task, "plan.submitted", { version: task.planVersion, steps: task.plan.length }, null, s.role);
         const risk = obj(a.risk);
