@@ -802,7 +802,8 @@ struct CountdownMergeButton: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            TimelineView(.animation) { context in
+            // Ten ticks a second, the drain animating linearly between them: not a redraw every frame.
+            TimelineView(.periodic(from: .now, by: 0.1)) { context in
                 let total = max(mergeAt.timeIntervalSince(from ?? mergeAt.addingTimeInterval(-10)), 0.001)
                 let left = max(0, mergeAt.timeIntervalSince(context.date))
                 let fraction = min(1, left / total)
@@ -822,6 +823,7 @@ struct CountdownMergeButton: View {
                         ZStack(alignment: .leading) {
                             Rectangle().fill(Theme.approve.opacity(0.4))
                             Rectangle().fill(Theme.approve).frame(width: geo.size.width * fraction)
+                                .animation(.linear(duration: 0.1), value: fraction)
                         }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
