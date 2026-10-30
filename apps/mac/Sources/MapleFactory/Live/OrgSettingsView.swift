@@ -842,7 +842,8 @@ struct OtherGitHubAccounts: View {
                         HStack(spacing: 8) {
                             Image(systemName: "building.2").foregroundStyle(Theme.textMuted).frame(width: 16)
                             Text(owner).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
-                            Text("\(client.repos.filter { $0.source == .github && $0.name.lowercased().hasPrefix(owner.lowercased() + "/") }.count) repos")
+                            let count = client.repos.filter { $0.source == .github && $0.name.lowercased().hasPrefix(owner.lowercased() + "/") }.count
+                            Text(count == 1 ? "1 repo" : "\(count) repos")
                                 .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
                             Spacer()
                             if isAdmin {
