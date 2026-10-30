@@ -284,7 +284,7 @@ struct ContentView: View {
             state.showToast(toast.text, icon: "info.circle")
         }
         .onChange(of: client.notice) { _, notice in
-            // A saving goal sheet shows its refusal inside, where it can be seen.
+            // A saving goal editor shows its refusal inside, where it can be seen.
             guard let notice, !client.savingGoal else { return }
             state.serverRefused(notice)
             // Cleared once shown, so the same refusal again still reaches the buttons.
@@ -303,9 +303,6 @@ struct ContentView: View {
             let unfinished = state.unfinishedTasks(in: state.archiving ?? "")
             let ids = unfinished.prefix(6).map(\.id).joined(separator: ", ") + (unfinished.count > 6 ? " and \(unfinished.count - 6) more" : "")
             Text("\(ids) \(unfinished.count == 1 ? "isn't" : "aren't") finished. Ending cancels \(unfinished.count == 1 ? "it" : "them"): sessions stop and pull requests close. Cleaning up also removes \(unfinished.count == 1 ? "its worktree" : "their worktrees"), but never anything uncommitted or unpushed. Letting them finish archives the goal and leaves the work running.")
-        }
-        .sheet(item: Binding(get: { state.goalSheet }, set: { state.goalSheet = $0 })) { sheet in
-            if case .edit(let id) = sheet { GoalSheet(editing: client.goals.first { $0.id == id }) } else { GoalSheet(prefill: state.goalPrefill) }
         }
         .sheet(item: Binding(get: { state.checkLogShown }, set: { state.checkLogShown = $0 })) { request in
             CheckLogSheet(request: request).environment(state)
@@ -362,7 +359,7 @@ struct ContentView: View {
 
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
-        if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing,
+        if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing, state.goalSheet == nil,
            ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
@@ -399,7 +396,25 @@ struct ContentView: View {
 }
 
 extension ContentView {
-    @ViewBuilder fileprivate var mainContent: some View {
+    /// The goal editor takes the page over; what was under it stays mounted (a draft waiting on a new goal
+    /// still hears it arrive) and comes back on Cancel or Save.
+    fileprivate var mainContent: some View {
+        ZStack {
+            pageContent
+                .opacity(state.goalSheet == nil ? 1 : 0)
+                .disabled(state.goalSheet != nil)
+                .accessibilityHidden(state.goalSheet != nil)
+            if let sheet = state.goalSheet {
+                Group {
+                    if case .edit(let id) = sheet { GoalEditorView(editing: client.goals.first { $0.id == id }) } else { GoalEditorView(prefill: state.goalPrefill) }
+                }
+                .id(sheet.id)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    @ViewBuilder private var pageContent: some View {
         if state.isComposing {
             ComposeView()
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
