@@ -394,7 +394,7 @@ export class Engine {
         // The builder (or planner) gets the batch as one change request.
         const text = [summary, ...notes.map((n, i) => `${i + 1}. ${lineAnchor(n)}${n.side === "old" ? " (removed lines)" : ""}: ${n.text}`)].filter(Boolean).join("\n");
         const count = `${notes.length} comment${notes.length === 1 ? "" : "s"}`;
-        return this.steer(task, who, text, `Review · ${count}`, `reviewed the diff: ${count}`);
+        return this.steer(task, who, text, `Review · ${count}`, `asked for a change: a review of ${count}`);
       }
       case "task.approvePlan": {
         if (task.state === "backlog") {
