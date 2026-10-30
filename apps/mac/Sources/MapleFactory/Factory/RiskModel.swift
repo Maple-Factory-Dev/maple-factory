@@ -55,6 +55,8 @@ struct RiskPolicy {
     var autoFixMerges = true
     /// Off for the whole factory: nothing merges on its own, whatever the levels or a goal's acceptance say.
     var autoMerges = true
+    /// The most leftovers one Scout run turns into drafted plans (1–10).
+    var scoutItems = 3
 
     func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
         guard let footprint = task.footprint else { return nil }

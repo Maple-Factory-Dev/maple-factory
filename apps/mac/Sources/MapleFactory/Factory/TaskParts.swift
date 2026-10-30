@@ -72,6 +72,41 @@ struct TaskOwnership: View {
     }
 }
 
+/// Where a task came from, when it didn't start as someone's idea: split off an over-budget task, or
+/// a leftover a Scout run picked up. Each names the task, linked.
+struct TaskOrigin: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+
+    var body: some View {
+        if task.splitFrom != nil || task.scoutedFrom != nil {
+            HStack(spacing: 12) {
+                if let id = task.splitFrom { line("arrow.triangle.branch", "Split from", id, nil) }
+                if let from = task.scoutedFrom {
+                    let parts = from.split(separator: "#", maxSplits: 1).map(String.init)
+                    line("binoculars", "Scouted from", parts[0], parts.count > 1 ? "a review finding" : nil)
+                }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    private func line(_ icon: String, _ label: String, _ id: String, _ detail: String?) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10.5))
+            Text(label)
+            Text(id)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.accent)
+                .onTapGesture { appState.openReference(id) }
+                .pointerStyle(.link)
+                .help("Open \(id)")
+            if let detail { Text("· \(detail)") }
+        }
+    }
+}
+
 /// The ⋯ menu on a task: what to do next, editing it, and getting at it, with Cancel's confirmation
 /// and the Rename alert.
 struct TaskActionsMenu<Label: View>: View {
@@ -591,7 +626,8 @@ struct ReviewActions: View {
     var body: some View {
         let gate = state.mergeGate(for: task)
         let iReviewed = task.reviews.contains { $0.id == FactoryData.me.id }
-        let autoMerging = state.autoMerging.contains(task.id)
+        // Mid-countdown it isn't merging yet: the countdown button itself locks when it runs out.
+        let factoryMerging = task.merging || state.autoMerging.contains(task.id)
 
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
@@ -626,8 +662,9 @@ struct ReviewActions: View {
 
             if let mergeAt = countdown(gate) {
                 CountdownMergeButton(number: task.pr?.number ?? 0, mergeAt: mergeAt, from: task.mergeFrom,
+                                     holding: state.isInFlight(task.id, .holdMerge),
                                      hold: { state.holdMerge(task.id) }, mergeNow: { state.merge(task.id) })
-            } else if autoMerging {
+            } else if factoryMerging {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Factory is merging #\(task.pr?.number ?? 0)…")
@@ -655,7 +692,7 @@ struct ReviewActions: View {
                 }
             } else {
                 let approving = state.isInFlight(task.id, .approveChanges)
-                let merging = state.isInFlight(task.id, .merge)
+                let merging = state.isMerging(task)
                 DecisionButtons {
                     if !gate.autoReviewReady && !gate.reviewsReady && !iReviewed {
                         // The server refuses approvals until the reviewer passes the round, so say so instead of failing silently.
@@ -677,7 +714,7 @@ struct ReviewActions: View {
             if let mergeAt = countdown(gate) {
                 TimelineView(.everySecond(until: mergeAt)) { context in
                     let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
-                    statusRow("bolt.fill", "Auto-merging in \(left)s — Hold to merge it yourself.", Theme.State.merged)
+                    statusRow("bolt.fill", left > 0 ? "Auto-merging in \(left)s — Hold to merge it yourself." : "Auto-merging now.", Theme.State.merged)
                 }
             } else {
                 statusLine(gate)
@@ -688,7 +725,7 @@ struct ReviewActions: View {
     /// When the factory auto-merges it, while that's counting down and every gate still holds.
     private func countdown(_ gate: MergeGate) -> Date? {
         guard task.state == .reviewing, let mergeAt = task.mergeAt, gate.canMerge, gate.autoMerge,
-              task.hand == nil, !state.isInFlight(task.id, .merge) else { return nil }
+              task.hand == nil, !task.merging, !state.isInFlight(task.id, .merge) else { return nil }
         return mergeAt
     }
 
@@ -791,21 +828,36 @@ struct ReviewActions: View {
 }
 
 /// The auto-merge counting down: a green button whose fill drains to empty by `mergeAt`, when the
-/// factory merges, with Hold (a person merges it instead) and Merge now beside it.
+/// factory merges, with Hold (a person merges it instead) and Merge now beside it. At 0s both give way
+/// to a locked "Merging #N…" at once, without waiting for the server to say it's merging.
 struct CountdownMergeButton: View {
     let number: Int
     let mergeAt: Date
     /// When the countdown started; unknown, it's taken as the factory's default 10s.
     var from: Date?
+    /// Hold was sent and the server hasn't cleared the countdown yet.
+    var holding = false
     var hold: () -> Void
     var mergeNow: () -> Void
 
     var body: some View {
+        // Once a second for the number, and at 0s for the lock; Core Animation drains the bar (CountdownDrain),
+        // not a redraw every frame.
+        TimelineView(.everySecond(until: mergeAt)) { context in
+            let left = max(0, mergeAt.timeIntervalSince(context.date))
+            if left > 0 {
+                counting(left)
+            } else {
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: true, busyTitle: "Merging #\(number)…") {}
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private func counting(_ left: TimeInterval) -> some View {
         VStack(spacing: 8) {
-            // Once a second for the number; Core Animation drains the bar (CountdownDrain), not a redraw every frame.
-            TimelineView(.everySecond(until: mergeAt)) { context in
+            Group {
                 let total = max(mergeAt.timeIntervalSince(from ?? mergeAt.addingTimeInterval(-10)), 0.001)
-                let left = max(0, mergeAt.timeIntervalSince(context.date))
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold))
                     Text("Merging #\(number) in \(Int(left.rounded(.up)))s")
@@ -828,11 +880,10 @@ struct CountdownMergeButton: View {
                 .accessibilityLabel("Merging #\(number) in \(Int(left.rounded(.up))) seconds")
             }
             DecisionButtons {
-                SecondaryButton(title: "Hold", action: hold)
-                SecondaryButton(title: "Merge now", action: mergeNow)
+                SecondaryButton(title: "Hold", enabled: !holding, action: hold)
+                SecondaryButton(title: "Merge now", enabled: !holding, action: mergeNow)
             }
         }
-        .transition(.opacity)
     }
 }
 

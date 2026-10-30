@@ -8,6 +8,9 @@
 
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
+import { loadCollapsed, toggleCollapsed } from "./sections.js";
+import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
+import { bundleStale } from "./update.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -116,6 +119,9 @@ function receive(m) {
       $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
+      // The first version seen is the bundle this tab loaded; a reconnect after a deploy reports the new one.
+      state.loadedVersion ??= m.serverVersion || null;
+      if (bundleStale(state.loadedVersion, m.serverVersion)) $("update").hidden = false;
       break;
     case "icon.updated": showIcon(m.icon); return;
     case "name.updated": $("org").textContent = m.name || state.org || "Maple Factory"; return;
@@ -123,6 +129,7 @@ function receive(m) {
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
+      mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
     case "machine.updated":
@@ -154,6 +161,7 @@ function receive(m) {
       // The task being created didn't take; let the composer try again. Errors carry no request id, so
       // take one that comes back soon after the create to be about it; any later one leaves it alone.
       if (creating && Date.now() - creating.at < 5_000) createFailed();
+      mergeSent.clear(); // a refused Merge or Hold gives its buttons back
       toast(m.message);
       break;
     default: return;
@@ -266,13 +274,35 @@ function render() {
 }
 const view = render;
 
+// Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
+const collapsed = loadCollapsed();
+
+/** A section with a heading that collapses it to "Title · count"; `body()` isn't built while it's collapsed. */
+function section(key, title, count, body) {
+  const open = !collapsed.has(key);
+  const id = `section-${key.replace(/[^\w-]/g, "-")}`;
+  return h("section", { class: `section${open ? "" : " closed"}` },
+    h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
+      onclick: () => { toggleCollapsed(collapsed, key); render(); } },
+      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+    open && h("div", { id }, body()));
+}
+
 function row(t, sub) {
   const goal = goalOf(t);
   return h("a", { class: "item", href: `#/t/${t.id}` },
     h("span", { class: `dot bg-${t.state}` }),
     h("div", {},
       h("div", { class: "title" }, t.title),
-      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", ` · ${sub}`)));
+      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", " · ", sub)));
+}
+
+/** Its state's title, or "Merging…" (the server's live log while it merges) or the auto-merge countdown. */
+function stateLabel(t) {
+  if (t.state !== "reviewing") return STATE_TITLE[t.state];
+  if (t.liveLog === "Merging…") return "Merging…";
+  if (t.mergeAt != null && !t.hand) return h("span", { "data-merge-at": t.mergeAt }, countdownLabel(t.mergeAt));
+  return STATE_TITLE[t.state];
 }
 
 function inboxView() {
@@ -287,16 +317,12 @@ function inboxView() {
   return h("div", {},
     h("h1", {}, "Inbox"),
     h("p", { class: "muted" }, total ? `${total} thing${total === 1 ? "" : "s"} waiting on you.` : "Nothing's waiting on you."),
-    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) => [
-      h("h2", {}, `${KINDS[k][0]} · ${groups.get(k).length}`),
-      h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))),
-    ]),
-    mentioned.length > 0 && [
-      h("h2", {}, `Mentions · ${mentioned.length}`),
+    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) =>
+      section(`inbox:${k}`, KINDS[k][0], groups.get(k).length, () => h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))))),
+    mentioned.length > 0 && section("inbox:mentions", "Mentions", mentioned.length, () =>
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
-        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss")))),
-    ],
+        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
     !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
@@ -319,12 +345,12 @@ function tasksView() {
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
-    drafts.length > 0 && [h("h2", {}, `Drafts · ${drafts.length}`), h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))],
-    queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
-    backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
-    h("h2", {}, `In flight · ${active.length}`),
-    active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || STATE_TITLE[t.state]))) : h("div", { class: "card empty" }, "Nothing in flight."),
-    done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
+    drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
+    queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
+    backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
+    section("tasks:active", "In flight", active.length, () =>
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
+    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
 }
 
 // ---- a new task ----
@@ -537,6 +563,9 @@ function mount(next, keepCompose) {
     active.focus({ preventScroll: true });
     if (range) try { active.setSelectionRange(...range); } catch {}
   }
+  // A section heading is rebuilt on every render; keep the keyboard on it.
+  const head = active?.dataset?.section;
+  if (head) main.querySelector(`[data-section="${CSS.escape(head)}"]`)?.focus({ preventScroll: true });
 }
 
 // ---- a task ----
@@ -554,7 +583,7 @@ function taskView(id) {
     h("div", { class: "row muted" }, h("a", { href: "#/" }, "← Inbox"), h("span", { class: "spacer" }), h("span", { class: "mono" }, t.id)),
     h("h1", {}, t.title),
     h("div", { class: "row" },
-      h("span", { class: `pill s-${t.state}` }, STATE_TITLE[t.state]),
+      h("span", { class: `pill s-${t.state}` }, stateLabel(t)),
       ownerControl(t),
       h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
@@ -724,18 +753,21 @@ function decisions(t) {
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
-    if (countdown) {
+    if (merging(t)) {
+      // The factory has it (or a click is on its way): nothing to click until it lands.
+      buttons.push(h("button", { class: "btn go", disabled: true }, "Merging…"));
+    } else if (countdown) {
       // The factory merges when the fill drains: its delay is the part of the window already gone,
       // so a re-render (or a reload) carries on from where it is.
       buttons.push(h("button", {
-        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt,
+        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.holdMerge", id: t.id }) }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.merge", id: t.id }) }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
-      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
+      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
@@ -792,18 +824,43 @@ function mergeCountdown(t) {
   return { total: Math.max(started ? t.mergeAt - started : 10_000, left, 1), left };
 }
 
+/** Merging, as far as its buttons go: the server says so, a Merge or Hold is on its way, or its
+ *  countdown ran out (the server says Merging… a moment later). */
+function merging(t) {
+  if (t.state !== "reviewing") return false;
+  if (t.liveLog === "Merging…" || mergeSent.has(t.id)) return true;
+  const countdown = !t.hand && mergeCountdown(t);
+  return !!countdown && countdown.left === 0;
+}
+
+/** Sends a Merge or Hold and locks its buttons until the task's next update (or 30s, if none comes). */
+function sendMerge(t, type) {
+  if (mergeSent.has(t.id) || !send({ type, id: t.id })) return;
+  const at = Date.now();
+  mergeSent.set(t.id, at);
+  setTimeout(() => { if (mergeSent.get(t.id) === at) { mergeSent.delete(t.id); render(); } }, 30_000);
+  render();
+}
+
 function countdownLabel(mergeAt) {
   const left = Math.ceil((mergeAt - Date.now()) / 1000);
   return left > 0 ? `Merging in ${left}s` : "Merging…";
 }
 
 // A countdown's label ticks on its own, between the renders that updates bring.
+// A countdown button that reaches 0 redraws once, so Hold and Merge now drop out at once.
 setInterval(() => {
-  for (const el of document.querySelectorAll("[data-merge-at]")) el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+  let due = false;
+  for (const el of document.querySelectorAll("[data-merge-at]")) {
+    el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+    if (el.hasAttribute("data-locks") && Number(el.dataset.mergeAt) <= Date.now()) due = true;
+  }
+  if (due) render();
 }, 250);
 
 const keepingTitle = new Set(); // ids whose approver ticked "Keep current title"
 const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
+const mergeSent = new Map(); // id → when its Merge or Hold was sent, until the task's next update
 
 /** Asks before cancelling, saying what it stops. */
 function cancelCard(t) {
@@ -829,7 +886,7 @@ function compose(t, key, placeholder, label, submit) {
   const go = () => {
     const text = editor.textarea.value.trim();
     if (!text) return;
-    submit(text);
+    if (submit(text) === false) return;
     editor.clear();
   };
   const editor = markdownEditor({ members: () => state.members, tasks: allTasks, placeholder, rows: 2, onsubmit: go }, h);
@@ -888,7 +945,7 @@ function overview(t) {
     t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
-    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map(mockup)],
+    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
     t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
       h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
         h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
@@ -980,16 +1037,45 @@ function checkLogPanel(log) {
     pre);
 }
 
-function mockup(m) {
+const mockupAsking = new Set(); // "<task>:<mockup>" whose Request a change box is open
+
+function mockup(t, m) {
   const body = m.kind === "terminal"
     ? h("div", { class: "terminal" }, m.lines.map((l) => h("div", { class: l.style }, l.text || " ", l.callout && h("span", { class: "callout-n" }, l.callout))))
     : h("div", { class: "browser" }, h("div", { class: "url" }, m.url ?? m.title),
-      h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }));
+      fitted(h("div", { class: "mockup-fit" }, h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }))));
   return h("div", { style: "margin-bottom:14px" },
     h("div", { class: "row", style: "margin-bottom:6px" }, h("b", {}, m.title), h("span", { class: "muted" }, m.status === "approved" ? "· approved" : m.status === "changesRequested" ? "· changes asked" : "")),
     body,
-    m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
+    m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))),
+    mockupChange(t, m));
 }
+
+/** Ask for a change to a mockup, as the Mac app does: awaiting approval, the planner revises the plan. */
+function mockupChange(t, m) {
+  if (t.state === "merged" || t.state === "cancelled") return null;
+  const key = `${t.id}:${m.id}`;
+  if (!mockupAsking.has(key)) {
+    return h("div", { style: "margin-top:8px" },
+      h("button", { class: "btn small", onclick: () => { mockupAsking.add(key); render(); document.querySelector(`[data-keep="${t.id}:mockup:${m.id}"] textarea`)?.focus(); } }, "Request a change"));
+  }
+  const box = compose(t, `mockup:${m.id}`, `What should change in "${m.title}"?`, "Request change", (text) => {
+    if (!send({ type: "task.mockupChange", id: t.id, mockup: m.id, text })) return false;
+    mockupAsking.delete(key);
+    render();
+  });
+  // Cancel goes next to compose's own button.
+  box.lastChild.classList.add("row");
+  box.lastChild.prepend(h("button", { class: "btn small", onclick: () => { mockupAsking.delete(key); render(); } }, "Cancel"));
+  return box;
+}
+
+/** On a phone a mockup renders 800px wide and scales down by --fit to its box (app.css). */
+// A re-render drops the old box, which reports a size of 0 on its way out: let go of it then.
+const fit = new ResizeObserver((entries) => {
+  for (const e of entries) e.target.isConnected ? e.target.style.setProperty("--fit", Math.min(1, e.contentRect.width / 800)) : fit.unobserve(e.target);
+});
+const fitted = (el) => (fit.observe(el), el);
 
 const attesting = new Map(); // task id → { item, note }: the Done when item being attested and the reason typed so far
 
@@ -1049,8 +1135,8 @@ function timeline(t) {
   const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
-    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
     compose(t, "comment", "Comment…", "Comment", (text) => send({ type: "task.comment", id: t.id, text })),
@@ -1059,23 +1145,154 @@ function timeline(t) {
 
 // ---- the diff ----
 
+// A review in progress on a task's diff, kept in memory like draftEdits: the lines picked, the comment
+// being typed on them, the comments waiting to be sent, and the summary.
+const reviewPicks = new Map(); // task id → { path, anchor, head }
+const reviewNotes = new Map(); // task id → [{ id, rows: { first, last }, note }]
+const reviewText = new Map(); // task id → the comment being typed on the picked lines
+const reviewSummary = new Map(); // task id → the review's summary
+let noteIds = 0;
+
+/** The same states as decisions()'s Request change: something's working on it to send the review to. */
+const reviewable = (t) => ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
+const touch = matchMedia("(pointer: coarse)");
+
 function diffView(t) {
   const key = `${t.pr?.head ?? ""}+${t.diff?.added}-${t.diff?.removed}`;
   const cached = state.diffs.get(t.id);
   if (!cached || cached.key !== key) {
-    state.diffs.set(t.id, { key, files: null });
-    fetch(`/api/tasks/${t.id}/diff`).then((r) => (r.ok ? r.text() : "")).then((text) => {
-      state.diffs.set(t.id, { key, files: parseDiff(text) });
+    // The diff that was showing stays up until the new one is in, and the review moves onto it.
+    state.diffs.set(t.id, { key, files: cached?.files ?? null });
+    fetch(`/api/tasks/${t.id}/diff`).then((r) => (r.ok ? r.text() : null)).then((text) => {
+      const files = text == null ? cached?.files ?? [] : parseDiff(text);
+      if (text != null && cached?.files) carryReview(t.id, cached.files, files);
+      state.diffs.set(t.id, { key, files });
       render();
     });
   }
   const files = state.diffs.get(t.id).files;
   if (!files) return h("div", { class: "card empty" }, "Loading the diff…");
   if (!files.length) return h("div", { class: "card empty" }, "No diff yet.");
-  return h("div", { style: "margin-top:12px" }, files.map((f) => h("div", { class: "diff" },
-    h("div", { class: "file" }, h("span", {}, f.path), h("span", { class: "spacer" }), h("span", { class: "ok" }, `+${f.added}`), h("span", { class: "bad" }, `−${f.removed}`)),
-    h("div", { class: "scroll" }, h("table", {}, f.lines.map((l) => h("tr", { class: l.kind },
-      h("td", { class: "n" }, l.old ?? ""), h("td", { class: "n" }, l.new ?? ""), h("td", { class: "c" }, l.text))))))));
+  const can = reviewable(t);
+  const notes = reviewNotes.get(t.id) ?? [];
+  return h("div", { style: "margin-top:12px" },
+    can && notes.length > 0 && reviewBar(t, notes),
+    can && !notes.length && h("p", { class: "muted", style: "font-size:13px;margin:0 0 10px" },
+      touch.matches ? "Tap a line number to comment on it; tap another to take in the lines between." : "Click a line number to comment on it; shift-click to take in more lines."),
+    files.map((f) => diffFile(t, f, can, notes.filter((n) => n.note.path === f.path))));
+}
+
+function diffFile(t, f, can, notes) {
+  const sel = reviewPicks.get(t.id);
+  const mine = sel?.path === f.path;
+  const click = (row, e) => {
+    const extending = mine && (e.shiftKey || (touch.matches && !(reviewText.get(t.id) ?? "").trim()));
+    reviewPicks.set(t.id, extending ? extend(sel, f.path, row) : pick(f.path, row));
+    render();
+    // On a phone the keyboard would cover the lines still being picked.
+    if (!touch.matches) document.querySelector(`[data-keep="${t.id}:review-comment"]`)?.focus({ preventScroll: true });
+  };
+  const rows = [];
+  f.lines.forEach((l, row) => {
+    const on = can && picked(sel, f.path, row) && pickable(l);
+    const num = (n) => can && pickable(l)
+      ? h("td", { class: "n pick", title: "Comment on this line", onclick: (e) => click(row, e) }, n ?? "")
+      : h("td", { class: "n" }, n ?? "");
+    rows.push(h("tr", { class: `${l.kind}${on ? " picked" : ""}${notes.some((n) => row >= n.rows.first && row <= n.rows.last) ? " noted" : ""}` },
+      num(l.old), num(l.new), h("td", { class: "c" }, l.text)));
+    for (const n of notes) if (n.rows.last === row) rows.push(h("tr", { class: "inline" }, h("td", { colspan: 3 }, pendingNote(t, n))));
+    if (can && mine && rowsOf(sel).last === row) rows.push(h("tr", { class: "inline" }, h("td", { colspan: 3 }, commentBox(t, f))));
+  });
+  return h("div", { class: "diff" },
+    h("div", { class: "file" }, h("span", {}, f.path), h("span", { class: "spacer" }),
+      notes.length > 0 && h("span", { class: "muted" }, `${notes.length} comment${notes.length === 1 ? "" : "s"}`),
+      h("span", { class: "ok" }, `+${f.added}`), h("span", { class: "bad" }, `−${f.removed}`)),
+    h("div", { class: "scroll" }, h("table", {}, rows)));
+}
+
+/** The box under the picked lines: what to say about them. */
+function commentBox(t, f) {
+  const sel = reviewPicks.get(t.id);
+  const lines = selected(sel, f.lines);
+  const draft = toNote(f.path, lines, "");
+  const close = () => { reviewPicks.delete(t.id); reviewText.delete(t.id); render(); };
+  const add = () => {
+    const text = (reviewText.get(t.id) ?? "").trim();
+    const note = toNote(f.path, lines, text);
+    if (!text || !note) return;
+    const r = rowsOf(sel);
+    reviewNotes.set(t.id, [...(reviewNotes.get(t.id) ?? []), { id: ++noteIds, rows: { first: r.first, last: r.last }, note }]);
+    close();
+  };
+  return h("div", { class: "review-box" },
+    h("b", {}, draft ? `Comment on ${linesLabel(draft)}` : "Pick a line to comment on"),
+    h("textarea", { "data-keep": `${t.id}:review-comment`, rows: 3, placeholder: "What should change here?",
+      oninput: (e) => reviewText.set(t.id, e.target.value),
+      onkeydown: (e) => {
+        if (e.key === "Escape") close();
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); }
+      } }, reviewText.get(t.id) ?? ""),
+    h("div", { class: "row", style: "gap:6px;justify-content:flex-end" },
+      h("button", { class: "btn small", onclick: close }, "Cancel"),
+      h("button", { class: "btn small primary", disabled: !draft, onclick: add }, "Add comment")));
+}
+
+/** A comment waiting to go with the review. */
+function pendingNote(t, n) {
+  const remove = () => { reviewNotes.set(t.id, (reviewNotes.get(t.id) ?? []).filter((x) => x.id !== n.id)); render(); };
+  return h("div", { class: "review-note" },
+    h("div", { class: "row", style: "gap:8px" },
+      h("span", { class: "pill" }, "Pending"), h("span", { class: "muted" }, linesLabel(n.note)), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: remove }, "Remove")),
+    h("div", { class: "review-note-text" }, n.note.text));
+}
+
+/** At the top of the Diff tab while comments wait: a summary and Submit review, sent as one change request. */
+function reviewBar(t, notes) {
+  const submit = () => {
+    const summary = (reviewSummary.get(t.id) ?? "").trim();
+    if (!send({ type: "task.review", id: t.id, notes: notes.map((n) => n.note), summary: summary || null })) return;
+    reviewNotes.delete(t.id);
+    reviewSummary.delete(t.id);
+    reviewPicks.delete(t.id);
+    reviewText.delete(t.id);
+    toast(`Review sent: ${notes.length} comment${notes.length === 1 ? "" : "s"}`);
+    render();
+  };
+  const discard = () => { reviewNotes.delete(t.id); reviewSummary.delete(t.id); render(); };
+  return h("div", { class: "review-bar" },
+    h("div", { class: "row", style: "gap:8px" },
+      h("b", {}, `Review · ${notes.length} comment${notes.length === 1 ? "" : "s"}`), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: discard }, "Discard"),
+      h("button", { class: "btn small primary", onclick: submit }, "Submit review")),
+    h("textarea", { "data-keep": `${t.id}:review-summary`, rows: 1, placeholder: "Summary (optional)",
+      oninput: (e) => reviewSummary.set(t.id, e.target.value),
+      onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } } }, reviewSummary.get(t.id) ?? ""));
+}
+
+/** A reloaded diff keeps the pending comments and the picked lines whose code is still there, renumbered;
+ *  comments on lines that are gone are dropped. */
+function carryReview(id, before, files) {
+  const moved = (path, rows, note) => {
+    const f = files.find((x) => x.path === path);
+    const at = f && relocate(rows, note, f.lines);
+    return at && { at, note: toNote(path, f.lines.slice(at.first, at.last + 1), note.text) };
+  };
+  const notes = reviewNotes.get(id);
+  if (notes?.length) {
+    const kept = notes.flatMap((n) => {
+      const m = moved(n.note.path, n.rows, n.note);
+      return m?.note ? [{ ...n, rows: m.at, note: m.note }] : [];
+    });
+    if (kept.length < notes.length) toast(`${notes.length - kept.length} pending comment${notes.length - kept.length === 1 ? " is" : "s are"} gone: those lines changed.`);
+    reviewNotes.set(id, kept);
+  }
+  const sel = reviewPicks.get(id);
+  const was = sel && before.find((x) => x.path === sel.path);
+  const note = was && toNote(sel.path, selected(sel, was.lines), "");
+  const m = note && moved(sel.path, rowsOf(sel), note);
+  if (!m) reviewPicks.delete(id);
+  else reviewPicks.set(id, { path: sel.path, anchor: sel.anchor <= sel.head ? m.at.first : m.at.last, head: sel.anchor <= sel.head ? m.at.last : m.at.first });
 }
 
 function parseDiff(text) {
@@ -1115,4 +1332,5 @@ window.addEventListener("hashchange", () => {
   window.scrollTo(0, 0);
   render();
 });
+$("update-refresh").addEventListener("click", () => location.reload());
 connect();

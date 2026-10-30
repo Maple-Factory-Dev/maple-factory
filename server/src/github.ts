@@ -197,8 +197,9 @@ export async function installationId(app: GitHubApp, owner: string, repo: string
   return id;
 }
 
-/** Whether `login` is in `org` now, asked as the app on the org's installation (it reads members there). */
-export async function orgMember(app: GitHubApp, org: string, login: string): Promise<boolean> {
+/** `login`'s role in `org` now ("admin" for its owners), or null if they aren't in it: asked as the app on the
+ *  org's installation (it reads members there). */
+export async function orgRole(app: GitHubApp, org: string, login: string): Promise<"admin" | "member" | null> {
   const jwt = `Bearer ${await appJwt(app)}`;
   const inst = await call(app, "GET", `/orgs/${seg(org)}/installation`, jwt);
   if (inst.status === 404) throw new GitHubError("not_installed", `The GitHub App isn't installed on ${org}.`, 404);
@@ -207,10 +208,13 @@ export async function orgMember(app: GitHubApp, org: string, login: string): Pro
   const tokenRes = await call(app, "POST", `/app/installations/${id}/access_tokens`, jwt, { permissions: { members: "read" } });
   if (!tokenRes.ok) throw await failure(tokenRes, `give a token to read ${org}'s members`);
   const { token } = (await tokenRes.json()) as { token: string };
-  const res = await call(app, "GET", `/orgs/${seg(org)}/members/${seg(login)}`, `token ${token}`);
-  if (res.status === 204) return true;
-  if (res.status === 404 || res.status === 302) return false;
-  throw await failure(res, `say whether ${login} is in ${org}`);
+  const res = await call(app, "GET", `/orgs/${seg(org)}/memberships/${seg(login)}`, `token ${token}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw await failure(res, `say whether ${login} is in ${org}`);
+  const body = (await res.json()) as { state?: string; role?: string };
+  // A pending invitation isn't membership yet.
+  if (body.state !== "active") return null;
+  return body.role === "admin" ? "admin" : "member";
 }
 
 /** What each job may do with its token. */

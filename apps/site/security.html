@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security · Maple Factory</title>
+  <meta name="description" content="How Maple Factory's server, runner and Mac app handle sign-in, tokens, secrets, updates and your data, and how to report a vulnerability.">
+  <meta name="theme-color" content="#faf5ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b0e1f" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+  <script>
+    try { var t = localStorage.getItem('mf-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Maple Factory home">
+        <picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="30" height="30"></picture>
+        <span>Maple Factory</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#process">How it works</a>
+        <a href="/#install">Install</a>
+        <a href="/download">Download</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>
+          <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="deploy security" aria-labelledby="security-title">
+      <div class="wrap deploy-inner">
+        <p class="kicker">Security</p>
+        <h1 id="security-title">How Maple Factory handles your code and credentials.</h1>
+        <p class="deploy-lede">Maple Factory has three parts: a server you deploy to your own Cloudflare account, a runner on your team’s machines, and a Mac app. This page says what each one does with sign-in, tokens, secrets and updates, for anyone reviewing it.</p>
+
+        <nav class="sec-toc" aria-label="On this page">
+          <a href="#server">Server</a>
+          <a href="#runner">Runner</a>
+          <a href="#mac">Mac app</a>
+          <a href="#report">Reporting a vulnerability</a>
+        </nav>
+
+        <!-- Server -->
+        <section class="sec-part" id="server" aria-labelledby="server-title">
+          <h2 id="server-title">Server <span>maple-server</span></h2>
+
+          <h3>Where it runs, and who has the data</h3>
+          <ul>
+            <li>Each organization runs its own factory: a Cloudflare Worker with two Durable Objects, a D1 database and an R2 bucket, deployed to your Cloudflare account with the Deploy to Cloudflare button or <code>npx maple-factory install</code>. There is no shared, hosted Maple Factory service.</li>
+            <li>Tasks, plans, members, machines, the audit log and repo secrets are stored in that account’s D1, Durable Object storage and R2. Anyone with access to the Cloudflare account can read them.</li>
+            <li>The factory makes outbound requests to GitHub’s API, to maplefactory.dev’s release feed (to fetch runner builds and check for new server versions), and to Slack, Linear or Jira only if you connect them.</li>
+            <li>Updates are yours to apply. A button deploy gets a daily GitHub Actions workflow that opens a pull request with the new release, which you review and merge. <code>maple install</code> and <code>maple update</code> only deploy a server release whose manifest is signed with Maple Factory’s Ed25519 release key and whose bundle matches the manifest’s SHA-256.</li>
+          </ul>
+
+          <h3>Sign-in</h3>
+          <ul>
+            <li>People sign in with GitHub, through a GitHub App your factory creates for itself at <code>/setup</code>. <code>/setup</code> only accepts an app owned by your configured organization, and changes nothing once sign-in works.</li>
+            <li>Only active members of that GitHub organization can sign in, plus any logins listed in <code>GITHUB_ALLOWED_LOGINS</code>. For a factory on a personal account, only that account and the listed logins can sign in. Refused sign-ins are recorded in the audit log.</li>
+            <li>Org membership is checked with GitHub at each sign-in, and again every 10 minutes for anyone with the web or Mac app open. Someone who has left the organization is cut off at the next check: their web sessions and app tokens stop working, their open terminals close, and their machines stay offline until they can sign in again. An admin can also cut someone off at once with <b>Revoke access</b> in the Mac app’s settings. On a personal-account factory, removing a login from the list signs them out at once.</li>
+            <li>The web app gets a session cookie signed with HMAC-SHA256. It is <code>HttpOnly</code>, <code>SameSite=Lax</code>, and on HTTPS <code>Secure</code> with a <code>__Host-</code> prefix. The GitHub OAuth flow uses a signed, single-browser <code>state</code> that expires after 10 minutes.</li>
+            <li>Browser requests that change data, and WebSocket upgrades, are refused unless their <code>Origin</code> is the factory itself.</li>
+          </ul>
+
+          <h3>Roles</h3>
+          <ul>
+            <li>GitHub organization owners are admins. An admin can make another member an admin in the factory. That changes their role, but doesn’t let in anyone who couldn’t already sign in.</li>
+            <li>Only admins can add or remove repos, set or delete repo secrets, change worktree scripts, the risk policy, prompts and MCP connectors, or see usage statistics.</li>
+            <li>Only a machine’s owner or an admin can start or end sessions on that machine, change its settings, or remove it.</li>
+            <li>Only a machine’s owner or an admin can open, type into or resize the live terminal of a session on that machine. Taking back someone’s admin grant closes the terminals they opened as an admin.</li>
+          </ul>
+
+          <h3>How the Mac app and runners authenticate</h3>
+          <ul>
+            <li>The Mac app signs in with GitHub’s device flow and gets a factory token (<code>mft_…</code>) that expires after 30 days.</li>
+            <li>To add a machine, a member asks for an enrollment code. It can be used once and expires after 15 minutes. The runner trades it for a machine token (<code>mfr_…</code>) and uses that token to connect from then on.</li>
+            <li>The factory stores only SHA-256 hashes of app tokens, machine tokens and enrollment codes. Tokens are 32 random bytes. Enrolling a machine again replaces its token and disconnects the old connection. Removing a machine deletes its token and disconnects it.</li>
+          </ul>
+
+          <h3>Repo secrets</h3>
+          <ul>
+            <li>Admins store per-repo secrets in Settings › Secrets. Nobody can view a value after it’s saved: the apps see only names, who changed them and when.</li>
+            <li>Each value is encrypted with AES-256-GCM, using a fresh IV and the repo and name as additional data, under a key derived with HKDF-SHA256 from <code>SECRETS_KEY</code>. <code>SECRETS_KEY</code> is a Worker secret if you set one; otherwise the factory generates a random key and stores it in D1. In that case, anyone who can read the D1 database can read the key too.</li>
+            <li>The factory sends a repo’s values only to the machine running a task on that repo, and only while the task is being planned, built or reviewed. The only other way to get values is <code>maple-runner secrets pull</code>, which works only on a machine whose owner is an org admin.</li>
+            <li>Every secret change and every time values are sent to a machine is recorded in the audit log, with names only.</li>
+          </ul>
+
+          <h3>GitHub App and its tokens</h3>
+          <ul>
+            <li>The app asks for: contents (write), pull requests (write), checks (write), actions (write), commit statuses (read), metadata (read), and organization members (read) for an org factory.</li>
+            <li>The factory never gives out the app’s full access. For each job it mints an installation token for one repository, with only that job’s permissions, which expires after an hour. A runner fetching code gets <code>contents: read</code>. A runner pushing a branch gets <code>contents: write</code>.</li>
+            <li>A runner only gets a token for the repo of a task that is assigned to that machine.</li>
+            <li>The app is public on GitHub, so that it can be installed on repos in other accounts. The factory only uses installations on your organization and on accounts an admin approved.</li>
+            <li>The app’s webhooks are checked against <code>GITHUB_WEBHOOK_SECRET</code> (HMAC-SHA256), and Linear’s against its signing secret.</li>
+          </ul>
+
+          <h3>Audit log</h3>
+          <p>The D1 <code>audit</code> table records who did what and when: sign-ins and refused sign-ins, admin grants, machines enrolled and removed, sessions opened and killed, repos, secrets, worktree scripts, policy, prompts and connectors changed, secrets sent to a machine, and tasks created, moved, merged and cancelled. Secret values and script contents are never written to it. There’s no audit viewer in the apps yet: you read the table with <code>wrangler d1 execute</code>.</p>
+
+          <h3>Local development routes</h3>
+          <p><code>/dev/*</code> routes, and signing in without GitHub, only work when the <code>DEV_LOGIN</code> variable is set and the request’s host is <code>localhost</code> or <code>127.0.0.1</code>. Otherwise they return 404. <code>DEV_LOGIN</code> is meant for <code>.dev.vars</code> and isn’t part of a deployed factory’s configuration.</p>
+        </section>
+
+        <!-- Runner -->
+        <section class="sec-part" id="runner" aria-labelledby="runner-title">
+          <h2 id="runner-title">Runner <span>maple-runner</span></h2>
+
+          <h3>Network</h3>
+          <ul>
+            <li>The runner makes one outbound WebSocket connection to your factory (<code>wss://&lt;factory&gt;/runner/connect</code>), authenticated with its machine token. It doesn’t open any port for inbound connections. Ports it uses for its own work bind to <code>127.0.0.1</code>.</li>
+            <li>It uses TLS (rustls) for that connection and for downloading updates.</li>
+          </ul>
+
+          <h3>Where it runs, and what it can reach</h3>
+          <ul>
+            <li>The runner is installed per user, as a launchd agent on macOS or a systemd user service on Linux, and runs as that user. It doesn’t use root.</li>
+            <li>Coding agents (Claude Code, Codex) run as that same user, with the same access to files, credentials and network that user has. Treat a runner machine as one where agents can do anything that user account can do.</li>
+            <li>Factory sessions start Claude Code in its <code>auto</code> permission mode, with <code>git</code>, the repo’s configured commands and the factory’s own MCP tools pre-approved. They start Codex in its <code>workspace-write</code> sandbox with network access and automatic review of approvals.</li>
+            <li>Sessions run in tmux, on a private tmux server whose socket is in <code>~/.config/maple/</code>. Each task gets its own git worktree, outside the repo, on its own <code>agent/…</code> branch.</li>
+            <li>The folder browser and file views in the apps only show paths under the user’s home directory. Paths containing <code>..</code> are refused.</li>
+            <li>The machine token is saved in <code>~/.config/maple/runner.json</code>, readable only by that user (mode 0600).</li>
+          </ul>
+
+          <h3>Secrets on the machine</h3>
+          <ul>
+            <li>A task’s secrets reach its session through a one-time file (mode 0600, in <code>~/.config/maple/secrets/</code>, never in the worktree). The pane’s shell reads it and deletes it before starting the agent. The values are in the pane’s processes only, not in tmux’s session environment.</li>
+            <li>The agent working on a task can read that repo’s secrets. Before the runner sends output to the factory (logs, proofs, the terminal stream and its replays), it replaces each secret value with <code>***</code>. Values shorter than 6 characters aren’t replaced, and neither are encoded forms of a value, such as base64.</li>
+            <li><code>maple-runner secrets pull</code> writes to a <code>.env.local</code> with mode 0600, and refuses if that file isn’t gitignored. The runner also refuses a pull that comes from a process inside one of its sessions. That check can be bypassed by a process that detaches itself. What actually stops an agent on a member’s machine is the factory’s check that only an admin’s machine can pull.</li>
+            <li>Other processes running as the same user can read a process’s environment.</li>
+          </ul>
+
+          <h3>Pushing to GitHub</h3>
+          <p>The runner pushes a task’s branch with a one-hour token for that repo only. The token is passed as an argument to that one <code>git</code> command, and is never written to git config, a remote, or a log. An empty <code>credential.helper</code> stops a keychain helper from saving it. Pushing with the machine’s own git credentials is a setting that is off unless someone turns it on.</p>
+
+          <h3>Installs and updates</h3>
+          <ul>
+            <li>Runner releases are described by a manifest that is signed with an Ed25519 key. The public key is compiled into the runner. A runner checks the signature before it trusts anything in the manifest, then checks that the download matches the manifest’s size and SHA-256. It only installs a version newer than the one it’s running.</li>
+            <li>Runners download releases through your factory, which passes along maplefactory.dev’s feed. Because of the signature check, someone who controlled the factory or the feed could hold back updates, but couldn’t make runners install a build of their own.</li>
+            <li>macOS runner builds in the feed are code-signed with a Developer ID, with the hardened runtime.</li>
+            <li>The first install from <code>/install.sh</code> is a shell script. It checks the binary against the manifest’s SHA-256 but doesn’t check the manifest’s signature, so it relies on HTTPS to your factory. Every update after that is checked against the signature.</li>
+          </ul>
+        </section>
+
+        <!-- Mac app -->
+        <section class="sec-part" id="mac" aria-labelledby="mac-title">
+          <h2 id="mac-title">Mac app</h2>
+          <ul>
+            <li><strong>Signing.</strong> Release builds are signed with a Developer ID Application certificate, with the hardened runtime and a secure timestamp. This covers the app, its bundled runner and tmux, and Sparkle’s helpers. The release script refuses to ship a build that isn’t signed with a Developer ID. The app and the DMG are each notarized by Apple and stapled.</li>
+            <li><strong>Updates.</strong> The app updates with Sparkle from <code>https://updates.maplefactory.dev/appcast.xml</code> and checks hourly. Each update is signed with an EdDSA (Ed25519) key, and Sparkle checks the signature against the public key built into the app before it installs.</li>
+            <li><strong>Credentials.</strong> Your factory token is stored in the macOS login Keychain, one item per factory address. The exception is a plain-<code>http://</code> local development factory, whose token is kept in the app’s preferences.</li>
+            <li><strong>Connections.</strong> The app connects to your factory over HTTPS and WebSockets, to updates.maplefactory.dev for updates, and to GitHub for avatars. GitHub sign-in opens github.com in your browser.</li>
+          </ul>
+        </section>
+
+        <!-- Reporting -->
+        <section class="sec-part" id="report" aria-labelledby="report-title">
+          <h2 id="report-title">Reporting a vulnerability</h2>
+          <p>Email <a href="mailto:andrea.fomera@gmail.com">andrea.fomera@gmail.com</a>. Please report privately, and don’t disclose the issue publicly until a fix has shipped. Include:</p>
+          <ul>
+            <li>the affected component (server, runner or Mac app) and its version. The server’s version is at <code>/healthz</code>, and the runner’s is shown by <code>maple-runner --version</code>;</li>
+            <li>steps to reproduce;</li>
+            <li>what an attacker could do with it.</li>
+          </ul>
+          <p>This is also published as <a href="/.well-known/security.txt">/.well-known/security.txt</a>.</p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <p class="foot-brand"><picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="22" height="22" loading="lazy"></picture> Maple Factory</p>
+      <p class="foot-note">Set in <a href="https://afomera.dev/fonts">Atlas</a>. Boiled down in small batches.</p>
+      <p class="foot-links"><a href="/security" aria-current="page">Security</a></p>
+      <p class="foot-copy">© <span id="year">2026</span> Maple Factory</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,6 +1,7 @@
 // The auto-merge countdown (task.mergeAt). A low-risk task whose last gate passes isn't merged at once:
 // the factory stamps mergeAt (now + MERGE_GRACE_MS), says "will auto-merge in Ns", keeps it reviewing
-// until then and merges afterwards. Hold (task.holdMerge) stops it for good on that head and a person's
+// until then and merges afterwards. The moment the countdown runs out it says "Merging…" (before its
+// dry-run merge check), and a Merge sent then, or again while it merges, is a quiet no-op. Hold (task.holdMerge) stops it for good on that head and a person's
 // Merge lands it; Request changes during the countdown clears it, and the next round counts down again.
 //   node server/test/e2e-merge-countdown.mjs http://localhost:8788 <repo folder>
 // Needs a real runner whose agents.toml has the `scripted` agent (test/scripted-agent.mjs), a local repo
@@ -26,7 +27,7 @@ feed.onmessage = (e) => {
   if (m.type === "snapshot") { goals = m.goals; policy = m.policy; for (const t of m.tasks) tasks.set(t.id, t); }
   if (m.type === "task.updated") {
     tasks.set(m.task.id, m.task);
-    seen.set(m.task.id, [...(seen.get(m.task.id) ?? []), { at: Date.now(), state: m.task.state, mergeAt: m.task.mergeAt ?? null }]);
+    seen.set(m.task.id, [...(seen.get(m.task.id) ?? []), { at: Date.now(), state: m.task.state, mergeAt: m.task.mergeAt ?? null, liveLog: m.task.liveLog ?? null }]);
   }
   if (m.type === "policy.updated") policy = m.policy;
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
@@ -87,7 +88,27 @@ await pause(Math.max(0, a.t.mergeAt - Date.now() - 300));
 let t = tasks.get(a.id);
 if (t.state !== "reviewing" || autoMerged(t) || onMain(a.id)) throw new Error(`${a.id} is ${t.state} 300ms before its mergeAt: ${t.events.at(-1).text}`);
 step(`300ms before mergeAt: still reviewing, not merged, not on origin main`);
+// A person's late click, right as the countdown ends: no error, no second merge.
+await pause(Math.max(0, a.t.mergeAt - Date.now()));
+send({ type: "task.merge", id: a.id });
+const flipped = await wait(`${a.id} Merging…`, () => seen.get(a.id).find((s) => s.liveLog === "Merging…"), 10000);
+// The hub's alarm fires at mergeAt; "within a tick" allows for its scheduling and the feed's hop.
+if (flipped.at - a.t.mergeAt > 1000) throw new Error(`Merging… showed ${flipped.at - a.t.mergeAt}ms after mergeAt`);
+if (seen.get(a.id).find((s) => s.liveLog === "Merging…" && s.at < a.t.mergeAt)) throw new Error("Merging… before mergeAt");
+step(`Merging… showed ${flipped.at - a.t.mergeAt}ms after mergeAt; a Merge sent at 0s was no error`);
+if (tasks.get(a.id).state === "reviewing") {
+  send({ type: "task.merge", id: a.id });
+  send({ type: "task.holdMerge", id: a.id });
+  step("Merge and Hold sent again while it's merging");
+}
 t = await wait(`${a.id} merged`, () => tasks.get(a.id)?.state === "merged" && tasks.get(a.id), 30000);
+await pause(1000); // a stray second merge would say so by now
+t = tasks.get(a.id);
+if (errors.length) throw new Error(`server said: ${errors.join("; ")}`);
+const merges = t.events.filter((e) => /merged it/.test(e.text));
+if (merges.length !== 1) throw new Error(`${merges.length} merges: ${merges.map((e) => `${e.who}: ${e.text}`).join(" / ")}`);
+if (t.liveLog != null) throw new Error(`merged, still saying ${t.liveLog}`);
+step(`no errors, exactly one merge ("${merges[0].who}: ${merges[0].text}"), liveLog cleared`);
 const merged = seen.get(a.id).find((s) => s.state === "merged");
 if (merged.at < a.t.mergeAt) throw new Error(`merged ${a.t.mergeAt - merged.at}ms before its mergeAt`);
 const texts = t.events.map((e) => e.text);

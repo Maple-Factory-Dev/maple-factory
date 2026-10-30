@@ -64,6 +64,14 @@ export const enums: Record<string, Enum> = {
       failed: "It couldn't; `error` says why.",
     },
   },
+  ScoutState: {
+    doc: "Where a goal's Scout run is.",
+    values: { running: "Its agent is looking over the goal's leftovers.", done: "Finished: `tasks` went to planning.", failed: "It couldn't; `error` says why." },
+  },
+  RepoSetupState: {
+    doc: "Where a repo's Set up with AI run is.",
+    values: { running: "Its agent is reading the repo.", done: "Finished: `suggestion` is filled in.", failed: "It couldn't; `error` says why." },
+  },
   DraftLineKind: {
     doc: "A line of a draft's transcript.",
     values: { text: "Something the agent said or thought.", tool: "Something it did: \"Reading lib/session.ts\"." },
@@ -464,8 +472,8 @@ export const structs: Record<string, Struct> = {
   },
   RepoWorktreeScripts: {
     doc: "One repo's worktree scripts, and who last changed them.",
-    fields: { repo: "string", scripts: "WorktreeScripts", updatedBy: "string", updatedAt: "u64" },
-    fieldDocs: { repo: "GitHub owner/name." },
+    fields: { repo: "string", scripts: "WorktreeScripts", prompts: "PromptAdditions?", updatedBy: "string", updatedAt: "u64" },
+    fieldDocs: { repo: "GitHub owner/name.", prompts: "The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server." },
   },
   ServerUpdate: {
     doc: "A newer maple-server than the factory runs, and how this factory gets it.",
@@ -538,6 +546,7 @@ export const structs: Record<string, Struct> = {
       branch: "string?",
       machine: "string?",
       splitFrom: "string?",
+      scoutedFrom: "string?",
       repo: "string?",
       after: "string[]",
       followUps: "FollowUp[]",
@@ -561,6 +570,7 @@ export const structs: Record<string, Struct> = {
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
       after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
       splitFrom: "The task it was split off from to stay inside the PR budget.",
+      scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
@@ -584,10 +594,12 @@ export const structs: Record<string, Struct> = {
       autoMerge: "map<bool>",
       autoFixMerges: "bool?",
       autoMerges: "bool?",
+      scoutItems: "u32?",
     },
     fieldDocs: {
       autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
+      scoutItems: "The most leftovers one Scout run turns into drafted plans (1–10). None: 3.",
       maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
       planApprovals: "By risk level (low, medium, high).",
     },
@@ -693,6 +705,21 @@ export const structs: Record<string, Struct> = {
     doc: "One line of what a draft's agent said or did.",
     fields: { kind: "DraftLineKind", text: "string" },
   },
+  RepoSetupSuggestion: {
+    doc: "What a Set up with AI run suggests for a repo, for an admin to review and save.",
+    fields: { scripts: "WorktreeScripts", prompts: "PromptAdditions", notes: "string[]" },
+    fieldDocs: { notes: "Short notes from the agent: what it found and why it suggests these." },
+  },
+  RepoSetupRun: {
+    doc: "Set up with AI for one repo: an agent that can't change anything reads the repo and suggests its worktree scripts and prompt additions.",
+    fields: { repo: "string", by: "string", state: "RepoSetupState", startedAt: "u64", progress: "string?", suggestion: "RepoSetupSuggestion?", error: "string?" },
+    fieldDocs: { by: "Who started it (an admin); it runs on their machine.", progress: "What the agent is doing now, one line." },
+  },
+  ScoutRun: {
+    doc: "A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.",
+    fields: { goal: "string", by: "string", state: "ScoutState", startedAt: "u64", tasks: "string[]", error: "string?" },
+    fieldDocs: { by: "Who started it; it runs on their machine.", tasks: "The tasks it sent to planning." },
+  },
   Draft: {
     doc: "Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.",
     fields: {
@@ -777,7 +804,7 @@ export const structs: Record<string, Struct> = {
     },
   },
   StatsCount: { fields: { key: "string", count: "u32", medianMs: "u64?" } },
-  StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD (UTC)." } },
+  StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC)." } },
   StatsGoalRow: {
     fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?" },
   },
@@ -1075,6 +1102,13 @@ export const unions: Record<string, Union> = {
       },
       "draft.goal": { doc: "Carry on a draft with this goal (one it suggested making, or another).", fields: { id: "string", goal: "string" } },
       "draft.cancel": { fields: { id: "string" } },
+      "goal.scout": { doc: "Run Scout on a goal: its leftovers still worth doing come back as drafted plans.", fields: { goal: "string" } },
+      "repo.setup.start": {
+        doc: "Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.",
+        fields: { repo: "string", agent: "string?" },
+        fieldDocs: { agent: "claude or codex; none: whichever the machine has." },
+      },
+      "repo.setup.cancel": { doc: "Stop a repo's Set up with AI run.", fields: { repo: "string" } },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -1102,6 +1136,7 @@ export const unions: Record<string, Union> = {
       "prompts.save": { doc: "Admins only: the org's prompt additions.", fields: { prompts: "PromptAdditions" } },
       "admins.grant": { doc: "Admins only: make someone who has signed in an admin of this factory.", fields: { login: "string" } },
       "admins.revoke": { doc: "Admins only: take back an admin grant (not a GitHub owner's, nor your own).", fields: { login: "string" } },
+      "members.revoke": { doc: "Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).", fields: { login: "string" } },
       "connectors.save": {
         doc: "Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.",
         fields: { connectors: "McpConnector[]" },
@@ -1120,8 +1155,9 @@ export const unions: Record<string, Union> = {
       },
       "secrets.delete": { doc: "Admins only.", fields: { repo: "string", name: "string" } },
       "repos.scripts.set": {
-        doc: "Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.",
-        fields: { repo: "string", scripts: "WorktreeScripts" },
+        doc: "Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.",
+        fields: { repo: "string", scripts: "WorktreeScripts", prompts: "PromptAdditions?" },
+        fieldDocs: { prompts: "The repo's prompt additions; none (an older app) keeps the stored ones." },
       },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",
@@ -1227,6 +1263,7 @@ export const unions: Record<string, Union> = {
           githubApp: "GitHubAppInfo?",
           secrets: "RepoSecret[]",
           scripts: "RepoWorktreeScripts[]?",
+          setupRuns: "RepoSetupRun[]?",
           runnerLatest: "string?",
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
@@ -1240,6 +1277,7 @@ export const unions: Record<string, Union> = {
           prompts: "The org's prompt additions. None: an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",
+          setupRuns: "Each repo's latest Set up with AI run. None: an older server.",
           repoOwners: "Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.",
           githubApp: "The factory's GitHub App. None: no app, or an older server.",
           connectors: "The factory's MCP connectors, secret values blank. None: an older server.",
@@ -1261,6 +1299,8 @@ export const unions: Record<string, Union> = {
       "intake.updated": { fields: { request: "IntakeRequest" } },
       "note.removed": { fields: { id: "uuid" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
+      "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
+      "repo.setup.updated": { doc: "How a repo's Set up with AI run is going.", fields: { run: "RepoSetupRun" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },

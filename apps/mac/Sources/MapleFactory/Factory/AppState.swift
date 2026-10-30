@@ -1574,7 +1574,7 @@ final class AppState {
 
     /// An approval or merge sent to the factory that the task doesn't show yet.
     struct InFlight {
-        enum Kind { case approvePlan, approveChanges, merge }
+        enum Kind { case approvePlan, approveChanges, merge, holdMerge }
         let kind: Kind
         let startedAt: Date
     }
@@ -1601,7 +1601,16 @@ final class AppState {
         case .approvePlan: return task.approvals.contains { $0.id == me } || (task.state != .awaitingApproval && task.state != .backlog)
         case .approveChanges: return task.reviews.contains { $0.id == me }
         case .merge: return task.state == .merged || task.pr?.state == .merged
+        case .holdMerge: return task.mergeAt == nil
         }
+    }
+
+    /// The factory has its merge: it says Merging…, a merge was sent, or its auto-merge countdown ran out
+    /// (the server says Merging… a moment later). Merge, Hold and Merge now all lock until it lands.
+    func isMerging(_ task: FactoryTask, now: Date = .now) -> Bool {
+        if task.merging || autoMerging.contains(task.id) || isInFlight(task.id, .merge) { return true }
+        guard task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt else { return false }
+        return mergeAt <= now
     }
 
     /// Records `kind` as sent for the task; false when it's already in flight, so a second click sends nothing.
@@ -2006,7 +2015,7 @@ final class AppState {
     /// Stops the auto-merge counting down on a task; a person merges it instead.
     func holdMerge(_ id: String) {
         if let client, isLive {
-            client.send(.taskHoldMerge(.init(id: id)))
+            if beginInFlight(id, .holdMerge) { client.send(.taskHoldMerge(.init(id: id))) }
             return
         }
         withAnimation(.snappy(duration: 0.25)) {
@@ -2053,6 +2062,11 @@ final class AppState {
                     task.mergeFrom = nil
                 }
                 self.autoMerging.insert(id)
+                // A demo script shows the factory's "Merging…" for a moment, as the server's merge does.
+                if AppDefaults.string(forKey: "actions") != nil {
+                    self.update(id) { $0.liveLog = FactoryTask.mergingLog }
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
                 self.merge(id, byFactory: true)
             }
         }
@@ -2250,6 +2264,19 @@ final class AppState {
                     if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { goalSheet = .edit(goal.id); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // The goal header's Scout button, on a goal by its name or task prefix: `scout:MF`. Signing in, it waits for the goal.
+            case "scout":
+                for _ in 0..<300 {
+                    if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { client?.scout(goal: goal.name); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            // Settings → Scout's Items per Scout run stepper set to a number: `scoutitems:5`.
+            case "scoutitems":
+                for _ in 0..<300 where client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let client, var policy = client.riskPolicy, let n = Int(parts[1]) {
+                    policy.scoutItems = n
+                    client.save(policy: policy)
+                }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
@@ -2328,6 +2355,7 @@ final class AppState {
                 NotificationCenter.default.post(name: MentionKey.demo, object: key)
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
+            case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.

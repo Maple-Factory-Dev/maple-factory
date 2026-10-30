@@ -82,6 +82,10 @@ struct GoalView: View {
                 Spacer()
                 FollowButton(following: state.isFollowing(goal)) { state.setFollowing(goal, !state.isFollowing(goal)) }
                     .padding(.trailing, 6)
+                if state.isLive, let live = client.goal(named: goal.name) {
+                    ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
+                        .padding(.trailing, 6)
+                }
                 RiskPolicyButton()
                     .padding(.trailing, 10)
                 if state.isLive, let live = client.goal(named: goal.name) {
@@ -115,6 +119,61 @@ struct GoalView: View {
             FlowBar(tasks: tasks)
                 .padding(.top, 8)
         }
+    }
+}
+
+/// Scout: an agent picks the goal's leftovers still worth doing (backlog tasks, review findings left
+/// open) and they come back as drafted plans. Shows the latest run's state beside it.
+struct ScoutButton: View {
+    let run: Wire.ScoutRun?
+    let action: () -> Void
+
+    private var running: Bool { run?.state == .running }
+
+    private var result: String? {
+        switch run?.state {
+        case .done?:
+            let n = run?.tasks.count ?? 0
+            return n == 0 ? "Nothing left over" : n == 1 ? "1 plan drafted" : "\(n) plans drafted"
+        case .failed?:
+            // The whole error is in the tooltip.
+            let error = run?.error ?? "Scout failed"
+            return error.count > 40 ? error.prefix(39) + "…" : error
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if running {
+                    ProgressView().controlSize(.mini)
+                    Text("Scouting…")
+                } else {
+                    Image(systemName: "binoculars").font(.system(size: 11))
+                    Text("Scout")
+                    if let result {
+                        Text(result)
+                            .foregroundStyle(run?.state == .failed ? Theme.State.cancelled : Theme.textMuted)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(running)
+        .help(run?.state == .failed ? (run?.error ?? "") : "Find this goal's leftovers still worth doing, and draft plans for them")
     }
 }
 
@@ -637,6 +696,16 @@ struct TaskCard: View {
 
             if let effort = task.effort { EffortChip(effort: effort) }
 
+            if let from = task.scoutedFrom {
+                HStack(spacing: 4) {
+                    Image(systemName: "binoculars").font(.system(size: 9.5))
+                    Text("Scouted from \(from.split(separator: "#").first.map(String.init) ?? from)")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+                .help(from.contains("#") ? "A review finding left open on \(from.replacingOccurrences(of: "#", with: " (")))" : "Scout picked it up from \(from)")
+            }
+
             if task.queued {
                 QueuedFooter(task: task)
             } else {
@@ -667,7 +736,8 @@ struct TaskCard: View {
             }
 
             if mergeButton {
-                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isInFlight(task.id, .merge),
+                // Busy from the click until the server reports it merged, not just until the request returns.
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isMerging(task),
                               busyTitle: "Merging…") {
                     state.merge(task.id)
                 }
@@ -725,11 +795,19 @@ struct QueuedFooter: View {
 
 /// The state-specific line under a task: progress, checks and diff, a spinner, or plain detail text.
 struct TaskProgressFooter: View {
+    @Environment(AppState.self) private var state
     let task: FactoryTask
     var compact = false
 
     var body: some View {
-        if let progress = task.progress {
+        if state.isMerging(task) {
+            merging(FactoryTask.mergingLog)
+        } else if task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt {
+            TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
+                merging(left > 0 ? "Merging in \(left)s" : FactoryTask.mergingLog)
+            }
+        } else if let progress = task.progress {
             if compact {
                 HStack(spacing: 8) {
                     bar(progress).frame(width: 60)
@@ -772,6 +850,16 @@ struct TaskProgressFooter: View {
             .font(.system(size: 11.5))
             .foregroundStyle(Theme.textMuted)
             .lineLimit(1)
+    }
+
+    /// Merging, or counting down to the auto-merge: a spinner and the line in the merged color.
+    private func merging(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(text).monospacedDigit().lineLimit(1)
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(Theme.State.merged)
     }
 
     private func bar(_ progress: Double) -> some View {

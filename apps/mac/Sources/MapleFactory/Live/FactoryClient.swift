@@ -56,6 +56,10 @@ import Security
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
+    /// Each goal's latest Scout run since this app connected, by goal id.
+    private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
+    /// Each repo's latest Set up with AI run, by lowercased repo name.
+    private(set) var setupRuns: [String: Wire.RepoSetupRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
@@ -285,6 +289,8 @@ import Security
         notes = []
         drafts = [:]
         follows = [:]
+        scoutRuns = [:]
+        setupRuns = [:]
         policy = nil
         prompts = nil
         connectors = nil
@@ -419,6 +425,7 @@ import Security
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
+            setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
@@ -489,6 +496,10 @@ import Security
             if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
         case .draftUpdated(let update):
             drafts[update.draft.id] = update.draft
+        case .scoutUpdated(let update):
+            scoutRuns[update.run.goal] = update.run
+        case .repoSetupUpdated(let update):
+            setupRuns[update.run.repo.lowercased()] = update.run
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
@@ -627,6 +638,12 @@ import Security
         send(.goalFollow(.init(id: goal.id, following: following)))
     }
 
+    /// Run Scout on a goal: its leftovers come back as drafted plans, and `scoutRuns` says how it went.
+    func scout(goal name: String) {
+        guard let goal = goal(named: name) else { return }
+        send(.goalScout(.init(goal: goal.id)))
+    }
+
     /// Every GitHub team someone in the org is on, for a goal's team.
     var teams: [String] { Array(Set(members.flatMap(\.teams) + (me?.teams ?? []))).sorted() }
 
@@ -671,6 +688,11 @@ import Security
     /// Admins only: takes back a grant (not a GitHub owner's, nor my own).
     func revokeAdmin(_ login: String) {
         send(.adminsRevoke(.init(login: login)))
+    }
+
+    /// Admins only: signs someone out everywhere now (not a GitHub owner, nor me); members.updated says it took.
+    func revokeAccess(_ login: String) {
+        send(.membersRevoke(.init(login: login)))
     }
 
     // MARK: Icon
@@ -757,9 +779,24 @@ import Security
         let _: Empty = try await api("/api/name", method: "DELETE")
     }
 
-    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
-    func save(scripts: Wire.WorktreeScripts, for repo: String) {
-        send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared) and its prompt additions; repos.updated says how they were saved.
+    func save(scripts: Wire.WorktreeScripts, prompts: Wire.PromptAdditions? = nil, for repo: String) {
+        send(.reposScriptsSet(.init(repo: repo, scripts: scripts, prompts: prompts)))
+    }
+
+    /// Admins only: Set up with AI on `repo`. An agent on one of your machines reads it and suggests
+    /// scripts and prompts; `setupRun(for:)` says how it's going, and nothing is saved until you do.
+    func startSetup(for repo: String) {
+        send(.repoSetupStart(.init(repo: repo)))
+    }
+
+    func cancelSetup(for repo: String) {
+        send(.repoSetupCancel(.init(repo: repo)))
+    }
+
+    /// `repo`'s latest Set up with AI run, if there's been one.
+    func setupRun(for repo: String) -> Wire.RepoSetupRun? {
+        setupRuns[repo.lowercased()]
     }
 
     /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.
@@ -870,6 +907,21 @@ import Security
         return request
     }
 
+    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
+    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
+    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    nonisolated static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
+        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
+        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
+              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        request.url = components.url
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 403,
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
+        return text
+    }
+
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
         send(.statsGet(.init(days: UInt32(days), goal: goal)))
@@ -909,7 +961,9 @@ import Security
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+        // A big patch takes a moment to parse; keep it off the main thread.
+        let files = await Task.detached { DiffFile.parse(String(decoding: data, as: UTF8.self)) }.value
+        diffs[id] = (key, files)
     }
 
     /// Each task's GitHub review threads as last fetched, and the change they were fetched for.
