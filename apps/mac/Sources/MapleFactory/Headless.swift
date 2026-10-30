@@ -66,21 +66,49 @@ enum Headless {
         await Snapshotter.shared?.settleThenShoot(name)
     }
 
-    /// A key pressed in the main window (`key:esc`), as a key equivalent first, the way AppKit tries it, then as a
-    /// key down. The window is never key headless, so the event goes to it directly.
+    /// A key pressed in the main window (`key:esc`, `key:cmd+b`), as a key equivalent first, the way AppKit tries it:
+    /// the window, then the main menu. Otherwise it's a key down. The window is never key headless, so the event goes
+    /// to it directly.
     @MainActor static func press(_ key: String) {
-        let (characters, code): (String, UInt16) = switch key {
-        case "esc": ("\u{1b}", 53)
-        case "return": ("\r", 36)
-        default: (key, 0)
-        }
+        let (characters, code, modifiers) = keyStroke(key)
         guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow,
-              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
                                            windowNumber: window.windowNumber, context: nil, characters: characters,
                                            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
         else { return }
-        if !window.performKeyEquivalent(with: event) { window.sendEvent(event) }
+        if window.performKeyEquivalent(with: event) { return }
+        if !modifiers.isEmpty, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
+        window.sendEvent(event)
     }
+
+    /// `key:` as characters, key code and modifiers: `cmd+b` → ("b", 11, .command). Modifiers are cmd, ctrl, opt
+    /// (or alt) and shift, joined by `+`; the last part is the key.
+    static func keyStroke(_ key: String) -> (characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags) {
+        var parts = key.lowercased().split(separator: "+").map(String.init)
+        let name = parts.popLast() ?? ""
+        var modifiers: NSEvent.ModifierFlags = []
+        for part in parts {
+            switch part {
+            case "cmd", "command": modifiers.insert(.command)
+            case "ctrl", "control": modifiers.insert(.control)
+            case "opt", "option", "alt": modifiers.insert(.option)
+            case "shift": modifiers.insert(.shift)
+            default: break
+            }
+        }
+        let (characters, code): (String, UInt16) = switch name {
+        case "esc": ("\u{1b}", 53)
+        case "return": ("\r", 36)
+        default: (name, keyCodes[name] ?? 0)
+        }
+        return (characters, code, modifiers)
+    }
+
+    /// ANSI key codes for the letters, so a chord reads as the key it is.
+    private static let keyCodes: [String: UInt16] = [
+        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13,
+        "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
+    ]
 
     /// Waits until `busy` is false (polling every 50ms), or `timeout` passes; false on timeout.
     @MainActor static func untilIdle(timeout: Duration, _ busy: () -> Bool) async -> Bool {

@@ -1973,7 +1973,7 @@ final class AppState {
             // for the first of that kind), and put away (`lightbox:close`).
             case "lightbox":
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
-            // A key pressed in the window, headless: `key:esc`.
+            // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
