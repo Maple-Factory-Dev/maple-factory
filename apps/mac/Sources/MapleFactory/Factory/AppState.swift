@@ -710,6 +710,13 @@ final class AppState {
         }
     }
 
+    /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
+    /// in (else the usual one), a title, and a brief listing each finding with the task it came from.
+    func composeFromFindings(_ rows: [Wire.StatsFindingRow]) {
+        guard !rows.isEmpty else { return }
+        startCompose(goal: FindingsTask.goal(rows, tasks: tasks), title: FindingsTask.title(rows), body: FindingsTask.body(rows))
+    }
+
     /// Closes the composer. A Draft with AI that's running keeps going, to come back to; one that
     /// failed while open has been seen, so it isn't brought back.
     func cancelCompose() {
