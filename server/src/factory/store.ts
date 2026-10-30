@@ -428,6 +428,15 @@ export class Store {
     else this.sql.exec("DELETE FROM kv WHERE key = 'name'");
   }
 
+  /** Other GitHub accounts an admin approved: the app's installations on them add repos too. */
+  repoOwners(): string[] {
+    return JSON.parse(this.get("repoOwners") ?? "[]");
+  }
+
+  saveRepoOwners(owners: string[]) {
+    this.set("repoOwners", JSON.stringify(owners));
+  }
+
   /** The org's repos (from the GitHub App, and added by hand), and when the app's were last read. */
   repos(): OrgRepo[] {
     return (JSON.parse(this.get("repos") ?? "[]") as (OrgRepo & { private?: boolean })[]).map(({ private: hidden, ...r }) => ({ ...r, isPrivate: r.isPrivate ?? hidden ?? false }));

@@ -22,6 +22,7 @@ check(personal ? action.startsWith("https://github.com/settings/apps/new?state="
   `the form posts to the ${personal ? "account's" : "org's"} new-app page`);
 check(Boolean(state) && cookie.includes(state), "the state is also in a cookie");
 check(manifest.redirect_url === `${base}/setup/github` && manifest.callback_urls?.[0] === `${base}/auth/callback`, "the manifest comes back here");
+check(manifest.public === true, "the app is public, so other orgs can install it");
 check(personal ? !("members" in (manifest.default_permissions ?? {})) : manifest.default_permissions?.members === "read",
   personal ? "the app doesn't ask for org members" : "the app may read org members");
 

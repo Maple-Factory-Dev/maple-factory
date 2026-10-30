@@ -416,6 +416,16 @@ export const structs: Record<string, Struct> = {
     fields: { name: "string", defaultBranch: "string?", isPrivate: "bool", source: "RepoSource" },
     fieldDocs: { name: "GitHub owner/name.", source: "Granted to the GitHub App, or added by hand (no app, or not yet granted)." },
   },
+  GitHubAppInfo: {
+    doc: "The factory's GitHub App, for installing it on another GitHub account.",
+    fields: { slug: "string", ownerType: "string?", settingsUrl: "string", installUrl: "string" },
+    fieldDocs: {
+      slug: "Its name in github.com/apps/<slug>.",
+      ownerType: "User or Organization: the account that owns it (GITHUB_ORG). None: not known.",
+      settingsUrl: "Its advanced settings on GitHub, where it's made public so another account can install it.",
+      installUrl: "Where an account installs it.",
+    },
+  },
   RepoSecret: {
     doc: "A secret kept for one of the org's repos: who set it and when, never its value.",
     fields: { repo: "string", name: "string", updatedBy: "string", updatedAt: "u64" },
@@ -999,6 +1009,11 @@ export const unions: Record<string, Union> = {
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
       "repos.add": { doc: "Admins only: a repo the GitHub App doesn't list (or there's no app).", fields: { name: "string" } },
       "repos.remove": { doc: "Admins only: one added by hand.", fields: { name: "string" } },
+      "repos.owners.set": {
+        doc: "Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.",
+        fields: { owners: "string[]" },
+        fieldDocs: { owners: "GitHub logins." },
+      },
       "secrets.set": {
         doc: "Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.",
         fields: { repo: "string", name: "string", value: "string" },
@@ -1094,6 +1109,8 @@ export const unions: Record<string, Union> = {
           follows: "GoalFollow[]",
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
+          repoOwners: "string[]?",
+          githubApp: "GitHubAppInfo?",
           secrets: "RepoSecret[]",
           scripts: "RepoWorktreeScripts[]?",
           runnerLatest: "string?",
@@ -1109,6 +1126,8 @@ export const unions: Record<string, Union> = {
           prompts: "The org's prompt additions. None: an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",
+          repoOwners: "Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.",
+          githubApp: "The factory's GitHub App. None: no app, or an older server.",
           runnerLatest: "The newest released runner version, when there's a release.",
           runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
@@ -1142,8 +1161,8 @@ export const unions: Record<string, Union> = {
         fieldDocs: { name: "The new name; none: cleared (back to the GitHub org)." },
       },
       "repos.updated": {
-        fields: { repos: "OrgRepo[]", scripts: "RepoWorktreeScripts[]?" },
-        fieldDocs: { scripts: "The repos that have worktree scripts. None: an older server." },
+        fields: { repos: "OrgRepo[]", scripts: "RepoWorktreeScripts[]?", repoOwners: "string[]?" },
+        fieldDocs: { scripts: "The repos that have worktree scripts. None: an older server.", repoOwners: "The approved other GitHub accounts. None: an older server." },
       },
       "secrets.updated": { doc: "Every repo's secrets again (names only), after one changed.", fields: { secrets: "RepoSecret[]" } },
       "runner.released": {

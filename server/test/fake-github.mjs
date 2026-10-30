@@ -12,7 +12,8 @@
 //
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
 //   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
-//   GET  /app/installations, GET /installation/repositories   the app's installations, and an installation's repos
+//   GET  /app/installations, GET /installation/repositories   the app's installations (one per account, with its
+//                                                        login), and an installation's repos
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
@@ -58,7 +59,10 @@ const users = new Set(values.user.map((u) => u.toLowerCase()));
 const ownerType = (login) => (users.has(login.toLowerCase()) ? "User" : "Organization");
 const owners = new Set(values.owner.map((m) => m.toLowerCase()));
 const members = new Set([...values.member.map((m) => m.toLowerCase()), ...owners]);
-const installed = new Map(values.installed.map((r, i) => [r.toLowerCase(), 1000 + i]));
+// One installation per account, as on GitHub: --installed acme/api --installed acme/web --installed other/x
+// is acme's installation (both repos) and other's.
+const accounts = [...new Set(values.installed.map((r) => r.split("/")[0].toLowerCase()))];
+const installed = new Map(values.installed.map((r) => [r.toLowerCase(), 1000 + accounts.indexOf(r.split("/")[0].toLowerCase())]));
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
 const pulls = [];
@@ -191,7 +195,7 @@ createServer((req, res) => {
     if (req.method === "GET" && url.pathname === "/app/installations") {
       const why = verifyJwt(req.headers.authorization);
       if (why) return send(res, 401, { message: why });
-      return send(res, 200, [...new Set(installed.values())].map((id) => ({ id, account: { login: [...installed].find(([, i]) => i === id)[0].split("/")[0] } })));
+      return send(res, 200, accounts.map((login, i) => ({ id: 1000 + i, account: { login, type: ownerType(login) } })));
     }
     if (req.method === "GET" && url.pathname === "/installation/repositories") {
       const t = /^token (.+)$/.exec(req.headers.authorization ?? "")?.[1];
