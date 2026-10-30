@@ -49,8 +49,10 @@ enum DiffReview {
 
     /// A note on `rows` of a file's lines, or nil when there's nothing there to comment on.
     static func note(path: String, lines: [DiffLine], rows: ClosedRange<Int>, text: String) -> Wire.ReviewNote? {
-        let picked = Array(lines[max(rows.lowerBound, 0)...min(rows.upperBound, lines.count - 1)])
-        guard !lines.isEmpty, let span = span(picked) else { return nil }
+        let first = max(rows.lowerBound, 0), last = min(rows.upperBound, lines.count - 1)
+        guard first <= last else { return nil }
+        let picked = Array(lines[first...last])
+        guard let span = span(picked) else { return nil }
         return Wire.ReviewNote(path: path, start: UInt32(span.start), end: UInt32(span.end), side: span.side, snippet: snippet(picked), text: text)
     }
 

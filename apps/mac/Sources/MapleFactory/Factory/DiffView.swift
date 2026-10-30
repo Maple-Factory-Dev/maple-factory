@@ -716,9 +716,11 @@ struct DiffView: View {
         switch action {
         case "file": if let file = files.first(where: { $0.path == argument }) { pick(file) }
         case "select":
-            guard let current, parts.count > 1, let from = Int(parts[1]) else { return }
-            var picked = LineSelection(path: current.path, row: from)
-            picked.head = parts.count > 2 ? Int(parts[2]) ?? from : from
+            let count = current.map { DiffReview.rows(hunks($0)).count } ?? 0
+            guard let current, count > 0, parts.count > 1, let from = Int(parts[1]) else { return }
+            let clamp = { (row: Int) in min(max(row, 0), count - 1) }
+            var picked = LineSelection(path: current.path, row: clamp(from))
+            picked.head = clamp(parts.count > 2 ? Int(parts[2]) ?? from : from)
             selection = picked
         case "comment":
             if let selection { startComment(path: selection.path, row: selection.rows.upperBound) }

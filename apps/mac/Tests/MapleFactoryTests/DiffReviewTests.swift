@@ -102,6 +102,12 @@ import Testing
         #expect(note.snippet.components(separatedBy: "\n").count == 3)
     }
 
+    @Test func rowsPastTheEndMakeNoNote() {
+        #expect(DiffReview.note(path: "p", lines: lines, rows: 40...42, text: "t") == nil)
+        #expect(DiffReview.note(path: "p", lines: [], rows: 0...0, text: "t") == nil)
+        #expect(DiffReview.note(path: "p", lines: lines, rows: 9...20, text: "t")?.snippet == "+three();")
+    }
+
     @Test func snippetsRoundTripThroughACommentsText() throws {
         let note = try #require(DiffReview.note(path: "p", lines: lines, rows: 1...2, text: "x"))
         let text = "```diff\n\(note.snippet)\n```\nUse 3 here."
