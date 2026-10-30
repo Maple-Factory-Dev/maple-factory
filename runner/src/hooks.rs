@@ -361,13 +361,15 @@ fn last_assistant_text(path: &Path) -> Option<String> {
 }
 
 /// Accepts hook events and MCP requests from sessions. A hook event is one JSON message,
-/// then EOF. An MCP request is one line, `{"mcp":{…}}`, and gets one line back.
+/// then EOF. An MCP request is one line, `{"mcp":{…}}`, and gets one line back; so does the
+/// `secrets` CLI's `{"secrets":{…}}`.
 pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).with_context(|| format!("listening on {}", socket.display()))?;
     loop {
         let (mut stream, _) = listener.accept().await?;
         let sessions = sessions.clone();
+        let peer = stream.peer_cred().ok().and_then(|c| c.pid()).and_then(|p| u32::try_from(p).ok());
         tokio::spawn(async move {
             let (read, mut write) = stream.split();
             let mut buf = Vec::new();
@@ -378,6 +380,12 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             if let Some(usage) = event.get("usage") {
                 crate::usage::observe_claude(usage);
                 crate::costs::observe_claude(usage);
+                return;
+            }
+            if let Some(request) = event.get("secrets") {
+                let mut line = serde_json::to_vec(&crate::secrets::serve(&sessions, peer, request).await).unwrap_or_default();
+                line.push(b'\n');
+                let _ = write.write_all(&line).await;
                 return;
             }
             if let Some(request) = event.get("mcp") {

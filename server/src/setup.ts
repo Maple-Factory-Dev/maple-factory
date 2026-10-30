@@ -23,6 +23,7 @@ import { apiBase } from "./github.ts";
 import { escape, githubButton, page, updateNotice } from "./page.ts";
 import { serverUpdate } from "./version.ts";
 import { saveSettings } from "./settings.ts";
+import { secretsKey } from "./secrets.ts";
 import { audit, isLocal, publicOrigin, randomToken, sha256, sign, text, verify } from "./util.ts";
 
 const STATE_TTL = 3600; // GitHub's manifest codes last an hour
@@ -75,9 +76,11 @@ async function factoryId(secret: string): Promise<string> {
   return (await sha256(`maple-factory-id:${secret}`)).slice(0, 16);
 }
 
-/** The secret /setup signs its state with; a new factory makes one and keeps it as SESSION_SECRET. */
+/** The secret /setup signs its state with; a new factory makes one and keeps it as SESSION_SECRET
+ *  (and a SECRETS_KEY for repo secrets, unless a Worker secret gives one). */
 async function sessionSecret(env: Env): Promise<string> {
   if (!env.SESSION_SECRET) await saveSettings(env, { SESSION_SECRET: randomToken("mfs") });
+  if (!env.SECRETS_KEY) await secretsKey(env);
   return env.SESSION_SECRET!;
 }
 

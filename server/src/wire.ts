@@ -7,8 +7,8 @@ export type EndCause = "exited" | "killed" | "signaled" | "outOfMemory" | "machi
 export const EndCauseValues: readonly EndCause[] = ["exited","killed","signaled","outOfMemory","machineSlept","tmuxLost","runnerUpdated","authExpired","usageLimit","unknown"];
 
 /** Where a task is in the loop. */
-export type TaskState = "drafting" | "planning" | "awaitingApproval" | "building" | "reviewing" | "merged" | "cancelled";
-export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","building","reviewing","merged","cancelled"];
+export type TaskState = "drafting" | "planning" | "awaitingApproval" | "backlog" | "building" | "reviewing" | "merged" | "cancelled";
+export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","backlog","building","reviewing","merged","cancelled"];
 
 /** What a factory session is for. */
 export type Role = "planner" | "builder" | "reviewer";
@@ -486,6 +486,16 @@ export interface OrgRepo {
   source: RepoSource;
 }
 
+/** A secret kept for one of the org's repos: who set it and when, never its value. */
+export interface RepoSecret {
+  /** GitHub owner/name. */
+  repo: string;
+  /** An environment variable's name (A–Z, 0–9 and _). */
+  name: string;
+  updatedBy: string;
+  updatedAt: number;
+}
+
 /** A newer maple-server than the factory runs, and how this factory gets it. */
 export interface ServerUpdate {
   version: string;
@@ -843,6 +853,67 @@ export interface StatsCostRow {
   unpriced: number;
 }
 
+export interface StatsFindingCell {
+  kind: FindingKind;
+  severity: Severity;
+  count: number;
+}
+
+/** Where findings land: a folder, by the file's first two folders. */
+export interface StatsFindingArea {
+  /** "server/src", "(root)" for a file at the top, "(no file)" when the finding names none. */
+  key: string;
+  count: number;
+  tasks: number;
+  /** Blockers and majors. */
+  serious: number;
+}
+
+export interface StatsFindingOutcomes {
+  fixed: number;
+  disputed: number;
+  open: number;
+  /** Findings of tasks that are gone, whose status wasn't kept. */
+  unknown: number;
+  /** Rounds from the one that raised a finding to the one that saw it fixed. */
+  roundsToFixMedian?: number | null;
+}
+
+/** Findings raised on one agent's work. */
+export interface StatsFindingAgent {
+  agent: string;
+  rounds: number;
+  findings: number;
+  serious: number;
+  perRound?: number | null;
+}
+
+export interface StatsFindingRow {
+  task: string;
+  title: string;
+  kind: FindingKind;
+  severity: Severity;
+  text: string;
+  file?: string | null;
+  area: string;
+  /** None for a task that's gone. */
+  status?: FindingStatus | null;
+  raisedIn: number;
+  /** When its round came in. */
+  at: number;
+}
+
+/** The window's review findings, from their text, file and status. */
+export interface StatsFindings {
+  matrix: StatsFindingCell[];
+  /** Most findings first, up to 12. */
+  areas: StatsFindingArea[];
+  outcomes: StatsFindingOutcomes;
+  byAgent: StatsFindingAgent[];
+  /** Newest first, up to 60. */
+  recent: StatsFindingRow[];
+}
+
 /** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
 export interface StatsSummary {
   days: number;
@@ -869,6 +940,8 @@ export interface StatsSummary {
   costByRole: StatsCostRow[];
   /** Keyed "agent · model". */
   costByAgent: StatsCostRow[];
+  /** The findings breakdown; none from a server older than it. */
+  findings?: StatsFindings | null;
 }
 
 /** First message on every connection, so a server that missed messages catches up. */
@@ -1036,9 +1109,18 @@ export interface RunnerMessage_TaskTokenRequest {
   purpose?: string | null;
 }
 
+/** A repo's secrets: for a task assigned to this machine (`taskId`), or for its owner's own checkout (`maple-runner secrets pull`). */
+export interface RunnerMessage_SecretsRequest {
+  type: "secrets.request";
+  reqId: string;
+  taskId?: string | null;
+  /** GitHub owner/name. */
+  repo: string;
+}
+
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.cleaned","task.token_request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -1172,9 +1254,18 @@ export interface ServerToRunner_TaskToken {
   code?: string | null;
 }
 
+/** The answer to `secrets.request`: `values` by name, or `error` with a `code`. */
+export interface ServerToRunner_SecretsReply {
+  type: "secrets.reply";
+  reqId: string;
+  values?: Record<string, string> | null;
+  error?: string | null;
+  code?: string | null;
+}
+
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -1347,6 +1438,21 @@ export interface ClientMessage_ReposRemove {
   name: string;
 }
 
+/** Admins only: add or replace one of a repo's secrets. The value is never sent back to any app. */
+export interface ClientMessage_SecretsSet {
+  type: "secrets.set";
+  repo: string;
+  name: string;
+  value: string;
+}
+
+/** Admins only. */
+export interface ClientMessage_SecretsDelete {
+  type: "secrets.delete";
+  repo: string;
+  name: string;
+}
+
 /** Let the factory auto-merge a goal's work up to `upTo`; none takes it back. */
 export interface ClientMessage_GoalAcceptRisk {
   type: "goal.acceptRisk";
@@ -1391,9 +1497,15 @@ export interface ClientMessage_TaskAssign {
   owner: string;
 }
 
-/** Send a draft to planning. */
+/** Send a draft to planning, or pick up a backlog task (one with a plan is planned again). */
 export interface ClientMessage_TaskPlan {
   type: "task.plan";
+  id: string;
+}
+
+/** Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up. */
+export interface ClientMessage_TaskBacklog {
+  type: "task.backlog";
   id: string;
 }
 
@@ -1412,6 +1524,7 @@ export interface ClientMessage_TaskSteer {
   anchor?: string | null;
 }
 
+/** Approve its plan; a planned backlog task is picked up and builds once its approvals are met. */
 export interface ClientMessage_TaskApprovePlan {
   type: "task.approvePlan";
   id: string;
@@ -1520,8 +1633,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1542,6 +1655,8 @@ export interface ServerToClient_Snapshot {
   follows: GoalFollow[];
   intake: IntakeRequest[];
   repos: OrgRepo[];
+  /** Every repo's secrets, names and who changed them only. */
+  secrets: RepoSecret[];
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes (What's new). None: an older server. */
@@ -1627,6 +1742,21 @@ export interface ServerToClient_ReposUpdated {
   repos: OrgRepo[];
 }
 
+/** Every repo's secrets again (names only), after one changed. */
+export interface ServerToClient_SecretsUpdated {
+  type: "secrets.updated";
+  secrets: RepoSecret[];
+}
+
+/** A runner release came out (or the feed changed) since the snapshot. */
+export interface ServerToClient_RunnerReleased {
+  type: "runner.released";
+  /** The newest released runner version. */
+  runnerLatest?: string | null;
+  /** Runner releases, newest first, with their notes. */
+  runnerReleases: RunnerRelease[];
+}
+
 /** Something worth a passing line in the app. */
 export interface ServerToClient_Toast {
   type: "toast";
@@ -1653,5 +1783,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_ReposUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","repos.updated","toast","session.ended","stats","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","error"] as const;

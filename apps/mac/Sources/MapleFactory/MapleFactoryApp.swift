@@ -58,6 +58,7 @@ struct MapleFactoryApp: App {
                     state.toggleTaskPanel()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(!state.taskPanelEnabled)
 
                 Button(state.isComposing ? "Send to Planning" : state.focusedTask == nil ? "Open Task Full View" : "Close Task Full View") {
                     if state.isComposing {

@@ -39,6 +39,7 @@ export const enums: Record<string, Enum> = {
       drafting: "Written, not sent to planning yet.",
       planning: "A planner is writing the plan.",
       awaitingApproval: "The plan waits for its approvals.",
+      backlog: "Parked for later, planned or not; nothing runs until someone picks it up.",
       building: "Approved: queued for a slot, or a builder is working.",
       reviewing: "Pushed: the review agent and people are reviewing it.",
       merged: "Merged into its base.",
@@ -415,6 +416,11 @@ export const structs: Record<string, Struct> = {
     fields: { name: "string", defaultBranch: "string?", isPrivate: "bool", source: "RepoSource" },
     fieldDocs: { name: "GitHub owner/name.", source: "Granted to the GitHub App, or added by hand (no app, or not yet granted)." },
   },
+  RepoSecret: {
+    doc: "A secret kept for one of the org's repos: who set it and when, never its value.",
+    fields: { repo: "string", name: "string", updatedBy: "string", updatedAt: "u64" },
+    fieldDocs: { repo: "GitHub owner/name.", name: "An environment variable's name (A–Z, 0–9 and _)." },
+  },
   ServerUpdate: {
     doc: "A newer maple-server than the factory runs, and how this factory gets it.",
     fields: { version: "string", how: "string" },
@@ -676,6 +682,49 @@ export const structs: Record<string, Struct> = {
       unpriced: "Sessions with tokens but no $ figure (Codex).",
     },
   },
+  StatsFindingCell: { fields: { kind: "FindingKind", severity: "Severity", count: "u32" } },
+  StatsFindingArea: {
+    doc: "Where findings land: a folder, by the file's first two folders.",
+    fields: { key: "string", count: "u32", tasks: "u32", serious: "u32" },
+    fieldDocs: { key: "\"server/src\", \"(root)\" for a file at the top, \"(no file)\" when the finding names none.", serious: "Blockers and majors." },
+  },
+  StatsFindingOutcomes: {
+    fields: { fixed: "u32", disputed: "u32", open: "u32", unknown: "u32", roundsToFixMedian: "f64?" },
+    fieldDocs: {
+      unknown: "Findings of tasks that are gone, whose status wasn't kept.",
+      roundsToFixMedian: "Rounds from the one that raised a finding to the one that saw it fixed.",
+    },
+  },
+  StatsFindingAgent: {
+    doc: "Findings raised on one agent's work.",
+    fields: { agent: "string", rounds: "u32", findings: "u32", serious: "u32", perRound: "f64?" },
+  },
+  StatsFindingRow: {
+    fields: {
+      task: "string",
+      title: "string",
+      kind: "FindingKind",
+      severity: "Severity",
+      text: "string",
+      file: "string?",
+      area: "string",
+      status: "FindingStatus?",
+      raisedIn: "u32",
+      at: "u64",
+    },
+    fieldDocs: { status: "None for a task that's gone.", at: "When its round came in." },
+  },
+  StatsFindings: {
+    doc: "The window's review findings, from their text, file and status.",
+    fields: {
+      matrix: "StatsFindingCell[]",
+      areas: "StatsFindingArea[]",
+      outcomes: "StatsFindingOutcomes",
+      byAgent: "StatsFindingAgent[]",
+      recent: "StatsFindingRow[]",
+    },
+    fieldDocs: { areas: "Most findings first, up to 12.", recent: "Newest first, up to 60." },
+  },
   StatsSummary: {
     doc: "The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.",
     fields: {
@@ -698,6 +747,7 @@ export const structs: Record<string, Struct> = {
       costTotal: "StatsCostRow?",
       costByRole: "StatsCostRow[]",
       costByAgent: "StatsCostRow[]",
+      findings: "StatsFindings?",
     },
     fieldDocs: {
       costByRole: "planner, builder, reviewer, …",
@@ -705,6 +755,7 @@ export const structs: Record<string, Struct> = {
       inferred: "Rows in the window worked out from older tasks' history rather than recorded as they happened.",
       handsByReason: "medianMs: how long they stayed up.",
       topTasks: "The tasks with the most touchpoints, most first.",
+      findings: "The findings breakdown; none from a server older than it.",
     },
   },
 };
@@ -781,6 +832,11 @@ export const unions: Record<string, Union> = {
         doc: "A GitHub token to fetch or push a task's repo.",
         fields: { reqId: "string", taskId: "string", owner: "string", repo: "string", purpose: "string?" },
       },
+      "secrets.request": {
+        doc: "A repo's secrets: for a task assigned to this machine (`taskId`), or for its owner's own checkout (`maple-runner secrets pull`).",
+        fields: { reqId: "string", taskId: "string?", repo: "string" },
+        fieldDocs: { repo: "GitHub owner/name." },
+      },
     },
   },
   ServerToRunner: {
@@ -846,6 +902,10 @@ export const unions: Record<string, Union> = {
         doc: "The answer to `task.token_request`.",
         fields: { reqId: "string", token: "string?", error: "string?", code: "string?" },
       },
+      "secrets.reply": {
+        doc: "The answer to `secrets.request`: `values` by name, or `error` with a `code`.",
+        fields: { reqId: "string", values: "map<string>?", error: "string?", code: "string?" },
+      },
     },
   },
   ClientMessage: {
@@ -895,6 +955,11 @@ export const unions: Record<string, Union> = {
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
       "repos.add": { doc: "Admins only: a repo the GitHub App doesn't list (or there's no app).", fields: { name: "string" } },
       "repos.remove": { doc: "Admins only: one added by hand.", fields: { name: "string" } },
+      "secrets.set": {
+        doc: "Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.",
+        fields: { repo: "string", name: "string", value: "string" },
+      },
+      "secrets.delete": { doc: "Admins only.", fields: { repo: "string", name: "string" } },
       "goal.acceptRisk": {
         doc: "Let the factory auto-merge a goal's work up to `upTo`; none takes it back.",
         fields: { goal: "string", upTo: "RiskLevel?", note: "string?" },
@@ -912,10 +977,11 @@ export const unions: Record<string, Union> = {
         fields: { id: "string", owner: "string" },
         fieldDocs: { owner: "The member's login." },
       },
-      "task.plan": { doc: "Send a draft to planning.", fields: { id: "string" } },
+      "task.plan": { doc: "Send a draft to planning, or pick up a backlog task (one with a plan is planned again).", fields: { id: "string" } },
+      "task.backlog": { doc: "Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.", fields: { id: "string" } },
       "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
-      "task.approvePlan": { fields: { id: "string" } },
+      "task.approvePlan": { doc: "Approve its plan; a planned backlog task is picked up and builds once its approvals are met.", fields: { id: "string" } },
       "task.answer": { doc: "Answer the agent's question.", fields: { id: "string", text: "string" } },
       "task.answerPrompt": {
         doc: "Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.",
@@ -971,6 +1037,7 @@ export const unions: Record<string, Union> = {
           follows: "GoalFollow[]",
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
+          secrets: "RepoSecret[]",
           runnerLatest: "string?",
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
@@ -980,6 +1047,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: {
           ended: "The most recent session ends (last 7 days, newest first).",
           prompts: "The org's prompt additions. None: an older server.",
+          secrets: "Every repo's secrets, names and who changed them only.",
           runnerLatest: "The newest released runner version, when there's a release.",
           runnerReleases: "Runner releases, newest first, with their notes (What's new). None: an older server.",
           serverVersion: "This factory's maple-server version.",
@@ -1000,6 +1068,12 @@ export const unions: Record<string, Union> = {
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
       "repos.updated": { fields: { repos: "OrgRepo[]" } },
+      "secrets.updated": { doc: "Every repo's secrets again (names only), after one changed.", fields: { secrets: "RepoSecret[]" } },
+      "runner.released": {
+        doc: "A runner release came out (or the feed changed) since the snapshot.",
+        fields: { runnerLatest: "string?", runnerReleases: "RunnerRelease[]" },
+        fieldDocs: { runnerLatest: "The newest released runner version.", runnerReleases: "Runner releases, newest first, with their notes." },
+      },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },

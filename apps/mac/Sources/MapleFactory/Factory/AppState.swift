@@ -81,15 +81,16 @@ final class AppState {
     private static let panelKey = "taskPanelOpen"
     private static var panelLeftOpen: Bool {
         AppDefaults.removeObject(forKey: "taskPanel")
-        return AppDefaults.bool(forKey: panelKey)
+        return TaskOpening.stored() == .panel && AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147"
     /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
     var openedTask: String? { showInspector ? selectedTask : nil }
 
-    /// A card or row was clicked: show it in the task panel.
+    /// A card or row was clicked: show it in the task panel, or the full view when the panel is off.
     func openTask(_ id: String) {
+        guard taskPanelEnabled else { return openFocus(id) }
         withAnimation(.snappy(duration: 0.25)) {
             selectedTask = id
             showInspector = true
@@ -98,8 +99,15 @@ final class AppState {
 
     /// What a click on a card or row does: the full task view by default, or a peek in the panel.
     var taskOpening = TaskOpening.stored() {
-        didSet { AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key) }
+        didSet {
+            AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key)
+            // Nothing can toggle the panel once it's off, so one that's open would be stuck.
+            if !taskPanelEnabled && showInspector { closeTaskPanel() }
+        }
     }
+
+    /// The task panel exists only with "Peek in the side panel"; otherwise its toolbar button is hidden and its menu item is off.
+    var taskPanelEnabled: Bool { taskOpening == .panel }
 
     nonisolated enum ClickAction: Equatable { case focus, openPanel, closePanel }
 
@@ -127,6 +135,7 @@ final class AppState {
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
     /// (in a full-width window; a narrow one hides and floats the panel on its own).
     func toggleTaskPanel() {
+        guard taskPanelEnabled else { return }
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
         if !isCompact { AppDefaults.set(showInspector, forKey: AppState.panelKey) }
     }
@@ -271,7 +280,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = AppDefaults.bool(forKey: AppState.panelKey)
+                showInspector = taskPanelEnabled && AppDefaults.bool(forKey: AppState.panelKey)
             }
         }
     }
@@ -705,6 +714,13 @@ final class AppState {
         }
     }
 
+    /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
+    /// in (else the usual one), a title, and a brief listing each finding with the task it came from.
+    func composeFromFindings(_ rows: [Wire.StatsFindingRow]) {
+        guard !rows.isEmpty else { return }
+        startCompose(goal: FindingsTask.goal(rows, tasks: tasks), title: FindingsTask.title(rows), body: FindingsTask.body(rows))
+    }
+
     /// Closes the composer. A Draft with AI that's running keeps going, to come back to; one that
     /// failed while open has been seen, so it isn't brought back.
     func cancelCompose() {
@@ -1091,6 +1107,29 @@ final class AppState {
         update(id) { $0.state = .planning }
     }
 
+    /// Parks a draft or a plan waiting for approval: nothing runs on it until someone picks it up.
+    func sendToBacklog(_ id: String) {
+        let park = { (task: inout FactoryTask) in
+            guard task.state == .drafting || task.state == .awaitingApproval else { return }
+            task.state = .backlog
+            task.approvals = []
+            task.detail = task.plan.isEmpty ? "Backlog · not planned" : "Backlog · plan v\(task.planVersion)"
+        }
+        showToast("Sent \(id) to the backlog", icon: TaskState.backlog.icon, color: Theme.State.backlog)
+        if let client, isLive {
+            // Shown at once; the factory's update confirms it (or a refusal's toast says why not).
+            withAnimation(.snappy(duration: 0.3)) { client.expect(id, park) }
+            client.send(.taskBacklog(.init(id: id)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                park(&task)
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Sent it to the backlog", when: "now"), at: 0)
+            }
+        }
+    }
+
     /// A new title; empty or unchanged ones are ignored.
     func rename(_ id: String, title: String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1295,7 +1334,7 @@ final class AppState {
     private func landed(_ kind: InFlight.Kind, on task: FactoryTask) -> Bool {
         let me = FactoryData.me.id
         switch kind {
-        case .approvePlan: return task.approvals.contains { $0.id == me } || task.state != .awaitingApproval
+        case .approvePlan: return task.approvals.contains { $0.id == me } || (task.state != .awaitingApproval && task.state != .backlog)
         case .approveChanges: return task.reviews.contains { $0.id == me }
         case .merge: return task.state == .merged || task.pr?.state == .merged
         }
@@ -1360,6 +1399,8 @@ final class AppState {
         withAnimation(.snappy(duration: 0.3)) {
             update(id) { task in
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
+                // Picked up from the backlog.
+                if task.state == .backlog { task.state = .awaitingApproval }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
@@ -1760,6 +1801,11 @@ final class AppState {
     }
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
+    /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
+    /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:severity:blocker` is a severity chip,
+    /// `findings:select:0` ticks a shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
+    /// is Make a task from them.
+    static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
     /// one action per second (`wait:5` for longer), so flows can be shown (or screenshotted) without
@@ -1771,6 +1817,8 @@ final class AppState {
             guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
+            case "backlog": sendToBacklog(parts[1])
+            case "plan": plan(parts[1])
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
@@ -1829,6 +1877,7 @@ final class AppState {
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
+            case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
@@ -1894,6 +1943,10 @@ final class AppState {
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
+            // `secret:add` opens Settings › Secrets' Add sheet (with `-window settings-sheet`).
+            case "secret" where parts.count > 3 && parts[1] == "save":
+                NotificationCenter.default.post(name: SecretsSettings.demoSave, object: nil, userInfo: ["name": parts[2], "value": parts.dropFirst(3).joined(separator: ":")])
+            case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), and its What's New sheet.
             case "runnerupdate":

@@ -5,6 +5,8 @@
 // update.status notices move it to installing (with the version) and restarting, and it stays restarting
 // while the runner is offline; reconnecting on that version marks it updated, in a fresh snapshot too.
 // A second update that fails shows failed with the runner's reason (and a toast), and up_to_date shows as upToDate.
+// Then a newer runner is published to the bucket and the hub's alarm fires (its hourly check due): the app gets
+// runner.released with that version and its notes, and the alarm is set again no more than an hour ahead.
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -47,7 +49,7 @@ const connectRunner = async (version) => {
 // The app: the machine as it's last been told, and the toasts.
 const connectApp = async () => {
   const sock = new WebSocket(`${ws}/client/connect`, { headers: auth });
-  const app = { sock, snapshot: null, machine: null, history: [], toasts: [] };
+  const app = { sock, snapshot: null, machine: null, history: [], toasts: [], released: [] };
   sock.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type === "snapshot") { app.snapshot = m; app.machine = m.machines.find((x) => x.id === runnerId) ?? null; }
@@ -56,6 +58,7 @@ const connectApp = async () => {
       if (m.machine.update && app.history.at(-1) !== m.machine.update.state) app.history.push(m.machine.update.state);
     }
     if (m.type === "toast") app.toasts.push(m.text);
+    if (m.type === "runner.released") app.released.push(m);
   };
   await new Promise((r) => (sock.onopen = r));
   sock.send(JSON.stringify({ type: "subscribe" }));
@@ -108,6 +111,24 @@ await wait("the third runner.update", () => asked.length === 3);
 runner.status("up_to_date", "0.2.0", "maple-runner 0.2.0 is up to date");
 await wait("upToDate", () => app.machine.update?.state === "upToDate");
 step("up_to_date → upToDate");
+
+const newer = `9.${Date.now() % 100000}.0`;
+const publish = (path, body) => fetch(`${base}/dev/releases/${path}`, { method: "PUT", body: JSON.stringify(body) });
+await publish("maple-runner/latest.json", { version: newer });
+await publish("maple-runner/changes.json", { releases: [{ version: newer, publishedAt: new Date().toISOString(), notes: "- A test release." }] });
+const fired = await (await fetch(`${base}/dev/alarm?stale`, { method: "POST" })).json();
+const released = await wait("runner.released", () => app.released.find((m) => m.runnerLatest === newer));
+if (released.runnerReleases[0]?.version !== newer || released.runnerReleases[0].notes !== "- A test release.") throw new Error(`runner.released carried ${JSON.stringify(released.runnerReleases)}`);
+step(`a newer runner published and the alarm fired → runner.released ${released.runnerLatest} with its notes`);
+const ahead = fired.alarm - fired.now;
+if (fired.alarm == null || ahead > 3_600_000) throw new Error(`the alarm is set ${fired.alarm == null ? "never" : `${ahead}ms ahead`}`);
+step(`the alarm is set again ${Math.round(ahead / 60000)} min ahead (no more than an hour)`);
+
+const before = app.released.length;
+await fetch(`${base}/dev/alarm`, { method: "POST" });
+await new Promise((r) => setTimeout(r, 500));
+if (app.released.length !== before) throw new Error("runner.released again within the hour");
+step("no runner.released again until the hour's up");
 
 runner.close();
 process.exit(0);

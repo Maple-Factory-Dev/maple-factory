@@ -147,6 +147,15 @@ pub enum Outbound {
         #[serde(skip_serializing_if = "Option::is_none")]
         purpose: Option<&'static str>,
     },
+    /// A repo's secrets (answered with `secrets.reply`): for a task this machine is running, or with no
+    /// task for its owner's own checkout (`maple-runner secrets pull`). See `secrets`.
+    #[serde(rename = "secrets.request")]
+    SecretsRequest {
+        req_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        repo: String,
+    },
     /// A task's session is starting: its repo, and the project and `.factory.toml` it got (see `factory`).
     #[serde(rename = "task.started")]
     TaskStarted {
@@ -609,6 +618,18 @@ pub enum Inbound {
         req_id: String,
         #[serde(default)]
         token: Option<String>,
+        #[serde(default)]
+        error: Option<String>,
+        #[serde(default)]
+        code: Option<String>,
+    },
+    /// The hub's answer to `secrets.request`: `values` by name, or `error` with a `code`.
+    #[serde(rename = "secrets.reply")]
+    SecretsReply {
+        #[serde(rename = "reqId")]
+        req_id: String,
+        #[serde(default)]
+        values: Option<std::collections::BTreeMap<String, String>>,
         #[serde(default)]
         error: Option<String>,
         #[serde(default)]

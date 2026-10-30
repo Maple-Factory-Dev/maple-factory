@@ -18,8 +18,9 @@ import { goalRepos, REPO, taskRepo } from "./repos.ts";
 import { allowed, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { assess, validPolicy } from "./policy.ts";
-import type { StatKind } from "./stats.ts";
+import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
+import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
 import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
 
@@ -70,6 +71,8 @@ export class FactoryError extends Error {}
 
 const now = () => Date.now();
 const branchName = (task: Task) => task.id.toLowerCase();
+/** A task's id releases its repo's secrets to its machine only in these states. */
+const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
 const fail = (message: string): never => {
   throw new FactoryError(message);
 };
@@ -77,7 +80,7 @@ const fail = (message: string): never => {
 export class Engine {
   private drafts: Drafts;
 
-  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake) {
+  constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
       sendTo: (login, message) => hooks.sendTo(login, message),
       machines: () => hooks.machines(),
@@ -158,6 +161,24 @@ export class Engine {
         this.store.saveRepos(repos.filter((r) => r !== repo));
         await audit(this.env, who, "repo.removed", null, { name: repo.name });
         this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos() });
+        return;
+      }
+      case "secrets.set":
+      case "secrets.delete": {
+        if (member.role !== "admin") fail("Only admins can change a repo's secrets.");
+        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name
+          ?? fail(`${msg.repo} isn't one of the org's repos.`);
+        const name = msg.name.trim();
+        if (msg.type === "secrets.set") {
+          try {
+            await this.secrets.set(repo, name, msg.value, who);
+          } catch (e) {
+            fail((e as Error).message);
+          }
+        } else if (!this.secrets.delete(repo, name)) fail(`${repo} has no secret called ${name}.`);
+        // Which one and who, never the value.
+        await audit(this.env, who, msg.type === "secrets.set" ? "secret.set" : "secret.deleted", repo, { repo, name });
+        this.hooks.broadcast({ type: "secrets.updated", secrets: this.secrets.list() });
         return;
       }
       case "policy.save": {
@@ -274,12 +295,14 @@ export class Engine {
     const task = this.store.task(msg.type === "subscribe" ? "" : (msg as { id: string }).id) ?? fail("That task isn't there any more.");
     switch (msg.type) {
       case "task.edit": {
-        if (task.state !== "drafting" && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
+        // A backlog task without a plan is still a draft, just parked.
+        const unplanned = task.state === "drafting" || (task.state === "backlog" && !task.plan.length);
+        if (!unplanned && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
         if (msg.title != null && msg.title.trim()) task.title = msg.title.trim();
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
         if (msg.repo != null && msg.repo !== task.repo) {
-          if (task.state !== "drafting") fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
+          if (!unplanned) fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
         }
@@ -314,8 +337,20 @@ export class Engine {
         return;
       }
       case "task.plan":
-        if (task.state !== "drafting") fail("It's already past drafting.");
-        return this.startPlanning(task, who);
+        if (task.state !== "drafting" && task.state !== "backlog") fail("It's already past drafting.");
+        // Picked up from the backlog with a plan: the planner revises the plan it has.
+        return this.startPlanning(task, who, task.state === "backlog" && task.plan.length > 0);
+      case "task.backlog": {
+        if (task.state !== "drafting" && task.state !== "awaitingApproval") fail("Only a draft or a plan waiting for approval can go to the backlog.");
+        this.closeWorker(task, "done");
+        task.state = "backlog";
+        task.approvals = [];
+        task.waiting = null;
+        task.startAt = null;
+        this.event(task, who, "sent it to the backlog");
+        this.save(task);
+        return;
+      }
       case "task.comment": {
         const text = msg.text.trim() || fail("Say something.");
         task.comments.push(await this.comment(who, text, { anchor: msg.anchor ?? null }));
@@ -324,14 +359,15 @@ export class Engine {
       }
       case "task.steer": {
         const text = msg.text.trim() || fail("Say what to change.");
-        if (!["planning", "awaitingApproval", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
+        if (task.state === "backlog" && !task.plan.length) fail("It isn't planned yet; edit its brief or send it to planning.");
+        if (!["planning", "awaitingApproval", "backlog", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
         if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
         const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: msg.anchor ?? null, status: "queued", timing: null };
         task.changes.push(change);
         this.event(task, who, `asked for a change: ${text}`);
         this.stat(task, "steer", { state: task.state }, who);
-        if (task.state === "awaitingApproval") {
-          // The plan isn't approved yet: the planner revises it.
+        if (task.state === "awaitingApproval" || task.state === "backlog") {
+          // The plan isn't approved yet: the planner revises it (picking it up from the backlog).
           task.approvals = [];
           this.save(task);
           return this.startPlanning(task, who, true);
@@ -350,6 +386,12 @@ export class Engine {
         return;
       }
       case "task.approvePlan": {
+        if (task.state === "backlog") {
+          if (!task.plan.length) fail("It isn't planned yet; send it to planning first.");
+          // Picked up from the backlog: it waits for the rest of its approvals, if it needs more.
+          task.state = "awaitingApproval";
+          this.event(task, who, "picked it up from the backlog");
+        }
         if (task.state !== "awaitingApproval") fail("There's no plan waiting for approval.");
         if (task.approvals.includes(who)) fail("You've already approved it.");
         task.approvals.push(who);
@@ -446,6 +488,7 @@ export class Engine {
       }
       case "task.queue": {
         if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (task.state === "backlog") fail("It's in the backlog. Pick it up first: send it to planning, or approve its plan.");
         if (msg.force) {
           if (task.worker || task.hand || task.question) fail("It's already running.");
           if (task.state !== "drafting" && !this.roleFor(task)) fail("It isn't waiting for a session.");
@@ -487,6 +530,7 @@ export class Engine {
       case "task.retry": {
         if (task.state === "merged") fail("It's already merged.");
         if (task.state === "drafting") fail("It hasn't started yet; send it to planning.");
+        if (task.state === "backlog") fail("Nothing runs on it in the backlog; send it to planning or approve its plan.");
         const goal = this.store.goal(task.goal);
         if (goal?.archived) fail(`${goal.name} is archived; unarchive it to pick this back up.`);
         const priv = this.store.private(task.id);
@@ -530,7 +574,7 @@ export class Engine {
         return;
       }
       case "task.move": {
-        if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting") fail("There's nothing running to move.");
+        if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting" || task.state === "backlog") fail("There's nothing running to move.");
         if (!task.machine) fail("It hasn't started on a machine yet.");
         if (this.store.private(task.id).handingOff) fail("It's already being handed off.");
         const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
@@ -1033,9 +1077,44 @@ export class Engine {
         }
         return null;
       }
+      case "secrets.request": return this.releaseSecrets(machine, msg), null;
       default:
         return null;
     }
+  }
+
+  /** A repo's secret values, to a machine with a planning, building or reviewing task on that repo assigned to it, or (no task: the
+   *  `maple-runner secrets pull` CLI) to a machine whose owner is a member. Every release is audited. */
+  private async releaseSecrets(machine: string, msg: Extract<RunnerMessage, { type: "secrets.request" }>) {
+    const reply = (values: Record<string, string> | null, error: string | null, code: string | null) =>
+      this.toRunner(machine, { type: "secrets.reply", reqId: msg.reqId, values, error, code });
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name;
+    if (!repo) return reply(null, `${msg.repo} isn't one of the org's repos.`, "unknown_repo");
+    let actor: string;
+    if (msg.taskId) {
+      const task = this.store.task(msg.taskId);
+      if (!task || task.machine !== machine) return reply(null, "That task isn't assigned to this machine.", "forbidden");
+      // Only while an agent works on it there: a merged or cancelled task keeps its last machine.
+      if (!SECRET_STATES.has(task.state)) return reply(null, `${task.id} isn't being planned, built or reviewed (it's ${task.state}).`, "forbidden");
+      const taskRepoName = taskRepo(task, this.store.goal(task.goal) ?? null);
+      if (taskRepoName?.toLowerCase() !== repo.toLowerCase()) return reply(null, `${task.id} works on ${taskRepoName ?? "no repo"}, not ${repo}.`, "forbidden");
+      actor = task.id;
+    } else {
+      const owner = (await this.hooks.machines()).find((m) => m.id === machine)?.owner;
+      if (!owner || !(await this.hooks.members()).some((m) => m.login === owner)) return reply(null, "This machine's owner isn't a member of the org.", "forbidden");
+      actor = owner;
+    }
+    let values: Record<string, string>;
+    try {
+      values = await this.secrets.values(repo);
+    } catch (e) {
+      console.error("secrets: couldn't open", repo, e);
+      return reply(null, "The factory couldn't decrypt this repo's secrets (was SECRETS_KEY changed?).", "decrypt");
+    }
+    // Every task session asks; only a release of something is worth a row.
+    if (!Object.keys(values).length) return reply(values, null, null);
+    await audit(this.env, `machine:${machine}`, "secret.pulled", repo, { machine, repo, task: msg.taskId ?? null, for: actor, names: Object.keys(values).sort() });
+    return reply(values, null, null);
   }
 
   /** A session ended. The ones the factory closed are already marked; anything else is unplanned. */
@@ -1567,7 +1646,7 @@ export class Engine {
         round.found = found.length;
         round.at = now();
         const fixed = arr(a.fixed).length;
-        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map((f) => ({ kind: f.kind, severity: f.severity })) }, null, s.role);
+        const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map(findingDetail) }, null, s.role);
         this.closeWorker(task, "done");
         if (round.verdict === "passed") {
           this.event(task, "reviewer", `passed round ${round.number}`);

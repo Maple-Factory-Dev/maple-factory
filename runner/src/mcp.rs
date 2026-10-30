@@ -1209,6 +1209,10 @@ pub fn set_connected(connected: bool) {
     }
 }
 
+pub fn connected() -> bool {
+    CONNECTED.load(Ordering::Relaxed)
+}
+
 /// The hub's `mcp.response`.
 pub fn resolve(req_id: &str, result: Option<Value>, error: Option<String>) {
     if let Some(tx) = PENDING.lock().unwrap().remove(req_id) {

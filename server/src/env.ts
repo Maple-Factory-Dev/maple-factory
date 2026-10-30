@@ -29,6 +29,8 @@ export interface Env {
   PUBLIC_URL?: string;
   GITHUB_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
+  /** Encrypts repo secrets at rest (secrets.ts). A Worker secret, or one the factory generates into settings. */
+  SECRETS_KEY?: string;
   DEV_LOGIN?: string;
   /** A shared secret for posting requests to /api/intake from outside (Bearer mfi_…). */
   INTAKE_KEY?: string;

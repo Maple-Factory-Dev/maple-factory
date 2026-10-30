@@ -1,18 +1,25 @@
 import SwiftUI
 
 enum TaskState: CaseIterable, Identifiable {
-    case drafting, planning, awaitingApproval, building, reviewing, merged, cancelled
+    case drafting, planning, awaitingApproval, backlog, building, reviewing, merged, cancelled
 
     var id: Self { self }
 
-    /// The happy path a task moves through; `cancelled` can branch off from any of these.
-    static let pipeline: [TaskState] = [.drafting, .planning, .awaitingApproval, .building, .reviewing, .merged]
+    /// The happy path a task moves through; `cancelled` can branch off from any of these, and a draft
+    /// or a plan waiting for approval can be parked in `backlog`.
+    static let pipeline: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged]
+
+    /// The stages a task's own track shows: Backlog only while it's parked there, since most never are.
+    static func stages(for state: TaskState) -> [TaskState] {
+        pipeline.filter { $0 != .backlog || state == .backlog }
+    }
 
     var title: String {
         switch self {
         case .drafting: "Drafting"
         case .planning: "Planning"
         case .awaitingApproval: "Awaiting approval"
+        case .backlog: "Backlog"
         case .building: "Building"
         case .reviewing: "Reviewing"
         case .merged: "Merged"
@@ -25,6 +32,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .drafting: "pencil.line"
         case .planning: "list.bullet.indent"
         case .awaitingApproval: "hand.raised"
+        case .backlog: "tray.full"
         case .building: "hammer"
         case .reviewing: "eye"
         case .merged: "arrow.triangle.merge"
@@ -38,6 +46,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .drafting: "Tasks land here while their brief is still being written."
         case .planning: "Tasks land here while a planner works out how to build them."
         case .awaitingApproval: "Tasks land here once their plan is ready and waiting on your approval."
+        case .backlog: "Tasks parked for later land here; nothing runs on them until someone picks them up."
         case .building: "Tasks land here while a builder works through the approved plan."
         case .reviewing: "Tasks land here once their build is proven and waiting on a review."
         case .merged: "Tasks land here once their branch is merged."
@@ -50,6 +59,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .drafting: Theme.State.drafting
         case .planning: Theme.State.planning
         case .awaitingApproval: Theme.State.awaitingApproval
+        case .backlog: Theme.State.backlog
         case .building: Theme.State.building
         case .reviewing: Theme.State.reviewing
         case .merged: Theme.State.merged

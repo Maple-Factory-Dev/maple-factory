@@ -6,7 +6,7 @@
 //! already reachable at `http://<machine>.<tailnet>.ts.net:<port>`; one bound to localhost isn't,
 //! and can be shared through `tailscale serve` on the same port number.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -311,6 +311,22 @@ fn session_for(pid: u32, parents: &HashMap<u32, u32>, sessions: &[SessionProc]) 
         }
     }
     None
+}
+
+/// Whether `pid` is one of `roots` or was started (at any depth) by one of them.
+pub async fn descends_from(pid: u32, roots: &HashSet<u32>) -> bool {
+    let parents = parents().await;
+    let mut cur = pid;
+    for _ in 0..64 {
+        if roots.contains(&cur) {
+            return true;
+        }
+        match parents.get(&cur) {
+            Some(&parent) if parent > 1 && parent != cur => cur = parent,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Every process's parent, from `ps` (the same flags work on macOS and Linux).

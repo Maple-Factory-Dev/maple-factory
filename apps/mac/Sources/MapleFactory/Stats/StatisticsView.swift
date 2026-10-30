@@ -6,6 +6,10 @@ struct StatisticsView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @AppStorage("statsDays") private var days = 30
+    /// A section pushed over the overview, in the same scroll view: "findings".
+    @State private var section: String?
+    /// The review findings ticked in Review findings' list, to make a task from.
+    @State private var pickedFindings: Set<String> = []
 
     private var narrow: Bool { state.contentWidth < 920 }
     private var isAdmin: Bool { !state.isLive || client.me?.role == "admin" }
@@ -22,6 +26,8 @@ struct StatisticsView: View {
                                 .font(.system(size: 13.5))
                                 .foregroundStyle(Theme.textMuted)
                         }
+                    } else if let summary, section == "findings" {
+                        FindingsView(summary: summary, narrow: narrow, picked: $pickedFindings) { section = nil }
                     } else if let summary {
                         content(summary)
                     } else {
@@ -32,12 +38,33 @@ struct StatisticsView: View {
                 .padding(.vertical, 30)
                 .frame(maxWidth: 1120, alignment: .leading)
                 .frame(maxWidth: .infinity)
+                .id("top")
             }
             .defaultScrollAnchor(.top)
+            .safeAreaInset(edge: .bottom) {
+                if section == "findings", !pickedFindings.isEmpty, let findings = summary?.findings {
+                    FindingsPickBar(findings: findings, picked: $pickedFindings)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: pickedFindings.isEmpty)
+            .onReceive(NotificationCenter.default.publisher(for: AppState.demoFindings)) { note in
+                switch (note.object as? [String])?.first {
+                case "open": section = "findings"
+                case "back": section = nil
+                case "list": withAnimation(.snappy(duration: 0.4)) { proxy.scrollTo("findings-list", anchor: .top) }
+                default: break
+                }
+            }
             .task(id: days) { if state.isLive && isAdmin { client.loadStats(days: days) } }
-            // `-statsSection cost` opens on the Cost card, for screenshots.
+            .onChange(of: section) { proxy.scrollTo("top", anchor: .top) }
+            // `-statsSection cost` opens on the Cost card and `-statsSection findings` on the findings, for screenshots.
             .onChange(of: summary == nil, initial: true) {
                 guard summary != nil, let section = AppDefaults.string(forKey: "statsSection") else { return }
+                if section == "findings" {
+                    self.section = section
+                    return
+                }
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(0.3))
                     proxy.scrollTo(section, anchor: .top)
@@ -90,7 +117,8 @@ struct StatisticsView: View {
 
         twoUp {
             BarList(title: "Hands by reason", note: "median time up", rows: s.handsByReason, label: handReason, trailing: { $0.medianMs.map(duration) })
-            BarList(title: "Review findings by kind", note: counted(t.reviewRounds, "round"), rows: s.findingsByKind, label: { $0.capitalized }, trailing: { _ in nil })
+            BarList(title: "Review findings by kind", note: counted(t.reviewRounds, "round"), rows: s.findingsByKind, label: { $0.capitalized }, trailing: { severities(s, kind: $0.key) },
+                    more: ("See all findings →", { section = "findings" }))
         }
 
         twoUp {
@@ -109,6 +137,14 @@ struct StatisticsView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textMuted)
         }
+    }
+
+    /// "2 blocker · 9 major · 4 minor" for one kind, from the findings breakdown.
+    private func severities(_ s: Wire.StatsSummary, kind: String) -> String? {
+        guard let cells = s.findings?.matrix.filter({ $0.kind.rawValue == kind }), !cells.isEmpty else { return nil }
+        return [Wire.Severity.blocker, .major, .minor].compactMap { sev in
+            cells.first { $0.severity == sev }.map { "\($0.count) \(sev.rawValue)" }
+        }.joined(separator: " · ")
     }
 
     private func twoUp<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -317,7 +353,7 @@ struct StatisticsView: View {
 
 // MARK: Pieces
 
-private func cardTitle(_ title: String, note: String?) -> some View {
+func cardTitle(_ title: String, note: String?) -> some View {
     HStack {
         Text(title)
             .font(.system(size: 14, weight: .semibold))
@@ -364,7 +400,7 @@ private func percent(_ rate: Double?) -> String {
     rate.map { "\(Int(($0 * 100).rounded()))%" } ?? "–"
 }
 
-private struct StatsCard<Content: View>: View {
+struct StatsCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -459,6 +495,8 @@ private struct BarList: View {
     let rows: [Wire.StatsCount]
     let label: (String) -> String
     let trailing: (Wire.StatsCount) -> String?
+    /// A link under the bars, to a section that digs into them.
+    var more: (title: String, action: () -> Void)? = nil
 
     var body: some View {
         let top = max(1, rows.map(\.count).max() ?? 1)
@@ -492,6 +530,13 @@ private struct BarList: View {
                         .frame(height: 6)
                     }
                     .help("\(label(row.key)): \(row.count)")
+                }
+                if let more {
+                    Button(more.title, action: more.action)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.top, 2)
                 }
             }
         }
@@ -579,7 +624,47 @@ extension Wire.StatsSummary {
                          .init(key: "planner", sessions: 39, costUsd: 46.2, tokens: 35_000_000, unpriced: 5)],
             costByAgent: [.init(key: "claude · claude-opus-5-5", sessions: 121, costUsd: 371.9, tokens: 236_000_000, unpriced: 0),
                           .init(key: "claude · claude-sonnet-5-5", sessions: 34, costUsd: 40.7, tokens: 41_400_000, unpriced: 0),
-                          .init(key: "codex · gpt-6.1", sessions: 31, costUsd: 0, tokens: 41_000_000, unpriced: 31)]
+                          .init(key: "codex · gpt-6.1", sessions: 31, costUsd: 0, tokens: 41_000_000, unpriced: 31)],
+            findings: .sample(now: now)
+        )
+    }
+}
+
+extension Wire.StatsFindings {
+    /// The sample month's 112 findings, broken down.
+    static func sample(now: UInt64) -> Wire.StatsFindings {
+        let hour: UInt64 = 3_600_000
+        let cells: [(Wire.FindingKind, [UInt32])] = [(.code, [7, 30, 24]), (.proof, [5, 12, 11]), (.scope, [3, 6, 5]), (.risk, [1, 4, 4])]
+        let row = { (task: String, title: String, kind: Wire.FindingKind, severity: Wire.Severity, text: String, file: String?, area: String, status: Wire.FindingStatus?, round: UInt32, hoursAgo: UInt64) in
+            Wire.StatsFindingRow(task: task, title: title, kind: kind, severity: severity, text: text, file: file, area: area, status: status, raisedIn: round, at: now - hoursAgo * hour)
+        }
+        return .init(
+            matrix: cells.flatMap { k, counts in zip([Wire.Severity.blocker, .major, .minor], counts).map { .init(kind: k, severity: $0, count: $1) } }
+                .sorted { $0.count > $1.count },
+            areas: [.init(key: "app/api", count: 24, tasks: 11, serious: 15), .init(key: "lib/auth", count: 21, tasks: 7, serious: 14),
+                    .init(key: "(no file)", count: 19, tasks: 14, serious: 9), .init(key: "db/migrations", count: 14, tasks: 9, serious: 10),
+                    .init(key: "emails", count: 11, tasks: 4, serious: 5), .init(key: "components/billing", count: 9, tasks: 5, serious: 6),
+                    .init(key: "lib/session", count: 8, tasks: 3, serious: 7), .init(key: "(root)", count: 6, tasks: 5, serious: 2)],
+            outcomes: .init(fixed: 78, disputed: 9, open: 21, unknown: 4, roundsToFixMedian: 1),
+            byAgent: [.init(agent: "claude", rounds: 66, findings: 81, serious: 48, perRound: 1.23),
+                      .init(agent: "codex", rounds: 17, findings: 31, serious: 20, perRound: 1.82)],
+            recent: [
+                row("ATL-147", "Refresh-token rotation with reuse detection", .code, .major, "A reused refresh token revokes only itself; revoke the whole token family so a stolen one can't keep a session alive.", "lib/auth/refresh.ts:88", "lib/auth", .open, 3, 3),
+                row("ATL-147", "Refresh-token rotation with reuse detection", .proof, .major, "The test output shows rotation but not reuse detection; run the reuse case too.", nil, "(no file)", .open, 3, 3),
+                row("ONB-19", "Invite-teammates step", .code, .minor, "inviteUrl() builds the link by string concatenation; use URL so the token is escaped.", "app/api/invites/route.ts:41", "app/api", .fixed, 2, 9),
+                row("BIL-91", "Idempotency keys on Stripe webhooks", .scope, .blocker, "customer.subscription.updated arriving after a newer event either drops a real downgrade or re-applies a stale plan.", "app/api/webhooks/stripe/route.ts:64", "app/api", .fixed, 2, 20),
+                row("BIL-91", "Idempotency keys on Stripe webhooks", .code, .major, "Event ids aren't unique-indexed; a race can process the same event twice.", "db/migrations/0044_stripe_events.sql", "db/migrations", .fixed, 2, 20),
+                row("ATL-150", "Sign out across all devices", .code, .major, "Refresh tokens survive sign-out; revoke the token family too.", "lib/auth/refresh.ts", "lib/auth", .fixed, 2, 26),
+                row("ATL-150", "Sign out across all devices", .scope, .blocker, "Edge session cache isn't purged in every region, so other devices stay signed in for up to 60s.", "lib/session/edge-cache.ts:52", "lib/session", .disputed, 2, 40),
+                row("ONB-19", "Invite-teammates step", .proof, .major, "No Outlook render attached; Outlook is where table layouts usually break.", nil, "(no file)", .fixed, 2, 52),
+                row("ONB-19", "Invite-teammates step", .code, .major, "Email used a <style> block, which Gmail strips.", "emails/invite.tsx", "emails", .fixed, 1, 60),
+                row("BIL-93", "Usage-based metering pipeline", .risk, .major, "The backfill migration rewrites live usage rows without a dry run.", "db/migrations/0041_usage.sql", "db/migrations", .fixed, 1, 75),
+                row("BIL-93", "Usage-based metering pipeline", .code, .minor, "UsageChart re-renders on every tick; memoise the series.", "components/billing/UsageChart.tsx", "components/billing", .open, 1, 75),
+                row("ATL-141", "Replace jsonwebtoken with jose", .risk, .major, "jwtVerify() doesn't pin algorithms; pass { algorithms: ['HS256'] }.", "lib/auth/jwt.ts:21", "lib/auth", .fixed, 1, 110),
+                row("ATL-144", "Extract auth middleware from route handlers", .code, .blocker, "verifyToken() isn't awaited in withAuth, so the promise is always truthy and any token passes.", "lib/auth/middleware.ts:38", "lib/auth", .fixed, 1, 110),
+                row("ATL-144", "Extract auth middleware from route handlers", .code, .major, "withAuth swallows the error and returns 200 with an empty body; return 401.", "app/api/projects/route.ts:17", "app/api", .fixed, 1, 112),
+                row("ONB-21", "Workspace templates picker", .code, .minor, "README still links the old setup guide.", "README.md", "(root)", nil, 1, 300),
+            ]
         )
     }
 }

@@ -59,9 +59,14 @@ struct FactoryTopBar: View {
             .padding(.trailing, 6)
 
             AppearanceButton()
-            iconButton("sidebar.right", active: state.showInspector && state.focusedTask == nil)
-                .onTapGesture { state.toggleTaskPanel() }
-                .help("Toggle task panel (⌥⌘I)")
+            if state.taskPanelEnabled {
+                iconButton("sidebar.right", active: state.showInspector && state.focusedTask == nil)
+                    .onTapGesture { state.toggleTaskPanel() }
+                    .help("Toggle task panel (⌥⌘I)")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Task panel")
+                    .accessibilityAddTraits(.isButton)
+            }
 
             HStack(spacing: 6) {
                 Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)

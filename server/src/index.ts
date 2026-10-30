@@ -71,6 +71,15 @@ export default {
     const auth = await handleAuth(request, env);
     if (auth) return auth;
     if (path === "/dev/token" && request.method === "POST") return devToken(request, env);
+    if (path.startsWith("/dev/") && env.DEV_LOGIN && isLocal(request)) {
+      // Local dev, for the e2e tests: publish a release file to the bucket, or run the org hub's alarm now.
+      const file = /^\/dev\/releases\/([\w.\-/]+)$/.exec(path);
+      if (file && request.method === "PUT" && !file[1].includes("..")) {
+        await env.RELEASES.put(file[1], await request.arrayBuffer(), { httpMetadata: { contentType: "application/json" } });
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/dev/alarm" && request.method === "POST") return orgHub(env).fetch(`https://org/dev/alarm${url.search}`, { method: "POST" });
+    }
 
     const me = await currentMember(request, env);
     if (path === "/") return home(request, env, me, me?.role === "admin" ? await serverUpdate(env) : null);
