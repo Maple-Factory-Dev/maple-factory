@@ -150,11 +150,7 @@ struct ContentView: View {
                 .onOpenURL { url in
                     // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it).
                     guard url.scheme == "maplefactory", url.host() == "task", let id = url.pathComponents.dropFirst().first else { return }
-                    let goal = Destination.goal(state.task(id).goal)
-                    if state.destination != goal { state.destination = goal }
-                    state.isComposing = false
-                    state.selectedTask = id
-                    state.focusedTask = id
+                    state.openFullView(id)
                 }
                 .onChange(of: Notifier.shared.opening?.id) {
                     // A clicked banner: its task, in the list that holds it.

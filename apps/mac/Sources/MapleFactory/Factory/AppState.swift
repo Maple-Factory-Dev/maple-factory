@@ -969,6 +969,73 @@ final class AppState {
         showToast("Note deleted", icon: "trash")
     }
 
+    // MARK: Command palette
+
+    /// The ⌘K palette is up; closing it forgets what was typed.
+    var showPalette = false {
+        didSet { if !showPalette { paletteQuery = ""; paletteSelection = 0 } }
+    }
+    /// What's typed into it; a new query puts the highlight back on the first row.
+    var paletteQuery = "" {
+        didSet { if paletteQuery != oldValue { paletteSelection = 0 } }
+    }
+    /// The highlighted row, an index into `paletteItems`.
+    var paletteSelection = 0
+    /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
+    @ObservationIgnored var openSettings: (() -> Void)? = nil
+
+    /// What the palette shows for the query, from the goals and pages in the sidebar and the actions on offer here.
+    var paletteSections: [PaletteSection] {
+        let goals = FactoryData.goals.filter { !$0.archived }.map(\.name)
+        let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
+        // The task panel can only be toggled with "Peek in the side panel" on.
+        let actions = PaletteAction.allCases.filter { $0 != .toggleTaskPanel || taskPanelEnabled }
+        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, me: FactoryData.me.id)
+    }
+    var paletteItems: [PaletteItem] { CommandPaletteModel.flatten(paletteSections) }
+
+    func togglePalette() {
+        withAnimation(.snappy(duration: 0.18)) { showPalette.toggle() }
+    }
+
+    /// ↑/↓: the highlight moves through every section's rows, wrapping at the ends.
+    func movePaletteSelection(_ delta: Int) {
+        let count = paletteItems.count
+        guard count > 0 else { return }
+        paletteSelection = ((paletteSelection + delta) % count + count) % count
+    }
+
+    /// Return: runs the highlighted row.
+    func runPaletteSelection() {
+        let items = paletteItems
+        guard items.indices.contains(paletteSelection) else { return }
+        perform(items[paletteSelection])
+    }
+
+    /// A row was chosen: the palette closes and its task, goal or page opens, or its action runs.
+    func perform(_ item: PaletteItem) {
+        withAnimation(.snappy(duration: 0.18)) { showPalette = false }
+        switch item {
+        case .task(let id): openFullView(id)
+        case .goal(let name): destination = .goal(name)
+        case .page(let page): destination = page.destination
+        case .action(.newTask): startCompose()
+        case .action(.newGoal): goalSheet = .new
+        case .action(.toggleSidebar): toggleSidebar()
+        case .action(.toggleTaskPanel): toggleTaskPanel()
+        case .action(.settings): openSettings?()
+        }
+    }
+
+    /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.
+    func openFullView(_ id: String) {
+        let goal = Destination.goal(task(id).goal)
+        if destination != goal { destination = goal }
+        isComposing = false
+        selectedTask = id
+        focusedTask = id
+    }
+
     // MARK: Navigation actions
 
     /// A `MF-12` reference in rendered Markdown was clicked: the task panel shows it, or, in a task's
