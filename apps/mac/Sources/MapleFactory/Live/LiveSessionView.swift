@@ -11,6 +11,8 @@ struct LiveSessionView: View {
     @State private var confirmKill = false
     @State private var copied = false
     @State private var sharing = false
+    /// The Share button's frame in the window, for a headless shot to hang the popover from.
+    @State private var shareFrame: CGRect = .zero
 
     /// The session as last seen live, so the header keeps its agent and folder after it ends.
     @State private var lastSeen: Wire.LiveSession?
@@ -47,6 +49,8 @@ struct LiveSessionView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(12)
         .onAppear { lastSeen = current }
+        .onReceive(NotificationCenter.default.publisher(for: SessionSharePopover.demoOpen)) { _ in sharing = true }
+        .onChange(of: sharing) { _, open in if Headless.isOn { Headless.popoverAnchor = open ? shareFrame : nil } }
         .onChange(of: current) { _, now in if let now { lastSeen = now } }
     }
 
@@ -147,6 +151,7 @@ struct LiveSessionView: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(shares.isEmpty ? Theme.fill : Theme.accent.opacity(0.12)))
         .contentShape(Rectangle())
         .onTapGesture { sharing.toggle() }
+        .background(GeometryReader { g in Color.clear.onAppear { shareFrame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in shareFrame = f } })
         .help(shares.isEmpty ? "Let teammates watch or type into this session" : shares.map { "@\($0.login) \($0.canType ? "can type" : "can watch")" }.joined(separator: ", "))
         .popover(isPresented: $sharing, arrowEdge: .bottom) { SessionSharePopover(machine: machine, live: live) }
     }

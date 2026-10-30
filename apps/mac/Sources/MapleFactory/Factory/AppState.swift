@@ -2232,6 +2232,9 @@ final class AppState {
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
+            // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
+            case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
+            case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             // The Diff tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
             // `diff:add`, `diff:summary:<text>`, `diff:submit` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.

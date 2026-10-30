@@ -4,6 +4,9 @@ import SwiftUI
 /// or to type into it too. Its machine's owner and admins see it; the whole list goes to the factory on
 /// every change, and the server closes the terminals of anyone taken off.
 struct SessionSharePopover: View {
+    /// Headless: opens the open session's popover (`share:open`).
+    static let demoOpen = Notification.Name("SessionSharePopover.demoOpen")
+
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     let machine: Wire.Machine
@@ -96,7 +99,7 @@ struct SessionSharePopover: View {
                 Text(client.members.first { $0.login == share.login }?.name ?? share.login)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Theme.text)
-                Text("@\(share.login) · shared by \(share.by == client.me?.login ? "you" : "@\(share.by)")")
+                Text("@\(share.login) · by \(share.by == client.me?.login ? "you" : "@\(share.by)")")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textMuted)
             }
