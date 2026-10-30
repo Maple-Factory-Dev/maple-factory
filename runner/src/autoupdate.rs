@@ -21,8 +21,8 @@ use crate::service;
 use crate::sessions::Sessions;
 use crate::update::{self, Check, EXIT_UPDATED, Releases};
 
-/// How often the service looks for a new release.
-const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// How often the service looks for a new release: hourly, like the hub's check that tells the apps.
+const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
 
 pub struct AutoUpdate {
     exe: PathBuf,

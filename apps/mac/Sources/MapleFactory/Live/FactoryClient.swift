@@ -345,7 +345,8 @@ import Security
         }
     }
 
-    private func apply(_ message: Wire.ServerToClient) {
+    /// One message from the feed (internal for tests).
+    func apply(_ message: Wire.ServerToClient) {
         switch message {
         case .snapshot(let snapshot):
             attempt = 0
@@ -433,6 +434,10 @@ import Security
             applyPresence()
         case .reposUpdated(let update):
             repos = update.repos
+        case .runnerReleased(let update):
+            // The hub's hourly look at the release feed: every outdated badge and What's new follows.
+            runnerLatest = update.runnerLatest
+            runnerReleases = update.runnerReleases
         case .promptsUpdated(let update):
             prompts = update.prompts
         case .policyUpdated(let update):
@@ -1040,6 +1045,15 @@ extension FactoryClient {
         Self.updatePhase(machine, latest: runnerLatest)
     }
 
+    /// What the machine's sidebar row shows about its runner: a newer release, or an update under way.
+    /// Nothing while it's offline, where the offline icon says enough.
+    static func sidebarUpdateBadge(_ machine: Wire.Machine, latest: String?) -> SidebarUpdateBadge? {
+        guard machine.online else { return nil }
+        let phase = updatePhase(machine, latest: latest)
+        if case .outdated(let version) = phase { return .available(version) }
+        return phase.isBusy ? .updating : nil
+    }
+
     static func updatePhase(_ machine: Wire.Machine, latest: String?) -> RunnerUpdatePhase {
         let outdated = { () -> RunnerUpdatePhase in
             guard let version = machine.version, let latest, Self.version(version, isOlderThan: latest) else { return .current }
@@ -1055,6 +1069,22 @@ extension FactoryClient {
         case .upToDate: return outdated() == .current ? .upToDate(machine.version ?? update.target) : outdated()
         case .failed: return .failed(update.message, target: update.target)
         case .other: return outdated()
+        }
+    }
+}
+
+/// A machine's runner in its sidebar row.
+enum SidebarUpdateBadge: Equatable {
+    /// This newer release is out.
+    case available(String)
+    /// Checking, installing or restarting.
+    case updating
+
+    /// The line it adds to the row's tooltip.
+    var helpLine: String {
+        switch self {
+        case .available(let version): "Runner update available: \(version)"
+        case .updating: "Updating its runner…"
         }
     }
 }

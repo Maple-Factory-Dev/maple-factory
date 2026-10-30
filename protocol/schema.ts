@@ -1044,6 +1044,11 @@ export const unions: Record<string, Union> = {
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
       "repos.updated": { fields: { repos: "OrgRepo[]" } },
+      "runner.released": {
+        doc: "A runner release came out (or the feed changed) since the snapshot.",
+        fields: { runnerLatest: "string?", runnerReleases: "RunnerRelease[]" },
+        fieldDocs: { runnerLatest: "The newest released runner version.", runnerReleases: "Runner releases, newest first, with their notes." },
+      },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },

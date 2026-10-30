@@ -18,6 +18,9 @@ import { fromNotice, onReport, shown } from "./runner-update.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
+/** How often the hub reads the runner releases again while apps are connected. */
+const RUNNER_CHECK_EVERY = 3_600_000;
+
 interface Client {
   member: Member;
   subscribed: boolean;
@@ -54,12 +57,14 @@ export class OrgHub extends DurableObject<Env> {
         if (machine) this.broadcast({ type: "machine.updated", machine });
       },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
-      wakeIn: (ms) => ctx.waitUntil((async () => {
-        const at = Date.now() + ms;
-        const set = await ctx.storage.getAlarm();
-        if (set == null || set > at) await ctx.storage.setAlarm(at);
-      })()),
+      wakeIn: (ms) => ctx.waitUntil(this.wakeAt(Date.now() + ms)),
     }, this.intake);
+  }
+
+  /** Sets the alarm for `at` unless it's already due sooner: the earliest wake wins. */
+  private async wakeAt(at: number) {
+    const set = await this.ctx.storage.getAlarm();
+    if (set == null || set > at) await this.ctx.storage.setAlarm(at);
   }
 
   /** Webhooks can't reach every server (a laptop's, say), so CI that's still running is read again;
@@ -68,6 +73,33 @@ export class OrgHub extends DurableObject<Env> {
     await applySettings(this.env);
     await this.engine.pollCI();
     await this.engine.pump();
+    await this.checkRunnerRelease();
+  }
+
+  /** While apps are connected, reads the runner releases again hourly and tells the apps when they
+   *  changed, so a new runner shows without reconnecting. An idle org isn't woken for it. */
+  private async checkRunnerRelease() {
+    if (!this.ctx.getWebSockets("client").length) return;
+    let checked = (await this.ctx.storage.get<number>("runner:checkedAt")) ?? 0;
+    if (Date.now() - checked >= RUNNER_CHECK_EVERY) {
+      const runnerLatest = await this.runnerLatest(true);
+      const runnerReleases = await this.runnerReleases(true);
+      const seen = JSON.stringify({ runnerLatest, runnerReleases });
+      if (seen !== (await this.ctx.storage.get<string>("runner:seen"))) {
+        await this.ctx.storage.put("runner:seen", seen);
+        this.broadcast({ type: "runner.released", runnerLatest, runnerReleases });
+      }
+      checked = Date.now();
+      await this.ctx.storage.put("runner:checkedAt", checked);
+    }
+    await this.armRunnerCheck(checked);
+  }
+
+  /** The next runner release check: an hour after the last one, never later than an hour from now. */
+  private async armRunnerCheck(checked?: number) {
+    checked ??= (await this.ctx.storage.get<number>("runner:checkedAt")) ?? Date.now();
+    const now = Date.now();
+    await this.wakeAt(Math.min(Math.max(checked + RUNNER_CHECK_EVERY, now + 1000), now + RUNNER_CHECK_EVERY));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -79,6 +111,7 @@ export class OrgHub extends DurableObject<Env> {
         const pair = new WebSocketPair();
         this.ctx.acceptWebSocket(pair[1], ["client"]);
         pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
+        await this.armRunnerCheck();
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
       case "/machine": {
@@ -128,6 +161,12 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
+      case "/dev/alarm": {
+        // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
+        if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete("runner:checkedAt");
+        await this.alarm();
+        return Response.json({ alarm: await this.ctx.storage.getAlarm(), now: Date.now() });
+      }
       case "/intake": {
         // A new request from an integration or the API (the Worker checked who's asking).
         const input = (await request.json()) as NewRequest;
@@ -190,9 +229,9 @@ export class OrgHub extends DurableObject<Env> {
   private latest: { version: string | null; at: number } | null = null;
   private changes: { releases: RunnerRelease[]; at: number } | null = null;
 
-  /** The newest released runner, from the releases manifest (the org's bucket, else the feed); read again every ten minutes. */
-  private async runnerLatest(): Promise<string | null> {
-    if (this.latest && Date.now() - this.latest.at < 600_000) return this.latest.version;
+  /** The newest released runner, from the releases manifest (the org's bucket, else the feed); read again every ten minutes, or now when `force`. */
+  private async runnerLatest(force = false): Promise<string | null> {
+    if (!force && this.latest && Date.now() - this.latest.at < 600_000) return this.latest.version;
     let version: string | null = null;
     try {
       const manifest = await release(this.env, "maple-runner/latest.json");
@@ -202,9 +241,9 @@ export class OrgHub extends DurableObject<Env> {
     return version;
   }
 
-  /** The runner releases' notes, newest first (maple-runner/changes.json); read again every ten minutes. */
-  private async runnerReleases(): Promise<RunnerRelease[]> {
-    if (this.changes && Date.now() - this.changes.at < 600_000) return this.changes.releases;
+  /** The runner releases' notes, newest first (maple-runner/changes.json); read again every ten minutes, or now when `force`. */
+  private async runnerReleases(force = false): Promise<RunnerRelease[]> {
+    if (!force && this.changes && Date.now() - this.changes.at < 600_000) return this.changes.releases;
     let releases: RunnerRelease[] = [];
     try {
       const file = await release(this.env, "maple-runner/changes.json");

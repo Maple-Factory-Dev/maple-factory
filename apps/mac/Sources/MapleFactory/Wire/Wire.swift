@@ -4829,6 +4829,25 @@ public enum Wire {
         }
     }
 
+    /// A runner release came out (or the feed changed) since the snapshot.
+    public struct ServerToClientRunnerReleased: Codable, Hashable, Sendable {
+        /// The newest released runner version.
+        public var runnerLatest: String?
+        /// Runner releases, newest first, with their notes.
+        public var runnerReleases: [RunnerRelease]
+
+        public init(runnerLatest: String? = nil, runnerReleases: [RunnerRelease] = []) {
+            self.runnerLatest = runnerLatest
+            self.runnerReleases = runnerReleases
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
+            runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases) ?? []
+        }
+    }
+
     /// Something worth a passing line in the app.
     public struct ServerToClientToast: Codable, Hashable, Sendable {
         public var text: String
@@ -4886,6 +4905,7 @@ public enum Wire {
         case policyUpdated(ServerToClientPolicyUpdated)
         case promptsUpdated(ServerToClientPromptsUpdated)
         case reposUpdated(ServerToClientReposUpdated)
+        case runnerReleased(ServerToClientRunnerReleased)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
@@ -4913,6 +4933,7 @@ public enum Wire {
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
+            case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
@@ -4968,6 +4989,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .reposUpdated(let body):
                 try c.encode("repos.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .runnerReleased(let body):
+                try c.encode("runner.released", forKey: .type)
                 try body.encode(to: encoder)
             case .toast(let body):
                 try c.encode("toast", forKey: .type)
