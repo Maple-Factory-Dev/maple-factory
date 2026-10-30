@@ -362,8 +362,10 @@ final class AppState {
         set { if !isLive { mockTasks = newValue } }
     }
 
-    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).map { seed in
+    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed
+        // The mockup's drafts keep the order they're seeded in.
+        task.draftRank = Double(at)
         task.autoReview = FactoryData.seedReviews[task.id]
         task.hand = FactoryData.seedHands[task.id]
         task.shareable = FactoryData.seedShareable.contains(task.id)
@@ -913,6 +915,8 @@ final class AppState {
             when: "now"
         )]
 
+        // A new draft goes to the bottom of its goal's drafts.
+        task.draftRank = (draftOrder(draft.goal).map(\.draftRank).max() ?? 0) + 1
         tasks.append(task)
         seenActivityCount[id] = task.activity.count
         LastTaskGoal.store(draft.goal, factory: taskGoalFactory, defaults: taskGoalDefaults)
@@ -1345,6 +1349,44 @@ final class AppState {
             task.startAt = nil
             joinQueue(&task)
         }
+    }
+
+    // MARK: Drafts
+
+    /// Moves a draft ahead of `before` among its goal's drafts ("top": the first), or to the bottom. It stays a draft.
+    func rankDraft(_ id: String, before: String?) {
+        guard let task = tasks.first(where: { $0.id == id }), task.state == .drafting else { return }
+        let rank = draftRank(for: task, before: before)
+        if let client, isLive {
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.draftRank = rank } }
+            client.send(.taskRankDraft(.init(id: id, before: before)))
+            return
+        }
+        let text = before == "top" ? "Moved it to the top of the drafts" : before.map { "Moved it ahead of \($0) in the drafts" } ?? "Moved it to the bottom of the drafts"
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.draftRank = rank
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: text, when: "now"), at: 0)
+            }
+        }
+    }
+
+    /// The draftRank that puts `task` ahead of `before` ("top": the first; none: the bottom), as the factory works it out.
+    private func draftRank(for task: FactoryTask, before: String?) -> Double {
+        let line = draftOrder(task.goal).filter { $0.id != task.id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            return at > 0 ? (line[at - 1].draftRank + target.draftRank) / 2 : target.draftRank - 1000
+        }
+        return (line.map(\.draftRank).max() ?? 0) + 1
+    }
+
+    func moveDraftToTop(_ id: String) { rankDraft(id, before: "top") }
+    func moveDraftToBottom(_ id: String) { rankDraft(id, before: nil) }
+
+    /// A goal's drafts, first first.
+    func draftOrder(_ goal: String) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal && $0.state == .drafting }.sorted { $0.draftRank < $1.draftRank }
     }
 
     /// The mockup's queue: a draft goes to planning.
@@ -1893,6 +1935,10 @@ final class AppState {
             case "top": moveToTop(parts[1])
             case "bottom": moveToBottom(parts[1])
             case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            // The Drafts column's: a draft dropped on another (`draftdrop:<id>:<before>`, none: the bottom), Move to top / bottom.
+            case "draftdrop": rankDraft(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "drafttop": moveDraftToTop(parts[1])
+            case "draftbottom": moveDraftToBottom(parts[1])
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil
@@ -1976,6 +2022,10 @@ final class AppState {
                 if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
             // A key pressed in the window, headless: `key:esc`.
             case "key": Headless.press(parts[1])
+            // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
+            // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
+            case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
+            case "menupick": Headless.pickMenuItem(parts.dropFirst().joined(separator: ":"))
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
