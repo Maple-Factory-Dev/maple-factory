@@ -430,6 +430,8 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
+    /// Bumped by every New Task, so the composer puts the caret in the title even when it's already open.
+    var composeFocusRequest = 0
     /// Your Scratchpad: the factory's copy when signed in.
     var notes: [Note] {
         get { isLive ? client?.notes ?? [] : mockNotes }
@@ -762,6 +764,7 @@ final class AppState {
             focusedTask = nil
             isComposing = true
         }
+        composeFocusRequest += 1
     }
 
     /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
