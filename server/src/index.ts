@@ -125,7 +125,7 @@ export default {
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
     if (path === "/api/usage/goals" && request.method === "GET") return orgHub(env).fetch("https://org/usage/goals");
     if (path === "/api/stats" && request.method === "GET") {
-      // For prompt and loop tuning: ?days= (7, 30 or 90), &goal=, &raw=1 adds the event rows.
+      // For prompt and loop tuning: ?days= (1, 3, 7, 30 or 90), &goal=, &raw=1 adds the event rows.
       if (me.role !== "admin") return text("Only admins can see statistics.", 403);
       return orgHub(env).fetch(`https://org/stats${url.search}`);
     }

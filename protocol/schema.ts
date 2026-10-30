@@ -777,7 +777,7 @@ export const structs: Record<string, Struct> = {
     },
   },
   StatsCount: { fields: { key: "string", count: "u32", medianMs: "u64?" } },
-  StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD (UTC)." } },
+  StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC)." } },
   StatsGoalRow: {
     fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?" },
   },
