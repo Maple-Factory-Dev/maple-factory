@@ -546,7 +546,7 @@ mod tests {
                     "--image=/tmp/first image.png,/tmp/second.png",
                 ]);
                 if prompt_file {
-                    assert_eq!(actual[4], r#"p="$(cat -- "$MAPLE_PROMPT_FILE")"; rm -f -- "$MAPLE_PROMPT_FILE"; exec "$0" "$@" "$p""#);
+                    assert_eq!(actual[4], r#"p="$(cat -- "$MAPLE_PROMPT_FILE"; printf .)"; p="${p%.}"; rm -f -- "$MAPLE_PROMPT_FILE"; exec "$0" "$@" "$p""#);
                 } else {
                     expected.push(prompt);
                 }
