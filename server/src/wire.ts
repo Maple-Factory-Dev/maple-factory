@@ -2045,6 +2045,8 @@ export interface ServerToClient_Snapshot {
   scripts?: RepoWorktreeScripts[] | null;
   /** Each repo's latest Set up with AI run. None: an older server. */
   setupRuns?: RepoSetupRun[] | null;
+  /** Each goal's latest Scout run. None: an older server. */
+  scoutRuns?: ScoutRun[] | null;
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes (What's new). None: an older server. */

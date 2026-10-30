@@ -2851,6 +2851,9 @@ pub enum ServerToClient {
         /// Each repo's latest Set up with AI run. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         setup_runs: Option<Vec<RepoSetupRun>>,
+        /// Each goal's latest Scout run. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scout_runs: Option<Vec<ScoutRun>>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,

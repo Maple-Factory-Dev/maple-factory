@@ -128,7 +128,7 @@ struct ScoutButton: View {
     let run: Wire.ScoutRun?
     let action: () -> Void
 
-    private var running: Bool { run?.state == .running }
+    var running: Bool { run?.state == .running }
 
     private var result: String? {
         switch run?.state {
