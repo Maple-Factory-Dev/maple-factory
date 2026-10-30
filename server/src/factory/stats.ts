@@ -41,6 +41,7 @@ export interface FindingDetail {
 }
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 /** What counts as a touchpoint: something that took a person, or made an agent go round again. */
 const TOUCHPOINTS = new Set<StatKind>(["hand.raised", "question.asked", "steer", "prompt.answered", "session.restarted", "session.ended"]);
 
@@ -145,11 +146,17 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
   const approvalVersions = approvals.map((e) => num(e.detail.version) || 1);
   const goalName = new Map((opts.goals ?? []).map((g) => [g.id, g.name]));
 
+  // A day by day chart says little over 3 days or less: those windows go by the hour, ending with this one.
+  const hourly = opts.days <= 3;
+  const step = hourly ? HOUR : DAY;
+  const buckets = hourly ? opts.days * 24 : opts.days;
+  const last = hourly ? at - (at % HOUR) : startOfDay(at);
   const daily = [];
-  for (let d = opts.days - 1; d >= 0; d--) {
-    const start = startOfDay(at) - d * DAY;
-    const inDay = (e: StatEvent) => e.at >= start && e.at < start + DAY;
-    daily.push({ day: new Date(start).toISOString().slice(0, 10), merges: merges.filter(inDay).length, hands: hands.filter(inDay).length });
+  for (let d = buckets - 1; d >= 0; d--) {
+    const start = last - d * step;
+    const inBucket = (e: StatEvent) => e.at >= start && e.at < start + step;
+    const iso = new Date(start).toISOString();
+    daily.push({ day: hourly ? iso.slice(0, 13) + ":00" : iso.slice(0, 10), merges: merges.filter(inBucket).length, hands: hands.filter(inBucket).length });
   }
 
   const goalRows = group(events, (e) => e.goal).map(([id, list]) => ({
