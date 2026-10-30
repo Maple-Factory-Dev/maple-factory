@@ -66,6 +66,22 @@ enum Headless {
         await Snapshotter.shared?.settleThenShoot(name)
     }
 
+    /// A key pressed in the main window (`key:esc`), as a key equivalent first, the way AppKit tries it, then as a
+    /// key down. The window is never key headless, so the event goes to it directly.
+    @MainActor static func press(_ key: String) {
+        let (characters, code): (String, UInt16) = switch key {
+        case "esc": ("\u{1b}", 53)
+        case "return": ("\r", 36)
+        default: (key, 0)
+        }
+        guard let window = Snapshotter.shared?.mainWindow ?? NSApp.mainWindow,
+              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: window.windowNumber, context: nil, characters: characters,
+                                           charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
+        else { return }
+        if !window.performKeyEquivalent(with: event) { window.sendEvent(event) }
+    }
+
     /// Waits until `busy` is false (polling every 50ms), or `timeout` passes; false on timeout.
     @MainActor static func untilIdle(timeout: Duration, _ busy: () -> Bool) async -> Bool {
         let clock = ContinuousClock()
@@ -120,6 +136,8 @@ enum Headless {
     private func number(_ key: String, _ fallback: Double) -> Double {
         AppDefaults.object(forKey: key) == nil ? fallback : AppDefaults.double(forKey: key)
     }
+
+    var mainWindow: NSWindow? { window }
 
     private var window: NSWindow? {
         NSApp.windows.first { $0.contentView != nil && $0.className.contains("AppKitWindow") }
