@@ -8,9 +8,9 @@
 // which raises their role but never lets them in.
 
 import type { Env } from "./env.ts";
-import { API, apiBase, githubApp, GitHubError, orgMember } from "./github.ts";
+import { API, apiBase, githubApp, GitHubError, orgRole } from "./github.ts";
 import type { Member } from "./wire.ts";
-import { audit, isLocal, orgHub, randomToken, sha256, sign, text, verify } from "./util.ts";
+import { audit, isLocal, machineHub, orgHub, randomToken, sha256, sign, text, verify } from "./util.ts";
 
 const SESSION_TTL = 7 * 24 * 3600; // seconds
 const APP_TOKEN_TTL = 30 * 24 * 3600 * 1000; // ms
@@ -24,7 +24,7 @@ export interface MemberRow {
   github_id: number;
   name: string | null;
   avatar_url: string | null;
-  /** GitHub's role, rewritten at each sign-in. */
+  /** GitHub's role, rewritten at each sign-in and membership re-check. */
   role: string;
   teams: string;
   /** Who made them admin here; NULL: nobody. A sign-in leaves it alone. */
@@ -33,6 +33,8 @@ export interface MemberRow {
   revoked_at: number | null;
   /** When GitHub last confirmed they may sign in (ms). */
   checked_at: number | null;
+  /** Their last sign-in (ms). */
+  last_seen: number | null;
 }
 
 /** A member as the apps see them: admin when GitHub says they're an owner, or an admin made them one here. */
@@ -95,20 +97,38 @@ export async function maySignIn(env: Env, login: string): Promise<boolean> {
   if (allowedLogins(env).has(login.toLowerCase())) return true;
   const app = githubApp(env);
   if (!app) throw new GitHubError("no_app", "The factory has no GitHub App to ask who's in the org.");
-  return orgMember(app, env.GITHUB_ORG, login);
+  return (await orgRole(app, env.GITHUB_ORG, login)) !== null;
+}
+
+/** The role GitHub gives `login` today, as a sign-in would set it, or null if they couldn't sign in. Someone on the
+ *  list who isn't in the org is a member. */
+async function githubRole(env: Env, login: string): Promise<"admin" | "member" | null> {
+  const listed = allowedLogins(env).has(login.toLowerCase());
+  if (env.GITHUB_OWNER_TYPE === "User") return login.toLowerCase() === env.GITHUB_ORG.toLowerCase() ? "admin" : listed ? "member" : null;
+  const app = githubApp(env);
+  if (!app) throw new GitHubError("no_app", "The factory has no GitHub App to ask who's in the org.");
+  return (await orgRole(app, env.GITHUB_ORG, login)) ?? (listed ? "member" : null);
 }
 
 async function memberRow(env: Env, login: string) {
   return env.DB.prepare("SELECT * FROM members WHERE login = ?").bind(login).first<MemberRow>();
 }
 
-/** Cuts someone off now: their app tokens go, web sessions issued before now stop working, and (with `notify`) the
- *  org hub closes their open sockets and terminals. A later sign-in, if GitHub still lets them, works as usual. */
+/** Cuts someone off now: their app tokens go, web sessions issued before now stop working, their machines go
+ *  offline and can't reconnect (authenticateRunner) until they sign in again, and (with `notify`) the org hub closes
+ *  their open sockets and terminals. A later sign-in, if GitHub still lets them, works as usual. */
 export async function revokeMember(env: Env, login: string, by: string, notify = true) {
   await env.DB.prepare("DELETE FROM app_tokens WHERE login = ?").bind(login).run();
   await env.DB.prepare("UPDATE members SET revoked_at = ?, admin_granted_by = NULL, admin_granted_at = NULL WHERE login = ?").bind(Date.now(), login).run();
   await audit(env, by, "member.revoked", login);
+  const { results } = await env.DB.prepare("SELECT id FROM machines WHERE owner = ?").bind(login).all<{ id: string }>();
+  await Promise.all(results.map((m) => machineHub(env, m.id).fetch("https://hub/disconnect", { method: "POST" })));
   if (notify) await orgHub(env).fetch("https://org/revoked", { method: "POST", body: login });
+}
+
+/** Whether `row` was revoked and hasn't signed in since (a sign-in sets last_seen). */
+export function revoked(row: Pick<MemberRow, "revoked_at" | "last_seen">): boolean {
+  return row.revoked_at !== null && (row.last_seen ?? 0) <= row.revoked_at;
 }
 
 /** How old a membership check may get (ms): MEMBERSHIP_RECHECK_MS in the env (the e2e tests set 0), else 10 minutes. */
@@ -116,29 +136,34 @@ export function recheckEvery(env: Env): number {
   return env.MEMBERSHIP_RECHECK_MS ? Number(env.MEMBERSHIP_RECHECK_MS) : MEMBERSHIP_RECHECK_MS;
 }
 
-/** Whether `row` may still use the factory: asks GitHub again once the last answer is stale, and revokes them
- *  if they've left (`notify` tells the org hub, which the hub itself skips). checked_at is claimed before the
- *  call, so concurrent requests from one member ask GitHub once; when GitHub can't say, the claim is undone
- *  and the last answer stands, so an outage signs nobody out. */
-export async function stillMember(env: Env, row: MemberRow, notify = true): Promise<boolean> {
-  if (!stillAllowed(env, row.login)) return false;
+/** `row` as it stands if they may still use the factory, else null: asks GitHub again once the last answer is
+ *  stale, revokes them if they've left, and takes up a role GitHub changed (so a demoted owner stops being an
+ *  admin). `notify` tells the org hub of either, which the hub itself skips. checked_at is claimed before the call,
+ *  so concurrent requests from one member ask GitHub once; when GitHub can't say, the claim is undone and the last
+ *  answer stands, so an outage signs nobody out. Teams are only read at sign-in. */
+export async function stillMember(env: Env, row: MemberRow, notify = true): Promise<MemberRow | null> {
+  if (!stillAllowed(env, row.login)) return null;
   const now = Date.now();
-  if (row.checked_at !== null && now - row.checked_at < recheckEvery(env)) return true;
+  if (row.checked_at !== null && now - row.checked_at < recheckEvery(env)) return row;
   const claim = await env.DB.prepare("UPDATE members SET checked_at = ? WHERE login = ? AND checked_at IS ?")
     .bind(now, row.login, row.checked_at).run();
-  if (!claim.meta.changes) return true; // Another request is asking GitHub now.
-  let allowed: boolean;
+  if (!claim.meta.changes) return row; // Another request is asking GitHub now.
+  let role: "admin" | "member" | null;
   try {
-    allowed = await maySignIn(env, row.login);
+    role = await githubRole(env, row.login);
   } catch {
     await env.DB.prepare("UPDATE members SET checked_at = ? WHERE login = ? AND checked_at = ?").bind(row.checked_at, row.login, now).run();
-    return true;
+    return row;
   }
-  if (!allowed) {
+  if (!role) {
     await revokeMember(env, row.login, "github", notify);
-    return false;
+    return null;
   }
-  return true;
+  if (role === row.role) return { ...row, checked_at: now };
+  await env.DB.prepare("UPDATE members SET role = ? WHERE login = ?").bind(role, row.login).run();
+  await audit(env, "github", "member.role_changed", row.login, { from: row.role, to: role });
+  if (notify) await orgHub(env).fetch("https://org/member-changed", { method: "POST", body: row.login });
+  return { ...row, role, checked_at: now };
 }
 
 /** The signed-in member, from a session cookie, an app token, or local dev's DEV_LOGIN. */
@@ -148,9 +173,10 @@ export async function currentMember(request: Request, env: Env): Promise<Member 
     const row = await env.DB.prepare(
       `SELECT m.* FROM app_tokens t JOIN members m ON m.login = t.login WHERE t.token_hash = ? AND t.expires_at > ?`,
     ).bind(await sha256(bearer), Date.now()).first<MemberRow>();
-    if (!row || !(await stillMember(env, row))) return null;
+    const still = row && (await stillMember(env, row));
+    if (!still) return null;
     await env.DB.prepare("UPDATE app_tokens SET last_used = ? WHERE token_hash = ?").bind(Date.now(), await sha256(bearer)).run();
-    return toMember(row);
+    return toMember(still);
   }
   if (env.SESSION_SECRET) {
     // iat is in ms; a session from before it was kept counts as issued a full SESSION_TTL before it expires.
@@ -158,7 +184,8 @@ export async function currentMember(request: Request, env: Env): Promise<Member 
     if (session) {
       const row = await memberRow(env, session.login);
       const issued = session.iat ?? (session.exp - SESSION_TTL) * 1000;
-      if (row && (row.revoked_at === null || issued > row.revoked_at) && (await stillMember(env, row))) return toMember(row);
+      const still = row && (row.revoked_at === null || issued > row.revoked_at) && (await stillMember(env, row));
+      if (still) return toMember(still);
     }
   }
   if (env.DEV_LOGIN && isLocal(request)) {

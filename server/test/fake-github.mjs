@@ -15,6 +15,7 @@
 //   GET  /app/installations, GET /installation/repositories   the app's installations (one per account, with its
 //                                                        login), and an installation's repos
 //   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
+//   GET  /orgs/:org/memberships/:login                   { state: "active", role } if a member, else 404 (members:read)
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
@@ -37,7 +38,7 @@
 // like a server webhooks can't reach), and POST /_deleteBranch { owner, repo, branch }, after which
 // GitHub won't reopen that branch's closed pull request, and POST /_moveOnMerge { owner, repo, branch }: once
 // that branch's pull request merges, someone pushes another commit to it, POST /_leave { org, login }: they
-// leave the org, and POST /_threads { owner, repo, number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT",
+// leave the org, POST /_role { org, login, role: "admin"|"member" }: their role there changes, and POST /_threads { owner, repo, number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT",
 // resolved?, outdated?, comments: [{ author, body }] }] }, the review threads people left on that pull request.
 
 import { execFileSync } from "node:child_process";
@@ -223,6 +224,12 @@ createServer((req, res) => {
       owners.delete(key);
       return send(res, 200, {});
     }
+    if (req.method === "POST" && url.pathname === "/_role") {
+      const key = `${body.org}:${body.login}`.toLowerCase();
+      if (body.role === "admin") owners.add(key);
+      else owners.delete(key);
+      return send(res, 200, {});
+    }
     if (req.method === "POST" && url.pathname === "/_checks") {
       const list = checkRunsFor(body.owner, body.repo, body.sha);
       for (const r of body.runs) {
@@ -275,6 +282,14 @@ createServer((req, res) => {
       if (!g) return send(res, 401, { message: "Bad credentials" });
       if (!g.permissions?.members || g.installation !== 1000 + accounts.indexOf(m[1].toLowerCase())) return send(res, 403, { message: "Resource not accessible by integration (needs members:read)" });
       return members.has(`${m[1]}:${m[2]}`.toLowerCase()) ? send(res, 204) : send(res, 404, { message: "Not Found" });
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/orgs\/([\w-]+)\/memberships\/([\w-]+)$/))) {
+      const t = /^token (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+      const g = t && tokens.get(t);
+      if (!g) return send(res, 401, { message: "Bad credentials" });
+      if (!g.permissions?.members || g.installation !== 1000 + accounts.indexOf(m[1].toLowerCase())) return send(res, 403, { message: "Resource not accessible by integration (needs members:read)" });
+      const key = `${m[1]}:${m[2]}`.toLowerCase();
+      return members.has(key) ? send(res, 200, { state: "active", role: owners.has(key) ? "admin" : "member" }) : send(res, 404, { message: "Not Found" });
     }
     if (req.method === "GET" && url.pathname === "/app/installations") {
       const why = verifyJwt(req.headers.authorization);

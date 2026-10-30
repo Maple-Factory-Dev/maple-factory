@@ -1,6 +1,8 @@
 // Who may open a terminal, and cutting people off, against the fake GitHub: only a machine's owner and admins
 // get its terminals, and taking back an admin's grant closes those they opened as one; someone who leaves the org
 // loses their session cookie, app token and open apps (by the org hub's sweep, or at their next request); an admin's "Revoke access" (members.revoke) does the same at once, and they can sign in again.
+// Only the owner and admins resize a machine's sessions; a revoked owner's machines go offline until they sign in
+// again; and an owner GitHub demotes stops being an admin at the next re-check.
 //   node server/test/e2e-access.mjs http://localhost:8788 [fake GitHub URL] [wrangler --persist-to folder]
 // The fake runs with --owner acme:alice --member acme:bob --member acme:carol --member acme:dave --installed acme/greeter;
 // the server with GITHUB_ORG=acme, GITHUB_API_URL pointing at the fake, the GitHub App's id, key, client id/secret,
@@ -109,18 +111,27 @@ const enrolled = await (await fetch(`${base}/runner/enroll`, {
   body: JSON.stringify({ code: enroll.code, runnerId: "bobs-mac", hostname: "bobs-mac", os: "macos", arch: "arm64", version: "0.0.0-e2e" }),
 })).json();
 check(!!enrolled.token, "bob enrolls bobs-mac");
-const runner = new WebSocket(`${wsBase}/runner/connect?runner=bobs-mac`, { headers: { authorization: `Bearer ${enrolled.token}` } });
 const replays = [];
-runner.onmessage = (e) => {
-  if (typeof e.data !== "string") return;
-  const m = JSON.parse(e.data);
-  if (m.type !== "session.replay") return;
-  replays.push(m);
-  runner.send(JSON.stringify({ type: "session.replay", id: m.id, nonce: m.nonce, data: Buffer.from(`replay for ${m.nonce}`).toString("base64") }));
-};
-await new Promise((r, j) => { runner.onopen = r; runner.onerror = j; });
-runner.send(JSON.stringify({ type: "hello", runnerId: "bobs-mac", hostname: "bobs-mac", os: "macos", arch: "arm64", version: "0.0.0-e2e", sessions: [], ended: [] }));
-await sleep(300);
+const resizes = [];
+/** bobs-mac's runner: answers replays and keeps the resizes it's sent. */
+async function connectRunner() {
+  const ws = new WebSocket(`${wsBase}/runner/connect?runner=bobs-mac`, { headers: { authorization: `Bearer ${enrolled.token}` } });
+  const r = { ws, closed: null };
+  ws.onmessage = (e) => {
+    if (typeof e.data !== "string") return;
+    const m = JSON.parse(e.data);
+    if (m.type === "session.resize") resizes.push(m);
+    if (m.type !== "session.replay") return;
+    replays.push(m);
+    ws.send(JSON.stringify({ type: "session.replay", id: m.id, nonce: m.nonce, data: Buffer.from(`replay for ${m.nonce}`).toString("base64") }));
+  };
+  ws.onclose = (e) => (r.closed = { code: e.code, reason: e.reason });
+  await new Promise((ok, j) => { ws.onopen = ok; ws.onerror = j; });
+  ws.send(JSON.stringify({ type: "hello", runnerId: "bobs-mac", hostname: "bobs-mac", os: "macos", arch: "arm64", version: "0.0.0-e2e", sessions: [], ended: [] }));
+  await sleep(300);
+  return r;
+}
+let runner = await connectRunner();
 
 const session = randomUUID();
 const terminal = `/client/terminal?machine=bobs-mac&session=${session}`;
@@ -161,7 +172,7 @@ const revokedRow = d1("SELECT revoked_at FROM members WHERE login = 'carol'")[0]
 check(revokedRow.revoked_at > 0, `members.revoked_at is set (${revokedRow.revoked_at})`);
 
 // A stale check is claimed before GitHub is asked, so a burst of requests from one member asks it far fewer times.
-const asks = async () => (await (await fetch(`${gh}/_log`)).json()).log.filter((e) => e.path === "/orgs/acme/members/bob").length;
+const asks = async () => (await (await fetch(`${gh}/_log`)).json()).log.filter((e) => e.path === "/orgs/acme/memberships/bob").length;
 const asksBefore = await asks();
 const burst = await Promise.all(Array.from({ length: 8 }, () => meStatus(bob)));
 const githubAsks = (await asks()) - asksBefore;
@@ -177,6 +188,15 @@ const daveFeed = await feed(daveApp);
 const refused = await bobFeed.ask({ type: "members.revoke", login: "dave" }, "bob's refusal", membersUpdated);
 check(refused.type === "error", `bob, a member, can't revoke dave: "${refused.message}"`);
 check(await meStatus(dave) === 200, "and dave's still in");
+
+// Resizing a session is for the machine's owner and admins too.
+const resize = { type: "session.resize", machine: "bobs-mac", id: session, cols: 100, rows: 30 };
+const resizesBefore = resizes.length;
+const daveResize = await daveFeed.ask(resize, "dave's resize refused", () => false);
+check(daveResize.message === "Only bob or an admin can resize sessions on bobs-mac.", `dave, a member, can't resize a session on bobs-mac: "${daveResize.message}"`);
+bobFeed.send(resize);
+await until("bob's resize reaching the runner", () => resizes.length > resizesBefore);
+check(resizes.length === resizesBefore + 1, "bob, its owner, can, and only his resize reached the runner");
 
 // Make dave an admin for a moment: a terminal he opens on bobs-mac closes when the grant is taken back.
 await aliceFeed.ask({ type: "admins.grant", login: "dave" }, "dave's grant", (m) => m.members?.find((x) => x.login === "dave")?.role === "admin");
@@ -211,6 +231,35 @@ const owner = await bobFeed.ask({ type: "members.revoke", login: "alice" }, "rev
 check(owner.type === "error", `bob, now an admin, can't revoke alice, a GitHub owner: "${owner.message}"`);
 check(await meStatus(alice) === 200, "and alice is still in");
 
-for (const f of [aliceFeed, bobFeed]) f.ws.close();
-runner.close();
+// ---- 4. A revoked owner's machines go offline until they sign in again ----------------------------------------
+
+const bobRevoked = await aliceFeed.ask({ type: "members.revoke", login: "bob" }, "bob's revocation", (m) => membersUpdated(m) && m.members.find((x) => x.login === "bob")?.role === "member");
+check(bobRevoked.type === "members.updated", `alice revokes bob (${bobRevoked.type}${bobRevoked.message ? `: ${bobRevoked.message}` : ""})`);
+const runnerClosed = await until("bobs-mac's runner closing", () => runner.closed);
+check(runnerClosed.code === 4001, `bobs-mac's runner is disconnected (${runnerClosed.code} ${runnerClosed.reason})`);
+const offline = await until("bobs-mac offline", async () => {
+  const m = (await (await get("/api/machines", alice)).json()).find((x) => x.id === "bobs-mac");
+  return m && !m.online && m;
+}).catch(() => null);
+check(!!offline, "alice sees bobs-mac offline, so no task is given to it");
+const back = await handshake("/runner/connect?runner=bobs-mac", { authorization: `Bearer ${enrolled.token}` });
+check(back.status === 401, `its token no longer connects while bob's revoked (${back.status} "${back.body}")`);
+await signIn("bob");
+runner = await connectRunner();
+check(!runner.closed, "once bob signs in again, bobs-mac connects again");
+
+// ---- 5. GitHub demotes an owner: they stop being an admin at the next re-check ---------------------------------
+
+const aliceTerm = await open(terminal, alice);
+await until("alice's replay", () => aliceTerm.seen.find((x) => typeof x === "string" && x.startsWith("replay for ")));
+await fetch(`${gh}/_role`, { method: "POST", body: JSON.stringify({ org: "acme", login: "alice", role: "member" }) });
+const aliceMe = await (await get("/api/me", alice)).json();
+check(aliceMe.member?.role === "member", `after GitHub makes alice a member, /api/me says ${aliceMe.member?.role}`);
+const aliceTermClosed = await until("alice's terminal closing", () => aliceTerm.closed);
+check(aliceTermClosed.code === 4003, `her terminal on bobs-mac closes (${aliceTermClosed.code} ${aliceTermClosed.reason})`);
+const demoted = await aliceFeed.ask({ type: "members.revoke", login: "dave" }, "alice's refusal", membersUpdated);
+check(demoted.type === "error", `and her open app can't revoke anyone any more: "${demoted.message}"`);
+
+aliceFeed.ws.close();
+runner.ws.close();
 process.exit(failures ? 1 : 0);

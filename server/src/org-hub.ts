@@ -91,7 +91,9 @@ export class OrgHub extends DurableObject<Env> {
     if (!logins.size) return;
     for (const login of logins) {
       const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ?").bind(login).first<MemberRow>();
-      if (!row || !(await stillMember(this.env, row, false))) await this.cutOff(login);
+      const still = row && (await stillMember(this.env, row, false));
+      if (!still) await this.cutOff(login);
+      else if (still.role !== row.role) await this.memberChanged(login);
     }
     await this.armRecheck();
   }
@@ -200,6 +202,11 @@ export class OrgHub extends DurableObject<Env> {
       case "/revoked": {
         // auth.ts revoked someone (they left the org): their apps and terminals close now.
         await this.cutOff(await request.text());
+        return new Response(null, { status: 204 });
+      }
+      case "/member-changed": {
+        // auth.ts's re-check found GitHub changed someone's role.
+        await this.memberChanged(await request.text());
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
@@ -386,17 +393,23 @@ export class OrgHub extends DurableObject<Env> {
     await this.env.DB.prepare("UPDATE members SET admin_granted_by = ?, admin_granted_at = ? WHERE login = ?")
       .bind(grant ? by.login : null, grant ? Date.now() : null, row.login).run();
     await audit(this.env, by.login, grant ? "admin.granted" : "admin.revoked", row.login);
+    await this.memberChanged(row.login);
+    return null;
+  }
+
+  /** Someone's role changed (an admin grant, or GitHub's role at a re-check): their open apps act with it straight
+   *  away, without reconnecting; if they're no longer an admin, the terminals they opened on others' machines as
+   *  one close (their own stay open); and everyone sees the members change. */
+  private async memberChanged(login: string) {
     const members = await this.members();
-    const updated = members.find((m) => m.login === row.login)!;
-    // Their open apps act with the new role straight away, without reconnecting.
+    const updated = members.find((m) => m.login === login);
+    if (!updated) return;
     for (const ws of this.ctx.getWebSockets("client")) {
       const c = ws.deserializeAttachment() as Client;
-      if (c.member.login === row.login) ws.serializeAttachment({ ...c, member: updated });
+      if (c.member.login === login) ws.serializeAttachment({ ...c, member: updated });
     }
-    // Terminals they opened on others' machines as an admin close; their own stay open.
-    if (!grant && updated.role !== "admin") await this.dropViewers(row.login, "admin");
+    if (updated.role !== "admin") await this.dropViewers(login, "admin");
     this.broadcast({ type: "members.updated", members });
-    return null;
   }
 
   /** An admin's "Revoke access": signs someone out everywhere now. The reason it's refused, if it is. */
@@ -534,9 +547,10 @@ export class OrgHub extends DurableObject<Env> {
       case "session.resize": {
         const machine = (await this.machines()).find((m) => m.id === msg.machine);
         if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
-        // Starting and ending sessions is for the machine's owner (and admins) until team slots land.
-        if (msg.type !== "session.resize" && machine.owner !== client.member.login && client.member.role !== "admin") {
-          return this.send(ws, { type: "error", message: `Only ${machine.owner} can start or end sessions on ${machine.name}.`, requestId: null });
+        // Starting, ending and resizing sessions is for the machine's owner (and admins), as its terminals are.
+        if (machine.owner !== client.member.login && client.member.role !== "admin") {
+          const what = msg.type === "session.resize" ? "resize sessions" : "start or end sessions";
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} or an admin can ${what} on ${machine.name}.`, requestId: null });
         }
         let command: ServerToRunner;
         if (msg.type === "session.open") {
