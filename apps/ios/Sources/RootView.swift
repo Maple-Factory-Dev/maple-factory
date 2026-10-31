@@ -2,8 +2,9 @@ import MapleKit
 import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings` and `-task <id>`
-/// open a screen directly, for screenshots. A `maplefactory://` link (FactoryStore.pendingLink) opens
-/// its task on the Inbox tab, or a session's machine on Machines.
+/// open a screen directly, for screenshots; `-stats YES` (with `-statsDays N`) opens Statistics.
+/// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
+/// machine on Machines.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -12,6 +13,7 @@ struct RootView: View {
     @State private var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "tab") ?? "") ?? .inbox
     @State private var inboxPath = NavigationPath()
     @State private var goalsPath = NavigationPath()
+    @State private var settingsPath = NavigationPath()
 
     var body: some View {
         TabView(selection: $tab) {
@@ -32,7 +34,7 @@ struct RootView: View {
                 .tabItem { Label("Machines", systemImage: "desktopcomputer") }
                 .tag(Tab.machines)
 
-            NavigationStack { SettingsView() }
+            NavigationStack(path: $settingsPath) { SettingsView().withTaskDestinations() }
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
@@ -63,11 +65,18 @@ struct RootView: View {
                 tab = .machines
             }
         }
+        // Live, who you are arrives with the snapshot, after the first appearance.
+        .onChange(of: store.isAdmin, initial: true) { _, isAdmin in
+            guard isAdmin, UserDefaults.standard.bool(forKey: "stats"), settingsPath.isEmpty else { return }
+            tab = .settings
+            settingsPath.append(StatsRoute())
+        }
     }
 }
 
 struct TaskRoute: Hashable { let id: String }
 struct GoalRoute: Hashable { let id: String }
+struct StatsRoute: Hashable {}
 
 extension View {
     func withTaskDestinations() -> some View {
@@ -416,6 +425,9 @@ struct SettingsView: View {
                 if let server = store.server { LabeledContent("Address", value: server.host() ?? server.absoluteString) }
                 if let version = store.feed.serverVersion { LabeledContent("Server", value: version) }
                 LabeledContent("Members", value: "\(store.feed.members.count)")
+                if store.isAdmin {
+                    NavigationLink(value: StatsRoute()) { Label("Statistics", systemImage: "chart.bar") }
+                }
             }
             if let me = store.feed.me {
                 Section("Account") {
@@ -449,5 +461,6 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
     }
 }

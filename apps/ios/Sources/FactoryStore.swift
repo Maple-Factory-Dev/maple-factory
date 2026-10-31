@@ -26,6 +26,8 @@ final class FactoryStore {
     var pendingLink: FactoryLink?
     /// Each task's diff once loaded, keyed by the change it was loaded for.
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
+    /// The last `stats` reply, for admins' Statistics (FeedState doesn't keep it).
+    private(set) var stats: Wire.StatsSummary?
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var generation = 0
@@ -41,6 +43,7 @@ final class FactoryStore {
 
     var isSignedIn: Bool { status != .signedOut }
     var me: String { feed.me?.login ?? "" }
+    var isAdmin: Bool { feed.me?.role == "admin" }
     var factoryName: String { feed.name ?? (feed.org.isEmpty ? server?.host() ?? "Factory" : feed.org) }
 
     // MARK: Signing in
@@ -87,6 +90,7 @@ final class FactoryStore {
         token = nil
         feed = FeedState()
         diffs = [:]
+        stats = nil
         status = .signedOut
     }
 
@@ -195,6 +199,7 @@ final class FactoryStore {
             status = .live
             ErrorReports.tag(org: snapshot.org)
         }
+        if case .stats(let reply) = message { stats = reply.summary }
         if let notice = feed.apply(message) { self.notice = notice }
     }
 
@@ -217,6 +222,8 @@ final class FactoryStore {
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
+    /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
+    func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
 
     /// Tells the factory which task you're looking at, so others see you there.
     func viewing(_ id: String?) { send(.presence(.init(viewing: id))) }
@@ -286,6 +293,8 @@ final class FactoryStore {
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
+        case .statsGet(let m):
+            stats = DemoData.stats(days: Int(m.days))
         default:
             break
         }
