@@ -178,7 +178,8 @@ import SwiftUI
         guard let me else { return false }
         if t.hand?.assignee == me || (t.question != nil && t.owner == me) { return true }
         if t.state == .awaitingApproval && !t.approvals.contains(me) { return true }
-        if t.state == .reviewing && t.autoReview?.rounds.last?.verdict == .passed && !t.reviews.contains(me) { return true }
+        // Only while a person's review is still needed (the web inbox rule): a passed task that needs none is merging, not waiting.
+        if t.state == .reviewing && t.autoReview?.rounds.last?.verdict == .passed && t.reviews.count < t.reviewsNeeded && !t.reviews.contains(me) { return true }
         return false
     }
 
