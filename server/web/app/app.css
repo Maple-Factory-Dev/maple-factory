@@ -521,6 +521,6 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 @media (max-width: 600px) {
   .machines { grid-template-columns: 1fr; }
   .meters { grid-template-columns: 1fr; }
-  .usage-row { grid-template-columns: 64px 1fr 36px; }
+  .usage-row { grid-template-columns: 84px 1fr 36px; }
   .usage-reset { grid-column: 2 / -1; margin-top: -6px; }
 }
