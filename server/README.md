@@ -127,6 +127,13 @@ starting, changing or resolving) is broadcast as `github.status`; the Mac sideba
 isn't woken for it. `GITHUB_STATUS_URL` points it at a fake for tests (test/e2e-github-status.mjs), and
 `POST /dev/alarm?stale` makes the check due.
 
+### Moving a task to another goal
+
+From 0.66.0 the apps can move a task to another goal (`task.moveGoal`): it keeps its id, branch and
+pull request, the new goal's accepted risk applies to it, and it leaves its effort. The new goal has
+to work in the task's repo (or, for a goal on a folder, name the same folder); merged and cancelled
+tasks stay where they are. An older server refuses it with "Unknown message".
+
 ## Develop
 
 ```sh

@@ -2643,6 +2643,13 @@ sealed class ClientMessage {
         /** The member's login. */
         val owner: String,
     ) : ClientMessage()
+    /** Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort. */
+    @Serializable
+    data class TaskMoveGoal(
+        val id: String,
+        /** The target goal's id. */
+        val goal: String,
+    ) : ClientMessage()
     /** Send a draft to planning, or pick up a backlog task (one with a plan is planned again). */
     @Serializable
     data class TaskPlan(
@@ -2844,6 +2851,7 @@ sealed class ClientMessage {
             "task.edit" -> json.decodeFromJsonElement(TaskEdit.serializer(), body)
             "task.followUp" -> json.decodeFromJsonElement(TaskFollowUp.serializer(), body)
             "task.assign" -> json.decodeFromJsonElement(TaskAssign.serializer(), body)
+            "task.moveGoal" -> json.decodeFromJsonElement(TaskMoveGoal.serializer(), body)
             "task.plan" -> json.decodeFromJsonElement(TaskPlan.serializer(), body)
             "task.backlog" -> json.decodeFromJsonElement(TaskBacklog.serializer(), body)
             "task.comment" -> json.decodeFromJsonElement(TaskComment.serializer(), body)
@@ -2919,6 +2927,7 @@ sealed class ClientMessage {
             is TaskEdit -> "task.edit" to json.encodeToJsonElement(TaskEdit.serializer(), value)
             is TaskFollowUp -> "task.followUp" to json.encodeToJsonElement(TaskFollowUp.serializer(), value)
             is TaskAssign -> "task.assign" to json.encodeToJsonElement(TaskAssign.serializer(), value)
+            is TaskMoveGoal -> "task.moveGoal" to json.encodeToJsonElement(TaskMoveGoal.serializer(), value)
             is TaskPlan -> "task.plan" to json.encodeToJsonElement(TaskPlan.serializer(), value)
             is TaskBacklog -> "task.backlog" to json.encodeToJsonElement(TaskBacklog.serializer(), value)
             is TaskComment -> "task.comment" to json.encodeToJsonElement(TaskComment.serializer(), value)

@@ -222,6 +222,7 @@ struct TaskActionButtons: View {
         }
         if open {
             TaskAssignButtons(task: task)
+            TaskMoveGoalMenu(task: task)
             Divider()
             Button { rename = true } label: { Label("Rename…", systemImage: "pencil") }
             Toggle(isOn: Binding(get: { task.shareable }, set: { appState.setShareable(task.id, $0) })) {
@@ -263,6 +264,34 @@ struct TaskAssignButtons: View {
             }
             .disabled(others.isEmpty)
         }
+    }
+}
+
+/// Move to goal ▸ the unarchived goals other than its own; one that doesn't work in its repo is disabled and says why.
+struct TaskMoveGoalMenu: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+
+    var body: some View {
+        let targets = appState.moveTargets(task.id)
+        Menu {
+            ForEach(targets, id: \.goal.id) { target in
+                Button {
+                    appState.moveToGoal(task.id, goal: target.goal.name)
+                } label: {
+                    if let blocked = target.blocked {
+                        Text("\(target.goal.name) — \(blocked)")
+                    } else {
+                        Text(target.goal.name)
+                    }
+                }
+                .disabled(target.blocked != nil)
+                .help(target.blocked ?? "Move \(task.id) to \(target.goal.name); it keeps its id")
+            }
+        } label: {
+            Label("Move to goal", systemImage: "folder")
+        }
+        .disabled(targets.isEmpty)
     }
 }
 

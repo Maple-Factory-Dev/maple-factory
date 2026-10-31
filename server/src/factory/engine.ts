@@ -502,6 +502,36 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.moveGoal": {
+        if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; it stays in its goal.`);
+        if (msg.goal === task.goal) fail("It's already in that goal.");
+        const target = this.store.goal(msg.goal) ?? fail("That goal doesn't exist.");
+        if (target.archived) fail(`${target.name} is archived; unarchive it first.`);
+        const from = this.store.goal(task.goal);
+        // The repo it changes stays the same: the target has to work in it.
+        const repo = taskRepo(task, from);
+        if (repo) {
+          if (!goalRepos(target).some((r) => r.toLowerCase() === repo.toLowerCase())) fail(`${target.name} doesn't work in ${repo}; add it to the goal's repos first.`);
+        } else if (goalRepos(target).length || !from?.folder || target.folder !== from.folder) {
+          // A goal on a folder (no repos): only to another goal on the same folder.
+          fail(`${target.name} doesn't work in ${from?.folder ?? "its folder"}.`);
+        }
+        const was = task.goal;
+        if (repo) task.repo ??= repo;
+        task.goal = target.id;
+        // Efforts belong to one goal.
+        task.effort = null;
+        task.draftRank = this.store.draftRankBefore(task.id, null, this.store.drafts(target.id));
+        // The target's accepted risk applies from now on.
+        if (task.risk) this.applyPolicy(task);
+        this.event(task, who, `moved it from ${from?.name ?? was} to ${target.name}`);
+        await audit(this.env, who, "task.movedGoal", task.id, { from: was, to: target.id });
+        if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) await this.approved(task, "queued it for building (its new goal needs fewer approvals)");
+        this.save(task);
+        await this.autoMerge(task);
+        await this.pump();
+        return;
+      }
       case "task.plan":
         if (task.state !== "drafting" && task.state !== "backlog") fail("It's already past drafting.");
         // Picked up from the backlog with a plan: the planner revises the plan it has.

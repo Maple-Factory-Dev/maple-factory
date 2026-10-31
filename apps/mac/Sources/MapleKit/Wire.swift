@@ -5622,6 +5622,18 @@ public enum Wire {
         }
     }
 
+    /// Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.
+    public struct ClientMessageTaskMoveGoal: Codable, Hashable, Sendable {
+        public var id: String
+        /// The target goal's id.
+        public var goal: String
+
+        public init(id: String, goal: String) {
+            self.id = id
+            self.goal = goal
+        }
+    }
+
     /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     public struct ClientMessageTaskPlan: Codable, Hashable, Sendable {
         public var id: String
@@ -5952,6 +5964,7 @@ public enum Wire {
         case taskEdit(ClientMessageTaskEdit)
         case taskFollowUp(ClientMessageTaskFollowUp)
         case taskAssign(ClientMessageTaskAssign)
+        case taskMoveGoal(ClientMessageTaskMoveGoal)
         case taskPlan(ClientMessageTaskPlan)
         case taskBacklog(ClientMessageTaskBacklog)
         case taskComment(ClientMessageTaskComment)
@@ -6031,6 +6044,7 @@ public enum Wire {
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
             case "task.followUp": self = .taskFollowUp(try ClientMessageTaskFollowUp(from: decoder))
             case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
+            case "task.moveGoal": self = .taskMoveGoal(try ClientMessageTaskMoveGoal(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
             case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
@@ -6198,6 +6212,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskAssign(let body):
                 try c.encode("task.assign", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskMoveGoal(let body):
+                try c.encode("task.moveGoal", forKey: .type)
                 try body.encode(to: encoder)
             case .taskPlan(let body):
                 try c.encode("task.plan", forKey: .type)
