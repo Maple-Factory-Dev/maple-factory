@@ -17,7 +17,9 @@
 //   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
 //   GET  /orgs/:org/memberships/:login                   { state: "active", role } if a member, else 404 (members:read)
 //   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
-//   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head)
+//   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head; 405 on a
+//                                                        branch that requires a merge queue)
+//   GET  /repos/:o/:r/rules/branches/:branch             [{ type: "merge_queue" }] when /_queue says the branch requires one, else []
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
@@ -31,7 +33,9 @@
 //   POST /login/oauth/access_token                       sign-in: code (or device_code) `as-<login>` is <login>'s user token
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
 //                                                        (its admin, for each --owner org:login)
-//   POST /graphql                                        repository.pullRequest.reviewThreads, from /_threads
+//   POST /graphql                                        repository.pullRequest.reviewThreads, from /_threads; repository.pullRequest.id;
+//                                                        enqueuePullRequest (pinned to expectedHeadOid), after which the queue
+//                                                        merges it (pull_request `closed`, merged) or takes it out (`dequeued`)
 //
 // and, for the test driver: GET /_log, POST /_checks { sha, owner, repo, runs: [{ name, conclusion }] },
 // which finishes checks the way CI would and delivers the signed check_run webhook (not with `quiet`,
@@ -39,7 +43,9 @@
 // GitHub won't reopen that branch's closed pull request, and POST /_moveOnMerge { owner, repo, branch }: once
 // that branch's pull request merges, someone pushes another commit to it, POST /_leave { org, login }: they
 // leave the org, POST /_role { org, login, role: "admin"|"member" }: their role there changes, and POST /_threads { owner, repo, number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT",
-// resolved?, outdated?, comments: [{ author, body }] }] }, the review threads people left on that pull request.
+// resolved?, outdated?, comments: [{ author, body }] }] }, the review threads people left on that pull request, and
+// POST /_queue { owner, repo, branch = "main", then: "merge"|"dequeue"|"hold"|"off", reason?, delayMs? }: that branch requires
+// a merge queue (not with "off"), and what the queue does with each pull request added to it a moment later.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -79,6 +85,7 @@ const pulls = [];
 const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite, log? }]
 const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
 const threads = new Map(); // `${owner}/${repo}#${number}` → [{ path, line, … }]
+const queues = new Map(); // `${owner}/${repo}:${branch}` → { then, reason, delayMs }
 let lastNumber = 0;
 let lastRun = 0;
 
@@ -117,6 +124,51 @@ function jobLog(r) {
     "##[endgroup]",
   ];
   return "\uFEFF" + lines.map((l, i) => `${at(i)} ${l}`).join("\n") + "\n";
+}
+
+/** Squash-merges a pull request into its base, as GitHub would; throws on a conflict. */
+function squash(p, title) {
+  const head = headOf(p);
+  const work = mkdtempSync(join(tmpdir(), "fake-gh-"));
+  try {
+    const dir = bare(p.owner, p.repo);
+    execFileSync("git", ["clone", "--quiet", "--branch", p.base, dir, work]);
+    execFileSync("git", ["-C", work, "merge", "--squash", `origin/${p.head}`], { stdio: "ignore" });
+    execFileSync("git", ["-C", work, "-c", "user.name=GitHub", "-c", "user.email=noreply@github.invalid", "commit", "--quiet", "-m", title]);
+    execFileSync("git", ["-C", work, "push", "--quiet", "origin", `HEAD:${p.base}`]);
+    const sha = execFileSync("git", ["-C", work, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    Object.assign(p, { state: "closed", merged: true });
+    if (moveOnMerge.delete(`${p.owner}/${p.repo}:${p.head}`)) {
+      const moved = execFileSync("git", ["--git-dir", dir, "-c", "user.name=Someone", "-c", "user.email=someone@example.invalid", "commit-tree", `${head}^{tree}`, "-p", head, "-m", "A push after the merge"], { encoding: "utf8" }).trim();
+      git(dir, "update-ref", `refs/heads/${p.head}`, moved);
+    }
+    return sha;
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+const queueOf = (p) => queues.get(`${p.owner}/${p.repo}:${p.base}`.toLowerCase());
+const pullEvent = (action, p, extra = {}) =>
+  deliver("pull_request", { action, number: p.number, pull_request: { number: p.number, head: { ref: p.head, sha: headOf(p) }, base: { ref: p.base }, merged: Boolean(p.merged) }, repository: repository(p.owner, p.repo), ...extra });
+
+/** A pull request joins its base's merge queue; a moment later the queue merges it or takes it out. */
+function enqueue(p) {
+  const q = queueOf(p);
+  p.queued = true;
+  pullEvent("enqueued", p);
+  if (q.then === "hold") return;
+  setTimeout(async () => {
+    if (!p.queued || p.state !== "open") return;
+    p.queued = false;
+    if (q.then === "dequeue") return void (await pullEvent("dequeued", p, { reason: q.reason ?? "CI_FAILURE" }));
+    try {
+      squash(p, `${p.title} (#${p.number})`);
+    } catch {
+      return void (await pullEvent("dequeued", p, { reason: "MERGE_CONFLICT" }));
+    }
+    await pullEvent("closed", p);
+  }, q.delayMs ?? 1500);
 }
 
 /** Where a run is: every fake check is a GitHub Actions job in workflow run 7. */
@@ -200,13 +252,38 @@ createServer((req, res) => {
       moveOnMerge.add(`${body.owner}/${body.repo}:${body.branch}`);
       return send(res, 200, {});
     }
+    if (req.method === "POST" && url.pathname === "/_queue") {
+      const key = `${body.owner}/${body.repo}:${body.branch ?? "main"}`.toLowerCase();
+      if (body.then === "off") queues.delete(key);
+      else queues.set(key, { then: body.then ?? "merge", reason: body.reason, delayMs: body.delayMs });
+      return send(res, 204);
+    }
     if (req.method === "POST" && url.pathname === "/_threads") {
       threads.set(`${body.owner}/${body.repo}#${body.number}`, body.threads);
       return send(res, 204);
     }
     if (req.method === "POST" && url.pathname === "/graphql") {
       const { owner, repo, number } = body.variables ?? {};
-      if (!/reviewThreads/.test(body.query ?? "")) return send(res, 200, { errors: [{ message: "The fake only answers reviewThreads." }] });
+      if (/enqueuePullRequest/.test(body.query ?? "")) {
+        const { id, head } = body.variables ?? {};
+        const p = pulls.find((x) => `PR_${x.owner}_${x.repo}_${x.number}` === id);
+        if (!p) return send(res, 200, { data: { enqueuePullRequest: null }, errors: [{ message: `Could not resolve to a node with the global id of '${id}'` }] });
+        const g = grant(req, p.repo, "pull_requests", "write");
+        if (g) return deny(g);
+        const fail = (message) => send(res, 200, { data: { enqueuePullRequest: null }, errors: [{ type: "UNPROCESSABLE", message }] });
+        if (!queueOf(p)) return fail("Merge queue is not enabled for this branch");
+        if (p.state !== "open") return fail("Pull request is not open");
+        if (head && head !== headOf(p)) return fail("Expected head oid does not match the pull request's head");
+        if (!p.queued) enqueue(p);
+        return send(res, 200, { data: { enqueuePullRequest: { mergeQueueEntry: { position: 1, state: "QUEUED" } } } });
+      }
+      if (/pullRequest\(number: \$number\) \{ id \}/.test(body.query ?? "")) {
+        const g = grant(req, repo, "pull_requests", "read");
+        if (g) return deny(g);
+        const p = pulls.find((x) => x.owner === owner && x.repo === repo && x.number === number);
+        return send(res, 200, { data: { repository: { pullRequest: p ? { id: `PR_${owner}_${repo}_${number}` } : null } } });
+      }
+      if (!/reviewThreads/.test(body.query ?? "")) return send(res, 200, { errors: [{ message: "The fake only answers reviewThreads, pullRequest.id and enqueuePullRequest." }] });
       const g = grant(req, repo, "pull_requests", "read");
       if (g) return deny(g);
       const pull = pulls.find((p) => p.owner === owner && p.repo === repo && p.number === number);
@@ -338,31 +415,22 @@ createServer((req, res) => {
       }
       if (req.method === "PUT" && m[4]) {
         if (p.state !== "open") return send(res, 405, { message: "Pull Request is not mergeable" });
-        const head = headOf(p);
-        if (body.sha && body.sha !== head) return send(res, 409, { message: "Head branch was modified. Review and try the merge again." });
-        // Squash it into the base, as GitHub would.
-        const work = mkdtempSync(join(tmpdir(), "fake-gh-"));
+        if (queueOf(p)) return send(res, 405, { message: "Repository rule violations found\n\nChanges must be made through the merge queue" });
+        if (body.sha && body.sha !== headOf(p)) return send(res, 409, { message: "Head branch was modified. Review and try the merge again." });
         try {
-          const dir = bare(p.owner, p.repo);
-          execFileSync("git", ["clone", "--quiet", "--branch", p.base, dir, work]);
-          execFileSync("git", ["-C", work, "merge", "--squash", `origin/${p.head}`], { stdio: "ignore" });
-          execFileSync("git", ["-C", work, "-c", "user.name=GitHub", "-c", "user.email=noreply@github.invalid", "commit", "--quiet", "-m", body.commit_title ?? p.title]);
-          execFileSync("git", ["-C", work, "push", "--quiet", "origin", `HEAD:${p.base}`]);
-          const sha = execFileSync("git", ["-C", work, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-          Object.assign(p, { state: "closed", merged: true });
-          if (moveOnMerge.delete(`${p.owner}/${p.repo}:${p.head}`)) {
-            const dir = bare(p.owner, p.repo);
-            const moved = execFileSync("git", ["--git-dir", dir, "-c", "user.name=Someone", "-c", "user.email=someone@example.invalid", "commit-tree", `${head}^{tree}`, "-p", head, "-m", "A push after the merge"], { encoding: "utf8" }).trim();
-            git(dir, "update-ref", `refs/heads/${p.head}`, moved);
-          }
+          const sha = squash(p, body.commit_title ?? p.title);
           return send(res, 200, { sha, merged: true, message: "Pull Request successfully merged" });
         } catch (e) {
           return send(res, 405, { message: `Merge conflict: ${e.message.split("\n")[0]}` });
-        } finally {
-          rmSync(work, { recursive: true, force: true });
         }
       }
       return send(res, 200, pullJson(p));
+    }
+    if (req.method === "GET" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/rules\/branches\/(.+)$/))) {
+      const g = grant(req, m[2], "contents", "read");
+      if (g) return deny(g);
+      const q = queues.get(`${m[1]}/${m[2]}:${decodeURIComponent(m[3])}`.toLowerCase());
+      return send(res, 200, q ? [{ type: "merge_queue", ruleset_source_type: "Repository", ruleset_source: `${m[1]}/${m[2]}`, ruleset_id: 1, parameters: { merge_method: "SQUASH" } }] : []);
     }
     if ((m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/git\/(ref|refs)\/heads\/(.+)$/))) {
       const g = grant(req, m[2], "contents", req.method === "GET" ? "read" : "write");
