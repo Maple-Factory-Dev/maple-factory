@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.77.0 — 2026-10-31
+
+The runner keeps up with the factory's protocol for task dependencies: a task can wait on several others before it builds.
+
 ## 0.76.0 — 2026-10-31
 
 Understands the new closed task state, for tasks that finish without code to merge, and closed-task counts in statistics.
