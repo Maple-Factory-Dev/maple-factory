@@ -60,8 +60,13 @@ type Deps = {
   token(): Promise<string | null>;
   /** Something Slack refused, for the integration's status. */
   problem(text: string): void;
-  /** Makes the proposed task and starts its planning; throws with a message for the thread. */
-  make(ask: Ask, proposal: Proposal, by: string, channelName: string | null): Promise<Task>;
+  /** Makes the proposed task and starts its planning; throws with a message for the thread. `onMade` is
+   *  called once the task is saved, so a throw after it (its planning) doesn't leave the task unknown. */
+  make(ask: Ask, proposal: Proposal, by: string, channelName: string | null, onMade: (task: Task) => void): Promise<Task>;
+  /** Deletes attachments (their `/attachments/<id>/<name>` paths) from the bucket. */
+  forget(paths: string[]): void;
+  /** Call `sweep` again in about `ms`. */
+  wakeIn(ms: number): void;
 };
 
 const WORDS = /[a-z0-9]{4,}/g;
@@ -123,13 +128,79 @@ export class SlackAsks {
     return raw ? (JSON.parse(raw) as Ask) : null;
   }
 
+  private ids(): string[] {
+    return JSON.parse(this.store.get("slack:asks") ?? "[]");
+  }
+
   /** Saves an ask, and forgets the ones whose time ran out. */
   private save(ask: Ask) {
     this.store.set(`slack:ask:${ask.id}`, JSON.stringify(ask));
-    const ids: string[] = JSON.parse(this.store.get("slack:asks") ?? "[]");
-    const kept = ids.filter((id) => id !== ask.id && (this.load(id)?.expiresAt ?? 0) > Date.now());
-    for (const id of ids) if (id !== ask.id && !kept.includes(id)) this.store.delete(`slack:ask:${id}`);
-    this.store.set("slack:asks", JSON.stringify([...kept, ask.id]));
+    this.prune(ask.id);
+  }
+
+  /** Forgets the asks whose time ran out (but `keep`), and the files of those that never became a task. */
+  private prune(keep: string | null = null) {
+    const ids = this.ids();
+    const kept: string[] = [];
+    for (const id of ids) {
+      const ask = this.load(id);
+      if (id === keep || (ask && ask.expiresAt > Date.now())) kept.push(id);
+      else {
+        if (ask && !ask.task) this.forget(ask);
+        this.store.delete(`slack:ask:${id}`);
+      }
+    }
+    if (keep && !kept.includes(keep)) kept.push(keep);
+    this.store.set("slack:asks", JSON.stringify(kept));
+  }
+
+  /** Deletes an ask's files from the bucket: it won't become a task. */
+  private forget(ask: Ask) {
+    if (ask.attachments.length) this.deps.forget(ask.attachments.map((f) => f.path));
+    ask.attachments = [];
+  }
+
+  /** The asks still waiting on their answer. */
+  private running(): Ask[] {
+    return this.ids().map((id) => this.load(id)).filter((a): a is Ask => a?.state === "running");
+  }
+
+  /** When @Maple was last mentioned, if ever. */
+  lastMention(): number | null {
+    const at = Number(this.store.get("slack:lastMention"));
+    return at || null;
+  }
+
+  /** The Slack integration's status line, with the bot token: its channels and its last mention. */
+  status(): string {
+    const n = this.channels().length;
+    if (!n) return "Invite @Maple to a public channel: /invite @Maple";
+    const at = this.lastMention();
+    const day = at ? new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : null;
+    return `@Maple is in ${n} channel${n === 1 ? "" : "s"}${day ? ` · last mentioned ${day}` : ""}.`;
+  }
+
+  /** A machine went offline: its running asks won't be answered, so their threads hear it. */
+  async machineGone(machine: string, name: string) {
+    for (const ask of this.running()) {
+      if (ask.machine !== machine || ask.expiresAt <= Date.now()) continue;
+      ask.state = "answered";
+      this.save(ask);
+      await this.update(ask.channel, ask.replyTs, `${name} went offline before answering. Mention me again in a moment.`);
+    }
+  }
+
+  /** The alarm: asks whose answer never came say so, once; expired asks are forgotten; and the next expiry is woken for. */
+  async sweep() {
+    for (const ask of this.running()) {
+      if (ask.expiresAt > Date.now()) continue;
+      ask.state = "answered";
+      this.store.set(`slack:ask:${ask.id}`, JSON.stringify(ask));
+      await this.update(ask.channel, ask.replyTs, "I didn't hear back in time, so I don't have an answer. Mention me again to try once more.");
+    }
+    this.prune();
+    const next = Math.min(...this.ids().map((id) => this.load(id)?.expiresAt ?? Infinity));
+    if (Number.isFinite(next)) this.deps.wakeIn(Math.max(next - Date.now(), 0) + 1000);
   }
 
   /** The ask a runner's `slack-<id>` is, if that machine is the one answering it. */
@@ -199,6 +270,7 @@ export class SlackAsks {
 
   /** A mention: its channel's best goal is read by an agent on an online machine, which answers the thread. */
   async ask(input: SlackAsk) {
+    this.store.set("slack:lastMention", String(Date.now()));
     const { goals, note } = this.channelGoals(input.channel);
     if (!goals.length) return void (await this.post(input.channel, input.threadTs, "This factory has no goals yet, so there's no code for me to look at."));
     const asked = words(`${input.question} ${input.thread.map((l) => l.text).join(" ")}`);
@@ -216,6 +288,7 @@ export class SlackAsks {
       goals: goals.map((g) => g.id), goal: goal.id, state: "running", proposal: null, answer: null, note, task: null, expiresAt: Date.now() + ASK_MS,
     };
     this.save(ask);
+    this.deps.wakeIn(ASK_MS + 1000);
     const command: ServerToRunner = { type: "draft.run", id: ask.id, agent, prompt: askPrompt(ask, goal, goals), repo: goal.folder ? null : goal.repo ?? null, folder: goal.folder ?? null, base: goal.base ?? null };
     if (!(await this.deps.toRunner(machine.id, command))) {
       ask.expiresAt = 0;
@@ -240,6 +313,7 @@ export class SlackAsks {
     ask.answer = ask.note ? `${parsed.answer}\n\n_${ask.note}_` : parsed.answer;
     ask.expiresAt = Date.now() + ASK_MS;
     this.save(ask);
+    this.deps.wakeIn(ASK_MS + 1000);
     const blocks = sections(ask.answer);
     if (ask.proposal) blocks.push(...card(ask, this.store.goal(ask.proposal.goal), null));
     await this.update(ask.channel, ask.replyTs, ask.answer.slice(0, 3000), blocks);
@@ -260,6 +334,7 @@ export class SlackAsks {
     }
     if (a.action === "slack.dismiss") {
       ask.state = "dismissed";
+      this.forget(ask);
       this.save(ask);
       return answer(`${a.user.name} said not now; no task made.`);
     }
@@ -268,8 +343,16 @@ export class SlackAsks {
     this.save(ask);
     let task: Task;
     try {
-      task = await this.deps.make(ask, ask.proposal, a.user.name, a.channel.name);
+      task = await this.deps.make(ask, ask.proposal, a.user.name, a.channel.name, (made) => {
+        ask.task = made.id;
+        this.save(ask);
+      });
     } catch (e) {
+      if (ask.task) {
+        // The task is made; only its planning didn't start. It stays created, so another click can't make a second.
+        await answer(`Created ${ask.task} in ${goal?.name ?? "its goal"}`);
+        return void (await this.post(ask.channel, ask.threadTs, `${ask.task} is made, but its planning didn't start: ${(e as Error).message} Send it to planning in the factory.`));
+      }
       ask.state = "answered";
       this.save(ask);
       return void (await this.post(ask.channel, ask.threadTs, `I couldn't create it: ${(e as Error).message}`));

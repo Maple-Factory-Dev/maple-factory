@@ -89,8 +89,12 @@ export class Intake {
   accepted(request: IntakeRequest, task: Task, how: "created" | "attached", by: string) {
     request.status = "accepted";
     request.taskId = task.id;
+    // A Slack thread can't answer the agent (its replies don't come back), so it's told where to.
+    const questions = this.store.intakeReplyUrl(request.id)?.startsWith("slack:")
+      ? "Its agent's questions show up here (answer them in the factory)"
+      : "Questions from its agent come here";
     this.say(request, how === "created"
-      ? `${by} is tracking this as ${task.id}${task.state === "planning" ? "; a planner is on it" : ""}. Questions from its agent come here, and this thread hears when it merges.`
+      ? `${by} is tracking this as ${task.id}${task.state === "planning" ? "; a planner is on it" : ""}. ${questions}, and this thread hears when it merges.`
       : `${by} added this to ${task.id}, whose agent reads it as context. This thread hears when it merges.`);
   }
 

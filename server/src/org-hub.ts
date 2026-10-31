@@ -90,6 +90,7 @@ export class OrgHub extends DurableObject<Env> {
     await this.engine.pollCI();
     await this.engine.mergeDue();
     await this.engine.pump();
+    await this.engine.slack.sweep();
     await this.checkRunnerRelease();
   }
 
@@ -178,6 +179,8 @@ export class OrgHub extends DurableObject<Env> {
         // Coming online, or a session ending, can free a slot for waiting tasks.
         // So can a pause running out, so health reports retry whatever's waiting.
         if (machine.online) this.engine.reap(machine);
+        // Its running @Maple asks won't be answered now: their threads hear it.
+        if (before?.online && !machine.online) await this.engine.slack.machineGone(machine.id, machine.name);
         if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || this.engine.waiting())) await this.engine.pump();
         return new Response(null, { status: 204 });
       }
@@ -269,6 +272,8 @@ export class OrgHub extends DurableObject<Env> {
       }
       case "/slack/ask": {
         await this.engine.slack.ask(await request.json());
+        // The status line's last mention.
+        await this.integrationEvent("slack");
         return new Response(null, { status: 204 });
       }
       case "/slack/action": {
@@ -330,8 +335,7 @@ export class OrgHub extends DurableObject<Env> {
     return this.integrations.list((kind, values) => {
       if (kind !== "slack") return null;
       if (!("botToken" in values)) return "Slash command only: add the bot token so people can mention @Maple.";
-      const n = this.engine.slack.channels().length;
-      return n ? `@Maple is in ${n} channel${n === 1 ? "" : "s"}.` : "Invite @Maple to a public channel: /invite @Maple";
+      return this.engine.slack.status();
     });
   }
 
