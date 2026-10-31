@@ -1066,7 +1066,10 @@ export const unions: Record<string, Union> = {
         fields: { id: "uuid", nonce: "string", data: "string" },
         fieldDocs: { data: "Base64." },
       },
-      "update.status": { fields: { state: "string", version: "string?", message: "string?" } },
+      "update.status": {
+        doc: "How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed).",
+        fields: { state: "string", version: "string?", message: "string?" },
+      },
       "agent.login_status": { doc: "How an `agent.login` is going.", fields: { status: "AgentLoginStatus" } },
       usage: { doc: "Plan usage readings that changed (all of them again on reconnect).", fields: { agents: "AgentUsage[]" } },
       "session.cost": { doc: "A session's latest spend reading (again on reconnect, and once more just before it ends).", fields: { cost: "SessionCost" } },
@@ -1164,7 +1167,10 @@ export const unions: Record<string, Union> = {
         fields: { id: "uuid", nonce: "string" },
         fieldDocs: { nonce: "Echoed in the reply, so it goes to the viewer that asked." },
       },
-      "runner.update": {},
+      "runner.update": {
+        fields: { version: "string?" },
+        fieldDocs: { version: "Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before." },
+      },
       "agent.login": {
         doc: "Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.",
         fields: { agent: "string", cancel: "bool" },
@@ -1273,7 +1279,11 @@ export const unions: Record<string, Union> = {
         doc: "Its owner or an admin: a nickname shown everywhere in place of its id. Empty goes back to the id.",
         fields: { machine: "string", name: "string" },
       },
-      "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
+      "machine.update": {
+        doc: "Its owner or an admin: update its runner to the latest release now.",
+        fields: { machine: "string", version: "string?" },
+        fieldDocs: { version: "The release the person was shown; a newer one isn't installed without asking again." },
+      },
       "machine.agent_login": {
         doc: "Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.",
         fields: { machine: "string", agent: "string", cancel: "bool?" },

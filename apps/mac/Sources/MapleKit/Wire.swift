@@ -4244,6 +4244,7 @@ public enum Wire {
         }
     }
 
+    /// How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed).
     public struct RunnerMessageUpdateStatus: Codable, Hashable, Sendable {
         public var state: String
         public var version: String?
@@ -4735,6 +4736,15 @@ public enum Wire {
         }
     }
 
+    public struct ServerToRunnerRunnerUpdate: Codable, Hashable, Sendable {
+        /// Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before.
+        public var version: String?
+
+        public init(version: String? = nil) {
+            self.version = version
+        }
+    }
+
     /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
     public struct ServerToRunnerAgentLogin: Codable, Hashable, Sendable {
         public var agent: String
@@ -4959,7 +4969,7 @@ public enum Wire {
         case sessionResize(ServerToRunnerSessionResize)
         case sessionKill(ServerToRunnerSessionKill)
         case sessionReplay(ServerToRunnerSessionReplay)
-        case runnerUpdate
+        case runnerUpdate(ServerToRunnerRunnerUpdate)
         case agentLogin(ServerToRunnerAgentLogin)
         case runnerRestart
         case mcpResponse(ServerToRunnerMcpResponse)
@@ -4985,7 +4995,7 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ServerToRunnerSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ServerToRunnerSessionKill(from: decoder))
             case "session.replay": self = .sessionReplay(try ServerToRunnerSessionReplay(from: decoder))
-            case "runner.update": self = .runnerUpdate
+            case "runner.update": self = .runnerUpdate(try ServerToRunnerRunnerUpdate(from: decoder))
             case "agent.login": self = .agentLogin(try ServerToRunnerAgentLogin(from: decoder))
             case "runner.restart": self = .runnerRestart
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
@@ -5018,8 +5028,9 @@ public enum Wire {
             case .sessionReplay(let body):
                 try c.encode("session.replay", forKey: .type)
                 try body.encode(to: encoder)
-            case .runnerUpdate:
+            case .runnerUpdate(let body):
                 try c.encode("runner.update", forKey: .type)
+                try body.encode(to: encoder)
             case .agentLogin(let body):
                 try c.encode("agent.login", forKey: .type)
                 try body.encode(to: encoder)
@@ -5330,9 +5341,12 @@ public enum Wire {
     /// Its owner or an admin: update its runner to the latest release now.
     public struct ClientMessageMachineUpdate: Codable, Hashable, Sendable {
         public var machine: String
+        /// The release the person was shown; a newer one isn't installed without asking again.
+        public var version: String?
 
-        public init(machine: String) {
+        public init(machine: String, version: String? = nil) {
             self.machine = machine
+            self.version = version
         }
     }
 

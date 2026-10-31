@@ -1353,6 +1353,7 @@ export interface RunnerMessage_SessionReplay {
   data: string;
 }
 
+/** How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed). */
 export interface RunnerMessage_UpdateStatus {
   type: "update.status";
   state: string;
@@ -1553,6 +1554,8 @@ export interface ServerToRunner_SessionReplay {
 
 export interface ServerToRunner_RunnerUpdate {
   type: "runner.update";
+  /** Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before. */
+  version?: string | null;
 }
 
 /** Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting. */
@@ -1849,6 +1852,8 @@ export interface ClientMessage_MachineRename {
 export interface ClientMessage_MachineUpdate {
   type: "machine.update";
   machine: string;
+  /** The release the person was shown; a newer one isn't installed without asking again. */
+  version?: string | null;
 }
 
 /** Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that. */
