@@ -67,7 +67,7 @@ struct Cli {
 }
 
 /// The footer under the command list.
-const AFTER_HELP: &str = "Run `maple-runner run` to start the runner, or `maple-runner install` to run it at login.";
+const AFTER_HELP: &str = "Run `maple-runner run` to start the runner, or `maple-runner install` to run it at login;\n`maple-runner stop` and `maple-runner start` then stop and start that service.";
 
 #[derive(Subcommand, Debug)]
 enum SecretsCmd {
@@ -132,6 +132,18 @@ enum Cmd {
         /// The control plane to check for updates. Defaults to runner.json's.
         #[arg(long, env = "MAPLE_URL")]
         url: Option<String>,
+    },
+    /// Start the installed runner service in the background and wait for it to connect.
+    Start {
+        /// Print the commands instead of running them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Stop the installed runner service, so nothing restarts it until `start` or the next login.
+    Stop {
+        /// Print the commands instead of running them.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Restart the runner service and wait for it to connect again.
     Restart,
@@ -323,6 +335,8 @@ async fn command(cli: Cli) -> Result<()> {
         Some(Cmd::Install { dry_run }) => install(dry_run),
         Some(Cmd::Uninstall { dry_run }) => service::Service::detect()?.uninstall(dry_run),
         Some(Cmd::Status { url }) => status(url.as_deref()),
+        Some(Cmd::Start { dry_run }) => start(dry_run),
+        Some(Cmd::Stop { dry_run }) => stop(dry_run),
         Some(Cmd::Restart) => restart(),
         Some(Cmd::SentryTest { url }) => telemetry::test(url).await,
         Some(Cmd::Update { url, check, force }) => self_update(url.as_deref(), check, force).await,
@@ -359,9 +373,11 @@ async fn enroll(url: &str, code: &str, runner_id: Option<String>, test: bool) ->
         style::accent(&config.url)
     );
     println!(
-        "\n{} {} to run it at login, or {} to run it now.",
+        "\n{} {} to run it at login ({} and {} it from then on), or {} to run it now.",
         style::dim("Next:"),
         style::accent("maple-runner install"),
+        style::accent("stop"),
+        style::accent("start"),
         style::accent("maple-runner run")
     );
     Ok(())
@@ -472,6 +488,40 @@ fn status(url: Option<&str>) -> Result<()> {
     match service::Service::detect() {
         Ok(service) => println!("{}{}", label("service:"), service.status()),
         Err(e) => println!("{}{}", label("service:"), style::err(format!("{e:#}"))),
+    }
+    Ok(())
+}
+
+fn start(dry_run: bool) -> Result<()> {
+    let service = service::Service::detect()?;
+    let manager = service.manager_name();
+    let wait = Duration::from_secs(10);
+    match service.start(wait, dry_run)? {
+        service::Start::DryRun => {}
+        service::Start::AlreadyRunning(pid) => {
+            println!("The service ({manager}) is already running (pid {pid}). {} restarts it.", style::accent("maple-runner restart"))
+        }
+        service::Start::Started(Some(runner_id)) => {
+            println!("{} the service ({manager}). It's connected as {}.", style::ok("Started"), style::bold(runner_id));
+            println!("{} {}", style::dim("Logs:"), style::accent(service.logs()));
+        }
+        service::Start::Started(None) => {
+            bail!("started the service ({manager}), but it hasn't connected after {}s. Check `maple-runner status` and {}", wait.as_secs(), service.logs())
+        }
+    }
+    Ok(())
+}
+
+fn stop(dry_run: bool) -> Result<()> {
+    let service = service::Service::detect()?;
+    let manager = service.manager_name();
+    if dry_run {
+        service.stop(true)?;
+    } else if service.stop(false)? {
+        println!("{} the service ({manager}). It stays stopped until {} or your next login.", style::ok("Stopped"), style::accent("maple-runner start"));
+        println!("{} {}", style::dim("Logs:"), style::accent(service.logs()));
+    } else {
+        println!("The service ({manager}) is already stopped. {} starts it.", style::accent("maple-runner start"));
     }
     Ok(())
 }
@@ -1072,6 +1122,10 @@ mod tests {
         assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--check"]).unwrap().command, Some(Cmd::Update { check: true, force: false, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--force"]).unwrap().command, Some(Cmd::Update { check: false, force: true, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "restart"]).unwrap().command, Some(Cmd::Restart)));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "start"]).unwrap().command, Some(Cmd::Start { dry_run: false })));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "start", "--dry-run"]).unwrap().command, Some(Cmd::Start { dry_run: true })));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "stop"]).unwrap().command, Some(Cmd::Stop { dry_run: false })));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "stop", "--dry-run"]).unwrap().command, Some(Cmd::Stop { dry_run: true })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "run", "--force"]).unwrap().command, Some(Cmd::Run(Args { force: true, .. }))));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "status", "--url", "https://x.dev"]).unwrap().command, Some(Cmd::Status { url: Some(_) })));
     }
@@ -1089,7 +1143,7 @@ mod tests {
     #[test]
     fn help_lists_every_command() {
         let help = Cli::command().render_help().to_string();
-        for cmd in ["run", "enroll", "install", "uninstall", "status", "restart", "update", "mcp"] {
+        for cmd in ["run", "enroll", "install", "uninstall", "status", "start", "stop", "restart", "update", "mcp"] {
             assert!(help.lines().any(|l| l.trim_start().starts_with(cmd)), "{cmd} missing:\n{help}");
         }
         assert!(help.contains("Maple Factory") && help.contains(AFTER_HELP), "{help}");

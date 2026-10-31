@@ -282,6 +282,136 @@ impl Service {
         }
     }
 
+    /// Whether the service manager has the service loaded: launchd has the job (running, or
+    /// waiting to be relaunched by KeepAlive), or systemd's unit is active or restarting.
+    fn loaded(&self) -> bool {
+        if !self.file.exists() {
+            return false;
+        }
+        match self.manager {
+            Manager::Launchd => quiet(&["launchctl", "print", &format!("{}/{LAUNCHD_LABEL}", self.domain)]).is_some(),
+            Manager::Systemd => {
+                let show = quiet(&["systemctl", "--user", "show", "-p", "ActiveState", "maple-runner"]).unwrap_or_default();
+                systemd_loaded(&show)
+            }
+        }
+    }
+
+    /// The commands that stop the service so nothing relaunches it until `start` (or the next
+    /// login). Killing the process or `launchctl stop` isn't enough: KeepAlive starts it again.
+    fn stop_commands(&self) -> Vec<Vec<String>> {
+        match self.manager {
+            Manager::Launchd => vec![args(&["launchctl", "bootout", &format!("{}/{LAUNCHD_LABEL}", self.domain)])],
+            Manager::Systemd => vec![args(&["systemctl", "--user", "stop", "maple-runner"])],
+        }
+    }
+
+    /// The commands that start a stopped service: launchd loads the job again (or kicks one
+    /// that's loaded but not running); systemd starts the unit, which stays enabled for login.
+    fn start_commands(&self, loaded: bool) -> Vec<Vec<String>> {
+        let file = self.file.to_string_lossy().into_owned();
+        match self.manager {
+            Manager::Launchd if loaded => vec![args(&["launchctl", "kickstart", &format!("{}/{LAUNCHD_LABEL}", self.domain)])],
+            Manager::Launchd => vec![args(&["launchctl", "bootstrap", &self.domain, &file])],
+            Manager::Systemd => vec![args(&["systemctl", "--user", "start", "maple-runner"])],
+        }
+    }
+
+    /// Stops the service and waits for its runner to exit. Returns false if it was already
+    /// stopped.
+    pub fn stop(&self, dry_run: bool) -> Result<bool> {
+        if !self.file.exists() {
+            bail!("the service isn't installed (run `maple-runner install`)");
+        }
+        let commands = self.stop_commands();
+        if dry_run {
+            println!("Would run:");
+            for cmd in &commands {
+                println!("  {}", cmd.join(" "));
+            }
+            return Ok(true);
+        }
+        // A crash-looping runner is loaded but often between runs, so "stopped" means unloaded.
+        if !self.loaded() {
+            return Ok(false);
+        }
+        for cmd in &commands {
+            run(cmd)?;
+        }
+        let start = Instant::now();
+        while self.loaded() || self.running_pid().is_some() {
+            if start.elapsed() >= Duration::from_secs(5) {
+                bail!("asked {} to stop the service, but it's still running after 5s", self.manager_name());
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Ok(true)
+    }
+
+    /// Starts the service and waits up to `wait` for it to connect. `Ok(None)` when it's
+    /// already running (or a dry run), else the runner id it connected as, if it did in time.
+    pub fn start(&self, wait: Duration, dry_run: bool) -> Result<Start> {
+        if !self.file.exists() {
+            bail!("the service isn't installed (run `maple-runner install`)");
+        }
+        let loaded = self.loaded();
+        let commands = self.start_commands(loaded);
+        if dry_run {
+            println!("Would run:");
+            for cmd in &commands {
+                println!("  {}", cmd.join(" "));
+            }
+            return Ok(Start::DryRun);
+        }
+        if let Some(pid) = self.running_pid() {
+            return Ok(Start::AlreadyRunning(pid));
+        }
+        let mark = self.log_mark()?;
+        for cmd in &commands {
+            // launchd can still be tearing the job down right after a `stop`.
+            let mut attempt = 0;
+            loop {
+                match run(cmd) {
+                    Ok(()) => break,
+                    Err(e) if attempt < 3 && self.manager == Manager::Launchd => {
+                        attempt += 1;
+                        tracing::debug!("{e:#}; retrying");
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(Start::Started(self.wait_connected(&mark, wait)))
+    }
+
+    /// Where the service's log is now, so only what it gains afterwards counts.
+    fn log_mark(&self) -> Result<LogMark> {
+        Ok(LogMark {
+            offset: std::fs::metadata(self.log_file()).map(|m| m.len()).unwrap_or(0),
+            since: format!("@{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()),
+        })
+    }
+
+    /// Waits up to `wait` for the service's log, after `mark`, to say it connected, and
+    /// returns the runner id it connected as.
+    fn wait_connected(&self, mark: &LogMark, wait: Duration) -> Option<String> {
+        let start = Instant::now();
+        loop {
+            let text = match self.manager {
+                Manager::Launchd => log_since(&self.log_file(), mark.offset),
+                Manager::Systemd => quiet(&["journalctl", "--user", "-u", "maple-runner", "--since", &mark.since, "-o", "cat", "--no-pager"]).unwrap_or_default(),
+            };
+            if let Some(id) = connected_as(&text) {
+                return Some(id);
+            }
+            if start.elapsed() >= wait {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     /// The command that restarts the service: it stops the running runner and starts it
     /// again (and starts it if it had stopped).
     fn restart_command(&self) -> Vec<String> {
@@ -297,26 +427,31 @@ impl Service {
         if !self.file.exists() {
             bail!("the service isn't installed (run `maple-runner install`)");
         }
-        // Only what the log gains after the restart counts.
-        let log = self.log_file();
-        let offset = std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
-        let since = format!("@{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs());
+        let mark = self.log_mark()?;
         run(&self.restart_command())?;
-        let start = Instant::now();
-        loop {
-            let text = match self.manager {
-                Manager::Launchd => log_since(&log, offset),
-                Manager::Systemd => quiet(&["journalctl", "--user", "-u", "maple-runner", "--since", &since, "-o", "cat", "--no-pager"]).unwrap_or_default(),
-            };
-            if let Some(id) = connected_as(&text) {
-                return Ok(Some(id));
-            }
-            if start.elapsed() >= wait {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
+        Ok(self.wait_connected(&mark, wait))
     }
+}
+
+/// What `Service::start` did.
+pub enum Start {
+    /// Started it; the runner id it connected as, if it did in time.
+    Started(Option<String>),
+    /// It was already running, with this pid.
+    AlreadyRunning(u32),
+    DryRun,
+}
+
+/// A place in the service's log: a byte offset in launchd's file, a `--since` for journalctl.
+struct LogMark {
+    offset: u64,
+    since: String,
+}
+
+/// Whether `systemctl show -p ActiveState` says the unit is up or coming up (including
+/// waiting to be restarted after a crash).
+fn systemd_loaded(show: &str) -> bool {
+    show.lines().find_map(|l| l.trim().strip_prefix("ActiveState=")).is_some_and(|s| !matches!(s, "inactive" | "failed" | ""))
 }
 
 /// The service's pid from `launchctl print`, if it says the job is running.
@@ -575,6 +710,36 @@ mod tests {
         let linux = Service::new(Manager::Systemd, PathBuf::from("/home/a"), 0);
         assert_eq!(linux.restart_command(), ["systemctl", "--user", "restart", "maple-runner"]);
         assert_eq!(linux.manager_name(), "systemd");
+    }
+
+    #[test]
+    fn start_stop_commands() {
+        let mac = Service::new(Manager::Launchd, PathBuf::from("/Users/a"), 501);
+        assert_eq!(mac.stop_commands(), [["launchctl", "bootout", "gui/501/dev.maplefactory.runner"]]);
+        assert_eq!(mac.start_commands(false), [["launchctl", "bootstrap", "gui/501", "/Users/a/Library/LaunchAgents/dev.maplefactory.runner.plist"]]);
+        assert_eq!(mac.start_commands(true), [["launchctl", "kickstart", "gui/501/dev.maplefactory.runner"]]);
+        let linux = Service::new(Manager::Systemd, PathBuf::from("/home/a"), 0);
+        assert_eq!(linux.stop_commands(), [["systemctl", "--user", "stop", "maple-runner"]]);
+        assert_eq!(linux.start_commands(false), [["systemctl", "--user", "start", "maple-runner"]]);
+        assert_eq!(linux.start_commands(true), [["systemctl", "--user", "start", "maple-runner"]]);
+    }
+
+    #[test]
+    fn systemd_load_states() {
+        assert!(systemd_loaded("ActiveState=active\n"));
+        assert!(systemd_loaded("ActiveState=activating\n"));
+        assert!(!systemd_loaded("ActiveState=inactive\n"));
+        assert!(!systemd_loaded("ActiveState=failed\n"));
+        assert!(!systemd_loaded(""));
+    }
+
+    #[test]
+    fn not_installed_says_install() {
+        let svc = Service::new(Manager::Launchd, std::env::temp_dir().join(format!("maple-svc-test-{}", uuid::Uuid::new_v4())), 501);
+        let stop = svc.stop(false).err().unwrap().to_string();
+        assert!(stop.contains("maple-runner install"), "{stop}");
+        let start = svc.start(Duration::from_secs(1), false).err().unwrap().to_string();
+        assert!(start.contains("maple-runner install"), "{start}");
     }
 
     #[test]
