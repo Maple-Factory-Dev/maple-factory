@@ -8,6 +8,7 @@ import type { TicketLink } from "./wire.ts";
 import { orgHub, sameText, text } from "./util.ts";
 import { verifyWebhook } from "./github.ts";
 import { integrationAccess, integrationConfig, integrationEvent, type IntegrationAccess } from "./integrations/registry.ts";
+import { parseThreadAddress, postMessage } from "./slack.ts";
 
 /** Starts every comment the bot writes, so the webhook for it isn't taken as the requester talking. */
 const BOT = "Maple · ";
@@ -138,8 +139,15 @@ export async function jiraWebhook(request: Request, env: Env, url: URL): Promise
 
 // ---- Replies ----
 
-/** Says `said` where a request came from: a Slack response URL or webhook, a Linear issue or a Jira issue. */
+/** Says `said` where a request came from: a Slack thread @Maple was asked in, a Slack response URL or webhook, a Linear issue or a Jira issue. */
 export async function deliver(env: Env, replyUrl: string, said: string, integrations: IntegrationAccess = integrationAccess(env)): Promise<void> {
+  if (replyUrl.startsWith("slack:")) {
+    const slack = await integrations.config("slack");
+    const thread = parseThreadAddress(replyUrl);
+    if (!slack?.botToken || !thread) return;
+    await postMessage(slack.botToken, thread.channel, thread.threadTs, said).catch((e) => integrations.event("slack", `Couldn't post in a thread: ${(e as Error).message}`));
+    return;
+  }
   if (replyUrl.startsWith("linear:")) {
     const linear = await integrations.config("linear");
     if (!linear?.apiKey) return;
