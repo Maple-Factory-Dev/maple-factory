@@ -11,6 +11,7 @@ import { markdownEditor } from "./editor.js";
 import { loadCollapsed, toggleCollapsed } from "./sections.js";
 import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 import { bundleStale } from "./update.js";
+import { createSettings } from "./settings.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -110,12 +111,15 @@ function send(msg) {
 }
 
 function receive(m) {
+  settings.receive(m);
   switch (m.type) {
     case "snapshot":
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
       state.notes = m.notes ?? [];
       state.machines = m.machines ?? [];
+      // The factory's settings, for admins' Settings page.
+      Object.assign(state, { policy: m.policy ?? null, prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
       $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
@@ -124,7 +128,16 @@ function receive(m) {
       if (bundleStale(state.loadedVersion, m.serverVersion)) $("update").hidden = false;
       break;
     case "icon.updated": showIcon(m.icon); return;
-    case "name.updated": $("org").textContent = m.name || state.org || "Maple Factory"; return;
+    case "name.updated": state.name = m.name ?? null; $("org").textContent = m.name || state.org || "Maple Factory"; break;
+    case "policy.updated": state.policy = m.policy; break;
+    case "prompts.updated": state.prompts = m.prompts; break;
+    case "members.updated":
+      state.members = m.members;
+      // A grant or revoke of your own takes effect here at once, like it does on the server.
+      state.me = m.members.find((x) => x.login === state.me?.login) ?? state.me;
+      break;
+    case "repos.updated": state.repos = m.repos; if (m.repoOwners) state.repoOwners = m.repoOwners; break;
+    case "secrets.updated": state.secrets = m.secrets; break;
     case "task.updated":
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
@@ -254,8 +267,10 @@ function route() {
   const [hash, query = ""] = (location.hash.replace(/^#/, "") || "/").split("?");
   const task = hash.match(/^\/t\/([A-Z][A-Z0-9]*-\d+)$/);
   const note = hash.match(/^\/notes\/([\w-]+)$/);
+  const settings = hash.match(/^\/settings(?:\/([\w-]+))?$/);
   if (task) return { name: "task", nav: "tasks", id: task[1] };
   if (note) return { name: "note", nav: "notes", id: note[1] };
+  if (settings) return { name: "settings", nav: "settings", section: settings[1] ?? null };
   if (hash === "/new") return { name: "new", nav: "new", note: new URLSearchParams(query).get("note") };
   if (hash === "/notes") return { name: "notes", nav: "notes" };
   return hash === "/tasks" ? { name: "tasks", nav: "tasks" } : { name: "inbox", nav: "inbox" };
@@ -265,14 +280,16 @@ function render() {
   if (!state.me) return;
   const r = route();
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === r.nav);
+  $("nav-settings").hidden = state.me.role !== "admin";
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, note: () => noteView(r.id) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
 const view = render;
+const settings = createSettings({ state, h, send, toast, render });
 
 // Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
 const collapsed = loadCollapsed();

@@ -2,6 +2,7 @@
 // Slack's slash command. Both land in OrgHub's intake (factory/intake.ts).
 
 import type { Env } from "./env.ts";
+import { integrationConfig, integrationEvent } from "./integrations/registry.ts";
 import type { Member, TicketLink } from "./wire.ts";
 import { orgHub, sameText, text } from "./util.ts";
 
@@ -73,12 +74,17 @@ export async function intakeApi(request: Request, env: Env, path: string, me: Me
  * secret; the bot's replies go back through the command's response_url.
  */
 export async function slackCommand(request: Request, env: Env): Promise<Response> {
-  if (!env.SLACK_SIGNING_SECRET) return text("Slack isn't set up for this factory.", 404);
+  const slack = await integrationConfig(env, "slack");
+  if (!slack) return text("Slack isn't set up for this factory.", 404);
   const raw = await request.text();
   const stamp = request.headers.get("x-slack-request-timestamp") ?? "";
   const signature = request.headers.get("x-slack-signature") ?? "";
   if (Math.abs(Date.now() / 1000 - Number(stamp)) > 300) return text("Stale request.", 401);
-  if (!sameText(signature, `v0=${await hmacHex(env.SLACK_SIGNING_SECRET, `v0:${stamp}:${raw}`)}`)) return text("Bad signature.", 401);
+  if (!sameText(signature, `v0=${await hmacHex(slack.signingSecret, `v0:${stamp}:${raw}`)}`)) {
+    await integrationEvent(env, "slack", "A slash command came with a bad signature: check the signing secret.");
+    return text("Bad signature.", 401);
+  }
+  await integrationEvent(env, "slack");
 
   const form = new URLSearchParams(raw);
   const said = (form.get("text") ?? "").trim();
