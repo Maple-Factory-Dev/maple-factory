@@ -111,3 +111,34 @@ struct GoalOverviewSections {
         return (task.plan.filter { $0.progress == .done }.count, task.plan.count)
     }
 }
+
+/// A section of the Overview a person can collapse to its header.
+enum OverviewSection: String, CaseIterable {
+    case needsYou, upNext, queue, drafts, planning, inMotion, landed
+}
+
+/// Which Overview sections are collapsed, kept as a comma-joined string so @AppStorage can hold it.
+struct OverviewCollapse: Equatable {
+    var collapsed: Set<OverviewSection>
+
+    /// Only Recently landed starts collapsed.
+    static let defaultRaw = OverviewSection.landed.rawValue
+
+    init(collapsed: Set<OverviewSection> = [.landed]) { self.collapsed = collapsed }
+
+    /// Unknown or empty keys are dropped.
+    init(raw: String) {
+        collapsed = Set(raw.split(separator: ",").compactMap { OverviewSection(rawValue: $0.trimmingCharacters(in: .whitespaces)) })
+    }
+
+    /// In `OverviewSection.allCases` order, so the same set always stores the same string.
+    var raw: String { OverviewSection.allCases.filter(collapsed.contains).map(\.rawValue).joined(separator: ",") }
+
+    func isCollapsed(_ section: OverviewSection) -> Bool { collapsed.contains(section) }
+
+    func toggling(_ section: OverviewSection) -> Self {
+        var next = self
+        if next.collapsed.remove(section) == nil { next.collapsed.insert(section) }
+        return next
+    }
+}
