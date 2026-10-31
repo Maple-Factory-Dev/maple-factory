@@ -10,6 +10,8 @@
 //! - `setup` runs once the worktree exists, whichever made it, before the agent starts.
 //! - `teardown` runs before a finished task's worktree is removed.
 //! - `archive` runs in place of the runner's own removal; the script owns the folder and the branch.
+//! - `checks` (one command per line: linters, formatters, lefthook) run in the worktree when a builder
+//!   finishes, before anything is committed; the first that fails stops the finish (`checks`).
 //!
 //! Each runs with `sh -c` in the repo's main checkout (preflight in the worktree: a managed clone's
 //! main checkout has no files), like a project check (`proof::run_check_env`:
@@ -29,7 +31,7 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::Outbound;
 use crate::tasks::Emit;
-pub use crate::wire::WorktreeScripts;
+pub use crate::wire::{CheckRun, WorktreeScripts};
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 /// The end of a failed script's output that goes into the error (and the app).
@@ -40,6 +42,7 @@ pub enum Phase {
     Create,
     Preflight,
     Setup,
+    Checks,
     Teardown,
     Archive,
 }
@@ -50,6 +53,7 @@ impl Phase {
             Phase::Create => "create",
             Phase::Preflight => "preflight",
             Phase::Setup => "setup",
+            Phase::Checks => "checks",
             Phase::Teardown => "teardown",
             Phase::Archive => "archive",
         }
@@ -91,13 +95,14 @@ pub struct Context<'a> {
     pub path: Option<&'a str>,
 }
 
-/// The command for `phase`, if the repo has one.
+/// The command for `phase`, if the repo has one (checks are many: `check_commands`).
 pub fn command(scripts: Option<&WorktreeScripts>, phase: Phase) -> Option<&str> {
     let s = scripts?;
     let c = match phase {
         Phase::Create => &s.create,
         Phase::Preflight => &s.preflight,
         Phase::Setup => &s.setup,
+        Phase::Checks => return None,
         Phase::Teardown => &s.teardown,
         Phase::Archive => &s.archive,
     };
@@ -186,6 +191,49 @@ async fn run_in(dir: &Path, scripts: Option<&WorktreeScripts>, phase: Phase, com
         bail!("The repo's {} script (`{command}`) {how}, with no output.", phase.name());
     }
     bail!("The repo's {} script (`{command}`) {how}:\n{end}", phase.name())
+}
+
+/// The repo's checks: one command per line, trimmed, blank lines skipped.
+pub fn check_commands(scripts: Option<&WorktreeScripts>) -> Vec<&str> {
+    scripts.and_then(|s| s.checks.as_deref()).unwrap_or("").lines().map(str::trim).filter(|c| !c.is_empty()).collect()
+}
+
+/// Runs the repo's checks one after another in the worktree, stopping at the first that fails (exits
+/// non-zero, is killed or runs past the timeout). Each comes back with its exit code and the scrubbed
+/// end of its output; the last one failed when `passed` says not.
+pub async fn checks(scripts: Option<&WorktreeScripts>, ctx: &Context<'_>) -> Vec<CheckRun> {
+    crate::secrets::remember(ctx.env.iter().map(|(_, v)| v));
+    let limit = timeout(scripts);
+    let env = environment(Phase::Checks, ctx);
+    let mut ran = Vec::new();
+    for command in check_commands(scripts) {
+        tracing::info!("task {}: running its check: {command}", ctx.task_id);
+        let r = crate::proof::run_check_env(ctx.worktree, command, ctx.path, &env, limit).await;
+        let lines: Vec<String> = scrub(&r.tail, ctx.env).lines().map(str::to_string).collect();
+        let output = lines[lines.len().saturating_sub(ERROR_TAIL_LINES)..].join("\n");
+        let run = CheckRun { command: command.to_string(), code: r.code, timed_out: r.timed_out, ms: r.ms, output };
+        let line = match (passed(&run), run.timed_out, run.code) {
+            (true, ..) => format!("check `{command}` passed in {:.1}s", run.ms as f64 / 1000.0),
+            (false, true, _) => format!("check `{command}` was stopped after {}s", limit.as_secs()),
+            (false, false, Some(code)) => format!("check `{command}` failed with exit code {code}"),
+            (false, false, None) => format!("check `{command}` was killed"),
+        };
+        tracing::info!("task {}: {line}", ctx.task_id);
+        if let Some(emit) = ctx.emit {
+            emit(Outbound::TaskProgress { task_id: ctx.task_id.to_string(), text: line });
+        }
+        let ok = passed(&run);
+        ran.push(run);
+        if !ok {
+            break;
+        }
+    }
+    ran
+}
+
+/// Whether a check exited 0.
+pub fn passed(run: &CheckRun) -> bool {
+    !run.timed_out && run.code == Some(0)
 }
 
 /// The files preflight watches when the repo doesn't say: the usual runtime and package pins.
@@ -293,7 +341,7 @@ mod tests {
     }
 
     fn scripts(setup: &str, timeout: Option<u32>) -> WorktreeScripts {
-        WorktreeScripts { create: None, preflight: None, preflight_watch: None, setup: Some(setup.into()), teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
+        WorktreeScripts { create: None, preflight: None, preflight_watch: None, setup: Some(setup.into()), checks: None, teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
     }
 
     #[tokio::test]

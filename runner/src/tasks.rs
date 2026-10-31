@@ -62,7 +62,13 @@ pub struct Finish {
     /// Push with the machine's own credentials (and no PR) when the app can't.
     #[serde(default)]
     pub fallback: bool,
+    /// The repo's checks, one command per line: each must pass before anything is committed.
+    #[serde(default)]
+    pub checks: Option<String>,
 }
+
+/// What a check that's really the commit's own git hooks (lefthook, husky) is called.
+pub const HOOK_CHECK: &str = "git commit (pre-commit hook)";
 
 /// `task.cleanup` from the hub: the task's PR was merged or closed and its session has ended, so
 /// remove the worktree and local branch if nothing would be lost (see `worktrees::remove_task`).
@@ -480,6 +486,7 @@ pub async fn run(sessions: Sessions, f: Finish) {
                 commit: None,
                 reason: None,
                 message: Some(format!("{e:#}")),
+                checks: None,
             }
         }
     };
@@ -489,10 +496,20 @@ pub async fn run(sessions: Sessions, f: Finish) {
 async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
     let dir = task_dir(&f.cwd, &f.branch, f.base.as_deref())?;
 
+    // 0. The repo's checks, in the worktree as the builder left it: the first that fails stops here.
+    let mut checks = run_checks(emit, f, &dir).await?;
+    if checks.last().is_some_and(|c| !crate::worktree_scripts::passed(c)) {
+        return Ok(checks_failed(f, checks));
+    }
+
     // 1. Commit what's left uncommitted, as the user (their git config), with the title as the message.
+    // Its own git hooks run; one that fails is a failed check, with nothing committed.
     if !git(&dir, &["status", "--porcelain"], None).await?.trim().is_empty() {
         git(&dir, &["add", "-A"], None).await?;
-        git(&dir, &["commit", "--quiet", "-m", &f.title], None).await.map_err(|e| anyhow!("Couldn't commit: {e}"))?;
+        if let Some(hook) = commit_with_hooks(&dir, &f.title).await? {
+            checks.push(hook);
+            return Ok(checks_failed(f, checks));
+        }
     }
     let commit = git(&dir, &["rev-parse", "HEAD"], None).await?.trim().to_string();
 
@@ -511,7 +528,108 @@ async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
 
     // 3 and 4. Push: the app, else the fallback.
     let p = push(emit, &f.task_id, &dir, &f.branch, f.fallback, None).await?;
-    Ok(finished(f, p.how, p.owner, p.repo, base, commit, p.reason))
+    let mut done = finished(f, p.how, p.owner, p.repo, base, commit, p.reason);
+    if let Outbound::TaskFinished { checks: c, .. } = &mut done
+        && !checks.is_empty()
+    {
+        *c = Some(checks);
+    }
+    Ok(done)
+}
+
+/// Runs the repo's checks (if `task.finish` brought any) in the task's worktree, with the MAPLE_*
+/// variables, its secrets and the login shell's PATH.
+async fn run_checks(emit: Emit<'_>, f: &Finish, dir: &Path) -> Result<Vec<crate::wire::CheckRun>> {
+    let scripts = crate::worktree_scripts::WorktreeScripts {
+        create: None,
+        preflight: None,
+        preflight_watch: None,
+        setup: None,
+        checks: f.checks.clone(),
+        teardown: None,
+        archive: None,
+        timeout_secs: None,
+    };
+    if crate::worktree_scripts::check_commands(Some(&scripts)).is_empty() {
+        return Ok(vec![]);
+    }
+    let root = crate::worktrees::main_root(dir).await.unwrap_or_else(|_| expand_home(&f.repo_dir));
+    let origin = git(dir, &["config", "--get", "remote.origin.url"], None).await.ok().and_then(|u| parse_github(u.trim()));
+    let repo = origin.map(|(owner, name)| format!("{owner}/{name}"));
+    let env: Vec<(String, String)> = match repo.as_deref() {
+        Some(r) => match crate::secrets::request(emit, r, Some(&f.task_id)).await {
+            Ok(values) => values.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!("task {}: its checks run without {r}'s secrets: {e:#}", f.task_id);
+                vec![]
+            }
+        },
+        None => vec![],
+    };
+    let path = crate::proof::login_path().await;
+    let t = crate::worktree_scripts::ForTask {
+        scripts: &scripts,
+        task_id: &f.task_id,
+        repo: repo.as_deref(),
+        base: f.base.as_deref(),
+        env: &env,
+        emit: Some(emit),
+        path: path.as_deref(),
+    };
+    Ok(crate::worktree_scripts::checks(Some(&scripts), &t.context(&root, dir, &f.branch)).await)
+}
+
+/// Commits what's staged with `title`, its git hooks and all. None: committed. A failure that's the
+/// hooks' (the same commit goes through without them) comes back as a failed check with what they
+/// printed, and the index as it was; any other failure is an error.
+async fn commit_with_hooks(dir: &Path, title: &str) -> Result<Option<crate::wire::CheckRun>> {
+    let began = std::time::Instant::now();
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["commit", "--quiet", "-m", title])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(GIT_TIMEOUT, out).await.map_err(|_| anyhow!("git commit timed out"))??;
+    if out.status.success() {
+        return Ok(None);
+    }
+    let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if git(dir, &["commit", "--quiet", "--dry-run", "--no-verify", "-m", title], None).await.is_err() {
+        let why = printed.lines().map(|l| l.trim_start_matches("fatal: ").trim_start_matches("error: ")).filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(" ");
+        bail!("Couldn't commit: {}", if why.is_empty() { "git commit failed" } else { why.trim() });
+    }
+    // Unstaged again, so the worktree is as the builder left it.
+    let _ = git(dir, &["reset", "--quiet"], None).await;
+    let lines: Vec<String> = crate::secrets::scrub(&printed).lines().map(str::to_string).collect();
+    let output = lines[lines.len().saturating_sub(40)..].join("\n");
+    Ok(Some(crate::wire::CheckRun { command: HOOK_CHECK.into(), code: out.status.code(), timed_out: false, ms: began.elapsed().as_millis() as u64, output }))
+}
+
+/// `task.finished` for a finish a check stopped: nothing committed or pushed.
+fn checks_failed(f: &Finish, checks: Vec<crate::wire::CheckRun>) -> Outbound {
+    let last = checks.last().expect("a failed check");
+    let how = match (last.timed_out, last.code) {
+        (true, _) => "timed out".to_string(),
+        (false, Some(code)) => format!("exited {code}"),
+        (false, None) => "was killed".to_string(),
+    };
+    tracing::info!("task {}: check `{}` {how}; nothing committed or pushed", f.task_id, last.command);
+    Outbound::TaskFinished {
+        task_id: f.task_id.clone(),
+        ok: false,
+        pushed: None,
+        owner: None,
+        repo: None,
+        branch: f.branch.clone(),
+        base: f.base.clone(),
+        commit: None,
+        reason: None,
+        message: Some(format!("The check `{}` {how}, so nothing was committed or pushed.", last.command)),
+        checks: Some(checks),
+    }
 }
 
 /// The task's worktree, once its branch and base are known to be safe to hand to git.
@@ -647,6 +765,7 @@ fn finished(f: &Finish, pushed: &'static str, owner: Option<String>, repo: Optio
         commit: Some(commit),
         reason,
         message: None,
+        checks: None,
     }
 }
 
@@ -1157,6 +1276,7 @@ mod tests {
             base: Some("main".into()),
             title: "Fix the flaky test".into(),
             fallback: false,
+            checks: None,
         };
         // Not GitHub, no fallback: a clear refusal, nothing pushed, but the commit is made.
         let err = format!("{:#}", finish(sessions, &f).await.unwrap_err());
@@ -1176,6 +1296,104 @@ mod tests {
         assert!(err.contains("didn't change anything"), "{err}");
         // A branch that isn't a task's is refused before git runs.
         assert!(finish(sessions, &Finish { branch: "--force".into(), ..f }).await.is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A work tree on agent/fix-1a2b, one change ahead of main and uncommitted, with a bare origin.
+    fn finish_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf, Finish) {
+        let root = tmp(tag);
+        let (bare, work) = (root.join("origin.git"), root.join("work"));
+        std::fs::create_dir_all(&work).unwrap();
+        sh(&root, &["init", "--quiet", "--bare", bare.to_str().unwrap()]);
+        sh(&work, &["init", "--quiet", "-b", "main"]);
+        for (k, v) in [("user.name", "Test Person"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")] {
+            sh(&work, &["config", k, v]);
+        }
+        commit(&work, "a.txt", "one\n", "first");
+        sh(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        sh(&work, &["checkout", "--quiet", "-b", "agent/fix-1a2b"]);
+        std::fs::write(work.join("a.txt"), "two\n").unwrap();
+        let f = Finish {
+            task_id: "t1".into(),
+            cwd: work.to_string_lossy().into_owned(),
+            repo_dir: work.to_string_lossy().into_owned(),
+            branch: "agent/fix-1a2b".into(),
+            base: Some("main".into()),
+            title: "Fix the flaky test".into(),
+            fallback: true,
+            checks: None,
+        };
+        (root, bare, work, f)
+    }
+
+    fn checks_of(out: &Outbound) -> (bool, Vec<crate::wire::CheckRun>) {
+        let Outbound::TaskFinished { ok, checks, .. } = out else { panic!("{out:?}") };
+        (*ok, checks.clone().unwrap_or_default())
+    }
+
+    /// Checks that pass: they run in the worktree with the MAPLE_* variables, then the commit and push.
+    /// The first that fails stops the finish there, with nothing committed or pushed.
+    #[tokio::test]
+    async fn checks_run_before_the_commit_and_a_failing_one_stops_the_finish() {
+        let (root, bare, work, f) = finish_fixture("checks");
+        let lines = Mutex::new(Vec::new());
+        let emit = |m: Outbound| match m {
+            Outbound::TaskProgress { text, .. } => lines.lock().unwrap().push(text),
+            m => panic!("unexpected message {m:?}"),
+        };
+        let emit: Emit = &emit;
+        let head = sh(&work, &["rev-parse", "HEAD"]);
+
+        let failing = Finish { checks: Some("  echo linting\n\n  echo \"a.txt:1 offence ($MAPLE_PHASE)\"; exit 3\necho never".into()), ..f.clone() };
+        let out = finish(emit, &failing).await.unwrap();
+        let (ok, checks) = checks_of(&out);
+        assert!(!ok);
+        assert_eq!(checks.iter().map(|c| (c.command.as_str(), c.code)).collect::<Vec<_>>(), [("echo linting", Some(0)), ("echo \"a.txt:1 offence ($MAPLE_PHASE)\"; exit 3", Some(3))]);
+        assert_eq!(checks[1].output.trim(), "a.txt:1 offence (checks)");
+        let Outbound::TaskFinished { message, commit, .. } = &out else { unreachable!() };
+        assert!(message.as_deref().unwrap().contains("exited 3"), "{message:?}");
+        assert_eq!(*commit, None);
+        assert_eq!(sh(&work, &["rev-parse", "HEAD"]), head, "nothing committed");
+        assert_eq!(sh(&work, &["status", "--porcelain"]).trim(), "M a.txt");
+        assert!(sh(&bare, &["branch", "--list"]).is_empty(), "nothing pushed");
+        assert!(lines.lock().unwrap().iter().any(|l| l.contains("failed with exit code 3")), "{lines:?}");
+
+        let passing = Finish { checks: Some("test \"$MAPLE_WORKTREE\" = \"$PWD\"\ngrep -q two a.txt".into()), ..f.clone() };
+        let out = finish(emit, &passing).await.unwrap();
+        let (ok, checks) = checks_of(&out);
+        assert!(ok, "{out:?}");
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().all(crate::worktree_scripts::passed));
+        assert_eq!(sh(&bare, &["log", "-1", "--format=%B", "agent/fix-1a2b"]), "Fix the flaky test");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A commit its pre-commit hook (lefthook, husky) refuses is a failed check with the hook's output:
+    /// nothing committed, pushed or left staged. Once the hook passes, the finish goes through.
+    #[tokio::test]
+    async fn a_failing_pre_commit_hook_is_a_failed_check_not_a_push_failure() {
+        let (root, bare, work, f) = finish_fixture("hook");
+        let hook = work.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\necho 'lefthook: rubocop: 1 offense'\necho 'a.txt: trailing whitespace' >&2\nexit 1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let emit = |m: Outbound| panic!("unexpected message {m:?}");
+        let head = sh(&work, &["rev-parse", "HEAD"]);
+
+        let out = finish(&emit, &f).await.unwrap();
+        let (ok, checks) = checks_of(&out);
+        assert!(!ok);
+        assert_eq!(checks.len(), 1);
+        assert_eq!((checks[0].command.as_str(), checks[0].code), (HOOK_CHECK, Some(1)));
+        assert!(checks[0].output.contains("1 offense") && checks[0].output.contains("trailing whitespace"), "{:?}", checks[0].output);
+        assert_eq!(sh(&work, &["rev-parse", "HEAD"]), head);
+        assert_eq!(sh(&work, &["diff", "--cached", "--name-only"]), "");
+        assert!(sh(&bare, &["branch", "--list"]).is_empty());
+
+        std::fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+        let (ok, _) = checks_of(&finish(&emit, &f).await.unwrap());
+        assert!(ok);
+        assert_eq!(sh(&bare, &["log", "-1", "--format=%B", "agent/fix-1a2b"]), "Fix the flaky test");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1626,6 +1844,7 @@ mod tests {
                 preflight: None,
                 preflight_watch: None,
                 setup: None,
+                checks: None,
                 teardown: teardown.map(String::from),
                 archive: archive.map(String::from),
                 timeout_secs: Some(30),
