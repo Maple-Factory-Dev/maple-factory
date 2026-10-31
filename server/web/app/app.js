@@ -438,6 +438,7 @@ function machineCard(m, now) {
   const gauges = meters(m);
   return h("section", { class: `card machine ${st.kind}`, "data-machine": m.id },
     h("div", { class: "machine-head" },
+      h("span", { class: "machine-icon" }, icon("server", { size: 18 })),
       h("div", { class: "machine-title" },
         h("div", { class: "title" }, m.name),
         h("div", { class: "sub muted" }, [m.owner === state.me?.login ? "Yours" : name(m.owner), m.os, m.version && `runner ${m.version}`].filter(Boolean).join(" · "))),
@@ -447,7 +448,7 @@ function machineCard(m, now) {
     gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
     usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
       h("div", { class: "usage-head" }, agentIcon(u.agent), h("span", {}, u.title), u.plan && h("span", { class: "faint usage-plan" }, `· ${u.plan}`),
-        h("span", { class: "faint usage-seen" }, `read ${ago(u.observedAt)}`)),
+        h("span", { class: "faint usage-seen" }, icon("clock", { size: 12 }), `read ${ago(u.observedAt)}`)),
       u.rows.map((r) => h("div", { class: `usage-row${r.over ? " over" : ""}` },
         h("span", { class: "usage-label" }, r.label),
         bar(r.used / 100, r.cap == null ? null : r.cap / 100, `${r.label}: ${r.usedText} used${r.cap == null ? "" : `, cap ${r.cap}%`}`),
@@ -461,7 +462,7 @@ function sessionLine(s) {
   const doing = a ? [ACTIVITY_TITLE[a.state] ?? a.state, a.step || a.message].filter(Boolean).join(" · ") : "Starting";
   const what = s.session.taskId
     ? h("a", { href: `#/t/${s.session.taskId}` }, h("span", { class: "mono" }, s.session.taskId), task ? ` ${task.title}` : "")
-    : h("span", {}, "Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
+    : h("span", {}, icon("terminal", { size: 14 }), " Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
   return h("div", { class: "machine-session" },
     h("span", { class: `dot act-${a?.state ?? "idle"}` }),
     h("div", {}, h("div", { class: "session-what" }, agentIcon(s.session.agent), what), h("div", { class: "sub muted" }, doing)));
