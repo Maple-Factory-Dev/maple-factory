@@ -12,5 +12,7 @@ echo "MapleKit builds for iOS."
 
 cd ../ios
 xcodegen generate --quiet
-xcodebuild -project MapleFactory.xcodeproj -scheme "Maple Factory" -destination 'generic/platform=iOS Simulator' -derivedDataPath build -quiet build
+# SwiftTerm's build-info plugin only stamps its version; skip Xcode's "trust this plugin" prompt.
+xcodebuild -project MapleFactory.xcodeproj -scheme "Maple Factory" -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+  -skipPackagePluginValidation -quiet build
 echo "The iPhone app builds."

@@ -256,6 +256,21 @@ final class FactoryStore {
         return FactoryAPI(server: server, token: token).request(path)
     }
 
+    /// A session's terminal socket (`/client/terminal`). No cols/rows: the phone watches at the pane's own size
+    /// rather than shrinking the agent's pane to fit. Nil in the demo, which plays DemoData.terminal instead.
+    func terminalRequest(machine: String, session: String) -> URLRequest? {
+        guard status != .demo, let server, let token else { return nil }
+        return FactoryAPI.terminalRequest(server, token: token, machine: machine, session: session)
+    }
+
+    /// Whether what you type reaches a session, as the server decides it: the machine's owner, an admin,
+    /// or a teammate it was shared with to type. Everyone else watches.
+    func canType(machine id: String, session: String) -> Bool {
+        guard let machine = feed.machines.first(where: { $0.id == id }) else { return false }
+        if machine.owner == me || isAdmin { return true }
+        return machine.sessions.first { $0.session.id == session }?.shares?.first { $0.login == me }?.canType == true
+    }
+
     /// Fetches a task's diff unless the one held is for the same change (`key`).
     func loadDiff(task id: String, key: String) async {
         if status == .demo { diffs[id] = (key, DemoData.diff(for: id)); return }
