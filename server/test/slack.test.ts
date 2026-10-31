@@ -50,7 +50,10 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
   const env: any = {
     DB: { prepare: () => ({ bind: () => ({ run: async () => {} }) }) },
     MACHINE: { idFromName: (n: string) => n, get: () => ({ fetch: async (_: string, init: { body: string }) => (sent.push(JSON.parse(init.body)), new Response("ok")) }) },
-    RELEASES: { put: async (key: string, body: Uint8Array, o: { httpMetadata: { contentType: string } }) => void r2.set(key, { body, type: o.httpMetadata.contentType }) },
+    RELEASES: {
+      put: async (key: string, body: Uint8Array, o: { httpMetadata: { contentType: string } }) => void r2.set(key, { body, type: o.httpMetadata.contentType }),
+      delete: async (keys: string | string[]) => void [keys].flat().forEach((k) => r2.delete(k)),
+    },
   };
   const access = { config: async () => config, event: async (_: unknown, e?: string) => void events.push(e ?? null) };
   const intake = new Intake(store, { broadcast: () => {}, waitUntil: (p) => void later.push(p), deliver: (url, said) => deliver(env, url, said, access as never) });
@@ -131,8 +134,8 @@ const PROPOSAL = {
   proposal: { goal: "web", title: "Stream the export instead of loading every row", brief: "`exportAll` in web/src/export.ts loads every row; stream it.", doneWhen: ["A 100k-row export finishes in under 30s"] },
 };
 
-async function asked(f: ReturnType<typeof factory>, output: unknown = PROPOSAL) {
-  const res = await slackEvents(signed("/integrations/slack/events", mention()), f.env, f.ctx);
+async function asked(f: ReturnType<typeof factory>, output: unknown = PROPOSAL, event = "Ev1") {
+  const res = await slackEvents(signed("/integrations/slack/events", mention(event)), f.env, f.ctx);
   assert.equal(res.status, 200);
   await f.settle();
   const run = f.sent.find((c) => c.type === "draft.run") as Extract<ServerToRunner, { type: "draft.run" }>;
@@ -348,6 +351,155 @@ test("Create task refuses a goal archived since the proposal", async () => {
     await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
     assert.equal(f.store.tasks().length, 0);
     assert.match(f.posts().at(-1)!.text, /I couldn't create it: Website is archived/);
+  } finally {
+    f.restore();
+  }
+});
+
+test("Create task whose planning fails after the task is made: the ask stays created, the card names it, and another click makes none", async () => {
+  const f = factory();
+  try {
+    const run = await asked(f);
+    (f.engine as any).startPlanning = async () => {
+      throw new Error("planning broke.");
+    };
+    const create = () => f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await create();
+    assert.equal(f.store.tasks().length, 1);
+    const saved = JSON.parse(f.store.get(`slack:ask:${run.id}`)!);
+    assert.deepEqual([saved.state, saved.task], ["created", "WEB-1"]);
+    const card = f.updates().at(-1)!;
+    assert.match(JSON.stringify(card.blocks), /Created WEB-1 in Website/);
+    assert.ok(!card.blocks.some((b: any) => b.type === "actions"), "the buttons are gone");
+    assert.match(f.posts().at(-1)!.text, /WEB-1 is made, but its planning didn't start: planning broke\./);
+    await create();
+    assert.equal(f.store.tasks().length, 1, "no second task");
+    assert.equal(f.posts().at(-1)!.text, "That's already WEB-1.");
+  } finally {
+    f.restore();
+  }
+});
+
+// ---- An answer that never comes ----
+
+async function running(f: ReturnType<typeof factory>) {
+  await slackEvents(signed("/integrations/slack/events", mention()), f.env, f.ctx);
+  await f.settle();
+  return f.sent.find((c) => c.type === "draft.run") as Extract<ServerToRunner, { type: "draft.run" }>;
+}
+
+test("a running ask whose machine goes offline: 'Looking into it…' says so, once", async () => {
+  const f = factory();
+  try {
+    const run = await running(f);
+    await f.engine.slack.machineGone("m2", "m2");
+    assert.equal(f.updates().length, 0, "another machine's going offline says nothing");
+    await f.engine.slack.machineGone("m1", "Dana's Mac");
+    await f.engine.slack.machineGone("m1", "Dana's Mac");
+    await f.engine.slack.sweep();
+    const said = f.updates();
+    assert.equal(said.length, 1, "said once");
+    assert.deepEqual([said[0].ts, said[0].text], ["100.0", "Dana's Mac went offline before answering. Mention me again in a moment."]);
+    // Its answer, if the runner comes back with one, is too late.
+    await f.engine.fromRunner("m1", { type: "draft.done", id: run.id, output: JSON.stringify(PROPOSAL), error: null });
+    assert.equal(f.updates().length, 1);
+  } finally {
+    f.restore();
+  }
+});
+
+test("a running ask past its expiry: the alarm's sweep says so, once, and wakes for the next expiry", async () => {
+  const f = factory();
+  try {
+    const wakes: number[] = [];
+    (f.engine as any).hooks.wakeIn = (ms: number) => void wakes.push(ms);
+    const run = await running(f);
+    assert.ok(wakes.some((ms) => ms > 30 * 60_000), "the ask wakes the alarm at its expiry");
+    await f.engine.slack.sweep();
+    assert.equal(f.updates().length, 0, "not yet");
+    const saved = JSON.parse(f.store.get(`slack:ask:${run.id}`)!);
+    f.store.set(`slack:ask:${run.id}`, JSON.stringify({ ...saved, expiresAt: Date.now() - 1 }));
+    await f.engine.slack.sweep();
+    await f.engine.slack.sweep();
+    const said = f.updates();
+    assert.equal(said.length, 1, "said once");
+    assert.equal(said[0].ts, "100.0");
+    assert.match(said[0].text, /^I didn't hear back in time/);
+  } finally {
+    f.restore();
+  }
+});
+
+// ---- Files of asks that never became a task ----
+
+test("Not now deletes the ask's files from the bucket", async () => {
+  const f = factory();
+  try {
+    const run = await asked(f);
+    assert.equal(f.r2.size, 1);
+    await f.engine.slack.action({ action: "slack.dismiss", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.settle();
+    assert.equal(f.r2.size, 0);
+  } finally {
+    f.restore();
+  }
+});
+
+test("pruning an expired ask deletes its files unless it became a task", async () => {
+  const f = factory();
+  try {
+    const expire = (id: string) => f.store.set(`slack:ask:${id}`, JSON.stringify({ ...JSON.parse(f.store.get(`slack:ask:${id}`)!), expiresAt: Date.now() - 1 }));
+    // One that became a task: its files are the task's now.
+    const made = await asked(f);
+    await f.engine.slack.action({ action: "slack.create", value: made.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    const kept = [...f.r2.keys()];
+    assert.equal(kept.length, 1);
+    expire(made.id);
+    await f.engine.slack.sweep();
+    await f.settle();
+    assert.equal(f.store.get(`slack:ask:${made.id}`), null, "forgotten");
+    assert.deepEqual([...f.r2.keys()], kept, "its file is kept");
+    // One answered and left: pruned on the next mention, its file deleted.
+    f.sent.length = 0;
+    const left = await asked(f, PROPOSAL, "Ev2");
+    assert.equal(f.r2.size, 2);
+    expire(left.id);
+    await slackEvents(signed("/integrations/slack/events", mention("Ev3")), f.env, f.ctx);
+    await f.settle();
+    assert.equal(f.store.get(`slack:ask:${left.id}`), null, "forgotten");
+    assert.equal([...f.r2.keys()].filter((k) => !kept.includes(k)).length, 1, "only the new mention's file is there besides the task's");
+  } finally {
+    f.restore();
+  }
+});
+
+// ---- What the thread and the status line say ----
+
+test("a Slack thread's accepted message points to the factory for the agent's questions", async () => {
+  const f = factory();
+  try {
+    const run = await asked(f);
+    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.settle();
+    const said = f.posts().map((p) => p.text).find((t) => /is tracking this as WEB-1/.test(t))!;
+    assert.equal(said, "sam is tracking this as WEB-1; a planner is on it. Its agent's questions show up here (answer them in the factory), and this thread hears when it merges.");
+    assert.doesNotMatch(said, /Questions from its agent come here/);
+  } finally {
+    f.restore();
+  }
+});
+
+test("the Slack status line names its channels and the last mention's date", async () => {
+  const f = factory();
+  try {
+    assert.equal(f.engine.slack.status(), "Invite @Maple to a public channel: /invite @Maple");
+    f.store.set("slack:channels", JSON.stringify(["C1", "C2"]));
+    assert.equal(f.engine.slack.status(), "@Maple is in 2 channels.");
+    await running(f);
+    const day = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    assert.equal(f.engine.slack.status(), `@Maple is in 2 channels · last mentioned ${day}.`);
+    f.store.set("slack:lastMention", String(Date.UTC(2026, 9, 30, 23, 0)));
+    assert.equal(f.engine.slack.status(), "@Maple is in 2 channels · last mentioned Oct 30.");
   } finally {
     f.restore();
   }
