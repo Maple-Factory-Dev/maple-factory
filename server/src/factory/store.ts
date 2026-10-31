@@ -17,6 +17,8 @@ export interface TaskPrivate {
   finishing: boolean;
   /// A merge was sent and hasn't been answered.
   merging?: boolean;
+  /** When that merge was sent, so one that never answers is noticed (none on a merge from before this was kept). */
+  mergeStartedAt?: number | null;
   /// Who started the last merge ("factory" for an auto-merge), for its stats.
   mergeBy?: string | null;
   /** The head it was last noted as waiting for a person to merge (autoMerges off), so it's said once per head. */

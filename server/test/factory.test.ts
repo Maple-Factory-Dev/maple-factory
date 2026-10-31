@@ -27,10 +27,11 @@ const HEAD = "a".repeat(40);
 const BRANCH = "agent/mf-1";
 
 /** The engine with MF-1 reviewing on `mac`, merged by the factory; what it sends the runner is in `sent`. */
-function factory(env: Record<string, unknown> = {}, priv: Record<string, unknown> = {}) {
+function factory(env: Record<string, unknown> = {}, priv: Record<string, unknown> = {}, task: Record<string, unknown> = {}) {
   const store = new Store(sqlStorage());
   const sent: Record<string, unknown>[] = [];
   const pending: Promise<unknown>[] = [];
+  const wakes: number[] = [];
   const hooks = {
     broadcast: () => {},
     sendTo: () => {},
@@ -38,7 +39,7 @@ function factory(env: Record<string, unknown> = {}, priv: Record<string, unknown
     members: async () => [],
     machineChanged: async () => {},
     waitUntil: (p: Promise<unknown>) => pending.push(p),
-    wakeIn: () => {},
+    wakeIn: (ms: number) => wakes.push(ms),
   };
   const MACHINE = {
     idFromName: (id: string) => id,
@@ -50,6 +51,7 @@ function factory(env: Record<string, unknown> = {}, priv: Record<string, unknown
     approvals: [], approvalsNeeded: 1, reviews: [], reviewsNeeded: 1, comments: [], changes: [], events: [], mockups: [], tickets: [],
     shareable: false, agent: "claude", machine: "mac",
     pr: { number: 7, url: env.GITHUB_APP_ID ? "https://github.com/acme/app/pull/7" : null, state: "open", head: HEAD, branch: BRANCH, base: "main", checks: [] },
+    ...task,
   } as never);
   store.savePrivate("MF-1", { worktree: "~/.worktrees/app/mf-1", repoDir: "~/app", base: "main", finishing: false, restarts: 0, mergeBy: "factory", merging: true, ...priv });
   const merged = async (branch?: string) => {
@@ -57,7 +59,8 @@ function factory(env: Record<string, unknown> = {}, priv: Record<string, unknown
     while (pending.length) await pending.shift();
   };
   const events = () => store.task("MF-1")!.events.map((e) => e.text);
-  return { store, sent, merged, events };
+  const settle = async () => { while (pending.length) await pending.shift(); };
+  return { store, sent, merged, events, engine, wakes, pending, settle };
 }
 
 test("the runner's branch note is on the merged task's timeline, and a settled one isn't tried again", async () => {
@@ -142,4 +145,217 @@ test("app path: a failed delete on GitHub gets one more try before the cleanup",
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// A merge that never answers (GitHub's call cut off, a runner gone quiet) is found by the hub's alarm
+// (mergeDue): it lands when GitHub says the pull request merged, and otherwise goes to a person.
+
+const DB = { prepare: () => ({ bind: () => ({ run: async () => {} }) }) };
+const READY = { autoReview: { rounds: [{ verdict: "passed" }], maxRounds: 3 }, reviews: ["me"], liveLog: null };
+const ME = { member: { login: "me", role: "member" } } as never;
+
+/** A stubbed GitHub whose merge call never answers; `pr` is what reading the pull request says. */
+function stuckGitHub(pr: () => Record<string, unknown> | null) {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const env = { DB, GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }), GITHUB_API_URL: "http://localhost:1" };
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+    const path = new URL(url).pathname;
+    const method = init.method ?? "GET";
+    calls.push(`${method} ${path}`);
+    if (path === "/repos/acme/app/installation") return Response.json({ id: 9 });
+    if (path === "/app/installations/9/access_tokens") return Response.json({ token: "t", expires_at: "" });
+    if (method === "PUT" && path === "/repos/acme/app/pulls/7/merge") return new Promise<Response>(() => {});
+    if (method === "GET" && path === "/repos/acme/app/pulls/7") {
+      const j = pr();
+      return j ? Response.json(j) : Response.json({ message: "Server Error" }, { status: 502 });
+    }
+    if (path === `/repos/acme/app/git/ref/heads/${BRANCH}`) return Response.json({ object: { sha: HEAD } });
+    if (method === "DELETE" && path === `/repos/acme/app/git/refs/heads/${BRANCH}`) return new Response(null, { status: 204 });
+    return Response.json({ message: "Not Found" }, { status: 404 });
+  }) as typeof fetch;
+  return { env, calls, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+/** Moves the clock on by `ms` for the rest of a test. */
+function later(ms: number) {
+  const real = Date.now;
+  const at = real() + ms;
+  Date.now = () => at;
+  return () => { Date.now = real; };
+}
+
+test("a GitHub merge that never answers lands on the next alarm once GitHub says it merged", async () => {
+  const gh = stuckGitHub(() => ({ state: "closed", merged: true, merge_commit_sha: "c".repeat(40) }));
+  try {
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    assert.equal(f.store.private("MF-1").merging, true);
+    assert.equal(f.store.task("MF-1")!.liveLog, "Merging…");
+    assert.equal(typeof f.store.private("MF-1").mergeStartedAt, "number");
+    assert.ok(f.wakes.includes(3 * 60_000), "the hub wakes to check on it");
+    f.pending.length = 0; // the merge call that never answers
+
+    // Not quiet long enough: nothing changes, and the hub wakes again for it.
+    await f.engine.mergeDue();
+    assert.equal(f.store.private("MF-1").merging, true);
+    assert.ok(!gh.calls.includes("GET /repos/acme/app/pulls/7"));
+
+    const back = later(3 * 60_000 + 1);
+    try {
+      await f.engine.mergeDue();
+      await f.settle();
+    } finally {
+      back();
+    }
+    const task = f.store.task("MF-1")!;
+    assert.equal(task.state, "merged");
+    assert.equal(task.pr!.state, "merged");
+    assert.equal(task.liveLog, null);
+    assert.equal(task.hand ?? null, null);
+    assert.equal(f.store.private("MF-1").mergedAs, "c".repeat(40));
+    assert.ok(f.events().includes("didn't hear back from the merge; GitHub says it merged"));
+    assert.ok(f.events().includes("merged into main (ccccccc)"));
+  } finally {
+    gh.restore();
+  }
+});
+
+test("a GitHub merge that never answers with its pull request still open stops Merging… and asks a person; Try the merge again merges afresh", async () => {
+  const gh = stuckGitHub(() => ({ state: "open", merged: false }));
+  try {
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    f.pending.length = 0;
+    const back = later(4 * 60_000);
+    try {
+      await f.engine.mergeDue();
+    } finally {
+      back();
+    }
+    let task = f.store.task("MF-1")!;
+    assert.equal(task.state, "reviewing");
+    assert.equal(f.store.private("MF-1").merging, false);
+    assert.equal(task.liveLog, null);
+    assert.equal(task.hand?.reason, "mergeFailed");
+    assert.match(task.hand!.summary, /didn't answer after 4 min; its pull request is still open on GitHub/);
+    assert.deepEqual(task.hand!.options.map((o) => [o.title, o.recommended]), [["Try the merge again", true], ["Send it back to fix", false], ["Cancel it", false]]);
+    assert.ok(f.events().includes("didn't hear back from the merge after 4 min"));
+    // Not a merge-fix try, and not sent back to its builder.
+    assert.equal(f.store.private("MF-1").mergeFixes ?? 0, 0);
+
+    // Try the merge again: a fresh merge, with a fresh start time.
+    const puts = gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length;
+    await f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Try the merge again", note: "" } as never, ME);
+    task = f.store.task("MF-1")!;
+    assert.equal(task.hand ?? null, null);
+    assert.equal(task.liveLog, "Merging…");
+    assert.equal(f.store.private("MF-1").merging, true);
+    await new Promise((r) => setTimeout(r, 50)); // the token, then the merge call
+    assert.equal(gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length, puts + 1);
+  } finally {
+    gh.restore();
+  }
+});
+
+test("GitHub unreadable, or a pull request closed meanwhile, ends the wait too", async () => {
+  let pr: Record<string, unknown> | null = null;
+  const gh = stuckGitHub(() => pr);
+  try {
+    const started = Date.now() - 5 * 60_000;
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, mergeStartedAt: started }, { liveLog: "Merging…" });
+    await f.engine.mergeDue();
+    assert.equal(f.store.task("MF-1")!.hand?.reason, "mergeFailed");
+    assert.match(f.store.task("MF-1")!.hand!.summary, /GitHub couldn't be asked whether it merged/);
+
+    pr = { state: "closed", merged: false };
+    const g = factory(gh.env, { gh: { owner: "acme", repo: "app" }, mergeStartedAt: started }, { liveLog: "Merging…" });
+    await g.engine.mergeDue();
+    const task = g.store.task("MF-1")!;
+    assert.equal(task.pr!.state, "closed");
+    assert.equal(task.liveLog, null);
+    assert.equal(task.hand ?? null, null);
+    assert.equal(g.store.private("MF-1").merging, false);
+    assert.ok(g.events().includes("pull request #7 was closed on GitHub"));
+  } finally {
+    gh.restore();
+  }
+});
+
+test("a runner merge that never answers raises a hand after its longer wait", async () => {
+  const f = factory({ DB }, { merging: false, mergeBy: null }, READY);
+  await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+  assert.equal(f.sent.at(-1)!.type, "task.merge");
+  assert.ok(f.wakes.includes(10 * 60_000));
+  let back = later(5 * 60_000);
+  try {
+    await f.engine.mergeDue(); // a runner's merge may run hooks: 5 min isn't stuck yet
+  } finally {
+    back();
+  }
+  assert.equal(f.store.private("MF-1").merging, true);
+  assert.equal(f.store.task("MF-1")!.hand ?? null, null);
+  back = later(11 * 60_000);
+  try {
+    await f.engine.mergeDue();
+  } finally {
+    back();
+  }
+  const task = f.store.task("MF-1")!;
+  assert.equal(f.store.private("MF-1").merging, false);
+  assert.equal(task.liveLog, null);
+  assert.equal(task.hand?.reason, "mergeFailed");
+  assert.match(task.hand!.summary, /it may or may not have merged on its machine/);
+  assert.equal(task.hand!.options[0].title, "Try the merge again");
+});
+
+test("a merge stuck from before start times were kept is swept on the first alarm", async () => {
+  // As MF-89 was: merging, no start time, "Merging…" for hours.
+  const f = factory({ DB }, {}, { liveLog: "Merging…" });
+  assert.equal(f.store.private("MF-1").mergeStartedAt, undefined);
+  await f.engine.mergeDue();
+  const task = f.store.task("MF-1")!;
+  assert.equal(f.store.private("MF-1").merging, false);
+  assert.equal(task.liveLog, null);
+  assert.equal(task.hand?.reason, "mergeFailed");
+  assert.ok(f.events().includes("didn't hear back from the merge"));
+});
+
+test("a Merging… label with no merge or countdown behind it is cleared", async () => {
+  const f = factory({ DB }, { merging: false }, { liveLog: "Merging…" });
+  await f.engine.mergeDue();
+  assert.equal(f.store.task("MF-1")!.liveLog, null);
+  assert.equal(f.store.task("MF-1")!.hand ?? null, null);
+
+  // And on any save, without waiting for the alarm.
+  const g = factory({ DB }, { merging: false }, { liveLog: "Merging…" });
+  await g.engine.command({ type: "task.comment", id: "MF-1", text: "still merging?" } as never, ME);
+  assert.equal(g.store.task("MF-1")!.liveLog, null);
+
+  // One still counting down (its due "Merging…" while the dry run checks) keeps it.
+  const h = factory({ DB }, { merging: false }, { liveLog: "Merging…", mergeAt: Date.now() - 1 });
+  h.store.saveTask({ ...h.store.task("MF-1")!, liveLog: "Merging…" });
+  assert.equal(h.store.task("MF-1")!.liveLog, "Merging…");
+});
+
+test("a late answer that it merged wins over the watchdog's hand; a late failure doesn't undo it", async () => {
+  const f = factory({ DB }, {}, { liveLog: "Merging…" });
+  await f.engine.mergeDue();
+  assert.equal(f.store.task("MF-1")!.hand?.reason, "mergeFailed");
+
+  // A late failure for that merge changes nothing: the hand is already up.
+  await f.engine.fromRunner("mac", { type: "task.merged", taskId: "MF-1", ok: false, commit: null, message: "timed out" } as never);
+  assert.equal(f.store.task("MF-1")!.state, "reviewing");
+  assert.equal(f.store.private("MF-1").mergeFixes ?? 0, 0);
+
+  await f.merged();
+  const task = f.store.task("MF-1")!;
+  assert.equal(task.state, "merged");
+  assert.equal(task.hand ?? null, null);
+
+  // A duplicate answer after it's merged stays a no-op.
+  const n = task.events.length;
+  await f.merged();
+  assert.equal(f.store.task("MF-1")!.events.length, n);
 });
