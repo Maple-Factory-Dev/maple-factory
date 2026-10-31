@@ -415,6 +415,8 @@ struct GoalView: View {
                 if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
             }
             .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
+            // `-loadOlder YES` presses Load older once, for screenshots.
+            .task { if UserDefaults.standard.bool(forKey: "loadOlder") { store.loadOlder(goal: id) } }
         } else {
             ContentUnavailableView("Goal not found", systemImage: "flag.slash")
         }

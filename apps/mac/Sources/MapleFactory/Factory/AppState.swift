@@ -2527,6 +2527,8 @@ final class AppState {
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // `older:<goal>` presses the Timeline's "Load older finished tasks" for that goal (by name).
+            case "older": loadOlderTasks(in: FactoryData.goal(named: parts.dropFirst().joined(separator: ":")))
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
             // The goal view's Everyone | You switch, through the same persisted preference: `goaltasks:mine|everyone`.
