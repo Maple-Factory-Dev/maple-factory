@@ -13,6 +13,10 @@ struct GoalOverview: View {
     @SwiftUI.State private var draftsTargeted = false
     @SwiftUI.State private var queueTargeted = false
 
+    /// `overview:toggle:<section>` clicks a section's header; `overview:dropqueue:<id>` and `overview:dropdrafts:<id>`
+    /// drop a task on the Queue or Drafts lane (its header, when collapsed), lit as a drag over it would be.
+    static let demo = Notification.Name("GoalOverview.demo")
+
     var body: some View {
         let sections = GoalOverviewSections(tasks: tasks, today: FactoryData.todayOffset, pendingMerge: state.pendingMerge)
         ScrollView {
@@ -42,6 +46,35 @@ struct GoalOverview: View {
         .scrollIndicators(.automatic)
         // Drafts and the queue animate when a person drops a row (withAnimation there), not on each live update.
         .animation(.snappy, value: sections.needsYou.map(\.id))
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard let parts = note.object as? [String], parts.count > 1 else { return }
+            switch parts[0] {
+            case "toggle": if let section = OverviewSection(rawValue: parts[1]) { toggle(section) }
+            case "dropqueue", "dropdrafts":
+                let toQueue = parts[0] == "dropqueue"
+                if toQueue { queueTargeted = true } else { draftsTargeted = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(0.8))
+                    _ = toQueue ? dropOnQueue(parts[1]) : dropOnDrafts(parts[1], drafts: sections.drafts)
+                    if toQueue { queueTargeted = false } else { draftsTargeted = false }
+                }
+            default: break
+            }
+        }
+    }
+
+    /// A task dropped on the Queue lane goes to the back of the queue.
+    private func dropOnQueue(_ id: String) -> Bool {
+        guard state.tasks.contains(where: { $0.id == id }) else { return false }
+        withAnimation(.snappy) { state.moveToBottom(id) }
+        return true
+    }
+
+    /// A draft dropped on the Drafts lane goes to the bottom of the drafts.
+    private func dropOnDrafts(_ id: String, drafts: [FactoryTask]) -> Bool {
+        guard drafts.contains(where: { $0.id == id }) else { return false }
+        withAnimation(.snappy) { state.rankDraft(id, before: nil) }
+        return true
     }
 
     private var collapse: OverviewCollapse { OverviewCollapse(raw: collapsedRaw) }
@@ -99,9 +132,7 @@ struct GoalOverview: View {
             if sections.queued.isEmpty { placeholder("Drag a draft here to queue it") }
         }
         .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first, state.tasks.contains(where: { $0.id == id }) else { return false }
-            withAnimation(.snappy) { state.moveToBottom(id) }
-            return true
+            ids.first.map(dropOnQueue) ?? false
         } isTargeted: { queueTargeted = $0 }
 
         lane(icon: TaskState.drafting.icon, title: "Drafts", count: sections.drafts.count, color: TaskState.drafting.color, section: .drafts,
@@ -112,9 +143,7 @@ struct GoalOverview: View {
             if sections.drafts.isEmpty { placeholder("No drafts") }
         }
         .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first, sections.drafts.contains(where: { $0.id == id }) else { return false }
-            withAnimation(.snappy) { state.rankDraft(id, before: nil) }
-            return true
+            ids.first.map { dropOnDrafts($0, drafts: sections.drafts) } ?? false
         } isTargeted: { draftsTargeted = $0 }
 
         if !sections.planning.isEmpty {
