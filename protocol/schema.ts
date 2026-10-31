@@ -476,12 +476,13 @@ export const structs: Record<string, Struct> = {
   },
   WorktreeScripts: {
     doc: "A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional.",
-    fields: { create: "string?", preflight: "string?", preflightWatch: "string?", setup: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?" },
+    fields: { create: "string?", preflight: "string?", preflightWatch: "string?", setup: "string?", checks: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?" },
     fieldDocs: {
       create: "Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.",
       preflight: "Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes.",
       preflightWatch: "Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.",
       setup: "Runs once the worktree exists, before the agent starts.",
+      checks: "Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.",
       teardown: "Runs before the worktree is removed when a finished task is cleaned up.",
       archive: "Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.",
       timeoutSecs: "How long each one may run (default 600).",
@@ -650,6 +651,11 @@ export const structs: Record<string, Struct> = {
   RiskAcceptance: {
     doc: "A goal letting the factory merge without human review, up to a risk level, on the record.",
     fields: { goal: "string", upTo: "RiskLevel", by: "string", at: "u64", note: "string?" },
+  },
+  CheckRun: {
+    doc: "One of a repo's checks, run in a task's worktree before its finish is committed.",
+    fields: { command: "string", code: "i32?", timedOut: "bool", ms: "u64", output: "string" },
+    fieldDocs: { code: "Its exit code; none: it was killed by a signal or couldn't start.", output: "The end of what it printed (stdout and stderr)." },
   },
   DiffStat: { fields: { path: "string", added: "u32", removed: "u32" } },
   ReviewNote: {
@@ -969,8 +975,12 @@ export const unions: Record<string, Union> = {
           commit: "string?",
           reason: "string?",
           message: "string?",
+          checks: "CheckRun[]?",
         },
-        fieldDocs: { pushed: "app (a GitHub App token) or fallback (the machine's credentials)." },
+        fieldDocs: {
+          pushed: "app (a GitHub App token) or fallback (the machine's credentials).",
+          checks: "The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).",
+        },
       },
       "task.diff": {
         doc: "What a task's branch changes against its base: line counts per file and the unified patch.",
@@ -1050,8 +1060,11 @@ export const unions: Record<string, Union> = {
       },
       "task.finish": {
         doc: "Commit what's left in a task's worktree and push its branch.",
-        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool" },
-        fieldDocs: { fallback: "Push with the machine's own credentials (no GitHub App)." },
+        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool", checks: "string?" },
+        fieldDocs: {
+          fallback: "Push with the machine's own credentials (no GitHub App).",
+          checks: "The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.",
+        },
       },
       "task.diff": {
         doc: "Report a task's diff against its base (answered with `task.diff`).",

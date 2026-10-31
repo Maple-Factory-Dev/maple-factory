@@ -574,6 +574,8 @@ export interface WorktreeScripts {
   preflightWatch?: string | null;
   /** Runs once the worktree exists, before the agent starts. */
   setup?: string | null;
+  /** Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. */
+  checks?: string | null;
   /** Runs before the worktree is removed when a finished task is cleaned up. */
   teardown?: string | null;
   /** Runs in place of the runner's own removal at cleanup; it owns the folder and the branch. */
@@ -779,6 +781,17 @@ export interface RiskAcceptance {
   by: string;
   at: number;
   note?: string | null;
+}
+
+/** One of a repo's checks, run in a task's worktree before its finish is committed. */
+export interface CheckRun {
+  command: string;
+  /** Its exit code; none: it was killed by a signal or couldn't start. */
+  code?: number | null;
+  timedOut: boolean;
+  ms: number;
+  /** The end of what it printed (stdout and stderr). */
+  output: string;
 }
 
 export interface DiffStat {
@@ -1270,6 +1283,8 @@ export interface RunnerMessage_TaskFinished {
   commit?: string | null;
   reason?: string | null;
   message?: string | null;
+  /** The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed). */
+  checks?: CheckRun[] | null;
 }
 
 /** What a task's branch changes against its base: line counts per file and the unified patch. */
@@ -1441,6 +1456,8 @@ export interface ServerToRunner_TaskFinish {
   title: string;
   /** Push with the machine's own credentials (no GitHub App). */
   fallback: boolean;
+  /** The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish. */
+  checks?: string | null;
 }
 
 /** Report a task's diff against its base (answered with `task.diff`). */
