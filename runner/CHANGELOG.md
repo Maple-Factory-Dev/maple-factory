@@ -1,3 +1,7 @@
+## 0.76.0 — 2026-10-31
+
+Understands the new closed task state, for tasks that finish without code to merge, and closed-task counts in statistics.
+
 # maple-runner changelog
 
 Newest first. A release adds its `## <version> — <date>` section here before running
