@@ -1337,6 +1337,11 @@ export const unions: Record<string, Union> = {
         fields: { id: "string", owner: "string" },
         fieldDocs: { owner: "The member's login." },
       },
+      "task.moveGoal": {
+        doc: "Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.",
+        fields: { id: "string", goal: "string" },
+        fieldDocs: { goal: "The target goal's id." },
+      },
       "task.plan": { doc: "Send a draft to planning, or pick up a backlog task (one with a plan is planned again).", fields: { id: "string" } },
       "task.backlog": { doc: "Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.", fields: { id: "string" } },
       "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },

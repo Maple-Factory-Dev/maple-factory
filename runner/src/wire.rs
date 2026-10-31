@@ -2916,6 +2916,13 @@ pub enum ClientMessage {
         /// The member's login.
         owner: String,
     },
+    /// Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.
+    #[serde(rename = "task.moveGoal")]
+    TaskMoveGoal {
+        id: String,
+        /// The target goal's id.
+        goal: String,
+    },
     /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     #[serde(rename = "task.plan")]
     TaskPlan {
