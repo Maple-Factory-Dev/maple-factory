@@ -163,9 +163,9 @@ struct TaskFocusView: View {
                 // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort`
                 // at its effort, `-scroll details` at the rail's details.
                 .task {
-                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details"].contains(target) else { return }
+                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details", "artifacts"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
-                    proxy.scrollTo(target, anchor: target == "doneWhen" ? .top : .bottom)
+                    proxy.scrollTo(target, anchor: target == "doneWhen" || target == "artifacts" ? .top : .bottom)
                 }
               }
             }
@@ -354,6 +354,7 @@ struct TaskFocusView: View {
             }
 
             if !task.mockups.isEmpty { MockupsSection(task: task) }
+            if !task.artifacts.isEmpty { ArtifactsSection(task: task).id("artifacts") }
             if !task.plan.isEmpty { PlanSection(task: task) }
             if !task.doneWhen.isEmpty { DoneWhenSection(task: task).id("doneWhen") }
 
