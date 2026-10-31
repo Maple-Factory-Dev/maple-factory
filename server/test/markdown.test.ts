@@ -229,7 +229,49 @@ test("pullBody rewrites the brief, the plan and the evidence", () => {
   const priv = pullBody(task, { base, isPrivate: true });
   assert.equal(priv.split(`[shot.png](${base}${shot})`).length, 4);
   assert.ok(!priv.includes("(/attachments/"));
+  // On a public repo only the plan step still carries the attachment; the brief and evidence stay home.
   const pub = pullBody(task, { base, isPrivate: false });
   assert.ok(!pub.includes("/attachments/"));
-  assert.equal(pub.split(`[MF-163](${base}/t/MF-163)`).length, 4);
+  assert.equal(pub.split(`[MF-163](${base}/t/MF-163)`).length, 3);
+  assert.ok(pub.includes(`The brief is kept in Maple Factory: [MF-163](${base}/t/MF-163)`));
+});
+
+// A brief can name a customer or quote a private thread: a public repo's PR body must not show it.
+const sentinelTask = () =>
+  ({
+    id: "MF-169", owner: "ana", brief: "Globex Corporation asked us, in their private Slack, to hide the brief.",
+    plan: [{ text: "Branch on isPrivate", file: "server/src/factory/engine.ts" }, { text: "Add tests" }],
+    doneWhen: [
+      { text: "Unit tests pass", status: "proven", evidence: { summary: "Globex Corporation's case is covered" } },
+      { text: "Looks right", status: "proven", evidence: { attested: true, by: "bo", reason: "checked with Globex Corporation" } },
+      { text: "E2E passes", status: "pending" },
+    ],
+  }) as any;
+
+test("a public repo's PR body leaves out the brief and the evidence summaries", () => {
+  const out = pullBody(sentinelTask(), { base, isPrivate: false });
+  assert.ok(!out.includes("Globex"), out);
+  assert.ok(out.startsWith("Built by Maple Factory for **MF-169**, owned by @ana."));
+  assert.ok(out.includes(`The brief is kept in Maple Factory: [MF-169](${base}/t/MF-169)`));
+  assert.ok(out.includes("## Plan\n\n1. Branch on isPrivate (`server/src/factory/engine.ts`)\n2. Add tests"));
+  assert.ok(out.includes("## Done when\n\n- [x] Unit tests pass\n- [x] Looks right (attested by @bo)\n- [ ] E2E passes"));
+});
+
+test("a private repo's PR body still has the brief and the evidence", () => {
+  assert.equal(
+    pullBody(sentinelTask(), { base, isPrivate: true }),
+    [
+      "Built by Maple Factory for **MF-169**, owned by @ana.",
+      "Globex Corporation asked us, in their private Slack, to hide the brief.",
+      "## Plan\n\n1. Branch on isPrivate (`server/src/factory/engine.ts`)\n2. Add tests",
+      "## Done when\n\n- [x] Unit tests pass — Globex Corporation's case is covered\n- [x] Looks right (attested by @bo: checked with Globex Corporation)\n- [ ] E2E passes",
+    ].join("\n\n"),
+  );
+});
+
+test("with no PUBLIC_URL a public repo's PR body still leaves out the brief", () => {
+  const out = pullBody(sentinelTask(), { base: undefined, isPrivate: false });
+  assert.ok(!out.includes("Globex"), out);
+  assert.ok(out.includes("\n\nThe brief is kept in Maple Factory.\n\n"));
+  assert.ok(!out.includes("/t/MF-169"));
 });

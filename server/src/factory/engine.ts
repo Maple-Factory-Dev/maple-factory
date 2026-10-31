@@ -1657,7 +1657,8 @@ export class Engine {
     if (!app || !task?.pr) return;
     try {
       if (!task.pr.url) {
-        // A repo the factory doesn't know counts as public: the body then gives nothing of the factory away.
+        // A repo the factory doesn't know counts as public: the body then gives nothing of the factory away
+        // (no attachment links, and no brief or evidence summaries: `pullBody`).
         const isPrivate = this.store.repos().find((r) => r.name.toLowerCase() === `${owner}/${repo}`.toLowerCase())?.isPrivate ?? false;
         const body = pullBody(task, { base: this.env.PUBLIC_URL?.replace(/\/+$/, ""), isPrivate });
         const pr = await createPullRequest(app, owner, repo, { title: `${task.id}: ${task.title}`, head: task.pr.branch, base: task.pr.base, body });
@@ -3054,11 +3055,25 @@ const str = (v: unknown, name: string): string => (typeof v === "string" && v.tr
 const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "terminal", "tests"].includes(v as string) ? (v as Evidence["kind"]) : "terminal");
 
 /** The pull request's description: the brief, the plan, and what proves it's done, with attachment
- *  links made to work on GitHub (`pullAttachments`). */
+ *  links made to work on GitHub (`pullAttachments`). On a public repo anyone can read the body, so the
+ *  hand-typed brief (which can name customers or quote private threads) stays in the factory behind a
+ *  members-only link to the task page, and so do the Done when evidence summaries and attestation
+ *  reasons, which can quote it. */
 export function pullBody(task: Task, opts: { base?: string | null; isPrivate: boolean }): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text}${s.file ? ` (\`${s.file}\`)` : ""}`).join("\n");
-  const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence?.attested ? ` (attested by @${d.evidence.by}${d.evidence.reason ? `: ${d.evidence.reason}` : ""})` : d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
-  const body = [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, task.brief.trim(), steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
+  const proofs = task.doneWhen
+    .map((d) => {
+      const box = `- [${d.status === "proven" ? "x" : " "}] ${d.text}`;
+      if (d.evidence?.attested) return `${box} (attested by @${d.evidence.by}${opts.isPrivate && d.evidence.reason ? `: ${d.evidence.reason}` : ""})`;
+      return d.evidence && opts.isPrivate ? `${box} — ${d.evidence.summary}` : box;
+    })
+    .join("\n");
+  const brief = opts.isPrivate
+    ? task.brief.trim()
+    : opts.base
+      ? `The brief is kept in Maple Factory: [${task.id}](${opts.base}/t/${task.id})`
+      : "The brief is kept in Maple Factory.";
+  const body = [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, brief, steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
     .join("\n\n");
   return pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 60_000);

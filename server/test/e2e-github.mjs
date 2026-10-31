@@ -6,8 +6,8 @@
 // Checks: the runner fetches and pushes with app tokens, the PR opens on GitHub, auto-merge waits for
 // CI, a failed check blocks it until it's run again, it counts down (a short MERGE_GRACE_MS) and the merge is GitHub's squash and deletes the
 // task's branch on GitHub (but not one that moved after the merge), and a cancelled task's PR is
-// closed with a comment. A pull request's body links an attachment in the brief at the factory on a
-// private repo, and names it with a link to the task's page on a public one. Each check links to its job on GitHub; `task.checkLog` reads a failed job's log
+// closed with a comment. A pull request's body on a private repo has the brief, with its attachment
+// linked at the factory; on a public one it leaves the brief out and links the task's page instead. Each check links to its job on GitHub; `task.checkLog` reads a failed job's log
 // (the failing step marked) for the asker alone, and `task.rerunCheck` asks GitHub for that one job again.
 
 import { execFileSync } from "node:child_process";
@@ -57,7 +57,8 @@ send({ type: "goal.save", goal: { id: "", name: `GitHub ${prefix}`, prefix, colo
 const goal = await wait("goal", () => goals.find((g) => g.prefix === prefix));
 step(`goal ${goal.name} on ${folder} (origin github.com/acme/greeter)`);
 
-// A screenshot in the brief, and acme/greeter public on GitHub: its pull request mustn't show a factory link.
+// A screenshot and a customer's name in the brief, and acme/greeter public on GitHub: its pull request
+// mustn't show either, nor a factory attachment link.
 const upload = await fetch(`${base}/api/attachments?name=shot.png`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "image/png" }, body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) });
 const shot = (await upload.json()).path;
 if (upload.status !== 201 || !/^\/attachments\/[0-9a-f-]{36}\/shot\.png$/.test(shot ?? "")) throw new Error(`uploading shot.png: ${upload.status} ${shot}`);
@@ -73,16 +74,16 @@ const factoryUrl = base.replace(/\/+$/, "");
 await visibility(false);
 step(`uploaded ${shot}; acme/greeter is public on GitHub`);
 
-send({ type: "task.create", goal: goal.id, title: "Say hello on GitHub", brief: `Add hello.txt with a greeting.\n\n![shot.png](${shot})`, shareable: false, plan: true, tickets: [], agent: "scripted" });
+send({ type: "task.create", goal: goal.id, title: "Say hello on GitHub", brief: `Globex Corporation wants hello.txt with a greeting.\n\n![shot.png](${shot})`, shareable: false, plan: true, tickets: [], agent: "scripted" });
 const id = `${prefix}-1`;
 await wait("plan", () => tasks.get(id)?.state === "awaitingApproval", 60000);
 send({ type: "task.approvePlan", id });
 let t = await wait("pull request", () => tasks.get(id)?.pr?.url && tasks.get(id), 90000);
 step(`opened ${t.pr.url} from ${t.pr.branch}`);
 let body = await pullBody(t.pr.branch);
-const named = `shot.png (attached in Maple Factory: [${id}](${factoryUrl}/t/${id}))`;
-if (!body.includes(named) || body.includes("/attachments/")) throw new Error(`public repo's PR body: ${JSON.stringify(body)}`);
-step(`public repo: the PR body says "${named}" and has no /attachments/ link`);
+const keptLine = `The brief is kept in Maple Factory: [${id}](${factoryUrl}/t/${id})`;
+if (!body.includes(keptLine) || /Globex|shot\.png|\/attachments\//.test(body)) throw new Error(`public repo's PR body: ${JSON.stringify(body)}`);
+step(`public repo: the PR body says "${keptLine}" and has none of the brief (no Globex, shot.png or /attachments/)`);
 console.log(body.split("\n").map((l) => `    | ${l}`).join("\n"));
 let log = await fake();
 const grants = log.log.filter((l) => l.path.endsWith("/access_tokens")).map((l) => JSON.stringify(l.body.permissions));
@@ -130,8 +131,8 @@ send({ type: "task.approvePlan", id: id2 });
 const t2 = await wait("pull request 2", () => tasks.get(id2)?.pr?.url && tasks.get(id2), 90000);
 body = await pullBody(t2.pr.branch);
 const linked = `[shot.png](${factoryUrl}${shot})`;
-if (!body.includes(linked) || body.includes("](/attachments/")) throw new Error(`private repo's PR body: ${JSON.stringify(body)}`);
-step(`private repo: the PR body links ${linked}`);
+if (!body.includes("Add hello.txt with a greeting.") || !body.includes(linked) || body.includes("](/attachments/") || body.includes("The brief is kept")) throw new Error(`private repo's PR body: ${JSON.stringify(body)}`);
+step(`private repo: the PR body has the brief and links ${linked}`);
 console.log(body.split("\n").map((l) => `    | ${l}`).join("\n"));
 send({ type: "task.cancel", id: id2 });
 for (let i = 0; i < 20; i++) {
