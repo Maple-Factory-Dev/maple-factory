@@ -299,6 +299,63 @@ struct GoalView: View {
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .cancelled]
 
+    /// Edit mode for the Drafts section, where drafts are dragged into order.
+    @State private var editMode: EditMode = .inactive
+    private var editing: Bool { editMode.isEditing }
+
+    /// The goal's drafts in their order: swipe one to planning or the backlog, or Edit to drag them.
+    @ViewBuilder
+    private func draftsSection(_ drafts: [Wire.Task]) -> some View {
+        if !drafts.isEmpty {
+            Section {
+                ForEach(drafts) { task in
+                    NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                        .swipeActions(edge: .trailing) {
+                            if !editing {
+                                Button { store.sendToBacklog(task.id) } label: { Label("Backlog", systemImage: Wire.TaskState.backlog.icon) }
+                                    .tint(Theme.state(.backlog))
+                                planButton(task)
+                            }
+                        }
+                }
+                .onMove { from, to in move(drafts, from: from, to: to) }
+            } header: {
+                HStack {
+                    header(.drafting, drafts.count)
+                    Spacer()
+                    if drafts.count > 1 {
+                        Button(editing ? "Done" : "Edit") {
+                            withAnimation { editMode = editing ? .inactive : .active }
+                        }
+                        .font(.subheadline.weight(editing ? .semibold : .regular))
+                        .textCase(nil)
+                        .accessibilityIdentifier("drafts-edit")
+                    }
+                }
+            }
+            .onChange(of: drafts.count > 1) { _, several in if !several { editMode = .inactive } }
+        }
+    }
+
+    /// Ranks the dragged draft ahead of the one that now follows it ("top" when it lands first).
+    private func move(_ drafts: [Wire.Task], from: IndexSet, to: Int) {
+        guard let index = from.first else { return }
+        var order = drafts
+        order.move(fromOffsets: from, toOffset: to)
+        let id = drafts[index].id
+        guard let at = order.firstIndex(where: { $0.id == id }), order.map(\.id) != drafts.map(\.id) else { return }
+        store.rankDraft(id, before: at == 0 ? "top" : order.indices.contains(at + 1) ? order[at + 1].id : nil)
+    }
+
+    private func planButton(_ task: Wire.Task) -> some View {
+        Button { store.plan(task.id) } label: { Label("Plan", systemImage: Wire.TaskState.planning.icon) }
+            .tint(Theme.state(.planning))
+    }
+
+    private func header(_ stage: Wire.TaskState, _ count: Int) -> some View {
+        Label("\(stage.title) · \(count)", systemImage: stage.icon).foregroundStyle(Theme.state(stage))
+    }
+
     var body: some View {
         if let goal = store.feed.goal(id) {
             let tasks = store.feed.tasks(in: id)
@@ -313,17 +370,23 @@ struct GoalView: View {
                 }
                 ForEach(Self.stages, id: \.self) { stage in
                     let staged = tasks.filter { $0.state == stage }
-                    if !staged.isEmpty {
+                    if stage == .drafting {
+                        draftsSection(staged.sorted(by: Wire.Task.draftOrder))
+                    } else if !staged.isEmpty {
                         Section {
                             ForEach(staged) { task in
                                 NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                                    .swipeActions(edge: .trailing) {
+                                        if stage == .backlog, !editing { planButton(task) }
+                                    }
                             }
                         } header: {
-                            Label("\(stage.title) · \(staged.count)", systemImage: stage.icon).foregroundStyle(Theme.state(stage))
+                            header(stage, staged.count)
                         }
                     }
                 }
             }
+            .environment(\.editMode, $editMode)
             .navigationTitle(goal.name)
             .refreshable { await store.refresh() }
             .toolbar {

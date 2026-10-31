@@ -93,7 +93,7 @@ struct TaskDetailView: View {
         }
         if !task.doneWhen.isEmpty {
             Card("Done when", icon: "checklist") {
-                ForEach(Array(task.doneWhen.enumerated()), id: \.offset) { _, item in DoneItemRow(item: item) }
+                ForEach(Array(task.doneWhen.enumerated()), id: \.offset) { index, item in DoneItemRow(task: task, index: index, item: item, compose: $compose) }
             }
         }
         if let risk = task.risk {
@@ -105,7 +105,7 @@ struct TaskDetailView: View {
             }
         }
         ForEach(task.mockups, id: \.id) { mockup in
-            Card("Mockup: \(mockup.title)", icon: "photo.on.rectangle") { MockupView(mockup: mockup) }
+            Card("Mockup: \(mockup.title)", icon: "photo.on.rectangle") { MockupView(task: task, mockup: mockup, compose: $compose) }
         }
     }
 }
@@ -170,7 +170,13 @@ struct PlanStepRow: View {
 
 struct DoneItemRow: View {
     @Environment(FactoryStore.self) private var store
+    let task: Wire.Task
+    let index: Int
     let item: Wire.DoneItem
+    @Binding var compose: Compose?
+
+    /// The server takes your word for an item while the task is building or in review.
+    private var canAttest: Bool { item.status != .proven && (task.state == .building || task.state == .reviewing) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -182,6 +188,18 @@ struct DoneItemRow: View {
                 Text(item.proof.rawValue).font(.caption2).foregroundStyle(.secondary)
             }
             if let evidence = item.evidence { EvidenceView(evidence: evidence) }
+            if canAttest {
+                Button {
+                    compose = Compose(title: "I checked it", placeholder: "Why? (optional)", send: "Mark checked", optional: true) { [store, task, index] note in
+                        store.checkedIt(task.id, item: index, note: note)
+                    }
+                } label: {
+                    Label("I checked it", systemImage: "checkmark.seal").font(.caption.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("attest-\(index)")
+            }
         }
     }
 }
@@ -338,7 +356,9 @@ struct QuestionCard: View {
 /// A planner's mockup: a screen (HTML) in a web view, or terminal lines.
 struct MockupView: View {
     @Environment(FactoryStore.self) private var store
+    let task: Wire.Task
     let mockup: Wire.Mockup
+    @Binding var compose: Compose?
 
     var body: some View {
         if mockup.kind == "terminal" {
@@ -357,6 +377,23 @@ struct MockupView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         ForEach(mockup.notes, id: \.self) { Text("• \($0)").font(.caption).foregroundStyle(.secondary) }
+        if mockup.status == .changesRequested {
+            Label("Changes requested · v\(mockup.version + 1) coming", systemImage: "paintbrush.pointed")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Theme.warning)
+                .accessibilityIdentifier("mockup-changes-requested-\(mockup.id)")
+        } else if task.state == .planning || task.state == .awaitingApproval {
+            // Only while the plan is open: past it, nothing would deliver the change to the planner.
+            Button {
+                compose = Compose(title: "Change \"\(mockup.title)\"", placeholder: "What should the planner change in this mockup?", send: "Request") { [store, task, mockup] text in
+                    store.requestMockupChange(task.id, mockup: mockup.id, text: text)
+                }
+            } label: {
+                Label("Request change", systemImage: "paintbrush.pointed").font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("mockup-change-\(mockup.id)")
+        }
     }
 }
 
@@ -555,6 +592,8 @@ struct Compose: Identifiable {
     let title: String
     let placeholder: String
     let send: String
+    /// The text may be left empty (an attestation's note).
+    var optional = false
     let action: (String) -> Void
     var id: String { title }
 }
@@ -652,7 +691,7 @@ struct ComposeSheet: View {
                             compose.action(text.trimmingCharacters(in: .whitespacesAndNewlines))
                             dismiss()
                         }
-                        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!compose.optional && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
                 .onAppear { focused = true }
