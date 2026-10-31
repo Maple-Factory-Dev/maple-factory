@@ -12,7 +12,38 @@ export interface IntegrationDef {
   /** Where its events reach the factory. */
   webhookPath: string;
   fields: (IntegrationField & { env: keyof Env })[];
+  /** A link that creates its app on the other side with the factory's URLs filled in, from its public URL. */
+  setupUrl?: (base: string) => string;
 }
+
+/** Where Slack sends @Maple's events, button clicks and the slash command. */
+export const SLACK_PATHS = { events: "/integrations/slack/events", actions: "/integrations/slack/actions", command: "/integrations/slack/command" };
+
+/** The bot's scopes: hear mentions, answer, read the thread it's mentioned in and its files, name who asked, and /maple. */
+export const SLACK_SCOPES = ["app_mentions:read", "chat:write", "channels:history", "files:read", "users:read", "commands"];
+
+/** Slack's app manifest for this factory: the bot user Maple, its events, buttons and /maple, all pointed at `publicUrl`. */
+export function manifest(publicUrl: string) {
+  const base = publicUrl.replace(/\/+$/, "");
+  return {
+    display_information: { name: "Maple", description: "Ask the factory in Slack, and turn its answers into tasks.", background_color: "#2b2118" },
+    features: {
+      bot_user: { display_name: "Maple", always_online: true },
+      slash_commands: [{ command: "/maple", url: base + SLACK_PATHS.command, description: "Send the factory a request", usage_hint: "what you need", should_escape: false }],
+    },
+    oauth_config: { scopes: { bot: SLACK_SCOPES } },
+    settings: {
+      event_subscriptions: { request_url: base + SLACK_PATHS.events, bot_events: ["app_mention", "member_joined_channel"] },
+      interactivity: { is_enabled: true, request_url: base + SLACK_PATHS.actions },
+      org_deploy_enabled: false,
+      socket_mode_enabled: false,
+      token_rotation_enabled: false,
+    },
+  };
+}
+
+/** Slack's new-app page with this factory's manifest filled in. */
+export const slackSetupUrl = (publicUrl: string) => `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest(publicUrl)))}`;
 
 const LABEL_HELP = "The label that sends an issue to the factory. Default: maple.";
 
@@ -20,10 +51,12 @@ export const INTEGRATIONS: IntegrationDef[] = [
   {
     kind: "slack",
     label: "Slack",
-    webhookPath: "/integrations/slack/command",
+    webhookPath: SLACK_PATHS.command,
     fields: [
-      { name: "signingSecret", label: "Signing secret", secret: true, required: true, env: "SLACK_SIGNING_SECRET", help: "Your Slack app's Basic Information › Signing Secret. Point its /maple slash command at the URL below." },
+      { name: "signingSecret", label: "Signing secret", secret: true, required: true, env: "SLACK_SIGNING_SECRET", help: "Your Slack app's Basic Information › Signing Secret. An app made with Create the Slack app already points at the URLs below." },
+      { name: "botToken", label: "Bot token", secret: true, required: false, env: "SLACK_BOT_TOKEN", help: "OAuth & Permissions › Bot User OAuth Token (xoxb-…), after installing the app to your workspace. Without it only /maple works; with it people can mention @Maple." },
     ],
+    setupUrl: slackSetupUrl,
   },
   {
     kind: "linear",
@@ -78,6 +111,7 @@ export function merged(def: IntegrationDef, enabled: boolean, saved: Record<stri
       value = value.toLowerCase();
       if (/\s/.test(value)) return `${def.label}'s label can't have spaces.`;
     }
+    if (value && f.name === "botToken" && !value.startsWith("xoxb-")) return `${def.label}'s bot token starts with xoxb-.`;
     if (value && f.name === "site") {
       if (!/^https:\/\/[^\s/]+\/?$/.test(value)) return `${def.label}'s site needs to be an https:// address, like https://acme.atlassian.net.`;
       value = new URL(value).origin;

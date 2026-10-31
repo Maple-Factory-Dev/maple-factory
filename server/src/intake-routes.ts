@@ -1,17 +1,9 @@
-// Requests coming in from outside: the API (a member's app token, or the org's intake key) and
-// Slack's slash command. Both land in OrgHub's intake (factory/intake.ts).
+// Requests coming in from the API (a member's app token, or the org's intake key). They land in
+// OrgHub's intake (factory/intake.ts); Slack's come in through slack.ts.
 
 import type { Env } from "./env.ts";
-import { integrationConfig, integrationEvent } from "./integrations/registry.ts";
 import type { Member, TicketLink } from "./wire.ts";
 import { orgHub, sameText, text } from "./util.ts";
-
-const enc = new TextEncoder();
-
-async function hmacHex(secret: string, message: string) {
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(message)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /** The org's intake key, as `Authorization: Bearer mfi_…`. */
 export function intakeKey(request: Request, env: Env) {
@@ -67,42 +59,4 @@ export async function intakeApi(request: Request, env: Env, path: string, me: Me
       replyUrl: replyUrl || null,
     }),
   });
-}
-
-/**
- * POST /integrations/slack/command: `/maple <what you need>`. Verified with the app's signing
- * secret; the bot's replies go back through the command's response_url.
- */
-export async function slackCommand(request: Request, env: Env): Promise<Response> {
-  const slack = await integrationConfig(env, "slack");
-  if (!slack) return text("Slack isn't set up for this factory.", 404);
-  const raw = await request.text();
-  const stamp = request.headers.get("x-slack-request-timestamp") ?? "";
-  const signature = request.headers.get("x-slack-signature") ?? "";
-  if (Math.abs(Date.now() / 1000 - Number(stamp)) > 300) return text("Stale request.", 401);
-  if (!sameText(signature, `v0=${await hmacHex(slack.signingSecret, `v0:${stamp}:${raw}`)}`)) {
-    await integrationEvent(env, "slack", "A slash command came with a bad signature: check the signing secret.");
-    return text("Bad signature.", 401);
-  }
-  await integrationEvent(env, "slack");
-
-  const form = new URLSearchParams(raw);
-  const said = (form.get("text") ?? "").trim();
-  if (!said) return Response.json({ response_type: "ephemeral", text: "Say what you need: `/maple the export button times out on big workspaces`" });
-  const [first, ...rest] = said.split("\n");
-  const title = first.length > 90 ? `${first.slice(0, 87)}…` : first;
-  const res = await orgHub(env).fetch("https://org/intake", {
-    method: "POST",
-    body: JSON.stringify({
-      source: "slack",
-      channel: form.get("channel_name") ? `#${form.get("channel_name")}` : null,
-      requester: form.get("user_name") ?? "someone",
-      title,
-      text: said,
-      tickets: [],
-      replyUrl: form.get("response_url"),
-    }),
-  });
-  const created = (await res.json()) as { id: string };
-  return Response.json({ response_type: "in_channel", text: `Got it: ${created.id} is in the factory's requests. I'll post here when someone picks it up.` });
 }

@@ -13,7 +13,8 @@ import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
 import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
 import { PROTOCOL_VERSION, type Machine, type SessionShare } from "./wire.ts";
-import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
+import { intakeApi, intakeKey } from "./intake-routes.ts";
+import { slackActions, slackCommand, slackEvents } from "./slack.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
 import { handleSetup } from "./setup.ts";
@@ -37,7 +38,7 @@ const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*)?$/;
 const isUpgrade = (request: Request) => request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
 export default Sentry.withSentry((env: Env) => sentryOptions(env), {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     await applySettings(env);
@@ -76,6 +77,8 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     if (link) return taskLink(link[1]);
 
     if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
+    if (path === "/integrations/slack/events" && request.method === "POST") return slackEvents(request, env, ctx);
+    if (path === "/integrations/slack/actions" && request.method === "POST") return slackActions(request, env, ctx);
     if (path === "/integrations/linear" && request.method === "POST") return linearWebhook(request, env);
     if (path === "/integrations/github" && request.method === "POST") return githubWebhook(request, env);
     if (path === "/integrations/jira" && request.method === "POST") return jiraWebhook(request, env, url);

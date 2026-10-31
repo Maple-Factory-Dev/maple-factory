@@ -127,7 +127,7 @@ npm run typecheck
 `.dev.vars` holds local settings: `DEV_LOGIN=<your GitHub login>` signs localhost in without GitHub,
 `GITHUB_ORG`, `PUBLIC_URL=http://localhost:8788`, and optionally the GitHub App and the tracker secrets
 (`INTAKE_KEY`, `SLACK_SIGNING_SECRET`, `LINEAR_*`, `JIRA_*`). `INTAKE_KEY` (`mfi_…`) is the Bearer key for posting
-requests to /api/intake; a request's `replyUrl` must be on hooks.slack.com or a host in `INTAKE_REPLY_HOSTS`. `SLACK_SIGNING_SECRET` verifies Slack's /maple. `scripts/dev-stack.sh up` writes a
+requests to /api/intake; a request's `replyUrl` must be on hooks.slack.com or a host in `INTAKE_REPLY_HOSTS`. `SLACK_SIGNING_SECRET` verifies Slack's /maple, @Maple's events and its buttons; `SLACK_BOT_TOKEN` (`xoxb-…`) lets @Maple read the thread it's mentioned in and answer there. `scripts/dev-stack.sh up` writes a
 starter `.dev.vars`. There's deliberately no `.dev.vars.example`: the Deploy to Cloudflare button would ask for
 everything in it. End-to-end tests are in test/; each says what it needs at the top.
 
@@ -135,12 +135,24 @@ everything in it. End-to-end tests are in test/; each says what it needs at the 
 
 Slack, Linear and Jira don't need Cloudflare access to set up: an admin opens the Mac app's **Settings ›
 Integrations**, turns one on, fills in its fields and copies its webhook URL into Slack, Linear or Jira.
+For Slack, the web app's card has **Create the Slack app**: Slack's new-app page with a manifest (`manifest()` in
+`src/integrations/registry.ts`) naming the bot user Maple, its scopes, and this factory's events
+(`/integrations/slack/events`), interactivity (`/integrations/slack/actions`) and slash command URLs; it needs
+`PUBLIC_URL`. The setup guide is maplefactory.dev/docs/slack (apps/site/docs/slack.html).
+
+@Maple: `src/slack.ts` checks each request's signature and timestamp, answers Slack within its 3 seconds and does
+the rest in `waitUntil`, drops retried event_ids, reads the mention's thread and copies its files into R2 as
+attachments. OrgHub's `factory/slack-asks.ts` runs a read-only agent on an online machine (`draft.run`, id
+`slack-<uuid>`, in a worktree of the channel's best-suited goal) and replaces "Looking into it…" with its answer; a
+proposed task comes with Create task / Not now, and Create task opens a request whose reply address is the thread
+(`slack:<channel>|<thread ts>|<ask>`) and makes the task in planning. Each channel's goals are picked when Maple
+joins it (kv `slack:channel:<id>`; `@Maple goals` picks again); archived goals drop out at use time.
 Secret values are stored sealed in OrgHub's SQLite (AES-GCM under a key `SECRETS_KEY` derives for them) and never
 sent back to an app: a set one shows as ••••, and saving with it blank keeps it. Each row shows its status: the
 last event that reached the factory, or the last thing that went wrong (a bad signature, a refused comment).
 
 The env vars above still work: a field with nothing saved in Settings falls back to its env var
-(`SLACK_SIGNING_SECRET`, `LINEAR_WEBHOOK_SECRET`, `LINEAR_API_KEY`, `LINEAR_LABEL`, `JIRA_WEBHOOK_SECRET`,
+(`SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `LINEAR_WEBHOOK_SECRET`, `LINEAR_API_KEY`, `LINEAR_LABEL`, `JIRA_WEBHOOK_SECRET`,
 `JIRA_SITE`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_LABEL`), and the pane marks it "environment". A value saved in
 Settings wins over its env var, and an integration turned off in Settings is off whatever the env vars say. To add
 one (Discord, say): an entry in `src/integrations/registry.ts`, its kind in `IntegrationKind` (protocol/schema.ts),

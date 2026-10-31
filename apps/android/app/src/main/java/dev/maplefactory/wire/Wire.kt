@@ -357,6 +357,24 @@ enum class Severity(val raw: String) {
     object Serializer : WireEnumSerializer<Severity>("Severity", entries, { it.raw }, Unknown)
 }
 
+/** How soon a task should be done. */
+@Serializable(with = Priority.Serializer::class)
+enum class Priority(val raw: String) {
+    /** Do it right away. */
+    P0("p0"),
+    /** Next. */
+    P1("p1"),
+    /** Soon. */
+    P2("p2"),
+    /** When there's room. */
+    P3("p3"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<Priority>("Priority", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = FindingStatus.Serializer::class)
 enum class FindingStatus(val raw: String) {
     /** Open. */
@@ -455,6 +473,23 @@ enum class RiskLevel(val raw: String) {
     ;
 
     object Serializer : WireEnumSerializer<RiskLevel>("RiskLevel", entries, { it.raw }, Unknown)
+}
+
+@Serializable(with = RiskFactorSource.Serializer::class)
+enum class RiskFactorSource(val raw: String) {
+    /** The planner's own read of the change. */
+    Planner("planner"),
+    /** A risk check that matched: a path check against the diff's files, or a rule the planner cited. */
+    Check("check"),
+    /** The change's size against the PR budget. */
+    Size("size"),
+    /** A goal's acceptance of risk up to a level. */
+    Acceptance("acceptance"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<RiskFactorSource>("RiskFactorSource", entries, { it.raw }, Unknown)
 }
 
 @Serializable(with = IntegrationKind.Serializer::class)
@@ -1119,6 +1154,17 @@ data class ServerUpdate(
     val how: String,
 )
 
+/** One draft for task.followUp to make. */
+@Serializable
+data class FollowUpItem(
+    /** The review finding it follows up (f3); none: a free-form note about the task. */
+    val finding: String? = null,
+    val title: String,
+    /** What to do; the finding's text is quoted ahead of it. */
+    val brief: String,
+    val priority: Priority? = null,
+)
+
 /** Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved. */
 @Serializable
 data class FollowUp(
@@ -1129,11 +1175,26 @@ data class FollowUp(
     val task: String? = null,
 )
 
+/** One reason a change has the risk level it has. */
+@Serializable
+data class RiskFactor(
+    val source: RiskFactorSource,
+    /** What set or raised the level, e.g. the check's name. */
+    val label: String,
+    val level: RiskLevel,
+    /** Why: the planner's reasons, the rule's text or the budget it went over. */
+    val detail: String? = null,
+    /** For a path check, the diff's files that matched it. */
+    val files: List<String>? = null,
+)
+
 @Serializable
 data class Risk(
     val level: RiskLevel,
     val reasons: List<String> = emptyList(),
     val areas: List<String> = emptyList(),
+    /** Set by the server from the org's risk policy: every reason behind the level, highest first. */
+    val factors: List<RiskFactor>? = null,
 )
 
 /** The session working on a task right now. */
@@ -1240,19 +1301,26 @@ data class Task(
     val force: Boolean? = null,
     /** The bigger effort it's part of, like an epic: shared by name with other tasks in its goal. */
     val effort: String? = null,
+    /** How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server). */
+    val priority: Priority? = null,
+    /** What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server). */
+    val followUpOf: String? = null,
     /** The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down. */
     val mergeAt: Long? = null,
     /** Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge. */
     val mergeForecast: MergeForecast? = null,
 )
 
-/** Code that raises a change's risk when touched. */
+/** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
 @Serializable
 data class SensitiveArea(
     val name: String,
+    /** Globs matched against the diff's files. May be empty for a rule check. */
     val paths: List<String> = emptyList(),
     val level: RiskLevel,
     val enabled: Boolean,
+    /** A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies. */
+    val rule: String? = null,
 )
 
 /** The org's rules for how much sign-off a change needs, by its risk. */
@@ -1319,6 +1387,10 @@ data class Integration(
     val fromEnv: List<String> = emptyList(),
     /** Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. */
     val webhookUrl: String,
+    /** A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL. */
+    val setupUrl: String? = null,
+    /** How it's set up on the other side, in a few words (Slack: the channels @Maple is in). */
+    val status: String? = null,
     /** When it last reached the factory and was verified. */
     val lastEventAt: Long? = null,
     /** What went wrong last, since the last event that went well. */
@@ -2490,6 +2562,7 @@ sealed class ClientMessage {
         val repo: String? = null,
         val after: List<String>? = null,
         val effort: String? = null,
+        val priority: dev.maplefactory.wire.Priority? = null,
     ) : ClientMessage()
     @Serializable
     data class TaskEdit(
@@ -2504,6 +2577,16 @@ sealed class ClientMessage {
         val agent: String? = null,
         /** The model its next sessions use; an empty string goes back to the agent's default. */
         val model: String? = null,
+        /** Set its priority; refused once it's merged or cancelled. Setting a queued task to P0 moves it to the front of the queue. */
+        val priority: dev.maplefactory.wire.Priority? = null,
+        /** Take its priority off. */
+        val clearPriority: Boolean? = null,
+    ) : ClientMessage()
+    /** Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused. */
+    @Serializable
+    data class TaskFollowUp(
+        val id: String,
+        val items: List<dev.maplefactory.wire.FollowUpItem> = emptyList(),
     ) : ClientMessage()
     /** Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot). */
     @Serializable
@@ -2704,6 +2787,7 @@ sealed class ClientMessage {
             "goal.acceptRisk" -> json.decodeFromJsonElement(GoalAcceptRisk.serializer(), body)
             "task.create" -> json.decodeFromJsonElement(TaskCreate.serializer(), body)
             "task.edit" -> json.decodeFromJsonElement(TaskEdit.serializer(), body)
+            "task.followUp" -> json.decodeFromJsonElement(TaskFollowUp.serializer(), body)
             "task.assign" -> json.decodeFromJsonElement(TaskAssign.serializer(), body)
             "task.plan" -> json.decodeFromJsonElement(TaskPlan.serializer(), body)
             "task.backlog" -> json.decodeFromJsonElement(TaskBacklog.serializer(), body)
@@ -2777,6 +2861,7 @@ sealed class ClientMessage {
             is GoalAcceptRisk -> "goal.acceptRisk" to json.encodeToJsonElement(GoalAcceptRisk.serializer(), value)
             is TaskCreate -> "task.create" to json.encodeToJsonElement(TaskCreate.serializer(), value)
             is TaskEdit -> "task.edit" to json.encodeToJsonElement(TaskEdit.serializer(), value)
+            is TaskFollowUp -> "task.followUp" to json.encodeToJsonElement(TaskFollowUp.serializer(), value)
             is TaskAssign -> "task.assign" to json.encodeToJsonElement(TaskAssign.serializer(), value)
             is TaskPlan -> "task.plan" to json.encodeToJsonElement(TaskPlan.serializer(), value)
             is TaskBacklog -> "task.backlog" to json.encodeToJsonElement(TaskBacklog.serializer(), value)

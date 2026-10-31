@@ -69,6 +69,10 @@ export class OrgHub extends DurableObject<Env> {
       },
       waitUntil: (p) => ctx.waitUntil(p.catch((e) => console.error("factory:", e))),
       wakeIn: (ms) => ctx.waitUntil(this.wakeAt(Date.now() + ms)),
+      slack: {
+        token: async () => (await this.integrations.config("slack"))?.botToken ?? null,
+        problem: (text) => ctx.waitUntil(this.integrationEvent("slack", text)),
+      },
     }, this.intake, this.secrets);
   }
 
@@ -257,6 +261,26 @@ export class OrgHub extends DurableObject<Env> {
         const updated = replyUrl ? this.intake.replyFrom(replyUrl, author, text) : this.intake.reply(id ?? "", author, text);
         return updated ? Response.json(updated) : new Response("No such request.", { status: 404 });
       }
+      // @Maple, from slack.ts (which checked Slack's signature): an event seen before, a mention to answer,
+      // a click, and Maple joining a channel (or `@Maple goals`).
+      case "/slack/seen": {
+        const { id } = (await request.json()) as { id: string };
+        return Response.json({ seen: this.engine.slack.seen(id) });
+      }
+      case "/slack/ask": {
+        await this.engine.slack.ask(await request.json());
+        return new Response(null, { status: 204 });
+      }
+      case "/slack/action": {
+        await this.engine.slack.action(await request.json());
+        return new Response(null, { status: 204 });
+      }
+      case "/slack/joined": {
+        const { channel } = (await request.json()) as { channel: string };
+        await this.engine.slack.picker(channel);
+        this.broadcast({ type: "integrations.updated", integrations: await this.integrationList() });
+        return new Response(null, { status: 204 });
+      }
       case "/github": {
         await this.engine.fromGitHub(await request.json());
         return new Response(null, { status: 204 });
@@ -301,11 +325,21 @@ export class OrgHub extends DurableObject<Env> {
     return new Response("Not found.", { status: 404 });
   }
 
+  /** Every integration as the apps see it, with Slack's channels. */
+  private integrationList() {
+    return this.integrations.list((kind, values) => {
+      if (kind !== "slack") return null;
+      if (!("botToken" in values)) return "Slash command only: add the bot token so people can mention @Maple.";
+      const n = this.engine.slack.channels().length;
+      return n ? `@Maple is in ${n} channel${n === 1 ? "" : "s"}.` : "Invite @Maple to a public channel: /invite @Maple";
+    });
+  }
+
   /** How an integration's last event went, told to the apps. */
   private async integrationEvent(kind: IntegrationKind, error?: string) {
     if (error) this.integrations.noteError(kind, error);
     else this.integrations.noteEvent(kind);
-    this.broadcast({ type: "integrations.updated", integrations: await this.integrations.list() });
+    this.broadcast({ type: "integrations.updated", integrations: await this.integrationList() });
   }
 
   /** The factory icon's link, if it has one. */
@@ -546,7 +580,7 @@ export class OrgHub extends DurableObject<Env> {
           acceptances: this.store.acceptances(),
           prompts: this.store.prompts(),
           connectors: redacted(this.store.connectors()),
-          integrations: await this.integrations.list(),
+          integrations: await this.integrationList(),
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
@@ -735,7 +769,7 @@ export class OrgHub extends DurableObject<Env> {
           this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: null });
           return;
         }
-        const integrations = await this.integrations.list();
+        const integrations = await this.integrationList();
         await audit(this.env, client.member.login, "integrations.saved", msg.kind, integrations.find((i) => i.kind === msg.kind));
         this.broadcast({ type: "integrations.updated", integrations });
         return;

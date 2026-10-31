@@ -398,6 +398,7 @@ section { position: relative; }
 }
 .feature h3 { font-size: 21px; line-height: 1.2; }
 .feature p { margin-top: 10px; font-size: 15.5px; color: var(--ink-2); }
+.feature-wide { grid-column: 1 / -1; }
 @media (max-width: 960px) { .feature-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 600px) { .feature-grid { grid-template-columns: 1fr; } .features { padding: 88px 0; } }
 
@@ -467,8 +468,14 @@ section { position: relative; }
 .sec-part li { margin-top: 8px; }
 .sec-part li::marker { color: var(--maple); }
 .sec-part strong { color: var(--ink); font-weight: 600; }
+.sec-part .deploy-steps { margin-top: 24px; }
+.sec-part .deploy-steps h3 { margin-top: 0; }
+.sec-part .deploy-steps p { margin-top: 8px; }
+.doc-code { margin: 20px 0 0; padding: 18px 20px; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; font: 400 13px/1.6 var(--mono); color: var(--ink-2); }
+.doc-code code { font: inherit; background: none; border: 0; padding: 0; border-radius: 0; }
 .sec-part a { text-underline-offset: 3px; }
 .sec-part code { overflow-wrap: anywhere; }
+.sec-part .doc-code code { overflow-wrap: normal; }
 @media (max-width: 560px) { .sec-part { margin-top: 48px; padding-top: 32px; } }
 
 /* Footer */

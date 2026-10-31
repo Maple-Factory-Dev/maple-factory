@@ -408,6 +408,8 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .pill.set-env { margin-left: 6px; padding: 0 7px; font-size: 11px; font-weight: 450; color: var(--faint); background: none; border: 1px solid var(--stroke); vertical-align: 1px; }
 .set-webhook .set-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .set-webhook .btn { flex: none; }
+.slack-steps { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.slack-steps .btn { margin-right: 4px; text-decoration: none; }
 .confirm { font-size: 13px; }
 .btn.danger-text { color: var(--cancelled); }
 .avatar { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--fill); color: var(--muted); font-weight: 600; font-size: 13px; object-fit: cover; }

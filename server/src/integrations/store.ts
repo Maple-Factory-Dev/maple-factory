@@ -80,8 +80,8 @@ export class Integrations {
     return def.fields.every((f) => !f.required || values[f.name]);
   }
 
-  /** Every integration as apps see it: secret values blank. */
-  async list(): Promise<Integration[]> {
+  /** Every integration as apps see it: secret values blank; `status` adds a line about how each is doing. */
+  async list(status: (kind: IntegrationKind, values: Record<string, string>) => string | null = () => null): Promise<Integration[]> {
     const base = this.env.PUBLIC_URL ? this.env.PUBLIC_URL.replace(/\/+$/, "") : "";
     const out: Integration[] = [];
     for (const def of INTEGRATIONS) {
@@ -102,6 +102,8 @@ export class Integrations {
         values,
         fromEnv: def.fields.filter((f) => !stored?.[f.name] && env[f.name]).map((f) => f.name),
         webhookUrl: base + def.webhookPath,
+        setupUrl: base && def.setupUrl ? def.setupUrl(base) : null,
+        status: status(def.kind, values),
         lastEventAt: row?.last_event_at ?? null,
         lastError: stored ? (row?.last_error ?? null) : "Its saved settings can't be read with this factory's SECRETS_KEY; save them again.",
         updatedBy: row?.updated_by ?? null,

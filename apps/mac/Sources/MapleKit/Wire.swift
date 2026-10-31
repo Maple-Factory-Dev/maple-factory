@@ -3086,6 +3086,10 @@ public enum Wire {
         public var fromEnv: [String]
         /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to.
         public var webhookUrl: String
+        /// A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL.
+        public var setupUrl: String?
+        /// How it's set up on the other side, in a few words (Slack: the channels @Maple is in).
+        public var status: String?
         /// When it last reached the factory and was verified.
         public var lastEventAt: UInt64?
         /// What went wrong last, since the last event that went well.
@@ -3094,7 +3098,7 @@ public enum Wire {
         public var updatedBy: String?
         public var updatedAt: UInt64?
 
-        public init(kind: IntegrationKind, label: String, fields: [IntegrationField] = [], enabled: Bool, values: [String: String] = [:], fromEnv: [String] = [], webhookUrl: String, lastEventAt: UInt64? = nil, lastError: String? = nil, updatedBy: String? = nil, updatedAt: UInt64? = nil) {
+        public init(kind: IntegrationKind, label: String, fields: [IntegrationField] = [], enabled: Bool, values: [String: String] = [:], fromEnv: [String] = [], webhookUrl: String, setupUrl: String? = nil, status: String? = nil, lastEventAt: UInt64? = nil, lastError: String? = nil, updatedBy: String? = nil, updatedAt: UInt64? = nil) {
             self.kind = kind
             self.label = label
             self.fields = fields
@@ -3102,6 +3106,8 @@ public enum Wire {
             self.values = values
             self.fromEnv = fromEnv
             self.webhookUrl = webhookUrl
+            self.setupUrl = setupUrl
+            self.status = status
             self.lastEventAt = lastEventAt
             self.lastError = lastError
             self.updatedBy = updatedBy
@@ -3117,6 +3123,8 @@ public enum Wire {
             values = try c.decodeIfPresent([String: String].self, forKey: .values) ?? [:]
             fromEnv = try c.decodeIfPresent([String].self, forKey: .fromEnv) ?? []
             webhookUrl = try c.decode(String.self, forKey: .webhookUrl)
+            setupUrl = try c.decodeIfPresent(String.self, forKey: .setupUrl)
+            status = try c.decodeIfPresent(String.self, forKey: .status)
             lastEventAt = try c.decodeIfPresent(UInt64.self, forKey: .lastEventAt)
             lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
             updatedBy = try c.decodeIfPresent(String.self, forKey: .updatedBy)

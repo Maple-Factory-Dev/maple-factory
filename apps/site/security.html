@@ -61,7 +61,7 @@
           <ul>
             <li>Each organization runs its own factory: a Cloudflare Worker with two Durable Objects, a D1 database and an R2 bucket, deployed to your Cloudflare account with the Deploy to Cloudflare button or <code>npx maple-factory install</code>. There is no shared, hosted Maple Factory service.</li>
             <li>Tasks, plans, members, machines, the audit log and repo secrets are stored in that account’s D1, Durable Object storage and R2. Anyone with access to the Cloudflare account can read them.</li>
-            <li>The factory makes outbound requests to GitHub’s API, to maplefactory.dev’s release feed (to fetch runner builds and check for new server versions), to Slack, Linear or Jira only if you connect them, and to Sentry with <a href="#errors">error reports</a> unless you turn them off.</li>
+            <li>The factory makes outbound requests to GitHub’s API, to maplefactory.dev’s release feed (to fetch runner builds and check for new server versions), to Slack, Linear or Jira only if you connect them (see <a href="/docs/slack#scopes">what @Maple can read in Slack</a>), and to Sentry with <a href="#errors">error reports</a> unless you turn them off.</li>
             <li>Updates are yours to apply. A button deploy gets a daily GitHub Actions workflow that opens a pull request with the new release, which you review and merge. <code>maple install</code> and <code>maple update</code> only deploy a server release whose manifest is signed with Maple Factory’s Ed25519 release key and whose bundle matches the manifest’s SHA-256.</li>
           </ul>
 
