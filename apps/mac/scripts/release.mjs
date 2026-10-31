@@ -323,15 +323,77 @@ function cmdBuild(v) {
   uploadSymbols();
 }
 
-/** The app's debug symbols to Sentry, so its crash reports read as source lines. Only with SENTRY_AUTH_TOKEN
- *  (in .env.release or the environment): without one the release goes out and its crashes show addresses. */
+/** The app's debug symbols to Sentry, so its crash and hang reports read as source lines. A bundle that
+ *  reports to Sentry (MapleSentryDSN in its Info.plist) doesn't go out without them: no SENTRY_AUTH_TOKEN
+ *  stops the build, unless MAPLE_SKIP_SYMBOLS=1 says to go without. The dSYM is checked against the
+ *  bundled binary (dwarfdump --uuid), so an upload that couldn't symbolicate this release fails too. */
 function uploadSymbols() {
-  if (!process.env.SENTRY_AUTH_TOKEN) return console.log("  (No SENTRY_AUTH_TOKEN: skipping the dSYM upload to Sentry.)");
-  const sentry = JSON.parse(readFileSync(join(here, "../../server/web/sentry.json"), "utf8"));
+  const binary = join(APP, "Contents/MacOS/MapleFactory");
+  let dsn = "";
+  try { dsn = capture("plutil", ["-extract", "MapleSentryDSN", "raw", join(APP, "Contents/Info.plist")]); } catch { /* no key */ }
+  if (!dsn) return console.log("  (The bundle has no Sentry DSN: no dSYMs to upload.)");
+  if (process.env.MAPLE_SKIP_SYMBOLS === "1") return console.log("  (MAPLE_SKIP_SYMBOLS=1: not uploading dSYMs; this release's reports will show addresses.)");
+  if (!process.env.SENTRY_AUTH_TOKEN) {
+    fail("No SENTRY_AUTH_TOKEN: this release's dSYMs would not upload, and its crash and hang reports would show <unknown> frames.\n" +
+      "  Add SENTRY_AUTH_TOKEN=<token> to apps/mac/.env.release (a Sentry auth token with project:releases and project:write),\n" +
+      "  or set MAPLE_SKIP_SYMBOLS=1 to ship without symbols.");
+  }
   const dsym = join(here, "build/MapleFactory.dSYM");
+  rmSync(dsym, { recursive: true, force: true });
   run("dsymutil", [join(capture("swift", ["build", "-c", "release", "--show-bin-path"]), "MapleFactory"), "-o", dsym]);
-  run("npx", ["-y", "@sentry/cli@3.8.2", "debug-files", "upload", "--org", sentry.org, "--project", sentry.projects.mac.slug, dsym]);
+  sendSymbols(dsym, binary);
+}
+
+/** A Mach-O's or dSYM's UUIDs, one per architecture: "17F47C63-… (arm64)". */
+const uuids = (path) => [...capture("dwarfdump", ["--uuid", path]).matchAll(/UUID: ([0-9A-F-]+) \((\w+)\)/g)].map(([, u, arch]) => `${u} (${arch})`).sort().join(", ");
+
+/** dsym to Sentry once its UUID is the binary's and sentry-cli finds its debug info. */
+function sendSymbols(dsym, binary) {
+  const [want, have] = [uuids(binary), uuids(dsym)];
+  console.log(`  binary ${want}\n  dSYM   ${have}`);
+  if (!want || want !== have) fail(`The dSYM's UUID (${have || "none"}) isn't the binary's (${want || "none"}): it wouldn't symbolicate this release.`);
+  ok(`dSYM UUID matches the binary: ${want}`);
+  const sentry = JSON.parse(readFileSync(join(here, "../../server/web/sentry.json"), "utf8"));
+  const cli = ["-y", "@sentry/cli@3.8.2"];
+  const check = capture("npx", [...cli, "debug-files", "check", join(dsym, "Contents/Resources/DWARF/MapleFactory")]);
+  console.log(check.replace(/^/gm, "  "));
+  if (!/Usable: yes/.test(check) || !/\bdebug\b/.test(check)) fail("sentry-cli debug-files check says the dSYM isn't usable.");
+  run("npx", [...cli, "debug-files", "upload", "--org", sentry.org, "--project", sentry.projects.mac.slug, "--wait", dsym]);
   ok("dSYMs uploaded to Sentry");
+}
+
+/** One release's dSYM, after the fact: from apps/mac/.build/release if that's still the shipped binary,
+ *  else from its mac-built-<v> tag built in a scratch worktree. Its UUID must be the shipped app's, read
+ *  from /Applications or --app <path to Maple Factory.app>. */
+function cmdSymbols(v) {
+  if (!v) fail("usage: release.mjs symbols <version> [--app <path to Maple Factory.app>]");
+  heading(`Symbols for ${v}`);
+  loadEnv();
+  need("SENTRY_AUTH_TOKEN");
+  const app = option("--app") ?? "/Applications/Maple Factory.app";
+  const shipped = capture("plutil", ["-extract", "CFBundleShortVersionString", "raw", join(app, "Contents/Info.plist")]);
+  if (shipped !== v) fail(`${app} is ${shipped}, not ${v}: pass --app with a ${v} bundle (from its DMG).`);
+  const binary = join(app, "Contents/MacOS/MapleFactory");
+  const dsym = join(here, `build/MapleFactory-${v}.dSYM`);
+  rmSync(dsym, { recursive: true, force: true });
+  let built = join(here, ".build/release/MapleFactory");
+  if (!existsSync(built) || uuids(built) !== uuids(binary)) {
+    // The same path the release was built from isn't ours to rebuild in place; a worktree of the tag
+    // builds the same sources, and its UUID check below says whether it came out the same binary.
+    const tree = join(tmpdir(), `maple-symbols-${v}`);
+    rmSync(tree, { recursive: true, force: true });
+    run("git", ["worktree", "add", "--detach", tree, `mac-built-${v}`]);
+    try {
+      run("swift", ["build", "-c", "release"], { cwd: join(tree, "apps/mac") });
+      built = join(capture("sh", ["-c", `cd "${join(tree, "apps/mac")}" && swift build -c release --show-bin-path`]), "MapleFactory");
+      run("dsymutil", [built, "-o", dsym]);
+    } finally {
+      run("git", ["worktree", "remove", "--force", tree]);
+    }
+  } else {
+    run("dsymutil", [built, "-o", dsym]);
+  }
+  sendSymbols(dsym, binary);
 }
 
 /** Notarizes and staples a .app or .dmg. Both get their own round: the app's ticket is what opens it
@@ -480,6 +542,7 @@ async function cmdShip(v) {
   // A missing credential fails now, not after ten minutes of notarizing.
   loadEnv();
   need("NOTARY_PROFILE", "R2_ACCOUNT_ID", "R2_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY");
+  if (process.env.MAPLE_SKIP_SYMBOLS !== "1") need("SENTRY_AUTH_TOKEN");
   sparkleBin("sign_update");
   cmdBuild(v);
   cmdNotarize(v);
@@ -491,18 +554,19 @@ async function cmdShip(v) {
   console.log(`\n  ✓ ${r.version} shipped. Commit apps/mac/releases/${r.version}/ and apps/mac/version.json.`);
 }
 
-const COMMANDS = { new: cmdNew, build: cmdBuild, notarize: cmdNotarize, dmg: cmdDmg, sign: cmdSign, appcast: cmdAppcast, publish: cmdPublish, ship: cmdShip };
+const COMMANDS = { new: cmdNew, build: cmdBuild, notarize: cmdNotarize, dmg: cmdDmg, sign: cmdSign, appcast: cmdAppcast, publish: cmdPublish, ship: cmdShip, symbols: cmdSymbols };
 if (!COMMANDS[command]) {
   console.log(`usage: release.mjs <command> [version]
 
   new <version>       releases/<version>/notes.md (--channel beta for a prerelease), and bumps version.json
-  build <version>     bundle.sh with the Developer ID, and checks every nested signature
+  build <version>     bundle.sh with the Developer ID, checks every nested signature, and uploads its dSYM to Sentry
   notarize <version>  notarizes and staples the app
   dmg <version>       the DMG from the stapled app, signed, notarized and stapled
   sign <version>      notes.html, and the EdDSA signatures in release.json
   appcast             build/updates-site/appcast.xml and changelog.html from every releases/*/release.json
   publish             uploads build/updates-site/ to R2 (the appcast last), and checks it's live
-  ship <version>      all of these, asking before it starts and before it publishes`);
+  ship <version>      all of these, asking before it starts and before it publishes
+  symbols <version>   uploads an already-shipped release's dSYM (--app <path> if /Applications isn't that version)`);
   process.exit(command ? 1 : 0);
 }
 try {
