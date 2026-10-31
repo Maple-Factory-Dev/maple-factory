@@ -53,7 +53,7 @@ export const INTEGRATIONS: IntegrationDef[] = [
     label: "Slack",
     webhookPath: SLACK_PATHS.command,
     fields: [
-      { name: "signingSecret", label: "Signing secret", secret: true, required: true, env: "SLACK_SIGNING_SECRET", help: "Your Slack app's Basic Information › Signing Secret. Point its /maple slash command at the URL below." },
+      { name: "signingSecret", label: "Signing secret", secret: true, required: true, env: "SLACK_SIGNING_SECRET", help: "Your Slack app's Basic Information › Signing Secret. An app made with Create the Slack app already points at the URLs below." },
       { name: "botToken", label: "Bot token", secret: true, required: false, env: "SLACK_BOT_TOKEN", help: "OAuth & Permissions › Bot User OAuth Token (xoxb-…), after installing the app to your workspace. Without it only /maple works; with it people can mention @Maple." },
     ],
     setupUrl: slackSetupUrl,

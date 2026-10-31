@@ -134,6 +134,16 @@ export function webhookUrl(i, origin) {
   return url + (i.kind === "jira" ? "?secret=<webhook secret>" : "");
 }
 
+/** Slack's three URLs (events, interactivity, the slash command), next to its command URL. */
+export function slackUrls(i, origin) {
+  const command = webhookUrl(i, origin);
+  const base = command.replace(/\/command$/, "");
+  return [["Events URL", `${base}/events`], ["Interactivity URL", `${base}/actions`], ["Slash command URL", command]];
+}
+
+/** The setup guide on the site. */
+export const SLACK_GUIDE = "https://maplefactory.dev/docs/slack.html";
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null));
 
@@ -391,7 +401,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
     }
     const copyUrl = (url) => navigator.clipboard.writeText(url).then(() => toast("Copied the webhook URL."), () => toast("Couldn't copy the webhook URL."));
     return [
-      h("p", { class: "muted" }, "Where requests come into the factory from: Slack's /maple, and Linear or Jira issues with the factory's label. The bot answers back where they came from."),
+      h("p", { class: "muted" }, "Where requests come into the factory from: Slack's @Maple and /maple, and Linear or Jira issues with the factory's label. The bot answers back where they came from."),
       state.integrations.map((i) => {
         const key = `integration:${i.kind}`;
         const d = draft(key, integrationForm(i));
@@ -404,6 +414,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
             h("span", { class: "set-label" }, h("span", {}, i.label), h("span", { class: `set-status ${status.tone}` }, status.text)),
             h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": `${i.label} enabled`, checked: i.enabled, disabled: saving.has(key),
               onchange: (e) => save(integrationSave(i, keptValues(i), e.target.checked), `${i.label} is ${e.target.checked ? "on" : "off"}.`) })),
+          i.kind === "slack" && slackSteps(i),
           i.fields.map((f) => {
             const isSet = i.values?.[f.name] != null;
             const env = i.fromEnv?.includes(f.name);
@@ -415,7 +426,9 @@ export function createSettings({ state, h, send, toast, render, ago }) {
                 autocomplete: f.secret ? "new-password" : "off", autocapitalize: "off", spellcheck: "false",
                 oninput: (e) => { d.value[f.name] = e.target.value; render(); } })));
           }),
-          h("div", { class: "set-row set-webhook" },
+          i.kind === "slack" ? slackUrls(i, location.origin).map(([label, u]) => h("div", { class: "set-row set-webhook" },
+            h("span", { class: "set-label" }, h("span", {}, label), h("span", { class: "set-detail mono", title: u }, u)),
+            h("button", { type: "button", class: "btn small", onclick: () => copyUrl(u) }, "Copy"))) : h("div", { class: "set-row set-webhook" },
             h("span", { class: "set-label" }, h("span", {}, "Webhook URL"), h("span", { class: "set-detail mono", title: url }, url)),
             h("button", { type: "button", class: "btn small", onclick: () => copyUrl(url) }, "Copy")),
           fromEnv.length > 0 && h("p", { class: "set-detail", style: "margin:0" }, `Set by environment: ${fromEnv.map((f) => f.label).join(", ")}. A value saved here wins over it.`),
@@ -424,6 +437,19 @@ export function createSettings({ state, h, send, toast, render, ago }) {
             { label: i.enabled ? "Save" : "Save and turn on", ready: isDirty(d) || !i.enabled }));
       }),
     ];
+  }
+
+  /** Slack's setup: the button that creates the app with this factory's URLs, the steps after it, and how it's doing. */
+  function slackSteps(i) {
+    return h("div", { class: "set-row stacked slack-setup" },
+        h("span", { class: "set-label" }, h("span", {}, "Set up @Maple"), i.status && h("span", { class: "set-detail" }, i.status)),
+        h("ol", { class: "slack-steps" },
+          h("li", {}, i.setupUrl
+            ? [h("a", { class: "btn small primary", href: i.setupUrl, target: "_blank", rel: "noopener" }, "Create the Slack app"), " opens Slack with this factory's URLs filled in. Pick your workspace and create it."]
+            : ["Set this factory's PUBLIC_URL so the app can be created for you, or create it from the manifest in the ", h("a", { href: SLACK_GUIDE, target: "_blank", rel: "noopener" }, "setup guide"), "."]),
+          h("li", {}, "In the app, Install App › Install to Workspace."),
+          h("li", {}, "Paste its Basic Information › Signing Secret and OAuth & Permissions › Bot User OAuth Token below, and save. Then /invite @Maple to a public channel.")),
+        h("span", { class: "set-detail" }, h("a", { href: SLACK_GUIDE, target: "_blank", rel: "noopener" }, "How @Maple works and what it can read")));
   }
 
   function merging() {
