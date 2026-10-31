@@ -187,9 +187,18 @@ enum Headless {
     }
 
     /// Picks the shown context menu's item titled `title`, as a click on it would, and puts the menu away.
+    /// An item with a submenu (`menupick:Move to goal`) opens it beside its row instead, for the next pick.
     @MainActor static func pickMenuItem(_ title: String) {
-        defer { shownMenu = nil }
-        guard let menu = shownMenu?.menu, let index = menu.items.firstIndex(where: { $0.title == title }) else { return }
+        guard let (menu, at) = shownMenu, let index = menu.items.firstIndex(where: { $0.title == title }) else { shownMenu = nil; return }
+        if let submenu = menu.items[index].submenu {
+            menu.update()
+            submenu.update()
+            let row = menu.items[..<index].reduce(5) { $0 + ($1.isHidden ? 0 : $1.isSeparatorItem ? 11 : 22) }
+            shownMenu = (submenu, CGPoint(x: at.x + 180, y: at.y + CGFloat(row)))
+            print("headless: submenu \(title): \(submenu.items.map { "\($0.title)\($0.isEnabled ? "" : " (disabled)")" })")
+            return
+        }
+        shownMenu = nil
         menu.performActionForItem(at: index)
     }
 

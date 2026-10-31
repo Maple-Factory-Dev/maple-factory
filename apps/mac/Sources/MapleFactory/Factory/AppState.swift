@@ -1447,7 +1447,8 @@ final class AppState {
             if let repo { return (goal, repos.contains(repo.lowercased()) ? nil : "doesn't work in \(repo)") }
             // A goal on a folder: only to another goal on the same folder.
             let folder = from?.folder
-            return (goal, repos.isEmpty && folder != nil && target.folder == folder ? nil : "doesn't work in \(folder ?? "its folder")")
+            let named = folder.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "its folder"
+            return (goal, repos.isEmpty && folder != nil && target.folder == folder ? nil : "doesn't work in \(named)")
         }
     }
 
