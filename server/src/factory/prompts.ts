@@ -158,6 +158,10 @@ export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org:
     .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
   const previous = task.autoReview?.findings.filter((f) => f.status === "open") ?? [];
+  const round = task.autoReview?.rounds.at(-1);
+  const asked = round?.focus
+    ? `\n## Asked for this round by ${round.by ?? "a teammate"}\n${round.focus}\n\nA teammate asked for this round with that focus: look into it first and report what you find there as findings, on top of the usual three questions below.\n`
+    : "";
   return `You are the review agent for a software factory task. You review; you do not change code.
 
 ${brief(task, goal)}${extra("reviewer", org, goal, repo)}
@@ -168,7 +172,7 @@ ${task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})`).join("\n")}
 
 ## Done when, with the builder's evidence
 ${done}
-${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}
+${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}${asked}
 Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/${base}..HEAD\`). Answer three things:
 1. Did it do the ask? One check per part of the brief: met, partial or missed.
 2. Are the proofs real? One check per Done when item: does the evidence actually show it? An ATTESTED item was signed off by a person themselves: accept it as proven, don't flag its proof as not real.
