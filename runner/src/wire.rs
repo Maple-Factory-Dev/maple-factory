@@ -357,6 +357,29 @@ pub enum HandReason {
     Other,
 }
 
+/// What an agent shared on a task, which decides how the apps show it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ArtifactKind {
+    /// An HTML page, run sandboxed with no network.
+    Html,
+    /// A PNG, JPEG, WebP or GIF.
+    Image,
+    /// An SVG drawing, shown like an HTML page.
+    Svg,
+    /// A PDF.
+    Pdf,
+    /// Markdown text.
+    Markdown,
+    /// Plain text.
+    Text,
+    /// CSV or JSON, shown as text.
+    Data,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MockupStatus {
@@ -1163,6 +1186,26 @@ pub struct Mockup {
     pub differences: Vec<String>,
 }
 
+/// A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Artifact {
+    pub id: String,
+    pub title: String,
+    pub kind: ArtifactKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Its upload's link, /attachments/<id>/<name> (members fetch it there).
+    pub file: String,
+    pub mime: String,
+    pub bytes: u64,
+    /// The role of the agent that shared it.
+    pub by: String,
+    pub at: u64,
+    /// 1 for the first share, one more each time the same title is shared again.
+    pub version: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TicketLink {
@@ -1446,6 +1489,9 @@ pub struct Task {
     pub auto_review: Option<AutoReview>,
     #[serde(default)]
     pub mockups: Vec<Mockup>,
+    /// Files its agents shared: charts, images, pages. Empty on older tasks.
+    #[serde(default)]
+    pub artifacts: Vec<Artifact>,
     #[serde(default)]
     pub tickets: Vec<TicketLink>,
     pub shareable: bool,
