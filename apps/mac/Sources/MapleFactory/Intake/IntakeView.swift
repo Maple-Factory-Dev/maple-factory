@@ -5,6 +5,11 @@ struct IntakeView: View {
     @Environment(AppState.self) private var state
     @AppStorage("intakeFilter") private var filter: IntakeFilter = .all
     @State private var showingHowTo = false
+    /// The ⓘ button's frame in the window, for a headless shot to hang the popover from.
+    @State private var infoFrame: CGRect = .zero
+
+    /// Headless runs drive the list with `requests:info` (the ⓘ popover) and `requests:filter:<name>`.
+    static let demo = Notification.Name("IntakeView.demo")
 
     /// A linked task's state, or nil when this app doesn't know the task. (`state.task(_:)` falls back to the first task.)
     private func taskState(_ id: String) -> TaskState? { state.tasks.first { $0.id == id }?.state }
@@ -24,6 +29,15 @@ struct IntakeView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard let parts = note.object as? [String], let what = parts.first else { return }
+            switch what {
+            case "info": showingHowTo = true
+            case "filter": if parts.count > 1, let pick = IntakeFilter(rawValue: parts[1]) { withAnimation(.snappy(duration: 0.2)) { filter = pick } }
+            default: break
+            }
+        }
+        .onChange(of: showingHowTo) { _, open in if Headless.isOn { Headless.popoverAnchor = open ? infoFrame : nil } }
         .onChange(of: visible.map(\.id), initial: true) { _, ids in
             if !ids.contains(where: { $0 == state.selectedIntake }) { state.selectedIntake = ids.first }
         }
@@ -58,6 +72,7 @@ struct IntakeView: View {
                     }
                     .buttonStyle(.plain)
                     .help("How requests come in")
+                    .background(GeometryReader { g in Color.clear.onAppear { infoFrame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in infoFrame = f } })
                     .popover(isPresented: $showingHowTo, arrowEdge: .bottom) { howTo }
                 }
                 filterPills
@@ -107,8 +122,9 @@ struct IntakeView: View {
 
     private var filterPills: some View {
         let counts = IntakeFilter.counts(state.intake, taskState: taskState)
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+        // Wraps rather than scrolls, so a narrow list never hides a filter.
+        return FlowLayout(spacing: 2, lineSpacing: 4) {
+            Group {
                 ForEach(IntakeFilter.allCases) { option in
                     let active = filter == option
                     HStack(spacing: 4) {
@@ -119,15 +135,15 @@ struct IntakeView: View {
                     }
                     .font(.system(size: 11.5, weight: active ? .medium : .regular))
                     .foregroundStyle(active ? Theme.text : Theme.textMuted)
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 7)
                     .frame(height: 22)
                     .background(Capsule().fill(active ? Theme.fillSelected : .clear))
                     .contentShape(Capsule())
                     .onTapGesture { withAnimation(.snappy(duration: 0.2)) { filter = option } }
+                    .help(option == .waiting ? "Waiting on requester" : option.title)
                 }
             }
         }
-        .scrollClipDisabled()
     }
 
     private var emptyState: some View {

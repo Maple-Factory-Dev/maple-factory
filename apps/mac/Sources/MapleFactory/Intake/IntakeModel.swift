@@ -399,7 +399,7 @@ enum IntakeFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all: "All"
         case .unanswered: "Unanswered"
-        case .waiting: "Waiting on requester"
+        case .waiting: "Waiting"
         case .inFlight: "In flight"
         case .done: "Done"
         }
