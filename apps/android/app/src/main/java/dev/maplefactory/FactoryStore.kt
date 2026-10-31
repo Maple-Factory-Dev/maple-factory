@@ -293,6 +293,21 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
 
     private fun encode(message: ClientMessage) = WireJson.encodeToString(ClientMessage.serializer(), message)
 
+    /** The next page of the goal's finished tasks older than the snapshot's 14 days. */
+    fun loadOlder(goal: String) {
+        val (next, request) = feed.olderRequest(goal) ?: return
+        feed = next
+        send(request)
+    }
+
+    /** A task opened by ID that isn't loaded (the snapshot leaves out ones finished over 14 days ago). */
+    fun fetchTask(id: String) {
+        if (status != Status.Live) return
+        val (next, request) = feed.fetchRequest(id) ?: return
+        feed = next
+        send(request)
+    }
+
     fun send(message: ClientMessage) {
         if (status == Status.Demo) return demoSend(message)
         socket?.send(encode(message))

@@ -15,7 +15,7 @@ export type Enum = Doc & { values: Record<string, string> };
 export type Variant = Doc & { fields?: Fields; fieldDocs?: Record<string, string> };
 export type Union = Doc & { variants: Record<string, Variant> };
 
-export const version = 1;
+export const version = 2;
 
 export const enums: Record<string, Enum> = {
   EndCause: {
@@ -1039,6 +1039,10 @@ export const structs: Record<string, Struct> = {
     },
     fieldDocs: { areas: "Most findings first, up to 12.", recent: "Newest first, up to 60." },
   },
+  GoalTally: {
+    doc: "How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).",
+    fields: { goal: "string", merged: "u32", cancelled: "u32", closed: "u32", total: "u32" },
+  },
   StatsSummary: {
     doc: "The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.",
     fields: {
@@ -1456,6 +1460,17 @@ export const unions: Record<string, Union> = {
       "task.checkedIt": { doc: "Attest to a Done when item yourself, with an optional reason.", fields: { id: "string", item: "u32", note: "string?" } },
       "task.mockupChange": { fields: { id: "string", mockup: "string", text: "string" } },
       "stats.get": { doc: "Admins only: the factory's statistics, answered with `stats`.", fields: { days: "u32", goal: "string?" } },
+      "tasks.older": {
+        doc: "Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.",
+        fields: { goal: "string?", before: "u64?", beforeId: "string?", limit: "u32?" },
+        fieldDocs: {
+          goal: "One goal's tasks. None: every goal's.",
+          before: "Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start.",
+          beforeId: "The previous page's last task ID, to page past tasks updated in the same millisecond.",
+          limit: "Page size: 50 by default, 200 at most.",
+        },
+      },
+      "task.get": { doc: "One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`.", fields: { id: "string" } },
     },
   },
   ServerToClient: {
@@ -1470,6 +1485,8 @@ export const unions: Record<string, Union> = {
           ended: "EndedSession[]",
           goals: "Goal[]",
           tasks: "Task[]",
+          tallies: "GoalTally[]?",
+          olderTasks: "u32?",
           policy: "RiskPolicy",
           acceptances: "RiskAcceptance[]",
           prompts: "PromptAdditions?",
@@ -1497,6 +1514,9 @@ export const unions: Record<string, Union> = {
         },
         fieldDocs: {
           ended: "The most recent session ends (last 7 days, newest first).",
+          tasks: "Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`.",
+          tallies: "Each goal's task counts over every task, also those left out. None: an older server, which sends every task.",
+          olderTasks: "How many finished tasks the snapshot left out. None: an older server.",
           prompts: "The org's prompt additions. None: an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",
@@ -1520,6 +1540,11 @@ export const unions: Record<string, Union> = {
       "machine.agent_login": { doc: "How a sign-in on your machine is going, to its owner's apps only.", fields: { machine: "string", status: "AgentLoginStatus" } },
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
+      "tasks.page": {
+        doc: "A page of older finished tasks `tasks.older` asked for, newest first, to that connection only.",
+        fields: { goal: "string?", tasks: "Task[]", more: "bool" },
+        fieldDocs: { goal: "The goal asked for. None: every goal.", more: "There are older ones still: ask again from this page's last task." },
+      },
       "goal.updated": { fields: { goal: "Goal" } },
       "note.updated": { fields: { note: "Note" } },
       "intake.updated": { fields: { request: "IntakeRequest" } },

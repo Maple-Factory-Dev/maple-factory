@@ -13,8 +13,67 @@ import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected,
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
+import { fillIcons, icon } from "./icons.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
+
+/**
+ * The finished tasks the snapshot left out (it sends those of the last 14 days) and not loaded since:
+ * `byGoal` their counts per goal id, `left` how many in all. `cursor` is where each `tasks.older` page
+ * starts (by goal id, "" for every goal), `loading` the pages on their way, `fetching` the `task.get`s.
+ */
+function older(tallies = null, tasks = [], left = 0) {
+  const byGoal = {};
+  for (const t of tallies ?? []) {
+    const sent = tasks.filter((x) => x.goal === t.goal);
+    const finished = t.merged + t.cancelled + t.closed - sent.filter((x) => FINISHED.includes(x.state)).length;
+    byGoal[t.goal] = { merged: Math.max(0, t.merged - sent.filter((x) => x.state === "merged").length), finished: Math.max(0, finished) };
+  }
+  return { byGoal, left, cursor: new Map(), loading: new Set(), fetching: new Set(), missing: new Set() };
+}
+const FINISHED = ["merged", "cancelled", "closed"];
+
+/** Older tasks from `tasks.page` or `task.get` join the tasks; one a live update already brought stays as it is. */
+function mergeOlder(tasks) {
+  for (const t of tasks) {
+    if (state.tasks.has(t.id)) continue;
+    state.tasks.set(t.id, t);
+    const counts = state.older.byGoal[t.goal];
+    if (counts && FINISHED.includes(t.state)) {
+      counts.finished = Math.max(0, counts.finished - 1);
+      if (t.state === "merged") counts.merged = Math.max(0, counts.merged - 1);
+      state.older.left = Math.max(0, state.older.left - 1);
+    }
+  }
+}
+
+/** Whether the goal (its id; none: any goal) has finished tasks older than the snapshot's still to load. */
+const hasOlder = (goal = null) => goal ? (state.older.byGoal[goal]?.finished ?? 0) > 0 : state.older.left > 0;
+
+/** The next 50 older finished tasks: the goal's, or every goal's. */
+function loadOlder(goal = null) {
+  const key = goal ?? "";
+  if (!hasOlder(goal) || state.older.loading.has(key)) return;
+  const cursor = state.older.cursor.get(key);
+  if (send({ type: "tasks.older", goal, before: cursor?.before ?? null, beforeId: cursor?.id ?? null, limit: 50 })) state.older.loading.add(key);
+  render();
+}
+
+/** A task opened by ID that isn't loaded, maybe one the snapshot left out: ask for it. */
+function fetchTask(id) {
+  if (!state.live || state.tasks.has(id) || state.older.fetching.has(id) || state.older.missing.has(id)) return;
+  if (send({ type: "task.get", id })) state.older.fetching.add(id);
+}
+
+/** "Load older" and its state, for under a list of finished tasks. */
+function loadOlderLink(goal = null) {
+  if (!hasOlder(goal)) return null;
+  const loading = state.older.loading.has(goal ?? "");
+  const left = goal ? state.older.byGoal[goal].finished : state.older.left;
+  return h("div", { class: "muted", style: "font-size:13px;margin-top:8px" },
+    loading ? "Loading older finished tasks…" : h("a", { href: "javascript:void 0", "data-load-older": goal ?? "", onclick: () => loadOlder(goal) }, "Load older"),
+    ` · ${left} finished more than 14 days ago`);
+}
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
 let socket = null;
 let retry = 1000;
@@ -117,6 +176,7 @@ function receive(m) {
     case "snapshot":
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
+      state.older = older(m.tallies, m.tasks, m.olderTasks ?? 0);
       state.notes = m.notes ?? [];
       state.machines = m.machines ?? [];
       // The factory's settings, for admins' Settings page.
@@ -145,12 +205,25 @@ function receive(m) {
     case "secrets.updated": state.secrets = m.secrets; break;
     case "integrations.updated": state.integrations = m.integrations; break;
     case "task.updated":
+      // One asked for by ID (`task.get`): no news, just here now.
+      if (state.older.fetching.delete(m.task.id) && !state.tasks.has(m.task.id)) { mergeOlder([m.task]); break; }
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
       mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
+    case "tasks.page": {
+      const key = m.goal ?? "";
+      state.older.loading.delete(key);
+      const last = m.tasks.at(-1);
+      if (last) state.older.cursor.set(key, { before: last.updatedAt, id: last.id });
+      mergeOlder(m.tasks);
+      // The server knows best: none left means none left, whatever the counts drifted to.
+      if (!m.more && m.goal && state.older.byGoal[m.goal]) state.older.byGoal[m.goal] = { merged: 0, finished: 0 };
+      if (!m.more && !m.goal) { state.older.left = 0; for (const c of Object.values(state.older.byGoal)) Object.assign(c, { merged: 0, finished: 0 }); }
+      break;
+    }
     case "machine.updated":
     case "machine.removed": {
       // Machines change with every step an agent takes; only a prompt starting or ending redraws, or a
@@ -175,6 +248,13 @@ function receive(m) {
       break;
     }
     case "error":
+      // A task asked for by ID that isn't there: its page says so, once.
+      if (m.requestId?.startsWith("task.get:")) {
+        const id = m.requestId.slice(9);
+        state.older.fetching.delete(id);
+        state.older.missing.add(id);
+        break;
+      }
       // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its panel.
       if (m.requestId?.startsWith("checkLog:")) {
         const key = m.requestId.slice(9);
@@ -211,7 +291,7 @@ function showGitHubStatus(s) {
   const incident = s.incidents?.[0];
   $("github-status-detail").textContent = `· ${incident?.name || s.components?.join(", ") || s.description}`;
   $("github-status-link").href = incident?.url || "https://www.githubstatus.com";
-  $("github-status-link").textContent = incident?.url ? "See the incident ↗" : "githubstatus.com ↗";
+  $("github-status-link").replaceChildren(incident?.url ? "See the incident" : "githubstatus.com", icon("external-link", { size: 14 }));
 }
 
 /** The factory's icon (`/icon/<id>`) in the header in place of the leaf, and as the tab's icon; none puts both back. */
@@ -225,7 +305,7 @@ function showIcon(link) {
 
 function status() {
   const s = $("status");
-  s.textContent = state.live ? "Live" : "Reconnecting…";
+  s.replaceChildren(...(state.live ? ["Live"] : [icon("refresh-cw", { size: 12, class: "spin" }), "Reconnecting…"]));
   s.className = `status${state.live ? " live" : ""}`;
 }
 
@@ -317,6 +397,8 @@ function render() {
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   $("machines-count").textContent = online() || "";
+  for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
+    document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
   const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
@@ -335,7 +417,7 @@ function section(key, title, count, body) {
   return h("section", { class: `section${open ? "" : " closed"}` },
     h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
       onclick: () => { toggleCollapsed(collapsed, key); render(); } },
-      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+      h("span", { class: "chevron", "aria-hidden": "true" }, icon("chevron-down")), count == null ? title : `${title} · ${count}`)),
     open && h("div", { id }, body()));
 }
 
@@ -384,7 +466,7 @@ function inboxView() {
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
         h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
-    !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
+    !total && h("div", { class: "card empty" }, icon("inbox", { size: 28 }), "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
 /** Waiting for a session with nobody on it, as the server's queue reads it (the Mac app's Queued column). */
@@ -398,20 +480,28 @@ const rank = (t) => t.queueRank ?? t.createdAt;
 const scheduled = (t) => t.startAt != null && t.startAt > Date.now();
 const queueLine = (t) => scheduled(t) ? `Starts ${new Date(t.startAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : t.waiting || "Waiting for a slot";
 
+/** How many merged tasks the Tasks page lists: 10, or every one loaded once someone asks for more. */
+let mergedShown = 0;
+
 function tasksView() {
   const drafts = [...state.tasks.values()].filter((t) => t.state === "drafting").sort((a, b) => b.updatedAt - a.updatedAt);
   const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
   const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
   const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled", "closed"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
-  const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
+  const merged = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt);
+  const done = merged.slice(0, Math.max(10, mergedShown));
   return h("div", {},
     h("h1", {}, "Tasks"),
     drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
     queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
     backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
     section("tasks:active", "In flight", active.length, () =>
-      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
-    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, icon("list-checks", { size: 28 }), "Nothing in flight.")),
+    (done.length > 0 || hasOlder()) && section("tasks:merged", mergedShown ? "Merged" : "Recently merged", null, () => h("div", {},
+      h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`))),
+      merged.length > done.length
+        ? h("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, h("a", { href: "javascript:void 0", onclick: () => { mergedShown = merged.length; render(); } }, `Show all ${merged.length} loaded`))
+        : loadOlderLink())));
 }
 
 // ---- machines: read-only; what each one is doing, how loaded it is and how much plan it has left ----
@@ -426,7 +516,7 @@ function machinesView() {
     h("p", { class: "muted" }, "Where agents run: what each machine is doing, its load, and how much plan its agents have left."),
     machines.length
       ? h("div", { class: "machines" }, machines.map((m) => machineCard(m, now)))
-      : h("div", { class: "card empty" }, "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
+      : h("div", { class: "card empty" }, icon("server", { size: 28 }), "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
 }
 
 function machineCard(m, now) {
@@ -435,6 +525,7 @@ function machineCard(m, now) {
   const gauges = meters(m);
   return h("section", { class: `card machine ${st.kind}`, "data-machine": m.id },
     h("div", { class: "machine-head" },
+      h("span", { class: "machine-icon" }, icon("server", { size: 18 })),
       h("div", { class: "machine-title" },
         h("div", { class: "title" }, m.name),
         h("div", { class: "sub muted" }, [m.owner === state.me?.login ? "Yours" : name(m.owner), m.os, m.version && `runner ${m.version}`].filter(Boolean).join(" · "))),
@@ -444,7 +535,7 @@ function machineCard(m, now) {
     gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
     usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
       h("div", { class: "usage-head" }, agentIcon(u.agent), h("span", {}, u.title), u.plan && h("span", { class: "faint usage-plan" }, `· ${u.plan}`),
-        h("span", { class: "faint usage-seen" }, `read ${ago(u.observedAt)}`)),
+        h("span", { class: "faint usage-seen" }, icon("clock", { size: 12 }), `read ${ago(u.observedAt)}`)),
       u.rows.map((r) => h("div", { class: `usage-row${r.over ? " over" : ""}` },
         h("span", { class: "usage-label" }, r.label),
         bar(r.used / 100, r.cap == null ? null : r.cap / 100, `${r.label}: ${r.usedText} used${r.cap == null ? "" : `, cap ${r.cap}%`}`),
@@ -458,7 +549,7 @@ function sessionLine(s) {
   const doing = a ? [ACTIVITY_TITLE[a.state] ?? a.state, a.step || a.message].filter(Boolean).join(" · ") : "Starting";
   const what = s.session.taskId
     ? h("a", { href: `#/t/${s.session.taskId}` }, h("span", { class: "mono" }, s.session.taskId), task ? ` ${task.title}` : "")
-    : h("span", {}, "Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
+    : h("span", {}, icon("terminal", { size: 14 }), " Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
   return h("div", { class: "machine-session" },
     h("span", { class: `dot act-${a?.state ?? "idle"}` }),
     h("div", {}, h("div", { class: "session-what" }, agentIcon(s.session.agent), what), h("div", { class: "sub muted" }, doing)));
@@ -587,7 +678,7 @@ function notesView() {
           h("div", { class: "title" }, n.title || "Untitled note"),
           h("div", { class: "sub" }, `${ago(n.updatedAt)} · `, preview(n.body) || "Empty")),
         n.taskId && h("span", { class: "pill tag" }, `became ${n.taskId}`))))
-      : h("div", { class: "card empty" }, "Nothing jotted down yet."));
+      : h("div", { class: "card empty" }, icon("notebook-pen", { size: 28 }), "Nothing jotted down yet."));
 }
 const preview = (body) => body.replace(/\s+/g, " ").trim().slice(0, 120);
 
@@ -695,7 +786,11 @@ const taskTabs = new Map(); // id → "overview" | "diff"
 
 function taskView(id) {
   const t = state.tasks.get(id);
-  if (!t) return h("div", { class: "card empty" }, state.live ? `There's no task ${id}.` : "Loading…");
+  if (!t) {
+    // One the snapshot left out (finished over 14 days ago) comes when asked for.
+    fetchTask(id);
+    return h("div", { class: "card empty" }, state.live && !state.older.fetching.has(id) ? `There's no task ${id}.` : "Loading…");
+  }
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
   // Parked in the backlog: as far as its plan got.
@@ -721,8 +816,8 @@ function taskView(id) {
     (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
     t.effort && effortCard(t),
     h("div", { class: "tabs", style: "margin-top:22px" },
-      h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, "Overview"),
-      t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, `Diff +${t.diff.added} −${t.diff.removed}`)),
+      h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, icon("file-text"), "Overview"),
+      t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, icon("git-pull-request"), `Diff +${t.diff.added} −${t.diff.removed}`)),
     tab === "diff" ? diffView(t) : overview(t));
 }
 
@@ -789,6 +884,8 @@ function effortCard(t) {
   const counted = tasks.filter((x) => x.state !== "cancelled" && x.state !== "closed");
   return [h("h2", { class: "row" }, h("span", {}, `Effort · ${t.effort}`), h("span", { class: "spacer" }),
       h("span", { style: "text-transform:none;letter-spacing:0;font-weight:500" }, `${counted.filter((x) => x.state === "merged").length} of ${counted.length} merged`)),
+    // The effort's older tasks may be among the goal's finished ones the snapshot left out.
+    loadOlderLink(t.goal),
     h("div", { class: "list" }, tasks.map((x) => h("a", { class: `item${x.id === t.id ? " current" : ""}`, href: `#/t/${x.id}` },
       h("span", { class: `dot bg-${x.state}` }),
       h("div", { style: "flex:1;min-width:0" },
@@ -800,7 +897,7 @@ function effortCard(t) {
 function handCard(t) {
   const mine = t.hand.assignee === state.me?.login;
   return h("div", { class: "callout hand" },
-    h("b", {}, "The agent needs a hand"),
+    h("b", { class: "callout-head" }, icon("hand"), "The agent needs a hand"),
     h("p", { style: "margin:6px 0 0" }, t.hand.summary),
     mine && h("div", { class: "options" }, t.hand.options.map((o) =>
       h("button", { class: `option${o.recommended ? " recommended" : ""}`, onclick: () => send({ type: "task.resolveHand", id: t.id, option: o.title, note: "" }) },
@@ -848,7 +945,7 @@ function promptCard(t) {
 function questionCard(t) {
   const mine = t.owner === state.me?.login;
   return h("div", { class: "callout question" },
-    h("b", {}, `${name(t.question.role)} asks`),
+    h("b", { class: "callout-head" }, icon("message-square"), `${name(t.question.role)} asks`),
     h("p", { style: "margin:6px 0 0" }, t.question.text),
     mine && t.question.options.length > 0 && h("div", { class: "options" }, t.question.options.map((o) =>
       h("button", { class: "option", onclick: () => send({ type: "task.answer", id: t.id, text: o }) }, h("b", {}, o)))),
@@ -862,7 +959,7 @@ function decisions(t) {
   const buttons = [];
   if (t.state === "awaitingApproval") {
     buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => approvePlan(t) },
-      t.approvals.includes(me) ? "You approved it" : "Approve plan"));
+      icon("check"), t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
   if (t.state === "awaitingApproval" || t.state === "drafting") {
@@ -870,7 +967,7 @@ function decisions(t) {
   }
   if (t.state === "backlog") {
     // Nothing runs on it until it's picked up: its plan approved, or planned (again).
-    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, "Approve & build"));
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, icon("check"), "Approve & build"));
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
   }
@@ -880,7 +977,7 @@ function decisions(t) {
     const pending = t.pr?.checks?.some((c) => c.status !== "passed" && c.status !== "failed");
     if (approvable(t)) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
-        t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
+        icon("check"), t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
@@ -894,14 +991,14 @@ function decisions(t) {
         class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, icon("pause"), "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, icon("git-merge"), "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
       buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
-        failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
+        icon(failing ? "circle-alert" : pending ? "clock" : "git-merge"), failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
-    if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
+    if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, icon("refresh-cw"), "Re-run failed"));
     // One more automated-review round, with this person's focus.
     if (reviewRequestable(t) && !reviewAsks.has(t.id)) {
       buttons.push(h("button", { class: "btn", onclick: () => { reviewAsks.set(t.id, ""); render(); document.querySelector(`[data-keep="${t.id}:review-ask"] textarea`)?.focus(); } }, "Request a review…"));
@@ -910,12 +1007,12 @@ function decisions(t) {
   }
   if (isQueued(t)) {
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top" }) }, "Move to top"));
-    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, "Start now"));
+    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, icon("play"), "Start now"));
   }
   if (t.state !== "merged") {
     // Waiting on its plan's approval or in the backlog, nothing is running to retry; requesting a change plans again.
-    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
-    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
+    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, icon("refresh-cw"), "Retry"));
+    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, icon("x"), "Cancel…"));
   }
   const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state) || (t.state === "backlog" && t.plan.length > 0);
   const [placeholder, label] = {
@@ -1681,4 +1778,5 @@ window.addEventListener("hashchange", () => {
   render();
 });
 $("update-refresh").addEventListener("click", () => location.reload());
+fillIcons();
 connect();

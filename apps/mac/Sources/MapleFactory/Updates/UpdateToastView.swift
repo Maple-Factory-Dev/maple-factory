@@ -17,14 +17,14 @@ struct UpdateToastView: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                if let url = updater.releaseNotesURL {
-                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                if updater.releaseNotesURL != nil {
+                    Text(UpdatePhase.releaseNotesLinkLabel)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.accent)
                         .contentShape(Rectangle())
-                        .onTapGesture { NSWorkspace.shared.open(url) }
+                        .onTapGesture { updater.openReleaseNotes() }
                         .pointerStyle(.link)
-                        .help("See the release notes")
+                        .help("Read the release notes")
                 }
             }
             .fixedSize()

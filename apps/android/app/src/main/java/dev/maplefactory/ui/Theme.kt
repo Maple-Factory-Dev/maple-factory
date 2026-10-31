@@ -53,6 +53,7 @@ object Maple {
     private val building = Tone(0x2F6FEB, 0x6B9BF5)
     private val reviewing = Tone(0x0E8FA3, 0x4CC4D6)
     private val merged = Tone(0x14A866, 0x3DD68C)
+    private val closed = Tone(0x6B7079, 0xA4AAB4)
 
     @Composable @ReadOnlyComposable
     fun state(state: TaskState): Color = when (state) {
@@ -63,6 +64,7 @@ object Maple {
         TaskState.Building -> building
         TaskState.Reviewing -> reviewing
         TaskState.Merged -> merged
+        TaskState.Closed -> closed
         TaskState.Cancelled, TaskState.Unknown -> danger
     }.color
 }
@@ -77,6 +79,7 @@ val TaskState.title: String
         TaskState.Reviewing -> "Reviewing"
         TaskState.Merged -> "Merged"
         TaskState.Cancelled -> "Cancelled"
+        TaskState.Closed -> "Closed"
         TaskState.Unknown -> "Unknown"
     }
 
@@ -88,7 +91,7 @@ val TaskState.icon: ImageVector
         TaskState.Backlog -> Icons.Filled.Inbox
         TaskState.Building -> Icons.Filled.Construction
         TaskState.Reviewing -> Icons.Outlined.Visibility
-        TaskState.Merged -> Icons.Filled.CheckCircle
+        TaskState.Merged, TaskState.Closed -> Icons.Filled.CheckCircle
         TaskState.Cancelled, TaskState.Unknown -> Icons.Filled.Cancel
     }
 

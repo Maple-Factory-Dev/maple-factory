@@ -160,4 +160,52 @@ struct UpdatePhaseTests {
         #expect(SidebarUserDriver.changelogURL(notes: notes, installed: "", offered: "0.2.0") == notes)
         #expect(SidebarUserDriver.changelogURL(notes: nil, installed: "0.1.0", offered: "0.2.0") == nil)
     }
+
+    // MARK: The What's new sheet
+
+    private let page = URL(string: "https://updates.maplefactory.dev/changelog.html?from=0.1.22&to=0.1.26")!
+
+    @Test func releaseNotesStayOnTheChangelog() {
+        let stays = [
+            "https://updates.maplefactory.dev/changelog.html?from=0.1.22&to=0.1.26",
+            "https://updates.maplefactory.dev/changelog.html?", // Show all releases
+            "https://updates.maplefactory.dev/changelog.html",
+            "https://updates.maplefactory.dev/changelog.html?from=0.1.22&to=0.1.26#v0.1.24",
+            "HTTPS://Updates.MapleFactory.dev/changelog.html#top",
+        ]
+        for link in stays {
+            #expect(ReleaseNotesSheet.releaseNotesNavigation(URL(string: link)!, page: page) == .stay, "\(link)")
+        }
+    }
+
+    @Test func otherWebPagesGoToTheBrowser() {
+        let out = [
+            "https://updates.maplefactory.dev/releases/0.1.24/notes.html",
+            "https://updates.maplefactory.dev/",
+            "https://github.com/Maple-Factory-Dev/maple-factory/pull/34",
+            "http://updates.maplefactory.dev/changelog.html", // another scheme is another page
+            "https://updates.maplefactory.dev:8443/changelog.html",
+        ]
+        for link in out {
+            #expect(ReleaseNotesSheet.releaseNotesNavigation(URL(string: link)!, page: page) == .browser, "\(link)")
+        }
+    }
+
+    @Test func nonWebLinksGoNowhere() {
+        for link in ["mailto:hi@maplefactory.dev", "file:///etc/hosts", "javascript:alert(1)", "about:blank", "maple://task/MF-1"] {
+            #expect(ReleaseNotesSheet.releaseNotesNavigation(URL(string: link)!, page: page) == .block, "\(link)")
+        }
+    }
+
+    @Test func whatsNewHasNoArrowNowItStaysInTheApp() {
+        #expect(!UpdatePhase.releaseNotesLinkLabel.contains("↗"))
+    }
+
+    @Test func sheetsUpdateButtonFollowsThePhase() {
+        #expect(ReleaseNotesSheet.updateButtonLabel(phase: .available(version: "0.2.0")) == "Update & Restart")
+        #expect(ReleaseNotesSheet.updateButtonLabel(phase: .readyToRelaunch(version: "0.2.0")) == "Restart")
+        for phase: UpdatePhase in [.checking, .downloading(received: 1, expected: 2), .extracting(fraction: 0.5), .installing, .idle] {
+            #expect(ReleaseNotesSheet.updateButtonLabel(phase: phase) == nil)
+        }
+    }
 }

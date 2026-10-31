@@ -1,6 +1,8 @@
 package dev.maplefactory.kit
 
 import dev.maplefactory.wire.CheckStatus
+import dev.maplefactory.wire.ClientMessage
+import dev.maplefactory.wire.GoalTally
 import dev.maplefactory.wire.Goal
 import dev.maplefactory.wire.IntakeRequest
 import dev.maplefactory.wire.Machine
@@ -35,6 +37,14 @@ data class FeedState(
     val runnerLatest: String? = null,
     val serverVersion: String? = null,
     val hasSnapshot: Boolean = false,
+    /** The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id. Empty from an older server. */
+    val older: Map<String, OlderTasks> = emptyMap(),
+    /** Goals whose next page of older tasks is on its way. */
+    val loadingOlder: Set<String> = emptySet(),
+    /** Where each goal's next page of older tasks starts: the last task of its last page. */
+    val olderCursor: Map<String, Pair<Long, String>> = emptyMap(),
+    /** Tasks asked for by ID (`task.get`) that haven't come yet. */
+    val fetching: Set<String> = emptySet(),
 ) {
     /** What a message says that isn't state: a toast or an error to show. */
     sealed class Notice {
@@ -62,9 +72,18 @@ data class FeedState(
                 runnerLatest = message.runnerLatest,
                 serverVersion = message.serverVersion,
                 hasSnapshot = true,
+                older = older(message.tallies, message.tasks),
+                loadingOlder = emptySet(),
+                olderCursor = emptyMap(),
+                fetching = emptySet(),
             ),
         )
-        is ServerToClient.TaskUpdated -> Applied(copy(tasks = upsert(message.task, tasks, front = true) { it.id }))
+        // A task asked for by ID (`task.get`), maybe one the snapshot left out.
+        is ServerToClient.TaskUpdated -> Applied(
+            if (message.task.id in fetching) copy(fetching = fetching - message.task.id).mergeOlder(listOf(message.task))
+            else copy(tasks = upsert(message.task, tasks, front = true) { it.id }),
+        )
+        is ServerToClient.TasksPage -> Applied(pageArrived(message))
         is ServerToClient.TaskRemoved -> Applied(copy(tasks = tasks.filter { it.id != message.id }))
         is ServerToClient.GoalUpdated -> Applied(copy(goals = upsert(message.goal, goals, front = false) { it.id }))
         is ServerToClient.MachineUpdated -> Applied(copy(machines = upsert(message.machine, machines, front = false) { it.id }))
@@ -79,8 +98,50 @@ data class FeedState(
         is ServerToClient.IconUpdated -> Applied(copy(icon = message.icon))
         is ServerToClient.RunnerReleased -> Applied(copy(runnerLatest = message.runnerLatest))
         is ServerToClient.Toast -> Applied(this, Notice.Toast(message.text, message.taskId))
-        is ServerToClient.Error -> Applied(this, Notice.Error(message.message))
+        is ServerToClient.Error -> Applied(
+            message.requestId?.takeIf { it.startsWith("task.get:") }?.let { copy(fetching = fetching - it.removePrefix("task.get:")) } ?: this,
+            Notice.Error(message.message),
+        )
         else -> Applied(this)
+    }
+
+    // Older tasks
+
+    /** A page of older tasks: they join the list, and the goal's cursor moves to its last one. */
+    fun pageArrived(page: ServerToClient.TasksPage): FeedState {
+        val goal = page.goal ?: ""
+        val last = page.tasks.lastOrNull()
+        var next = copy(loadingOlder = loadingOlder - goal, olderCursor = if (last != null) olderCursor + (goal to (last.updatedAt to last.id)) else olderCursor)
+            .mergeOlder(page.tasks)
+        // The server knows best: none left means none left, whatever the counts drifted to.
+        if (!page.more && page.goal != null) next = next.copy(older = next.older + (page.goal to OlderTasks()))
+        return next
+    }
+
+    /** Older tasks join the end of the list and the counts left out go down; one already here stays as it is. */
+    fun mergeOlder(page: List<Task>): FeedState {
+        val held = tasks.map { it.id }.toSet()
+        val new = page.filter { it.id !in held }
+        if (new.isEmpty()) return this
+        val counts = older.toMutableMap()
+        for (task in new) counts[task.goal]?.let { counts[task.goal] = it.count(task.state, -1) }
+        return copy(tasks = tasks + new, older = counts)
+    }
+
+    /** Whether [goal] (its id) has finished tasks older than the snapshot's that aren't loaded yet. */
+    fun hasOlder(goal: String): Boolean = (older[goal]?.finished ?: 0) > 0
+
+    /** The `tasks.older` that loads [goal]'s next page and the state marking it on its way; null when there's none or it's coming. */
+    fun olderRequest(goal: String, limit: Long = 50): Pair<FeedState, ClientMessage>? {
+        if (!hasOlder(goal) || goal in loadingOlder) return null
+        val cursor = olderCursor[goal]
+        return copy(loadingOlder = loadingOlder + goal) to ClientMessage.TasksOlder(goal = goal, before = cursor?.first, beforeId = cursor?.second, limit = limit)
+    }
+
+    /** The `task.get` for a task opened by ID that isn't loaded; null when it's here or already asked for. */
+    fun fetchRequest(id: String): Pair<FeedState, ClientMessage>? {
+        if (!hasSnapshot || id in fetching || task(id) != null) return null
+        return copy(fetching = fetching + id) to ClientMessage.TaskGet(id = id)
     }
 
     // Reading
@@ -141,6 +202,18 @@ data class FeedState(
     }
 
     companion object {
+        /** What the snapshot left out of each goal: its tally (counted over every task) less the tasks it sent. */
+        fun older(tallies: List<GoalTally>?, tasks: List<Task>): Map<String, OlderTasks> {
+            if (tallies == null) return emptyMap()
+            val held = mutableMapOf<String, OlderTasks>()
+            for (task in tasks) held[task.goal] = (held[task.goal] ?: OlderTasks()).count(task.state, 1)
+            return tallies.associate { tally ->
+                val sent = held[tally.goal] ?: OlderTasks()
+                val finished = (tally.merged + tally.cancelled + tally.closed).toInt()
+                tally.goal to OlderTasks(merged = maxOf(0, tally.merged.toInt() - sent.merged), finished = maxOf(0, finished - sent.finished))
+            }
+        }
+
         private fun <T> upsert(item: T, list: List<T>, front: Boolean, id: (T) -> String): List<T> {
             val index = list.indexOfFirst { id(it) == id(item) }
             return when {
@@ -162,6 +235,15 @@ data class FeedState(
             }
             return false
         }
+    }
+}
+
+/** A goal's finished tasks the snapshot left out and that aren't loaded yet. */
+data class OlderTasks(val merged: Int = 0, /** Merged, cancelled and closed. */ val finished: Int = 0) {
+    fun count(state: TaskState, by: Int): OlderTasks = when (state) {
+        TaskState.Merged -> OlderTasks(maxOf(0, merged + by), maxOf(0, finished + by))
+        TaskState.Cancelled, TaskState.Closed -> copy(finished = maxOf(0, finished + by))
+        else -> this
     }
 }
 

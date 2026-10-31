@@ -125,6 +125,8 @@ final class FactoryStore {
         var request = URLRequest(url: FactoryAPI.websocketURL(server, path: "/client/connect"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
+        // The default 1 MiB is less than a big factory's snapshot ("Message too long"), as on the Mac.
+        socket.maximumMessageSize = 64 << 20
         self.socket = socket
         socket.resume()
         send(.subscribe)
@@ -201,6 +203,17 @@ final class FactoryStore {
         }
         if case .stats(let reply) = message { stats = reply.summary }
         if let notice = feed.apply(message) { self.notice = notice }
+    }
+
+    /// The next page of the goal's finished tasks older than the snapshot's 14 days.
+    func loadOlder(goal: String) {
+        if let request = feed.olderRequest(goal: goal) { send(request) }
+    }
+
+    /// A task opened by ID that isn't loaded (the snapshot leaves out ones finished over 14 days ago).
+    func fetchTask(_ id: String) {
+        guard status == .live, let request = feed.fetchRequest(id: id) else { return }
+        send(request)
     }
 
     func send(_ message: Wire.ClientMessage) {

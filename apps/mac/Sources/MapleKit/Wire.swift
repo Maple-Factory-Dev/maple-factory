@@ -3,7 +3,7 @@
 import Foundation
 
 public enum Wire {
-    public static let protocolVersion: UInt32 = 1
+    public static let protocolVersion: UInt32 = 2
 
     /// Any JSON value, for fields the protocol passes through untouched.
     public enum JSONValue: Codable, Hashable, Sendable {
@@ -4174,6 +4174,23 @@ public enum Wire {
         }
     }
 
+    /// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
+    public struct GoalTally: Codable, Hashable, Sendable {
+        public var goal: String
+        public var merged: UInt32
+        public var cancelled: UInt32
+        public var closed: UInt32
+        public var total: UInt32
+
+        public init(goal: String, merged: UInt32, cancelled: UInt32, closed: UInt32, total: UInt32) {
+            self.goal = goal
+            self.merged = merged
+            self.cancelled = cancelled
+            self.closed = closed
+            self.total = total
+        }
+    }
+
     /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
     public struct StatsSummary: Codable, Hashable, Sendable {
         public var days: UInt32
@@ -6042,6 +6059,34 @@ public enum Wire {
         }
     }
 
+    /// Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.
+    public struct ClientMessageTasksOlder: Codable, Hashable, Sendable {
+        /// One goal's tasks. None: every goal's.
+        public var goal: String?
+        /// Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start.
+        public var before: UInt64?
+        /// The previous page's last task ID, to page past tasks updated in the same millisecond.
+        public var beforeId: String?
+        /// Page size: 50 by default, 200 at most.
+        public var limit: UInt32?
+
+        public init(goal: String? = nil, before: UInt64? = nil, beforeId: String? = nil, limit: UInt32? = nil) {
+            self.goal = goal
+            self.before = before
+            self.beforeId = beforeId
+            self.limit = limit
+        }
+    }
+
+    /// One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`.
+    public struct ClientMessageTaskGet: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// App (macOS, web) → server.
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
@@ -6116,6 +6161,8 @@ public enum Wire {
         case taskCheckedIt(ClientMessageTaskCheckedIt)
         case taskMockupChange(ClientMessageTaskMockupChange)
         case statsGet(ClientMessageStatsGet)
+        case tasksOlder(ClientMessageTasksOlder)
+        case taskGet(ClientMessageTaskGet)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -6196,6 +6243,8 @@ public enum Wire {
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
             case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
             case "stats.get": self = .statsGet(try ClientMessageStatsGet(from: decoder))
+            case "tasks.older": self = .tasksOlder(try ClientMessageTasksOlder(from: decoder))
+            case "task.get": self = .taskGet(try ClientMessageTaskGet(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -6417,6 +6466,12 @@ public enum Wire {
             case .statsGet(let body):
                 try c.encode("stats.get", forKey: .type)
                 try body.encode(to: encoder)
+            case .tasksOlder(let body):
+                try c.encode("tasks.older", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskGet(let body):
+                try c.encode("task.get", forKey: .type)
+                try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
             }
@@ -6431,7 +6486,12 @@ public enum Wire {
         /// The most recent session ends (last 7 days, newest first).
         public var ended: [EndedSession]
         public var goals: [Goal]
+        /// Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`.
         public var tasks: [Task]
+        /// Each goal's task counts over every task, also those left out. None: an older server, which sends every task.
+        public var tallies: [GoalTally]?
+        /// How many finished tasks the snapshot left out. None: an older server.
+        public var olderTasks: UInt32?
         public var policy: RiskPolicy
         public var acceptances: [RiskAcceptance]
         /// The org's prompt additions. None: an older server.
@@ -6473,7 +6533,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -6481,6 +6541,8 @@ public enum Wire {
             self.ended = ended
             self.goals = goals
             self.tasks = tasks
+            self.tallies = tallies
+            self.olderTasks = olderTasks
             self.policy = policy
             self.acceptances = acceptances
             self.prompts = prompts
@@ -6516,6 +6578,8 @@ public enum Wire {
             ended = try c.decodeIfPresent([EndedSession].self, forKey: .ended) ?? []
             goals = try c.decodeIfPresent([Goal].self, forKey: .goals) ?? []
             tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
+            tallies = try c.decodeIfPresent([GoalTally].self, forKey: .tallies)
+            olderTasks = try c.decodeIfPresent(UInt32.self, forKey: .olderTasks)
             policy = try c.decode(RiskPolicy.self, forKey: .policy)
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             prompts = try c.decodeIfPresent(PromptAdditions.self, forKey: .prompts)
@@ -6583,6 +6647,28 @@ public enum Wire {
 
         public init(id: String) {
             self.id = id
+        }
+    }
+
+    /// A page of older finished tasks `tasks.older` asked for, newest first, to that connection only.
+    public struct ServerToClientTasksPage: Codable, Hashable, Sendable {
+        /// The goal asked for. None: every goal.
+        public var goal: String?
+        public var tasks: [Task]
+        /// There are older ones still: ask again from this page's last task.
+        public var more: Bool
+
+        public init(goal: String? = nil, tasks: [Task] = [], more: Bool) {
+            self.goal = goal
+            self.tasks = tasks
+            self.more = more
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            goal = try c.decodeIfPresent(String.self, forKey: .goal)
+            tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
+            more = try c.decode(Bool.self, forKey: .more)
         }
     }
 
@@ -6895,6 +6981,7 @@ public enum Wire {
         case machineAgentLogin(ServerToClientMachineAgentLogin)
         case taskUpdated(ServerToClientTaskUpdated)
         case taskRemoved(ServerToClientTaskRemoved)
+        case tasksPage(ServerToClientTasksPage)
         case goalUpdated(ServerToClientGoalUpdated)
         case noteUpdated(ServerToClientNoteUpdated)
         case intakeUpdated(ServerToClientIntakeUpdated)
@@ -6934,6 +7021,7 @@ public enum Wire {
             case "machine.agent_login": self = .machineAgentLogin(try ServerToClientMachineAgentLogin(from: decoder))
             case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
+            case "tasks.page": self = .tasksPage(try ServerToClientTasksPage(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
             case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
             case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
@@ -6983,6 +7071,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRemoved(let body):
                 try c.encode("task.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .tasksPage(let body):
+                try c.encode("tasks.page", forKey: .type)
                 try body.encode(to: encoder)
             case .goalUpdated(let body):
                 try c.encode("goal.updated", forKey: .type)

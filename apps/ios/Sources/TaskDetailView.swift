@@ -43,8 +43,12 @@ struct TaskDetailView: View {
         } else if !store.feed.hasSnapshot {
             // Opened from a link before the feed landed: it fills in when the snapshot does.
             ProgressView().navigationTitle(id).navigationBarTitleDisplayMode(.inline)
+        } else if store.feed.fetching.contains(id) {
+            // One the snapshot left out (finished over 14 days ago): on its way.
+            ProgressView().navigationTitle(id).navigationBarTitleDisplayMode(.inline)
         } else {
             ContentUnavailableView("Task not found", systemImage: "questionmark.square.dashed")
+                .task(id: id) { store.fetchTask(id) }
         }
     }
 
