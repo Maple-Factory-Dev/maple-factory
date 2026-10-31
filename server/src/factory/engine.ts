@@ -243,17 +243,21 @@ export class Engine {
         if (unknown) fail(`${unknown} isn't one of the org's repos. Add it in Settings → Repositories (or grant the GitHub App access) first.`);
         if (this.store.goals().some((g) => g.prefix === goal.prefix && g.id !== goal.id)) fail(`Another goal already uses ${goal.prefix}.`);
         const before = this.store.goal(goal.id);
-        if (before && before.lead !== goal.lead) {
-          if (member.role !== "admin" && before.lead !== who) fail(`Only admins or ${before.lead}, its lead, can hand ${goal.name} to someone else.`);
-          const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === goal.lead.trim().replace(/^@/, "").toLowerCase()) ?? fail(`${goal.lead} hasn't signed in to this factory.`);
+        // Same login whatever its case, `@` or spaces; a new lead (or a new goal's lead other than its creator) has to have signed in.
+        goal.lead = goal.lead.trim().replace(/^@/, "");
+        const was = before?.lead ?? who;
+        if (goal.lead.toLowerCase() === was.toLowerCase()) goal.lead = was;
+        else {
+          if (before && member.role !== "admin" && before.lead !== who) fail(`Only admins or ${before.lead}, its lead, can hand ${goal.name} to someone else.`);
+          const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === goal.lead.toLowerCase()) ?? fail(`${goal.lead} hasn't signed in to this factory.`);
           goal.lead = to.login;
         }
         // None (an older app) keeps what it had; all empty is none.
         goal.prompts = goal.prompts ? cleanPrompts(goal.prompts) : (before?.prompts ?? null);
         if (goal.prompts && !goal.prompts.planner && !goal.prompts.builder && !goal.prompts.reviewer) goal.prompts = null;
         if (JSON.stringify(goal.prompts ?? null) !== JSON.stringify(before?.prompts ?? null) && member.role !== "admin") {
-          // Its lead before this save, so nobody can make themselves lead and change the prompts in one go.
-          const lead = before ? before.lead : goal.lead;
+          // Its lead before this save (a new goal's creator), so nobody can make themselves lead and change the prompts in one go.
+          const lead = before ? before.lead : who;
           if (lead !== who) fail(`Only admins or ${lead}, its lead, can change ${goal.name}'s agent instructions.`);
         }
         this.store.saveGoal(goal);

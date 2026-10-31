@@ -132,8 +132,9 @@ struct GoalEditorView: View {
         }
     }
 
-    /// Its lead or an admin; whoever makes a goal leads it. The lead it had when the editor opened, not the
-    /// one picked here, as goal.save checks, so changing both in one save isn't half refused.
+    /// Its lead or an admin; whoever makes a goal can set it up, even for someone else. The lead it had when
+    /// the editor opened (a new goal's creator), not the one picked here, as goal.save checks, so changing
+    /// both in one save isn't half refused.
     private var canEditPrompts: Bool {
         client.me?.role == "admin" || (editing?.lead ?? client.me?.login) == client.me?.login
     }

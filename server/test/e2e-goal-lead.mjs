@@ -2,7 +2,8 @@
 //   node server/test/e2e-goal-lead.mjs http://localhost:8788
 // Checks: the lead hands a goal to a member (goal.updated carries the new lead, and the old lead can
 // no longer change its prompts); an admin changes the lead; a member who isn't its lead is refused; a
-// login that hasn't signed in is refused; a save that keeps the lead works for anyone.
+// login that hasn't signed in is refused; a save that keeps the lead works for anyone,
+// whatever its spelling; a new goal for someone else is checked the same way and keeps the creator's prompts.
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 
@@ -61,6 +62,11 @@ goal = await wait("save without a lead", () => ana.goals.find((g) => g.id === go
 if (goal.lead !== ana.member.login) throw new Error(`leaving the lead out changed it to ${goal.lead}`);
 step(`a save that keeps the lead (or leaves it out) works for a non-lead: lead still ${goal.lead}`);
 
+cal.send({ type: "goal.save", goal: { ...goal, lead: ` @${ana.member.login.toUpperCase()} `, summary: "same lead, other spelling" } });
+goal = await wait("respelled lead", () => ana.goals.find((g) => g.id === goal.id && g.summary === "same lead, other spelling"));
+if (goal.lead !== ana.member.login) throw new Error(`resending the lead in another spelling saved ${goal.lead}`);
+step(`a non-lead resending the lead with another case, @ and spaces isn't a hand-over: lead still ${goal.lead}`);
+
 const msg = await refused(cal, { ...goal, lead: cal.member.login }, "cal's refusal");
 if (!msg.includes("hand")) throw new Error(`unexpected refusal: ${msg}`);
 step(`a member who isn't its lead can't take it over: "${msg}"`);
@@ -91,6 +97,20 @@ if (fresh.goals.find((g) => g.id === goal.id)?.lead !== cal.member.login) throw 
 fresh.close();
 step(`an admin hands it to ${goal.lead}, in goal.updated and a fresh snapshot`);
 
+// A new goal made for someone else: the creator can still set its agent instructions, and the lead
+// is checked and spelled like a hand-over.
+const prefix2 = `LEAD${(Date.now() + 1) % 1000}B`;
+const draft = { id: "", name: `Lead ${prefix2}`, prefix: prefix2, color: "#F59E0B", summary: "", repos: [], folder: "/tmp/lead-test", base: null };
+const noOne = await refused(ana, { ...draft, lead: "mf208-nobody" }, "new goal's unknown lead refusal");
+if (!noOne.includes("hasn't signed in")) throw new Error(`unexpected refusal: ${noOne}`);
+step(`a new goal for a login that hasn't signed in is refused: "${noOne}"`);
+ana.send({ type: "goal.save", goal: { ...draft, lead: ` @${ben.member.login.toUpperCase()} `, prompts: { planner: "for ben", builder: "", reviewer: "" } } });
+const made = await wait("goal made for ben", () => ben.goals.find((g) => g.prefix === prefix2));
+if (made.lead !== ben.member.login) throw new Error(`a new goal for ben has lead ${made.lead}`);
+if (made.prompts?.planner !== "for ben") throw new Error("the creator's agent instructions were dropped");
+step(`a member makes a goal led by ${made.lead} (typed " @${ben.member.login.toUpperCase()} ") with agent instructions in one save`);
+
+admin.send({ type: "goal.archive", id: made.id, archived: true });
 admin.send({ type: "goal.archive", id: goal.id, archived: true });
 await new Promise((r) => setTimeout(r, 300));
 process.exit(0);
