@@ -658,6 +658,25 @@ export class Engine {
         await this.autoMerge(task);
         return;
       }
+      case "task.requestReview": {
+        const focus = msg.focus.trim() || fail("Say what the review should look for.");
+        const review = task.autoReview;
+        if (task.state !== "reviewing" || !review?.rounds.length) fail("It isn't in review.");
+        if (review!.rounds.at(-1)!.verdict === "inProgress") fail("A review round is already running; wait for it to come in.");
+        const priv = this.store.private(task.id);
+        if (priv.merging) fail("It's merging now.");
+        if (priv.finishing) fail("It's pushing its work now; ask once that's done.");
+        // The merge waits for this round; approvals already given stay.
+        task.mergeAt = null;
+        const rounds = review!.rounds;
+        if (rounds.length >= review!.maxRounds) review!.maxRounds = rounds.length + 1;
+        rounds.push({ number: rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null, focus, by: who });
+        task.comments.push(await this.comment(who, focus, { anchor: "Review request" }));
+        this.event(task, who, `asked for a review: ${focus}`);
+        this.save(task);
+        await this.pump();
+        return;
+      }
       case "task.merge": {
         // A late or repeated click: it's merging (or merged) already, or its countdown ran out and the
         // factory has it. Nothing to do, and nothing to complain about.
