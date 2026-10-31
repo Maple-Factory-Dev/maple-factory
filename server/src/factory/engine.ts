@@ -660,20 +660,24 @@ export class Engine {
       }
       case "task.requestReview": {
         const focus = msg.focus.trim() || fail("Say what the review should look for.");
-        const review = task.autoReview;
-        if (task.state !== "reviewing" || !review?.rounds.length) fail("It isn't in review.");
+        // Its comment first: past that await, another request may have opened a round, so the checks
+        // and the new round run on the task as it is now, with nothing awaited between them.
+        const comment = await this.comment(who, focus, { anchor: "Review request" });
+        const now_ = this.store.task(task.id) ?? fail("That task isn't there any more.");
+        const review = now_.autoReview;
+        if (now_.state !== "reviewing" || !review?.rounds.length) fail("It isn't in review.");
         if (review!.rounds.at(-1)!.verdict === "inProgress") fail("A review round is already running; wait for it to come in.");
-        const priv = this.store.private(task.id);
+        const priv = this.store.private(now_.id);
         if (priv.merging) fail("It's merging now.");
         if (priv.finishing) fail("It's pushing its work now; ask once that's done.");
         // The merge waits for this round; approvals already given stay.
-        task.mergeAt = null;
+        now_.mergeAt = null;
         const rounds = review!.rounds;
         if (rounds.length >= review!.maxRounds) review!.maxRounds = rounds.length + 1;
         rounds.push({ number: rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null, focus, by: who });
-        task.comments.push(await this.comment(who, focus, { anchor: "Review request" }));
-        this.event(task, who, `asked for a review: ${focus}`);
-        this.save(task);
+        now_.comments.push(comment);
+        this.event(now_, who, `asked for a review: ${focus}`);
+        this.save(now_);
         await this.pump();
         return;
       }

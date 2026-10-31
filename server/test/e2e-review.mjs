@@ -5,7 +5,10 @@
 // scripted agent. Checks: GET /api/tasks/:id/threads reads the pull request's review threads from
 // GitHub; a review with 3 notes posts 3 comments anchored to their lines with the code, and one change
 // request that sends the task in review back to its builder, which applies it; a review of a plan
-// waiting for approval goes to the planner; one while the builder works is typed into its session.
+// waiting for approval goes to the planner; one while the builder works is typed into its session. A
+// teammate's `task.requestReview` on a passed task opens one more round with their focus (in the
+// reviewer's prompt), keeps the approvals already given, and the task merges once it passes; one while
+// a round runs, or on a task that isn't in review, is refused.
 
 const [base = "http://localhost:8788", folder = "/tmp/mfgh/greeter", gh = "http://localhost:18803"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -14,12 +17,16 @@ const feed = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `
 const tasks = new Map();
 let goals = [];
 const errors = [];
+const requested = new Map();
 let poke = null;
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.type === "snapshot") { goals = m.goals; for (const t of m.tasks) tasks.set(t.id, t); }
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
+  // Each round a teammate asked for, as it was first seen running.
+  const round = m.task?.autoReview?.rounds.at(-1);
+  if (round?.focus && round.verdict === "inProgress" && !requested.has(`${m.task.id}#${round.number}`)) requested.set(`${m.task.id}#${round.number}`, { ...round });
   if (m.type === "error") errors.push(m.message);
   poke?.();
 };
@@ -37,13 +44,17 @@ const wait = async (what, test, ms = 30000) => {
 const step = (text) => console.log(`✓ ${text}`);
 const check = (ok, why) => { if (!ok) throw new Error(why); };
 // "[risky]" keeps the factory from merging on its own; ann gives the second approvals.
-const ann = async (m) => {
+// Sends each message in order on one socket; resolves to the errors it got back.
+const ann = async (...ms) => {
   const { token } = await (await fetch(`${base}/dev/token?as=ann`, { method: "POST" })).json();
   const sock = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `Bearer ${token}` } });
+  const said = [];
+  sock.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === "error") said.push(m.message); };
   await new Promise((r) => (sock.onopen = r));
-  sock.send(JSON.stringify(m));
-  await new Promise((r) => setTimeout(r, 500));
+  for (const m of ms) sock.send(JSON.stringify(m));
+  await new Promise((r) => setTimeout(r, 1000));
   sock.close();
+  return said;
 };
 
 await new Promise((r) => (feed.onopen = r));
@@ -149,6 +160,47 @@ await wait("applied 3", () => tasks.get(id3)?.changes.find((c) => c.id === typed
 step(`${typed.id} applied`);
 send({ type: "task.cancel", id: id3 });
 await wait("cancelled 3", () => tasks.get(id3)?.state === "cancelled");
+
+// A teammate asks for one more review round with their own focus; approvals already given stay.
+send({ type: "task.create", goal: goal.id, title: "Review it for security", brief: "[risky] Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+const id4 = `${prefix}-4`;
+await wait("plan 4", () => tasks.get(id4)?.state === "awaitingApproval", 60000);
+send({ type: "task.approvePlan", id: id4 });
+await ann({ type: "task.approvePlan", id: id4 });
+t = await wait("review 4 passed", () => passed(tasks.get(id4)) && tasks.get(id4), 180000);
+const rounds = t.autoReview.rounds.length;
+send({ type: "task.approveChanges", id: id4 });
+await wait("approved", () => tasks.get(id4)?.reviews.length === 1);
+const focus = "Check security: could hello.txt leak anything?";
+// Another right behind it, while that round runs: refused.
+const busy = await ann({ type: "task.requestReview", id: id4, focus }, { type: "task.requestReview", id: id4, focus: "And error handling." });
+check(busy.length === 1 && /already running/.test(busy[0]), `a request during a round wasn't refused: ${busy.join("; ")}`);
+t = await wait("round requested", () => tasks.get(id4)?.autoReview.rounds.length === rounds + 1 && requested.get(`${id4}#${rounds + 1}`) && tasks.get(id4));
+const asked = requested.get(`${id4}#${rounds + 1}`);
+check(asked.focus === focus && asked.by === "ann", JSON.stringify(asked));
+check(t.comments.some((c) => c.author === "ann" && c.anchor === "Review request" && c.text === focus), "no Review request comment");
+check(t.events.some((e) => e.text === `asked for a review: ${focus}`), t.events.map((e) => e.text).join(" / "));
+step(`ann asked for round ${asked.number}: ${JSON.stringify(asked)}`);
+step(`a request while round ${asked.number} runs is refused: ${busy.join("; ")}`);
+t = await wait("requested round passed", () => passed(tasks.get(id4)) && tasks.get(id4).autoReview.rounds.length === rounds + 1 && tasks.get(id4), 120000);
+check(t.autoReview.summary.includes(`Looked at what ann asked: ${focus}`), `the reviewer's prompt didn't carry the focus: ${t.autoReview.summary}`);
+step(`the reviewer's prompt had the focus; it says: ${JSON.stringify(t.autoReview.summary)}`);
+check(t.reviews.join() === "afomera", `approvals after the round: ${t.reviews.join()}`);
+step(`approvals kept through round ${asked.number}: ${t.reviews.join()}`);
+await ann({ type: "task.approveChanges", id: id4 });
+t = await wait("approved 4", () => tasks.get(id4)?.reviews.length === 2 && tasks.get(id4));
+await fetch(`${gh}/_checks`, { method: "POST", body: JSON.stringify({ owner: "acme", repo: "greeter", sha: t.pr.head, runs: [{ name: "test", conclusion: "success" }] }) });
+await wait("CI passed", () => tasks.get(id4)?.pr.checks.every((c) => c.status === "passed"));
+send({ type: "task.merge", id: id4 });
+await wait("merged 4", () => tasks.get(id4)?.state === "merged", 60000);
+step(`${id4} merged after the requested round passed`);
+
+// Not in review: refused.
+send({ type: "task.requestReview", id: id3, focus: "Too late." });
+await new Promise((r) => setTimeout(r, 1000));
+const late = errors.splice(0);
+check(late.some((e) => /isn't in review/.test(e)), `a request on a cancelled task wasn't refused: ${late.join("; ")}`);
+step(`a request on a task that isn't in review is refused: ${late.join("; ")}`);
 
 // Nothing working on it: refused.
 send({ type: "task.review", id: id3, notes: [{ path: "hello.txt", start: 1, end: 1, side: "new", snippet: "+x", text: "Too late." }] });
