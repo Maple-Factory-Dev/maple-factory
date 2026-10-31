@@ -1432,6 +1432,44 @@ final class AppState {
         showToast(mine ? "You took over \(id)" : "Gave \(id) to \(person.firstName)", icon: "person.crop.circle.badge.checkmark")
     }
 
+    // MARK: Goal
+
+    /// The goals `id` can move to (unarchived, not its own), each with why it can't when its goal doesn't work in the task's repo.
+    func moveTargets(_ id: String) -> [(goal: Goal, blocked: String?)] {
+        let task = task(id)
+        let goals = FactoryData.goals.filter { !$0.archived && $0.name != task.goal }
+        guard let client, isLive else { return goals.map { ($0, nil) } }
+        let from = client.goal(named: task.goal)
+        let repo = task.repo ?? from?.repo
+        return goals.map { goal in
+            guard let target = client.goal(named: goal.name) else { return (goal, "isn't on the server") }
+            let repos = ([target.repo].compactMap { $0 } + target.repos).map { $0.lowercased() }
+            if let repo { return (goal, repos.contains(repo.lowercased()) ? nil : "doesn't work in \(repo)") }
+            // A goal on a folder: only to another goal on the same folder.
+            let folder = from?.folder
+            return (goal, repos.isEmpty && folder != nil && target.folder == folder ? nil : "doesn't work in \(folder ?? "its folder")")
+        }
+    }
+
+    /// Moves a task to another goal; it keeps its id, branch and pull request, and the new goal's accepted risk applies.
+    func moveToGoal(_ id: String, goal name: String) {
+        let was = task(id).goal
+        guard name != was else { return }
+        if let client, isLive {
+            guard let goal = client.goal(named: name) else { return }
+            // It leaves the old goal's board at once; the server's update confirms it (or an error puts it back).
+            client.expect(id) { $0.goal = name; $0.effort = nil }
+            client.send(.taskMoveGoal(.init(id: id, goal: goal.id)))
+        } else {
+            update(id) { task in
+                task.goal = name
+                task.effort = nil
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Moved it from \(was) to \(name)", when: "now"), at: 0)
+            }
+        }
+        showToast("Moved \(id) to \(name)", icon: "folder")
+    }
+
     // MARK: Queue
 
     /// Moves a task ahead of `before` in the queue ("top": the front), or to the back. A draft joins the queue.
@@ -2241,6 +2279,8 @@ final class AppState {
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
             // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
             case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
+            // The ⋯ menu's Move to goal ▸ a goal, by name (`movegoal:<id>:<goal>`).
+            case "movegoal": moveToGoal(parts[1], goal: parts.dropFirst(2).joined(separator: ":"))
             // The inspector's Agent and Model menus: `model:<id>:<agent>:<model>`, no model for the default.
             case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
