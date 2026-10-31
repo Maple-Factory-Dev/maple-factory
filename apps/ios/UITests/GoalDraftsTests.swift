@@ -26,9 +26,15 @@ final class GoalDraftsTests: XCTestCase {
     private func swipe(_ title: String, _ action: String) {
         let row = app.staticTexts[title]
         XCTAssertTrue(row.waitForExistence(timeout: 10), "\(title) isn't listed")
+        // Lift the row clear of the tab bar so its swipe buttons are on screen.
+        app.collectionViews.firstMatch.swipeUp()
         row.swipeLeft()
         let button = app.buttons[action]
         XCTAssertTrue(button.waitForExistence(timeout: 5), "no \(action) swipe action")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "swipe \(title)"
+        shot.lifetime = .keepAlways
+        add(shot)
         button.tap()
     }
 
@@ -85,7 +91,9 @@ final class GoalDraftsTests: XCTestCase {
         let ipadHandle = handles.matching(NSPredicate(format: "label CONTAINS %@", ipad)).firstMatch
         let center = CGVector(dx: 0.5, dy: 0.5)
         widgetHandle.coordinate(withNormalizedOffset: center)
-            .press(forDuration: 0.6, thenDragTo: ipadHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)))
+            .press(forDuration: 0.8,
+                   thenDragTo: ipadHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.2)),
+                   withVelocity: .slow, thenHoldForDuration: 0.6)
 
         edit.tap()
         XCTAssertEqual(edit.label, "Edit")
