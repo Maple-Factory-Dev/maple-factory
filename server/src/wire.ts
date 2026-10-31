@@ -1126,7 +1126,8 @@ export interface StatsTotals {
   merged: number;
   autoMerged: number;
   cancelled: number;
-  closed: number;
+  /** Tasks that finished with nothing to merge. None from a factory before it had the closed state. */
+  closed?: number | null;
   created: number;
   tasksTouched: number;
   handsRaised: number;

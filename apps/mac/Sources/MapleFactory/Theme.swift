@@ -99,6 +99,8 @@ enum Theme {
         /// Ready, waiting for a person to merge: between Reviewing's teal and Merged's green.
         static let pendingMerge = Color(light: 0x5E9A1E, dark: 0x9BCF5A)
         static let cancelled = Color(light: 0xC8474B, dark: 0xD9696C)
+        /// Finished with nothing to merge: a neutral gray, darker than Drafting's.
+        static let closed = Color(light: 0x6B7079, dark: 0xA4AAB4)
     }
 
     enum Syntax {

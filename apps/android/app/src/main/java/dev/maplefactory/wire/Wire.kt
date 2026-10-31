@@ -1726,7 +1726,8 @@ data class StatsTotals(
     val merged: Long,
     val autoMerged: Long,
     val cancelled: Long,
-    val closed: Long,
+    /** Tasks that finished with nothing to merge. None from a factory before it had the closed state. */
+    val closed: Long? = null,
     val created: Long,
     val tasksTouched: Long,
     val handsRaised: Long,

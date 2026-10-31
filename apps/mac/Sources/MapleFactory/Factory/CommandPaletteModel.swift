@@ -165,7 +165,7 @@ enum CommandPaletteModel {
 
     /// Nothing typed: what needs you, then what's moving, and the common actions.
     private static func defaults(tasks: [FactoryTask], actions: [PaletteAction]) -> [PaletteSection] {
-        let open = tasks.filter { $0.state != .merged && $0.state != .cancelled }
+        let open = tasks.filter { !$0.state.isFinished }
         let recent = open.filter { $0.needsYou || $0.hand != nil } + open.filter { !$0.needsYou && $0.hand == nil }
         let common = actions.filter { $0 == .newTask || $0 == .newGoal || $0 == .settings }
         return [
@@ -186,7 +186,7 @@ enum CommandPaletteModel {
     /// An id match beats the title, which beats the goal and state. With only filters, every task scores the same,
     /// unfinished ones first.
     private static func taskScore(_ task: FactoryTask, _ words: [String]) -> Int? {
-        let finished = task.state == .merged || task.state == .cancelled ? 0 : 1
+        let finished = task.state.isFinished ? 0 : 1
         guard !words.isEmpty else { return finished }
         var total = 0
         for word in words {

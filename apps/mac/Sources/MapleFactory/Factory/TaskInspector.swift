@@ -230,6 +230,10 @@ struct PipelineStepper: View {
                 Text("Cancelled — stopped before merge")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.State.cancelled)
+            } else if state == .closed {
+                Text("Closed — finished with nothing to merge")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.State.closed)
             } else if let current {
                 Text("Stage \(current + 1) of \(stages.count) · \(state.title)")
                     .font(.system(size: 11.5))

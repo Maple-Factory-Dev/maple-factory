@@ -167,6 +167,7 @@ struct StatisticsView: View {
                 metric("Questions answered in", duration(t.answerMedianMs) + (t.answerMedianMs == nil ? "" : " (median)"))
                 metric("Permission prompts", t.prompts == 0 ? "0" : "\(yes) allowed, \(no) denied")
                 metric("Cancelled", "\(t.cancelled)")
+                if let closed = t.closed { metric("Closed with nothing to merge", "\(closed)") }
             }
         }
     }

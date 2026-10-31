@@ -3789,7 +3789,8 @@ public enum Wire {
         public var merged: UInt32
         public var autoMerged: UInt32
         public var cancelled: UInt32
-        public var closed: UInt32
+        /// Tasks that finished with nothing to merge. None from a factory before it had the closed state.
+        public var closed: UInt32?
         public var created: UInt32
         public var tasksTouched: UInt32
         public var handsRaised: UInt32
@@ -3815,7 +3816,7 @@ public enum Wire {
         public var reviewRoundsPerMerge: Double?
         public var steersPerTask: Double?
 
-        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, closed: UInt32, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
+        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, closed: UInt32? = nil, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
             self.merged = merged
             self.autoMerged = autoMerged
             self.cancelled = cancelled

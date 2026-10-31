@@ -80,7 +80,7 @@ struct TaskFocusView: View {
                     ContentUnavailableView {
                         Label("No session running", systemImage: "terminal")
                     } description: {
-                        Text(task.state == .merged || task.state == .cancelled
+                        Text(task.state.isFinished
                              ? "\(task.id) is \(task.state.title.lowercased()); its sessions' history is under Machines."
                              : "A planner, builder or reviewer session shows here while one works on \(task.id).")
                     }
@@ -495,7 +495,7 @@ struct TaskFocusView: View {
                     detailRow("Runs on") {
                         Text(client.machineName(worker.machine)).font(.system(size: 12, design: .monospaced))
                     }
-                } else if let waiting = task.liveLog, task.state != .merged, task.state != .cancelled {
+                } else if let waiting = task.liveLog, !task.state.isFinished {
                     detailRow("Runs on") { Text(waiting).foregroundStyle(Theme.State.awaitingApproval).lineLimit(2) }
                 }
             } else if let found = appState.session(for: task.id) {
@@ -560,7 +560,7 @@ struct TaskFocusView: View {
     /// What builds it and the model it asks for: menus until it's merged or cancelled. A change applies
     /// from its next session, so a running one keeps going.
     @ViewBuilder private var agentRows: some View {
-        let done = task.state == .merged || task.state == .cancelled
+        let done = task.state.isFinished
         let agents = appState.isLive ? appState.liveAgents : ["claude", "codex"]
         let presets = AppState.models(for: task.builder)
         detailRow("Agent") {
@@ -699,6 +699,11 @@ struct StageTrack: View {
                         Text("Cancelled before merge")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(Theme.State.cancelled)
+                            .lineLimit(1)
+                    } else if task.state == .closed && stage == .merged {
+                        Text("Closed, nothing to merge")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.State.closed)
                             .lineLimit(1)
                     }
                 }

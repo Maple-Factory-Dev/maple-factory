@@ -208,6 +208,7 @@ import SwiftUI
             }
         case .merged: return t.pr.map { "#\($0.number) merged" } ?? "Merged"
         case .cancelled: return "Cancelled"
+        case .closed: return "Closed"
         case .other: return "In progress"
         }
     }
@@ -222,6 +223,7 @@ import SwiftUI
         case .reviewing: .reviewing
         case .merged: .merged
         case .cancelled: .cancelled
+        case .closed: .closed
         // A state a newer factory added: show it as work in progress.
         case .other: .building
         }

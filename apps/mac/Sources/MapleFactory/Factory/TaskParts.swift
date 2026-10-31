@@ -38,7 +38,7 @@ struct TaskOwnership: View {
     let task: FactoryTask
     var avatarSize: CGFloat = 18
 
-    private var open: Bool { task.state != .merged && task.state != .cancelled }
+    private var open: Bool { !task.state.isFinished }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -172,7 +172,7 @@ struct TaskActionButtons: View {
     /// Shows the Schedule… popover; without it there's no Schedule….
     var schedule: (() -> Void)? = nil
 
-    private var open: Bool { task.state != .merged && task.state != .cancelled }
+    private var open: Bool { !task.state.isFinished }
 
     var body: some View {
         if task.queued {
@@ -215,7 +215,7 @@ struct TaskActionButtons: View {
             if task.state != .drafting && task.state != .awaitingApproval && task.state != .backlog {
                 Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
             }
-            if task.state != .cancelled {
+            if task.state != .cancelled && task.state != .closed {
                 Button(role: .destructive) { confirmCancel = true } label: { Label("Cancel task…", systemImage: "xmark.circle") }
             }
             Divider()
