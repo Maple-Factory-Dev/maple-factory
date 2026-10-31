@@ -1,7 +1,7 @@
 // The factory's settings on the web, for admins who don't run the Mac app: its name, repos, secrets,
-// people, prompts, and merging and risk. It sends the same feed messages the Mac app does and reads
-// the snapshot and their *.updated answers; the server checks every one is an admin's. Connectors and
-// each repo's worktree scripts stay in the Mac app.
+// people, prompts, integrations, and merging and risk. It sends the same feed messages the Mac app does
+// and reads the snapshot and their *.updated answers; the server checks every one is an admin's.
+// Connectors and each repo's worktree scripts stay in the Mac app.
 //
 // Each form edits a draft against the server's value it started from (syncDraft): another admin's save
 // resets a form nobody has touched, and leaves one with edits in it alone. The helpers up top are pure
@@ -14,6 +14,7 @@ export const SECTIONS = [
   { key: "secrets", title: "Secrets" },
   { key: "people", title: "People" },
   { key: "prompts", title: "Prompts" },
+  { key: "integrations", title: "Integrations" },
   { key: "merging", title: "Merging & risk" },
 ];
 export const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
@@ -74,6 +75,38 @@ export function cleanOwners(text, org = "") {
   return owners;
 }
 
+/** An integration's status line, as the Mac app words it: `tone` is "error", "muted" or "faint". `ago`
+ *  turns a time into "3m ago". */
+export function integrationStatus(i, ago) {
+  if (i.lastError) return { tone: "error", text: `Error: ${i.lastError}` };
+  if (i.enabled) return { tone: "muted", text: i.lastEventAt ? `Connected · last event ${ago(i.lastEventAt)}` : "Connected · no events yet" };
+  return i.updatedBy ? { tone: "muted", text: "Off" } : { tone: "faint", text: "Not set up" };
+}
+
+/** What to send to keep an integration as it is: secrets blank (kept), plain values as stored, and the
+ *  ones the env vars give left out, so saving doesn't copy them into Settings. */
+export function keptValues(i) {
+  return Object.fromEntries(Object.entries(i.values ?? {}).filter(([name]) => !i.fromEnv?.includes(name)));
+}
+
+/** The form's fields for an integration: secrets blank, plain values as stored unless the env vars give them. */
+export function integrationForm(i) {
+  return Object.fromEntries(i.fields.map((f) => [f.name, f.secret || i.fromEnv?.includes(f.name) ? "" : i.values?.[f.name] ?? ""]));
+}
+
+/** The integrations.save for `draft` (the form's fields) over what's kept: a blank secret keeps the
+ *  stored one, a blank plain field clears it. */
+export function integrationSave(i, draft, enabled) {
+  return { type: "integrations.save", kind: i.kind, enabled, values: { ...keptValues(i), ...draft } };
+}
+
+/** The URL to paste into Slack, Linear or Jira: on this server when it only gives a path, and for Jira
+ *  with the webhook secret it has to carry. */
+export function webhookUrl(i, origin) {
+  const url = i.webhookUrl.startsWith("/") ? String(origin).replace(/\/+$/, "") + i.webhookUrl : i.webhookUrl;
+  return url + (i.kind === "jira" ? "?secret=<webhook secret>" : "");
+}
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null));
 
@@ -91,7 +124,7 @@ export function syncDraft(draft, server) {
 // ---- the page ----
 
 /** The Settings page, wired to the app: `h` builds elements, `send` puts a message on the feed. */
-export function createSettings({ state, h, send, toast, render }) {
+export function createSettings({ state, h, send, toast, render, ago }) {
   const drafts = new Map(); // form → { server, value }
   const saving = new Map(); // what's been sent → the toast for when its *.updated comes back
   const confirming = new Set(); // destructive buttons asking "Sure?"
@@ -122,11 +155,11 @@ export function createSettings({ state, h, send, toast, render }) {
   const toggle = (label, detail, on, flip) => h("label", { class: "set-row toggle-row" },
     h("span", { class: "set-label" }, h("span", {}, label), detail && h("span", { class: "set-detail" }, detail)),
     h("input", { type: "checkbox", class: "switch", role: "switch", checked: on, onchange: (e) => flip(e.target.checked) }));
-  const saveBar = (key, dirty, onSave, onReset) => h("div", { class: "set-actions" },
+  const saveBar = (key, dirty, onSave, onReset, { label = "Save", ready = dirty } = {}) => h("div", { class: "set-actions" },
     h("span", { class: "muted", style: "font-size:13px" }, saving.has(key) ? "Saving…" : dirty ? "Unsaved changes" : ""),
     h("span", { class: "spacer" }),
     dirty && h("button", { type: "button", class: "btn", onclick: onReset }, "Discard"),
-    h("button", { type: "button", class: "btn primary", disabled: !dirty || saving.has(key), onclick: onSave }, "Save"));
+    h("button", { type: "button", class: "btn primary", disabled: !ready || saving.has(key), onclick: onSave }, label));
   const macOnly = (what) => h("p", { class: "set-mac muted" }, `${what}: manage in the Mac app.`);
 
   function general() {
@@ -291,6 +324,47 @@ export function createSettings({ state, h, send, toast, render }) {
     ];
   }
 
+  function integrations() {
+    if (state.integrations == null) {
+      return h("div", { class: "card empty" }, h("strong", {}, "Needs a newer server"), h("br"), "Update this factory's maple-server to set up integrations here.");
+    }
+    const copyUrl = (url) => navigator.clipboard.writeText(url).then(() => toast("Copied the webhook URL."), () => toast("Couldn't copy the webhook URL."));
+    return [
+      h("p", { class: "muted" }, "Where requests come into the factory from: Slack's /maple, and Linear or Jira issues with the factory's label. The bot answers back where they came from."),
+      state.integrations.map((i) => {
+        const key = `integration:${i.kind}`;
+        const d = draft(key, integrationForm(i));
+        const status = integrationStatus(i, ago);
+        const url = webhookUrl(i, location.origin);
+        const fromEnv = i.fields.filter((f) => i.fromEnv?.includes(f.name));
+        const save = (msg, text) => go(msg, { key, text });
+        return h("div", { class: "card set-card" },
+          h("div", { class: "set-row" },
+            h("span", { class: "set-label" }, h("span", {}, i.label), h("span", { class: `set-status ${status.tone}` }, status.text)),
+            h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": `${i.label} enabled`, checked: i.enabled, disabled: saving.has(key),
+              onchange: (e) => save(integrationSave(i, keptValues(i), e.target.checked), `${i.label} is ${e.target.checked ? "on" : "off"}.`) })),
+          i.fields.map((f) => {
+            const isSet = i.values?.[f.name] != null;
+            const env = i.fromEnv?.includes(f.name);
+            const placeholder = f.secret ? (isSet ? "•••••••" : f.required ? "Required" : "Optional")
+              : env ? i.values[f.name] ?? "" : f.required ? "Required" : "Optional";
+            return field(h("span", {}, f.label, env && h("span", { class: "pill set-env", title: "Set by the Worker's environment variables" }, "environment")),
+              f.help + (f.secret && isSet ? " Leave it blank to keep the one that's set." : ""),
+              keep(`${key}:${f.name}`, h("input", { type: f.secret ? "password" : "text", class: "mono", placeholder, value: d.value[f.name] ?? "",
+                autocomplete: f.secret ? "new-password" : "off", autocapitalize: "off", spellcheck: "false",
+                oninput: (e) => { d.value[f.name] = e.target.value; render(); } })));
+          }),
+          h("div", { class: "set-row set-webhook" },
+            h("span", { class: "set-label" }, h("span", {}, "Webhook URL"), h("span", { class: "set-detail mono", title: url }, url)),
+            h("button", { type: "button", class: "btn small", onclick: () => copyUrl(url) }, "Copy")),
+          fromEnv.length > 0 && h("p", { class: "set-detail", style: "margin:0" }, `Set by environment: ${fromEnv.map((f) => f.label).join(", ")}. A value saved here wins over it.`),
+          i.updatedBy && i.updatedAt && h("p", { class: "set-detail", style: "margin:0" }, `Saved by @${i.updatedBy} · ${ago(i.updatedAt)}`),
+          saveBar(key, isDirty(d), () => save(integrationSave(i, d.value, true), `Saved ${i.label}.`), () => { drafts.delete(key); render(); },
+            { label: i.enabled ? "Save" : "Save and turn on", ready: isDirty(d) || !i.enabled }));
+      }),
+    ];
+  }
+
   function merging() {
     if (!state.policy) return h("div", { class: "card empty" }, "Loading…");
     const d = draft("policy", formFromPolicy(state.policy));
@@ -328,7 +402,7 @@ export function createSettings({ state, h, send, toast, render }) {
     ];
   }
 
-  const BODIES = { general, repos, secrets, people, prompts, merging };
+  const BODIES = { general, repos, secrets, people, prompts, integrations, merging };
 
   function view(sub) {
     if (state.me?.role !== "admin") {
@@ -346,7 +420,8 @@ export function createSettings({ state, h, send, toast, render }) {
 
   /** A message from the feed: an answer to something sent from here shows its toast. */
   function receive(m) {
-    const answered = { "policy.updated": ["policy"], "prompts.updated": ["prompts"], "members.updated": ["members"], "repos.updated": ["repos", "owners"], "secrets.updated": ["secrets"] }[m.type];
+    const answered = { "policy.updated": ["policy"], "prompts.updated": ["prompts"], "members.updated": ["members"], "repos.updated": ["repos", "owners"], "secrets.updated": ["secrets"],
+      "integrations.updated": (m.integrations ?? []).map((i) => `integration:${i.kind}`) }[m.type];
     if (m.type === "error") {
       saving.clear();
       return;
@@ -355,6 +430,8 @@ export function createSettings({ state, h, send, toast, render }) {
       if (!saving.has(key)) continue;
       toast(saving.get(key));
       saving.delete(key);
+      // A saved integration's secrets come back blank: start its form again from what's stored.
+      if (key.startsWith("integration:")) drafts.delete(key);
     }
   }
 

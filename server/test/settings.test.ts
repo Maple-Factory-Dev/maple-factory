@@ -1,10 +1,11 @@
 // The web Settings page's helpers (web/app/settings.js): the Merging & risk form round-trips a policy and
 // clamps what the server would refuse, approved GitHub accounts parse from what an admin types, and a
-// form's draft follows another admin's save only while nobody has touched it.
+// form's draft follows another admin's save only while nobody has touched it; an integration's status reads
+// as the Mac app's, and its save keeps stored secrets and leaves the env vars' values out.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_POLICY, validPolicy } from "../src/factory/policy.ts";
-import { clampInt, cleanOwners, formFromPolicy, isDirty, policyFromForm, syncDraft } from "../web/app/settings.js";
+import { clampInt, cleanOwners, formFromPolicy, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, syncDraft, webhookUrl } from "../web/app/settings.js";
 
 const policy = structuredClone(DEFAULT_POLICY);
 
@@ -107,4 +108,53 @@ test("the policy form's draft: an untouched one follows policy.updated, an edite
   assert.equal(kept.value.maxFiles, 30);
   assert.equal(kept.value.autoMerge.low, true);
   assert.equal(isDirty(kept), true);
+});
+
+const linear = {
+  kind: "linear",
+  label: "Linear",
+  fields: [
+    { name: "webhookSecret", label: "Webhook signing secret", secret: true, required: true, help: "" },
+    { name: "apiKey", label: "API key", secret: true, required: false, help: "" },
+    { name: "label", label: "Label", secret: false, required: false, help: "" },
+  ],
+  enabled: true,
+  values: { webhookSecret: "", apiKey: "", label: "maple" },
+  fromEnv: ["apiKey"],
+  webhookUrl: "/integrations/linear",
+  lastEventAt: null,
+  lastError: null,
+  updatedBy: "andrea",
+  updatedAt: 1,
+};
+const ago = (ms: number) => `at ${ms}`;
+
+test("an integration's status: an error first, then connected, off or not set up", () => {
+  assert.deepEqual(integrationStatus({ ...linear, lastError: "Linear refused the bot's comment (401)" }, ago), { tone: "error", text: "Error: Linear refused the bot's comment (401)" });
+  assert.deepEqual(integrationStatus({ ...linear, lastEventAt: 5 }, ago), { tone: "muted", text: "Connected · last event at 5" });
+  assert.deepEqual(integrationStatus(linear, ago), { tone: "muted", text: "Connected · no events yet" });
+  assert.deepEqual(integrationStatus({ ...linear, enabled: false }, ago), { tone: "muted", text: "Off" });
+  assert.deepEqual(integrationStatus({ ...linear, enabled: false, updatedBy: null, values: {} }, ago), { tone: "faint", text: "Not set up" });
+});
+
+test("the kept values leave out the ones the env vars give", () => {
+  assert.deepEqual(keptValues(linear), { webhookSecret: "", label: "maple" });
+  assert.deepEqual(keptValues({ ...linear, fromEnv: [] }), linear.values);
+});
+
+test("a save sends a blank secret, so the stored one is kept, and the edited plain fields", () => {
+  const form = integrationForm(linear);
+  assert.deepEqual(form, { webhookSecret: "", apiKey: "", label: "maple" });
+  form.label = "factory";
+  const msg = integrationSave(linear, form, true);
+  assert.deepEqual(msg, { type: "integrations.save", kind: "linear", enabled: true, values: { webhookSecret: "", apiKey: "", label: "factory" } });
+  // A new secret goes through; the env var's API key isn't copied into Settings.
+  assert.equal(integrationSave(linear, { ...form, webhookSecret: "whsec" }, true).values.webhookSecret, "whsec");
+  assert.deepEqual(integrationSave(linear, {}, false), { type: "integrations.save", kind: "linear", enabled: false, values: { webhookSecret: "", label: "maple" } });
+});
+
+test("the webhook URL: on this server when it's a path, as given when it's whole, Jira's with its secret", () => {
+  assert.equal(webhookUrl(linear, "https://maple.example.com/"), "https://maple.example.com/integrations/linear");
+  assert.equal(webhookUrl({ ...linear, webhookUrl: "https://factory.acme.dev/integrations/linear" }, "http://localhost:8788"), "https://factory.acme.dev/integrations/linear");
+  assert.equal(webhookUrl({ ...linear, kind: "jira", webhookUrl: "/integrations/jira" }, "http://localhost:8788"), "http://localhost:8788/integrations/jira?secret=<webhook secret>");
 });

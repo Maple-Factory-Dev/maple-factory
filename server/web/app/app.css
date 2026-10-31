@@ -402,6 +402,12 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .set-item { align-items: center; }
 .set-item:hover { background: none; }
 .set-buttons { flex: none; justify-content: flex-end; }
+.set-status { font-weight: 400; font-size: 13px; color: var(--muted); }
+.set-status.faint { color: var(--faint); }
+.set-status.error { color: var(--cancelled); }
+.pill.set-env { margin-left: 6px; padding: 0 7px; font-size: 11px; font-weight: 450; color: var(--faint); background: none; border: 1px solid var(--stroke); vertical-align: 1px; }
+.set-webhook .set-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-webhook .btn { flex: none; }
 .confirm { font-size: 13px; }
 .btn.danger-text { color: var(--cancelled); }
 .avatar { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--fill); color: var(--muted); font-weight: 600; font-size: 13px; object-fit: cover; }
