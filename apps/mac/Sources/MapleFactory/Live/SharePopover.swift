@@ -12,6 +12,7 @@ struct SharePopover: View {
         let role: String
         let online: Bool
         let viewing: String?
+        var mobile = false
         var id: String { login }
     }
 
@@ -20,13 +21,19 @@ struct SharePopover: View {
             return client.members.map { m in
                 let presence = client.online.first { $0.login == m.login }
                 return Row(person: LiveAdapter.person(m.login, members: client.members), login: m.login, role: m.role,
-                           online: presence != nil, viewing: presence?.viewing)
+                           online: presence != nil, viewing: presence?.viewing, mobile: presence?.mobile == true)
             }
             .sorted { ($0.online ? 0 : 1, $0.login) < ($1.online ? 0 : 1, $1.login) }
         }
         return FactoryData.presence.map { p in
             Row(person: p.person, login: p.person.github ?? p.person.firstName.lowercased(), role: "member", online: true, viewing: p.viewing)
         }
+    }
+
+    /// What they're looking at or that they're online, saying so when it's from a phone; their handle when offline.
+    private static func status(_ row: Row) -> String {
+        if let viewing = row.viewing { return "Looking at \(viewing)" + (row.mobile ? " · on mobile" : "") }
+        return row.online ? (row.mobile ? "Online on mobile" : "Online") : "@\(row.login)"
     }
 
     private var org: String { state.isLive ? (client.org.isEmpty ? client.workspaceName : client.org) : "acme" }
@@ -46,12 +53,12 @@ struct SharePopover: View {
             VStack(spacing: 2) {
                 ForEach(rows) { row in
                     HStack(spacing: 10) {
-                        AgentAvatar(agent: row.person, size: 24, online: row.online)
+                        AgentAvatar(agent: row.person, size: 24, online: row.online, mobile: row.mobile)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(row.login == client.me?.login ? "\(row.person.name) (you)" : row.person.name)
                                 .font(.system(size: 12.5, weight: .medium))
                                 .foregroundStyle(Theme.text)
-                            Text(row.viewing.map { "Looking at \($0)" } ?? (row.online ? "Online" : "@\(row.login)"))
+                            Text(Self.status(row))
                                 .font(.system(size: 11))
                                 .foregroundStyle(Theme.textMuted)
                         }

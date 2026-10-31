@@ -1665,6 +1665,8 @@ data class Presence(
     val login: String,
     val viewing: String? = null,
     val since: Long,
+    /** True when every app the person has open is the iPhone or Android app. */
+    val mobile: Boolean? = null,
 )
 
 /** A goal Draft with AI suggests making. */

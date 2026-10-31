@@ -82,6 +82,8 @@ struct Agent: Identifiable {
     let color: Color
     var isHuman = false
     var github: String? = nil
+    /// Online only on the iPhone or Android app, where presence says so (task viewers carry it).
+    var mobile = false
     var id: String { name }
 
     var firstName: String { String(name.split(separator: " ").first ?? "") }

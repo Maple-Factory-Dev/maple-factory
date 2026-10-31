@@ -3658,11 +3658,14 @@ public enum Wire {
         public var login: String
         public var viewing: String?
         public var since: UInt64
+        /// True when every app the person has open is the iPhone or Android app.
+        public var mobile: Bool?
 
-        public init(login: String, viewing: String? = nil, since: UInt64) {
+        public init(login: String, viewing: String? = nil, since: UInt64, mobile: Bool? = nil) {
             self.login = login
             self.viewing = viewing
             self.since = since
+            self.mobile = mobile
         }
     }
 

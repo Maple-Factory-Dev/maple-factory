@@ -153,6 +153,21 @@ import Testing
         #expect(client.factoryTasks[1].viewers.compactMap(\.github) == ["alice", "carol"])
     }
 
+    @Test func viewersCarryWhetherTheyreOnAPhone() throws {
+        let client = FactoryClient()
+        client.apply(try decode(snapshot([task("MF-1"), task("MF-2")], online: [("alice", "MF-1")])))
+        #expect(client.factoryTasks[0].viewers.map(\.mobile) == [false])
+
+        // Alice puts the Mac away and keeps looking from her phone: the same task, now with the phone flag.
+        let phone = #"{"type":"presence","online":[{"login":"alice","viewing":"MF-1","since":2,"mobile":true},{"login":"carol","viewing":"MF-2","since":2}]}"#
+        let viewers = FactoryClient.viewers(try presenceOnline(phone), me: "bob", members: client.members)
+        #expect(viewers["MF-1"]?.map(\.mobile) == [true])
+        #expect(viewers["MF-2"]?.map(\.mobile) == [false])
+        #expect(FactoryClient.viewerChanges(client.factoryTasks, viewers: viewers).map(\.index) == [0, 1])
+        client.apply(try decode(phone))
+        #expect(client.factoryTasks.map { $0.viewers.map(\.mobile) } == [[true], [false]])
+    }
+
     private func presenceOnline(_ json: String) throws -> [Wire.Presence] {
         guard case .presence(let update) = try decode(json) else { throw CocoaError(.coderReadCorrupt) }
         return update.online

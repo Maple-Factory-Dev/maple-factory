@@ -660,16 +660,19 @@ import Foundation
         var viewers: [String: [Person]] = [:]
         for presence in online where presence.login != me {
             guard let id = presence.viewing else { continue }
-            viewers[id, default: []].append(LiveAdapter.person(presence.login, members: members))
+            var person = LiveAdapter.person(presence.login, members: members)
+            person.mobile = presence.mobile == true
+            viewers[id, default: []].append(person)
         }
         return viewers
     }
 
-    /// The tasks whose viewers aren't `viewers`', by index, with the viewers they now have.
+    /// The tasks whose viewers (or whether they're on a phone) aren't `viewers`', by index, with the viewers they now have.
     static func viewerChanges(_ tasks: [FactoryTask], viewers: [String: [Person]]) -> [(index: Int, viewers: [Person])] {
         tasks.indices.compactMap { index in
             let now = viewers[tasks[index].id] ?? []
-            return now.map(\.id) == tasks[index].viewers.map(\.id) ? nil : (index, now)
+            let same = now.elementsEqual(tasks[index].viewers) { $0.id == $1.id && $0.mobile == $1.mobile }
+            return same ? nil : (index, now)
         }
     }
 

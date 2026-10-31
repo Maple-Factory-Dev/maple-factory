@@ -124,6 +124,8 @@ final class FactoryStore {
         if status != .live { status = attempt == 0 ? .connecting : status }
         var request = URLRequest(url: FactoryAPI.websocketURL(server, path: "/client/connect"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Teammates see a phone badge for someone who's only on a phone.
+        request.setValue("mobile", forHTTPHeaderField: "x-maple-client")
         let socket = URLSession.shared.webSocketTask(with: request)
         // The default 1 MiB is less than a big factory's snapshot ("Message too long"), as on the Mac.
         socket.maximumMessageSize = 64 << 20

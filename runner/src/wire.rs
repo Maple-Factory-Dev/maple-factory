@@ -1873,6 +1873,9 @@ pub struct Presence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewing: Option<String>,
     pub since: u64,
+    /// True when every app the person has open is the iPhone or Android app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mobile: Option<bool>,
 }
 
 /// A goal Draft with AI suggests making.

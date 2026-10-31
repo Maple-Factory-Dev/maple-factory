@@ -14,6 +14,7 @@ import { Secrets } from "./secrets.ts";
 import { Integrations } from "./integrations/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
+import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { statsWindow, summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
@@ -34,6 +35,8 @@ interface Client {
   /** The task this connection's app is showing. */
   viewing?: string | null;
   since?: number;
+  /** The iPhone or Android app: it opened the socket with `x-maple-client: mobile`. */
+  mobile?: boolean;
 }
 
 export class OrgHub extends DurableObject<Env> {
@@ -202,7 +205,7 @@ export class OrgHub extends DurableObject<Env> {
         const member = JSON.parse(request.headers.get("x-member") ?? "null") as Member;
         const pair = new WebSocketPair();
         this.ctx.acceptWebSocket(pair[1], ["client"]);
-        pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
+        pair[1].serializeAttachment({ member, subscribed: false, mobile: isMobileClient(request.headers.get("x-maple-client")) } satisfies Client);
         await this.armRunnerCheck();
         await this.armGitHubStatusCheck();
         await this.armRecheck();
@@ -573,18 +576,15 @@ export class OrgHub extends DurableObject<Env> {
     }));
   }
 
-  /** One entry per person with the app open: the most recent of their connections' views. */
+  /** One entry per person with the app open: the most recent of their connections' views, and whether they're only on a phone. */
   private online(except?: WebSocket): Presence[] {
-    const people = new Map<string, Presence>();
+    const connections: Connection[] = [];
     for (const ws of this.ctx.getWebSockets("client")) {
       if (ws === except) continue;
       const c = ws.deserializeAttachment() as Client;
-      if (!c.subscribed) continue;
-      const seen = people.get(c.member.login);
-      const since = c.since ?? 0;
-      if (!seen || (c.viewing && (!seen.viewing || since > seen.since))) people.set(c.member.login, { login: c.member.login, viewing: c.viewing ?? null, since });
+      if (c.subscribed) connections.push({ login: c.member.login, viewing: c.viewing, since: c.since, mobile: c.mobile });
     }
-    return [...people.values()];
+    return aggregatePresence(connections);
   }
 
   async webSocketClose(ws: WebSocket) {
