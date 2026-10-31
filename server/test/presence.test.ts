@@ -8,7 +8,7 @@ test("someone only on their phone is mobile", () => {
   assert.deepEqual(aggregatePresence([{ login: "ana", viewing: "MF-1", since: 5, mobile: true }]), [{ login: "ana", viewing: "MF-1", since: 5, mobile: true }]);
 });
 
-test("someone on a phone and two phones is still mobile", () => {
+test("someone on two phones is still mobile", () => {
   const [ana] = aggregatePresence([
     { login: "ana", viewing: null, since: 1, mobile: true },
     { login: "ana", viewing: "MF-2", since: 2, mobile: true },
