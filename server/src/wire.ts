@@ -815,6 +815,8 @@ export interface Integration {
   webhookUrl: string;
   /** A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL. */
   setupUrl?: string | null;
+  /** How it's set up on the other side, in a few words (Slack: the channels @Maple is in). */
+  status?: string | null;
   /** When it last reached the factory and was verified. */
   lastEventAt?: number | null;
   /** What went wrong last, since the last event that went well. */

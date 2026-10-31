@@ -1510,6 +1510,9 @@ pub struct Integration {
     /// A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_url: Option<String>,
+    /// How it's set up on the other side, in a few words (Slack: the channels @Maple is in).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     /// When it last reached the factory and was verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event_at: Option<u64>,
