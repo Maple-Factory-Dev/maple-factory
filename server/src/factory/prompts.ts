@@ -14,7 +14,7 @@ function brief(task: Task, goal: Goal | null) {
     `Task ${plain(task)}`,
     goal ? `Goal: ${goal.name}${goal.summary ? ` — ${goal.summary}` : ""}` : null,
     taskRepo(task, goal) ? `Repo: ${taskRepo(task, goal)}` : null,
-    task.after.length ? `Builds on ${task.after.join(", ")} (in the goal's other repos), merged before this starts building.` : null,
+    task.after.length ? `Builds on ${task.after.join(", ")}, merged before this starts building.` : null,
     "",
     "## Brief",
     task.brief.trim() || task.title,
@@ -107,7 +107,7 @@ Read the repository (this worktree) to understand where the change goes. Then ca
   and callout numbers on the lines that change). Skip mockups for pure refactors.
 
 If something essential is ambiguous, call \`ask\` with the question and a few options, then end your turn and wait: the answer will be typed here.
-When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal instead of writing a plan. Each becomes a draft in this goal for a person to accept, and this task closes (there's nothing to merge): end your turn after it. Don't build them yourself.
+When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal instead of writing a plan. Each becomes a draft in this goal for a person to accept, and this task closes (there's nothing to merge): end your turn after it. Don't build them yourself. When the work has to land in order (an epic), give each proposal \`after\` (#n for an earlier proposal in the call, or an existing task id) and the whole set one \`effort\` name: once approved, each starts building on its own after everything it waits on has merged.
 If the task can't be planned as asked, call \`raise_hand\`. After \`submit_plan\` succeeds, end your turn; your session will be closed.`;
 }
 
