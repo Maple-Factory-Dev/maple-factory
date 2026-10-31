@@ -362,11 +362,12 @@ function sendSymbols(dsym, binary) {
   ok("dSYMs uploaded to Sentry");
 }
 
-/** One release's dSYM, after the fact: from apps/mac/.build/release if that's still the shipped binary,
+/** One release's dSYM, after the fact: from apps/mac/.build/release (or --built <path to its MapleFactory>,
+ *  e.g. another checkout's .build/release) if that's still the shipped binary,
  *  else from its mac-built-<v> tag built in a scratch worktree. Its UUID must be the shipped app's, read
  *  from /Applications or --app <path to Maple Factory.app>. */
 function cmdSymbols(v) {
-  if (!v) fail("usage: release.mjs symbols <version> [--app <path to Maple Factory.app>]");
+  if (!v) fail("usage: release.mjs symbols <version> [--app <path to Maple Factory.app>] [--built <path to its release MapleFactory>]");
   heading(`Symbols for ${v}`);
   loadEnv();
   need("SENTRY_AUTH_TOKEN");
@@ -376,7 +377,7 @@ function cmdSymbols(v) {
   const binary = join(app, "Contents/MacOS/MapleFactory");
   const dsym = join(here, `build/MapleFactory-${v}.dSYM`);
   rmSync(dsym, { recursive: true, force: true });
-  let built = join(here, ".build/release/MapleFactory");
+  let built = option("--built") ?? join(here, ".build/release/MapleFactory");
   if (!existsSync(built) || uuids(built) !== uuids(binary)) {
     // The same path the release was built from isn't ours to rebuild in place; a worktree of the tag
     // builds the same sources, and its UUID check below says whether it came out the same binary.
@@ -566,7 +567,8 @@ if (!COMMANDS[command]) {
   appcast             build/updates-site/appcast.xml and changelog.html from every releases/*/release.json
   publish             uploads build/updates-site/ to R2 (the appcast last), and checks it's live
   ship <version>      all of these, asking before it starts and before it publishes
-  symbols <version>   uploads an already-shipped release's dSYM (--app <path> if /Applications isn't that version)`);
+  symbols <version>   uploads an already-shipped release's dSYM (--app <path> if /Applications isn't that version,
+                      --built <path> for a checkout's .build/release/MapleFactory that built it)`);
   process.exit(command ? 1 : 0);
 }
 try {
