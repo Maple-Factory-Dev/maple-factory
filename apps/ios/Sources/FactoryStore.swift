@@ -251,6 +251,23 @@ final class FactoryStore {
         notice = .toast(plan ? "Sent to planning" : "Saved as a draft", taskId: nil)
     }
 
+    // MARK: Goals
+
+    /// The goal's lead or an admin: who the server lets change its auto-merge or archive it.
+    func canLead(_ goal: Wire.Goal) -> Bool { feed.canLead(goal, me: feed.me) }
+
+    /// Lets the factory auto-merge the goal's work up to `upTo`, on the record; nil takes it back.
+    func acceptRisk(goal: Wire.Goal, upTo: Wire.RiskLevel?) {
+        send(.goalAcceptRisk(.init(goal: goal.id, upTo: upTo, note: nil)))
+        notice = .toast(upTo.map { "You accepted up to \($0.rawValue) for \(goal.name)" } ?? "Auto-merge off for \(goal.name)", taskId: nil)
+    }
+
+    /// Archives the goal (or brings it back). With unfinished tasks, `unfinished` says what happens to them.
+    func archiveGoal(_ goal: Wire.Goal, archived: Bool, unfinished: Wire.UnfinishedTasks?) {
+        send(.goalArchive(.init(id: goal.id, archived: archived, unfinished: unfinished)))
+        notice = .toast(archived ? "Archived \(goal.name)" : "Unarchived \(goal.name)", taskId: nil)
+    }
+
     // MARK: Machines
 
     /// The machine's owner or an admin: who the server lets update or rename it.
@@ -412,6 +429,20 @@ final class FactoryStore {
             notice = .toast("Change requested: the planner will post a new version", taskId: m.id)
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
+        case .goalAcceptRisk(let m):
+            // As the server does: one acceptance per goal, replaced, or removed when taken back.
+            var acceptances = feed.acceptances.filter { $0.goal != m.goal }
+            if let upTo = m.upTo { acceptances.append(.init(goal: m.goal, upTo: upTo, by: me, at: DemoData.now, note: m.note)) }
+            feed.acceptances = acceptances
+        case .goalArchive(let m):
+            guard var goal = feed.goal(m.id) else { break }
+            if m.archived, m.unfinished == .cleanup || m.unfinished == .cancel {
+                for task in feed.unfinishedTasks(in: goal.id) {
+                    update(task.id) { $0.state = .cancelled; $0.worker = nil; $0.events.append(.init(who: me, text: "cancelled it, archiving \(goal.name)", at: DemoData.now)) }
+                }
+            }
+            goal.archived = m.archived ? true : nil
+            feed.apply(.goalUpdated(.init(goal: goal)))
         case .taskCreate(let m):
             guard let goal = feed.goal(m.goal) else { return }
             let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1

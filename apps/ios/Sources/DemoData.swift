@@ -27,6 +27,10 @@ enum DemoData {
             Wire.Goal(id: "g-web", name: "Billing", prefix: "BIL", color: "#14A866", summary: "Usage-based plans and invoices.", lead: "sam", repo: "acme/web", repos: ["acme/web"]),
         ]
         feed.tasks = tasks()
+        // Low-risk work merges on its own; Kit let the Public API auto-merge up to low.
+        feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
+                                      autoMerge: ["low": true, "medium": false, "high": false], autoMerges: UserDefaults.standard.string(forKey: "demoAutoMerges") != "off")
+        feed.acceptances = [Wire.RiskAcceptance(goal: "g-api", upTo: .low, by: "kit", at: ago(60 * 24 * 3))]
         feed.machines = machines()
         feed.runnerLatest = "0.65.0"
         feed.serverVersion = "0.51.0"

@@ -368,6 +368,7 @@ struct GoalView: View {
                     if let repo = goal.repo { LabeledContent("Repo", value: repo) }
                     Toggle("Follow", isOn: Binding(get: { store.feed.following(goal) }, set: { store.follow(goal.id, $0) }))
                 }
+                GoalSettingsSection(goal: goal)
                 ForEach(Self.stages, id: \.self) { stage in
                     let staged = tasks.filter { $0.state == stage }
                     if stage == .drafting {
