@@ -100,8 +100,7 @@ struct TaskOrigin: View {
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Theme.accent)
                 .onTapGesture { appState.openReference(id) }
-                .pointerStyle(.link)
-                .help("Open \(id)")
+                .taskHovercard(id)
             if let detail { Text("· \(detail)") }
         }
     }
@@ -730,7 +729,7 @@ struct ReviewActions: View {
     }
 
     /// The merge forecast: conflicts with the base (red), overlaps with other work in flight (amber, each
-    /// one a link to that task), or merges cleanly (green).
+    /// one a link to that task, hovered for its card and the files they share), or merges cleanly (green).
     @ViewBuilder private var mergeRow: some View {
         let forecast = task.mergeForecast ?? MergeForecast()
         let base = forecast.base ?? task.pr?.base ?? "main"
@@ -751,14 +750,14 @@ struct ReviewActions: View {
                 Text("Overlaps").foregroundStyle(Theme.State.awaitingApproval)
                 ForEach(Array(forecast.overlaps.prefix(2).enumerated()), id: \.element) { i, o in
                     Button {
-                        state.openTask(o.task)
+                        state.openReference(o.task)
                     } label: {
                         Text("\(o.task) (\(o.files.count == 1 ? "1 file" : "\(o.files.count) files"))\(i < min(forecast.overlaps.count, 2) - 1 ? "," : "")")
                             .underline()
                             .foregroundStyle(Theme.State.awaitingApproval)
                     }
                     .buttonStyle(.plain)
-                    .help(o.files.joined(separator: "\n"))
+                    .taskHovercard(o.task, files: o.files)
                 }
                 if forecast.overlaps.count > 2 {
                     Text("+\(forecast.overlaps.count - 2)").foregroundStyle(Theme.State.awaitingApproval)

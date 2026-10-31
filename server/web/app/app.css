@@ -370,3 +370,79 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
 .proof-img img, .proof-video { display: block; max-width: min(100%, 560px); max-height: 420px; border: 1px solid var(--stroke); border-radius: 8px; background: var(--fill); }
 .proof-video { margin-top: 8px; width: 100%; background: #000; }
 .proof-file { display: inline-block; margin-top: 8px; font-size: 13px; }
+
+/* Settings (admins): a section list beside the page, tabs along the top on a phone. */
+.bar nav a[hidden] { display: none; }
+.bar nav .gear { display: none; width: 16px; height: 16px; vertical-align: -3px; }
+main:has(> .settings) { max-width: 1000px; }
+.settings { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 28px; align-items: start; }
+.set-nav { position: sticky; top: 72px; display: flex; flex-direction: column; gap: 2px; }
+.set-nav a { text-decoration: none; color: var(--muted); padding: 6px 10px; border-radius: 7px; font-size: 14px; }
+.set-nav a:hover { color: var(--text); }
+.set-nav a.on { color: var(--text); background: var(--fill); font-weight: 550; }
+.set-nav .set-mac { margin: 14px 10px 0; }
+.set-mac { font-size: 13px; }
+.set-body h1 { margin-bottom: 12px; }
+.set-body > .list, .set-body > .card { margin-bottom: 14px; }
+.set-head { margin-bottom: 12px; }
+.set-card { display: flex; flex-direction: column; gap: 14px; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.set-row > input[type="text"], .set-row > input[type="password"], .set-row > select, .set-row > .set-inline { max-width: 340px; }
+.set-row.stacked { flex-direction: column; align-items: stretch; gap: 6px; }
+.set-row.stacked textarea { min-height: 96px; font-size: 14px; }
+.set-label { display: flex; flex-direction: column; gap: 2px; font-weight: 550; font-size: 14px; flex: 1; min-width: 0; }
+.set-row.stacked .set-label { flex-direction: row; justify-content: space-between; }
+.set-detail { font-weight: 400; font-size: 13px; color: var(--muted); }
+.set-warn { font-weight: 400; font-size: 13px; color: var(--awaiting); margin: 0; }
+.set-inline { flex: 1; flex-wrap: nowrap; }
+.set-inline input { flex: 1; }
+.set-actions { display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--stroke); }
+input[type="password"], input[type="number"] { width: 100%; min-width: 0; border: 1px solid var(--stroke); background: var(--card); border-radius: 9px; padding: 7px 10px; }
+.set-num { width: 92px !important; flex: none; font-variant-numeric: tabular-nums; }
+.set-item { align-items: center; }
+.set-item:hover { background: none; }
+.set-buttons { flex: none; justify-content: flex-end; }
+.set-status { font-weight: 400; font-size: 13px; color: var(--muted); }
+.set-status.faint { color: var(--faint); }
+.set-status.error { color: var(--cancelled); }
+.pill.set-env { margin-left: 6px; padding: 0 7px; font-size: 11px; font-weight: 450; color: var(--faint); background: none; border: 1px solid var(--stroke); vertical-align: 1px; }
+.set-webhook .set-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-webhook .btn { flex: none; }
+.confirm { font-size: 13px; }
+.btn.danger-text { color: var(--cancelled); }
+.avatar { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--fill); color: var(--muted); font-weight: 600; font-size: 13px; object-fit: cover; }
+.person .title .pill { margin-left: 4px; vertical-align: 1px; }
+.pill.role { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.pill.locked::before { content: ""; width: 9px; height: 10px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 10'%3E%3Cpath d='M2 4V3a2.5 2.5 0 0 1 5 0v1h.5a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-5a.5.5 0 0 1 .5-.5H2Zm1 0h3V3a1.5 1.5 0 0 0-3 0v1Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 10'%3E%3Cpath d='M2 4V3a2.5 2.5 0 0 1 5 0v1h.5a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-5a.5.5 0 0 1 .5-.5H2Zm1 0h3V3a1.5 1.5 0 0 0-3 0v1Z'/%3E%3C/svg%3E") center / contain no-repeat; }
+/* A checkbox drawn as a switch. */
+.switch { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 38px; height: 22px; margin: 0; border-radius: 99px; background: color-mix(in srgb, var(--text) 18%, transparent); cursor: pointer; transition: background 0.15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.15s; }
+.switch:checked { background: var(--approve); }
+.switch:checked::after { transform: translateX(16px); }
+.switch:disabled { opacity: 0.4; cursor: default; }
+.switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+.risk-grid { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 92px); gap: 10px 12px; align-items: center; }
+.risk-head { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.risk-head.risk-medium { color: var(--awaiting); }
+.risk-head.risk-high { color: var(--cancelled); }
+.risk-check { display: flex; }
+@media (max-width: 600px) {
+  .bar nav .gear { display: inline-block; }
+  .bar nav #nav-settings .nav-label { display: none; }
+  .settings { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .set-nav { position: static; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 6px; border-bottom: 1px solid var(--stroke); }
+  .set-nav::-webkit-scrollbar { display: none; }
+  .set-nav a { flex: none; white-space: nowrap; }
+  .set-nav .set-mac { display: none; }
+  .set-row:not(.toggle-row) { flex-direction: column; align-items: stretch; gap: 6px; }
+  .set-row > input[type="text"], .set-row > input[type="password"], .set-row > select, .set-row > .set-inline { max-width: none; }
+  .set-item { flex-wrap: wrap; }
+  .set-buttons { width: 100%; justify-content: flex-start; padding-left: 44px; }
+  .set-item:not(.person) .set-buttons { padding-left: 0; }
+  .risk-grid { grid-template-columns: minmax(0, 1fr) repeat(3, 64px); gap: 10px 8px; }
+  .set-num { width: 100% !important; }
+  .risk-grid .set-num { width: 64px !important; }
+  input[type="password"], input[type="number"] { font-size: 16px; }
+}

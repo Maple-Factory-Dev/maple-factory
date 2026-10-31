@@ -1136,6 +1136,50 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum IntegrationKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Slack's /maple slash command.
+        case slack
+        /// Linear issues with the factory's label.
+        case linear
+        /// Jira issues with the factory's label.
+        case jira
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [IntegrationKind] = [.slack, .linear, .jira]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "slack": self = .slack
+            case "linear": self = .linear
+            case "jira": self = .jira
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .slack: "slack"
+            case .linear: "linear"
+            case .jira: "jira"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: IntegrationKind, b: IntegrationKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum McpTransport: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// A local command the runner starts.
         case stdio
@@ -2402,6 +2446,8 @@ public enum Wire {
         public var preflightWatch: String?
         /// Runs once the worktree exists, before the agent starts.
         public var setup: String?
+        /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.
+        public var checks: String?
         /// Runs before the worktree is removed when a finished task is cleaned up.
         public var teardown: String?
         /// Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.
@@ -2409,11 +2455,12 @@ public enum Wire {
         /// How long each one may run (default 600).
         public var timeoutSecs: UInt32?
 
-        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
+        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, checks: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
             self.create = create
             self.preflight = preflight
             self.preflightWatch = preflightWatch
             self.setup = setup
+            self.checks = checks
             self.teardown = teardown
             self.archive = archive
             self.timeoutSecs = timeoutSecs
@@ -2857,6 +2904,75 @@ public enum Wire {
         }
     }
 
+    /// One setting of an integration, as its definition describes it.
+    public struct IntegrationField: Codable, Hashable, Sendable {
+        /// Its key in Integration.values.
+        public var name: String
+        public var label: String
+        /// Apps get it blank (blank on save keeps the stored one).
+        public var secret: Bool
+        public var required: Bool
+        public var help: String
+
+        public init(name: String, label: String, secret: Bool, required: Bool, help: String) {
+            self.name = name
+            self.label = label
+            self.secret = secret
+            self.required = required
+            self.help = help
+        }
+    }
+
+    /// Something outside the factory that sends it requests (and gets the bot's replies), set up by an admin in Settings.
+    public struct Integration: Codable, Hashable, Sendable {
+        public var kind: IntegrationKind
+        public var label: String
+        public var fields: [IntegrationField]
+        public var enabled: Bool
+        /// The fields that have a value, by name. Secret ones are blank, so only that they're set shows.
+        public var values: [String: String]
+        /// Fields whose value comes from the Worker's environment variables, not Settings.
+        public var fromEnv: [String]
+        /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to.
+        public var webhookUrl: String
+        /// When it last reached the factory and was verified.
+        public var lastEventAt: UInt64?
+        /// What went wrong last, since the last event that went well.
+        public var lastError: String?
+        /// Who last saved it in Settings. None: never saved (env vars only, or not set up).
+        public var updatedBy: String?
+        public var updatedAt: UInt64?
+
+        public init(kind: IntegrationKind, label: String, fields: [IntegrationField] = [], enabled: Bool, values: [String: String] = [:], fromEnv: [String] = [], webhookUrl: String, lastEventAt: UInt64? = nil, lastError: String? = nil, updatedBy: String? = nil, updatedAt: UInt64? = nil) {
+            self.kind = kind
+            self.label = label
+            self.fields = fields
+            self.enabled = enabled
+            self.values = values
+            self.fromEnv = fromEnv
+            self.webhookUrl = webhookUrl
+            self.lastEventAt = lastEventAt
+            self.lastError = lastError
+            self.updatedBy = updatedBy
+            self.updatedAt = updatedAt
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try c.decode(IntegrationKind.self, forKey: .kind)
+            label = try c.decode(String.self, forKey: .label)
+            fields = try c.decodeIfPresent([IntegrationField].self, forKey: .fields) ?? []
+            enabled = try c.decode(Bool.self, forKey: .enabled)
+            values = try c.decodeIfPresent([String: String].self, forKey: .values) ?? [:]
+            fromEnv = try c.decodeIfPresent([String].self, forKey: .fromEnv) ?? []
+            webhookUrl = try c.decode(String.self, forKey: .webhookUrl)
+            lastEventAt = try c.decodeIfPresent(UInt64.self, forKey: .lastEventAt)
+            lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
+            updatedBy = try c.decodeIfPresent(String.self, forKey: .updatedBy)
+            updatedAt = try c.decodeIfPresent(UInt64.self, forKey: .updatedAt)
+        }
+    }
+
     /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
     public struct PromptAdditions: Codable, Hashable, Sendable {
         public var planner: String
@@ -2884,6 +3000,25 @@ public enum Wire {
             self.by = by
             self.at = at
             self.note = note
+        }
+    }
+
+    /// One of a repo's checks, run in a task's worktree before its finish is committed.
+    public struct CheckRun: Codable, Hashable, Sendable {
+        public var command: String
+        /// Its exit code; none: it was killed by a signal or couldn't start.
+        public var code: Int32?
+        public var timedOut: Bool
+        public var ms: UInt64
+        /// The end of what it printed (stdout and stderr).
+        public var output: String
+
+        public init(command: String, code: Int32? = nil, timedOut: Bool, ms: UInt64, output: String) {
+            self.command = command
+            self.code = code
+            self.timedOut = timedOut
+            self.ms = ms
+            self.output = output
         }
     }
 
@@ -3882,8 +4017,10 @@ public enum Wire {
         public var commit: String?
         public var reason: String?
         public var message: String?
+        /// The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).
+        public var checks: [CheckRun]?
 
-        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil) {
+        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil, checks: [CheckRun]? = nil) {
             self.taskId = taskId
             self.ok = ok
             self.pushed = pushed
@@ -3894,6 +4031,7 @@ public enum Wire {
             self.commit = commit
             self.reason = reason
             self.message = message
+            self.checks = checks
         }
     }
 
@@ -4312,8 +4450,10 @@ public enum Wire {
         public var title: String
         /// Push with the machine's own credentials (no GitHub App).
         public var fallback: Bool
+        /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
+        public var checks: String?
 
-        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool) {
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool, checks: String? = nil) {
             self.taskId = taskId
             self.cwd = cwd
             self.repoDir = repoDir
@@ -4321,6 +4461,7 @@ public enum Wire {
             self.base = base
             self.title = title
             self.fallback = fallback
+            self.checks = checks
         }
     }
 
@@ -4957,6 +5098,26 @@ public enum Wire {
         }
     }
 
+    /// Admins only: one integration's settings. A blank secret value keeps the stored one.
+    public struct ClientMessageIntegrationsSave: Codable, Hashable, Sendable {
+        public var kind: IntegrationKind
+        public var enabled: Bool
+        public var values: [String: String]
+
+        public init(kind: IntegrationKind, enabled: Bool, values: [String: String] = [:]) {
+            self.kind = kind
+            self.enabled = enabled
+            self.values = values
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try c.decode(IntegrationKind.self, forKey: .kind)
+            enabled = try c.decode(Bool.self, forKey: .enabled)
+            values = try c.decodeIfPresent([String: String].self, forKey: .values) ?? [:]
+        }
+    }
+
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
         public var name: String
@@ -5428,6 +5589,7 @@ public enum Wire {
         case adminsRevoke(ClientMessageAdminsRevoke)
         case membersRevoke(ClientMessageMembersRevoke)
         case connectorsSave(ClientMessageConnectorsSave)
+        case integrationsSave(ClientMessageIntegrationsSave)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
@@ -5504,6 +5666,7 @@ public enum Wire {
             case "admins.revoke": self = .adminsRevoke(try ClientMessageAdminsRevoke(from: decoder))
             case "members.revoke": self = .membersRevoke(try ClientMessageMembersRevoke(from: decoder))
             case "connectors.save": self = .connectorsSave(try ClientMessageConnectorsSave(from: decoder))
+            case "integrations.save": self = .integrationsSave(try ClientMessageIntegrationsSave(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
@@ -5644,6 +5807,9 @@ public enum Wire {
             case .connectorsSave(let body):
                 try c.encode("connectors.save", forKey: .type)
                 try body.encode(to: encoder)
+            case .integrationsSave(let body):
+                try c.encode("integrations.save", forKey: .type)
+                try body.encode(to: encoder)
             case .reposRefresh:
                 try c.encode("repos.refresh", forKey: .type)
             case .reposAdd(let body):
@@ -5769,6 +5935,8 @@ public enum Wire {
         public var prompts: PromptAdditions?
         /// The factory's MCP connectors, secret values blank. None: an older server.
         public var connectors: [McpConnector]?
+        /// Slack, Linear and Jira: their status, secret values blank. None: an older server.
+        public var integrations: [Integration]?
         public var online: [Presence]
         public var notes: [Note]
         public var follows: [GoalFollow]
@@ -5800,7 +5968,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -5812,6 +5980,7 @@ public enum Wire {
             self.acceptances = acceptances
             self.prompts = prompts
             self.connectors = connectors
+            self.integrations = integrations
             self.online = online
             self.notes = notes
             self.follows = follows
@@ -5845,6 +6014,7 @@ public enum Wire {
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             prompts = try c.decodeIfPresent(PromptAdditions.self, forKey: .prompts)
             connectors = try c.decodeIfPresent([McpConnector].self, forKey: .connectors)
+            integrations = try c.decodeIfPresent([Integration].self, forKey: .integrations)
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
@@ -6122,6 +6292,20 @@ public enum Wire {
         }
     }
 
+    /// Every integration again, after one was saved or heard from. Secret values blank.
+    public struct ServerToClientIntegrationsUpdated: Codable, Hashable, Sendable {
+        public var integrations: [Integration]
+
+        public init(integrations: [Integration] = []) {
+            self.integrations = integrations
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            integrations = try c.decodeIfPresent([Integration].self, forKey: .integrations) ?? []
+        }
+    }
+
     /// Something worth a passing line in the app.
     public struct ServerToClientToast: Codable, Hashable, Sendable {
         public var text: String
@@ -6212,6 +6396,7 @@ public enum Wire {
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
         case connectorsUpdated(ServerToClientConnectorsUpdated)
+        case integrationsUpdated(ServerToClientIntegrationsUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
@@ -6249,6 +6434,7 @@ public enum Wire {
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
             case "connectors.updated": self = .connectorsUpdated(try ServerToClientConnectorsUpdated(from: decoder))
+            case "integrations.updated": self = .integrationsUpdated(try ServerToClientIntegrationsUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
@@ -6332,6 +6518,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .connectorsUpdated(let body):
                 try c.encode("connectors.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .integrationsUpdated(let body):
+                try c.encode("integrations.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .toast(let body):
                 try c.encode("toast", forKey: .type)

@@ -7,6 +7,7 @@ import type { Env } from "./env.ts";
 import type { TicketLink } from "./wire.ts";
 import { orgHub, text } from "./util.ts";
 import { verifyWebhook } from "./github.ts";
+import { integrationAccess, integrationConfig, integrationEvent, type IntegrationAccess } from "./integrations/registry.ts";
 
 /** Starts every comment the bot writes, so the webhook for it isn't taken as the requester talking. */
 const BOT = "Maple · ";
@@ -42,10 +43,14 @@ interface LinearIssue {
 
 /** POST /integrations/linear: Linear's webhook, signed with its secret (`Linear-Signature`). */
 export async function linearWebhook(request: Request, env: Env): Promise<Response> {
-  if (!env.LINEAR_WEBHOOK_SECRET) return text("Linear isn't set up for this factory.", 404);
+  const linear = await integrationConfig(env, "linear");
+  if (!linear) return text("Linear isn't set up for this factory.", 404);
   const raw = await request.text();
   const signature = request.headers.get("linear-signature") ?? "";
-  if (!sameText(signature, await hmacHex(env.LINEAR_WEBHOOK_SECRET, raw))) return text("Bad signature.", 401);
+  if (!sameText(signature, await hmacHex(linear.webhookSecret, raw))) {
+    await integrationEvent(env, "linear", "A webhook came with a bad signature: check the signing secret.");
+    return text("Bad signature.", 401);
+  }
   const event = JSON.parse(raw) as {
     action: string;
     type: string;
@@ -55,7 +60,8 @@ export async function linearWebhook(request: Request, env: Env): Promise<Respons
     webhookTimestamp?: number;
   };
   if (event.webhookTimestamp && Math.abs(Date.now() - event.webhookTimestamp) > 60_000) return text("Stale request.", 401);
-  const label = (env.LINEAR_LABEL || "maple").toLowerCase();
+  await integrationEvent(env, "linear");
+  const label = (linear.label || "maple").toLowerCase();
 
   if (event.type === "Issue" && (event.action === "create" || event.action === "update")) {
     const issue = event.data as unknown as LinearIssue;
@@ -87,8 +93,12 @@ export async function linearWebhook(request: Request, env: Env): Promise<Respons
 
 /** POST /integrations/jira?secret=…: Jira's webhook (Jira Cloud doesn't sign them; the URL carries a secret). */
 export async function jiraWebhook(request: Request, env: Env, url: URL): Promise<Response> {
-  if (!env.JIRA_WEBHOOK_SECRET) return text("Jira isn't set up for this factory.", 404);
-  if (!sameText(url.searchParams.get("secret") ?? "", env.JIRA_WEBHOOK_SECRET)) return text("Bad secret.", 401);
+  const jira = await integrationConfig(env, "jira");
+  if (!jira) return text("Jira isn't set up for this factory.", 404);
+  if (!sameText(url.searchParams.get("secret") ?? "", jira.webhookSecret)) {
+    await integrationEvent(env, "jira", "A webhook came with the wrong ?secret= in its URL.");
+    return text("Bad secret.", 401);
+  }
   const event = (await request.json()) as {
     webhookEvent: string;
     issue?: { key: string; self: string; fields?: { summary?: string; description?: string | null; labels?: string[]; status?: { name?: string } } };
@@ -99,9 +109,13 @@ export async function jiraWebhook(request: Request, env: Env, url: URL): Promise
   const issue = event.issue;
   if (!issue) return new Response(null, { status: 204 });
   const site = new URL(issue.self).origin;
-  if (env.JIRA_SITE && site !== new URL(env.JIRA_SITE).origin) return text(`Not from ${env.JIRA_SITE}.`, 400);
+  if (jira.site && site !== new URL(jira.site).origin) {
+    await integrationEvent(env, "jira", `A webhook came from ${site}, not ${jira.site}.`);
+    return text(`Not from ${jira.site}.`, 400);
+  }
+  await integrationEvent(env, "jira");
   const replyUrl = `jira:${site}|${issue.key}`;
-  const label = (env.JIRA_LABEL || "maple").toLowerCase();
+  const label = (jira.label || "maple").toLowerCase();
   const has = (labels: string | null | undefined) => (labels ?? "").toLowerCase().split(/\s+/).includes(label);
 
   if (event.webhookEvent === "jira:issue_created" || event.webhookEvent === "jira:issue_updated") {
@@ -132,28 +146,32 @@ export async function jiraWebhook(request: Request, env: Env, url: URL): Promise
 // ---- Replies ----
 
 /** Says `said` where a request came from: a Slack response URL or webhook, a Linear issue or a Jira issue. */
-export async function deliver(env: Env, replyUrl: string, said: string): Promise<void> {
+export async function deliver(env: Env, replyUrl: string, said: string, integrations: IntegrationAccess = integrationAccess(env)): Promise<void> {
   if (replyUrl.startsWith("linear:")) {
-    if (!env.LINEAR_API_KEY) return;
-    await fetch(env.LINEAR_API_URL || "https://api.linear.app/graphql", {
+    const linear = await integrations.config("linear");
+    if (!linear?.apiKey) return;
+    const res = await fetch(env.LINEAR_API_URL || "https://api.linear.app/graphql", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: env.LINEAR_API_KEY },
+      headers: { "content-type": "application/json", authorization: linear.apiKey },
       body: JSON.stringify({
         query: "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
         variables: { input: { issueId: replyUrl.slice("linear:".length), body: BOT + said } },
       }),
     });
+    if (!res.ok) await integrations.event("linear", `Linear refused the bot's comment (${res.status}): check the API key.`);
     return;
   }
   if (replyUrl.startsWith("jira:")) {
-    if (!env.JIRA_EMAIL || !env.JIRA_API_TOKEN || !env.JIRA_SITE) return;
+    const jira = await integrations.config("jira");
+    if (!jira?.email || !jira.apiToken || !jira.site) return;
     const [site, key] = replyUrl.slice("jira:".length).split("|");
-    if (site !== new URL(env.JIRA_SITE).origin) return; // the token only goes to the configured site
-    await fetch(`${site}/rest/api/2/issue/${encodeURIComponent(key)}/comment`, {
+    if (site !== new URL(jira.site).origin) return; // the token only goes to the configured site
+    const res = await fetch(`${site}/rest/api/2/issue/${encodeURIComponent(key)}/comment`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Basic ${btoa(`${env.JIRA_EMAIL}:${env.JIRA_API_TOKEN}`)}` },
+      headers: { "content-type": "application/json", authorization: `Basic ${btoa(`${jira.email}:${jira.apiToken}`)}` },
       body: JSON.stringify({ body: BOT + said }),
     });
+    if (!res.ok) await integrations.event("jira", `Jira refused the bot's comment (${res.status}): check the email and API token.`);
     return;
   }
   await fetch(replyUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: said, response_type: "in_channel" }) });

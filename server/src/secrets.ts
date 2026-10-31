@@ -31,10 +31,11 @@ export async function secretsKey(env: Env): Promise<string> {
   return env.SECRETS_KEY;
 }
 
-async function aesKey(secret: string): Promise<CryptoKey> {
+/** The AES-GCM key SECRETS_KEY derives for one use (`info`), so each kind of stored value has its own. */
+export async function aesKey(secret: string, info = "repo-secrets v1"): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey("raw", enc.encode(secret), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: enc.encode("maple-factory"), info: enc.encode("repo-secrets v1") },
+    { name: "HKDF", hash: "SHA-256", salt: enc.encode("maple-factory"), info: enc.encode(info) },
     base,
     { name: "AES-GCM", length: 256 },
     false,

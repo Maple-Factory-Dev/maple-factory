@@ -14,7 +14,7 @@ struct OrgSettingsView: View {
     static let demoPick = Notification.Name("OrgSettingsView.demoPick")
 
     enum Pane: String, CaseIterable {
-        case general, account, appearance, repos, secrets, people, prompts, connectors, merging, scout, runner, notifications, updates
+        case general, account, appearance, repos, secrets, people, prompts, connectors, integrations, merging, scout, runner, notifications, updates
 
         var title: String {
             switch self {
@@ -26,6 +26,7 @@ struct OrgSettingsView: View {
             case .people: "People"
             case .prompts: "Prompts"
             case .connectors: "Connectors"
+            case .integrations: "Integrations"
             case .merging: "Merging"
             case .scout: "Scout"
             case .runner: "Runner"
@@ -44,6 +45,7 @@ struct OrgSettingsView: View {
             case .people: "person.2"
             case .prompts: "text.bubble"
             case .connectors: "puzzlepiece.extension"
+            case .integrations: "link"
             case .merging: "arrow.triangle.merge"
             case .scout: "binoculars"
             case .runner: "laptopcomputer"
@@ -63,6 +65,7 @@ struct OrgSettingsView: View {
             case .people: .blue
             case .prompts: .purple
             case .connectors: .indigo
+            case .integrations: .orange
             case .merging: .green
             case .scout: .teal
             case .runner: .gray
@@ -81,7 +84,7 @@ struct OrgSettingsView: View {
     static let headerPane = Pane.account
     static let sidebarGroups = [
         SidebarGroup(title: nil, panes: [.general]),
-        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .connectors, .merging, .scout]),
+        SidebarGroup(title: "Factory", panes: [.appearance, .repos, .secrets, .people, .prompts, .connectors, .integrations, .merging, .scout]),
         SidebarGroup(title: "This Mac", panes: [.runner, .notifications]),
     ]
     static let footerPane = Pane.updates
@@ -104,6 +107,7 @@ struct OrgSettingsView: View {
                 case .people: PeopleSettings()
                 case .prompts: PromptSettings()
                 case .connectors: ConnectorSettings()
+                case .integrations: IntegrationSettings()
                 case .merging: MergingSettings()
                 case .scout: ScoutSettings()
                 case .runner: RunnerSettings()

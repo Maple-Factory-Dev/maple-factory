@@ -5,6 +5,14 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.67.0
+
+Checks that a builder's branch merges into its base (origin/<base>, fetched fresh) before its finish is pushed: on a conflict nothing is pushed, and the conflicting files go back to the builder to merge the base in, resolve and finish again. A base that can't be fetched doesn't hold the push up.
+
+## 0.66.0 — 2026-10-30
+
+Runs a repo's checks (linters, formatters, lefthook) in the worktree before a builder's finish is committed; a failing check, or a failing pre-commit hook, stops the push and is reported back.
+
 ## 0.65.0 — 2026-10-30
 
 Runs a repo's preflight script (runtimes, brew, services) in a new worktree before its setup script: the first time a machine's checkout of the repo is used, and again when the command or a watched file such as .tool-versions or Brewfile changes.

@@ -9,7 +9,8 @@
 //
 // Planner: submits a two-step plan with a terminal and a screen mockup ("[cross-repo]": plus a part
 // for the goal's next repo). Builder: commits a file,
-// proves both items and finishes ("## It didn't merge": merges its base in and resolves the conflicts;
+// proves both items and finishes ("## It didn't merge", or a finish typed back because the branch doesn't
+// merge: merges its base in and resolves the conflicts;
 // "[attest]": waits for a person to attest to both items first, then proves them anyway).
 // Reviewer: asks for changes in round 1, passes round 2.
 
@@ -152,15 +153,29 @@ async function builder() {
   await call("prove", { item: 2, kind: "terminal", summary: "The commit is on the branch", command: "git log --oneline -3", output: git("log", "--oneline", "-3").split("\n") });
   const done = await call("finish", { summary: fixing ? "Addressed the review's finding." : "Added hello.txt with the task's greeting." });
   say(done.summary);
+  await mergeWhenTold();
 }
 
-// "## It didn't merge": bring the branch up to date with its base, keeping both sides of any
-// conflicting file's lines, and push. The merge commit names the change request it applies.
-async function mergeFix() {
-  const base = prompt.match(/bring it up to date with origin\/(\S+) and/)[1];
-  const [, id, text] = prompt.match(/^- \((C\d+)\) [^:]+: (The branch doesn't merge.*)$/m);
-  say(`merging origin/${base} (${id})`);
-  await call("progress", { note: `Merging origin/${base} for ${id}` });
+// A finish the runner stopped because the branch doesn't merge into its base comes back typed in
+// ("The branch doesn't merge into main (conflicts in …), so nothing was pushed."): merge it in,
+// resolve, finish again. The merge commit quotes what was typed.
+async function mergeWhenTold() {
+  for (;;) {
+    const line = await nextLine();
+    const told = line.match(/^The branch doesn't merge into (\S+) \(conflicts in .*$/);
+    if (!told) continue;
+    await new Promise((r) => setTimeout(r, 300));
+    typed.splice(0);
+    const base = told[1];
+    await call("progress", { note: `Merging origin/${base}: the finish found conflicts` });
+    mergeBase(base, line);
+    const done = await call("finish", { summary: `Merged origin/${base} into the branch and resolved the conflicts.` });
+    say(done.summary);
+  }
+}
+
+// Merges origin/<base> into the branch, keeping both sides of any conflicting file's lines.
+function mergeBase(base, why) {
   git("fetch", "--quiet", "origin", base);
   const as = ["-c", "user.name=Scripted", "-c", "user.email=scripted@maple.invalid"];
   try {
@@ -173,12 +188,23 @@ async function mergeFix() {
       git("add", file);
       say(`resolved ${file}`);
     }
-    git(...as, "commit", "--quiet", "-m", `Merge origin/${base} (${id}: ${text})`);
+    git(...as, "commit", "--quiet", "-m", `Merge origin/${base} (${why})`);
   }
+}
+
+// "## It didn't merge": bring the branch up to date with its base, keeping both sides of any
+// conflicting file's lines, and push. The merge commit names the change request it applies.
+async function mergeFix() {
+  const base = prompt.match(/bring it up to date with origin\/(\S+) and/)[1];
+  const [, id, text] = prompt.match(/^- \((C\d+)\) [^:]+: (The branch doesn't merge.*)$/m);
+  say(`merging origin/${base} (${id})`);
+  await call("progress", { note: `Merging origin/${base} for ${id}` });
+  mergeBase(base, `${id}: ${text}`);
   await call("progress", { applied: [id] });
   await call("prove", { item: 1, kind: "terminal", summary: "hello.txt keeps the greeting after the merge", command: "cat hello.txt", output: git("show", "HEAD:hello.txt").split("\n") });
   const done = await call("finish", { summary: `Merged origin/${base} into the branch and resolved the conflicts.` });
   say(done.summary);
+  await mergeWhenTold();
 }
 
 async function reviewer() {
