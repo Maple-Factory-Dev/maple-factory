@@ -924,6 +924,20 @@ export const structs: Record<string, Struct> = {
     doc: "Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.",
     fields: { goal: "string", following: "bool" },
   },
+  QuietWindow: {
+    doc: "One quiet-hours window: on these days, from `start` to `end`.",
+    fields: { days: "u16[]", start: "u16", end: "u16" },
+    fieldDocs: {
+      days: "The days it starts on, 0 Sunday to 6 Saturday.",
+      start: "Minutes after midnight (0–1439) it starts, in the schedule's time zone.",
+      end: "Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day.",
+    },
+  },
+  QuietHours: {
+    doc: "Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.",
+    fields: { timeZone: "string", windows: "QuietWindow[]" },
+    fieldDocs: { timeZone: "An IANA time zone, like America/Toronto.", windows: "Up to 7 windows." },
+  },
   Member: {
     fields: {
       login: "string",
@@ -1304,6 +1318,11 @@ export const unions: Record<string, Union> = {
         fieldDocs: { agent: "claude or codex; none: whichever the machine has." },
       },
       "repo.setup.cancel": { doc: "Stop a repo's Set up with AI run.", fields: { repo: "string" } },
+      "quietHours.set": {
+        doc: "Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`.",
+        fields: { quietHours: "QuietHours?" },
+        fieldDocs: { quietHours: "None: no quiet hours." },
+      },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -1495,6 +1514,7 @@ export const unions: Record<string, Union> = {
           online: "Presence[]",
           notes: "Note[]",
           follows: "GoalFollow[]",
+          quietHours: "QuietHours?",
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
           repoOwners: "string[]?",
@@ -1518,6 +1538,7 @@ export const unions: Record<string, Union> = {
           tallies: "Each goal's task counts over every task, also those left out. None: an older server, which sends every task.",
           olderTasks: "How many finished tasks the snapshot left out. None: an older server.",
           prompts: "The org's prompt additions. None: an older server.",
+          quietHours: "Your quiet hours. None: none set, or an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",
           setupRuns: "Each repo's latest Set up with AI run. None: an older server.",
@@ -1553,6 +1574,11 @@ export const unions: Record<string, Union> = {
       "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
       "repo.setup.updated": { doc: "How a repo's Set up with AI run is going.", fields: { run: "RepoSetupRun" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
+      "quietHours.updated": {
+        doc: "Your quiet hours changed, to your apps only.",
+        fields: { quietHours: "QuietHours?" },
+        fieldDocs: { quietHours: "None: cleared." },
+      },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },

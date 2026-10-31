@@ -1985,6 +1985,30 @@ pub struct GoalFollow {
     pub following: bool,
 }
 
+/// One quiet-hours window: on these days, from `start` to `end`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuietWindow {
+    /// The days it starts on, 0 Sunday to 6 Saturday.
+    #[serde(default)]
+    pub days: Vec<u16>,
+    /// Minutes after midnight (0–1439) it starts, in the schedule's time zone.
+    pub start: u16,
+    /// Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day.
+    pub end: u16,
+}
+
+/// Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuietHours {
+    /// An IANA time zone, like America/Toronto.
+    pub time_zone: String,
+    /// Up to 7 windows.
+    #[serde(default)]
+    pub windows: Vec<QuietWindow>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
@@ -2786,6 +2810,13 @@ pub enum ClientMessage {
     RepoSetupCancel {
         repo: String,
     },
+    /// Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`.
+    #[serde(rename = "quietHours.set")]
+    QuietHoursSet {
+        /// None: no quiet hours.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quiet_hours: Option<QuietHours>,
+    },
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
     GoalFollow {
@@ -3235,6 +3266,9 @@ pub enum ServerToClient {
         notes: Vec<Note>,
         #[serde(default)]
         follows: Vec<GoalFollow>,
+        /// Your quiet hours. None: none set, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quiet_hours: Option<QuietHours>,
         #[serde(default)]
         intake: Vec<IntakeRequest>,
         #[serde(default)]
@@ -3349,6 +3383,13 @@ pub enum ServerToClient {
     FollowsUpdated {
         #[serde(default)]
         follows: Vec<GoalFollow>,
+    },
+    /// Your quiet hours changed, to your apps only.
+    #[serde(rename = "quietHours.updated")]
+    QuietHoursUpdated {
+        /// None: cleared.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quiet_hours: Option<QuietHours>,
     },
     /// Who's online and what they're looking at, whenever it changes.
     #[serde(rename = "presence")]

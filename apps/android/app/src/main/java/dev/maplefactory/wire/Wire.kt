@@ -1752,6 +1752,26 @@ data class GoalFollow(
     val following: Boolean,
 )
 
+/** One quiet-hours window: on these days, from `start` to `end`. */
+@Serializable
+data class QuietWindow(
+    /** The days it starts on, 0 Sunday to 6 Saturday. */
+    val days: List<Int> = emptyList(),
+    /** Minutes after midnight (0–1439) it starts, in the schedule's time zone. */
+    val start: Int,
+    /** Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day. */
+    val end: Int,
+)
+
+/** Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices. */
+@Serializable
+data class QuietHours(
+    /** An IANA time zone, like America/Toronto. */
+    val timeZone: String,
+    /** Up to 7 windows. */
+    val windows: List<QuietWindow> = emptyList(),
+)
+
 @Serializable
 data class Member(
     val login: String,
@@ -2534,6 +2554,12 @@ sealed class ClientMessage {
     data class RepoSetupCancel(
         val repo: String,
     ) : ClientMessage()
+    /** Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`. */
+    @Serializable
+    data class QuietHoursSet(
+        /** None: no quiet hours. */
+        val quietHours: dev.maplefactory.wire.QuietHours? = null,
+    ) : ClientMessage()
     /** Follow a goal (it's in your sidebar) or stop following it. */
     @Serializable
     data class GoalFollow(
@@ -2915,6 +2941,7 @@ sealed class ClientMessage {
             "goal.scout" -> json.decodeFromJsonElement(GoalScout.serializer(), body)
             "repo.setup.start" -> json.decodeFromJsonElement(RepoSetupStart.serializer(), body)
             "repo.setup.cancel" -> json.decodeFromJsonElement(RepoSetupCancel.serializer(), body)
+            "quietHours.set" -> json.decodeFromJsonElement(QuietHoursSet.serializer(), body)
             "goal.follow" -> json.decodeFromJsonElement(GoalFollow.serializer(), body)
             "goal.archive" -> json.decodeFromJsonElement(GoalArchive.serializer(), body)
             "machine.settings" -> json.decodeFromJsonElement(MachineSettings.serializer(), body)
@@ -2993,6 +3020,7 @@ sealed class ClientMessage {
             is GoalScout -> "goal.scout" to json.encodeToJsonElement(GoalScout.serializer(), value)
             is RepoSetupStart -> "repo.setup.start" to json.encodeToJsonElement(RepoSetupStart.serializer(), value)
             is RepoSetupCancel -> "repo.setup.cancel" to json.encodeToJsonElement(RepoSetupCancel.serializer(), value)
+            is QuietHoursSet -> "quietHours.set" to json.encodeToJsonElement(QuietHoursSet.serializer(), value)
             is GoalFollow -> "goal.follow" to json.encodeToJsonElement(GoalFollow.serializer(), value)
             is GoalArchive -> "goal.archive" to json.encodeToJsonElement(GoalArchive.serializer(), value)
             is MachineSettings -> "machine.settings" to json.encodeToJsonElement(MachineSettings.serializer(), value)
@@ -3081,6 +3109,8 @@ sealed class ServerToClient {
         val online: List<dev.maplefactory.wire.Presence> = emptyList(),
         val notes: List<dev.maplefactory.wire.Note> = emptyList(),
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
+        /** Your quiet hours. None: none set, or an older server. */
+        val quietHours: dev.maplefactory.wire.QuietHours? = null,
         val intake: List<dev.maplefactory.wire.IntakeRequest> = emptyList(),
         val repos: List<dev.maplefactory.wire.OrgRepo> = emptyList(),
         /** Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server. */
@@ -3177,6 +3207,12 @@ sealed class ServerToClient {
     @Serializable
     data class FollowsUpdated(
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
+    ) : ServerToClient()
+    /** Your quiet hours changed, to your apps only. */
+    @Serializable
+    data class QuietHoursUpdated(
+        /** None: cleared. */
+        val quietHours: dev.maplefactory.wire.QuietHours? = null,
     ) : ServerToClient()
     /** Who's online and what they're looking at, whenever it changes. */
     @Serializable
@@ -3302,6 +3338,7 @@ sealed class ServerToClient {
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
             "repo.setup.updated" -> json.decodeFromJsonElement(RepoSetupUpdated.serializer(), body)
             "follows.updated" -> json.decodeFromJsonElement(FollowsUpdated.serializer(), body)
+            "quietHours.updated" -> json.decodeFromJsonElement(QuietHoursUpdated.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "policy.updated" -> json.decodeFromJsonElement(PolicyUpdated.serializer(), body)
             "prompts.updated" -> json.decodeFromJsonElement(PromptsUpdated.serializer(), body)
@@ -3338,6 +3375,7 @@ sealed class ServerToClient {
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
             is RepoSetupUpdated -> "repo.setup.updated" to json.encodeToJsonElement(RepoSetupUpdated.serializer(), value)
             is FollowsUpdated -> "follows.updated" to json.encodeToJsonElement(FollowsUpdated.serializer(), value)
+            is QuietHoursUpdated -> "quietHours.updated" to json.encodeToJsonElement(QuietHoursUpdated.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is PolicyUpdated -> "policy.updated" to json.encodeToJsonElement(PolicyUpdated.serializer(), value)
             is PromptsUpdated -> "prompts.updated" to json.encodeToJsonElement(PromptsUpdated.serializer(), value)
