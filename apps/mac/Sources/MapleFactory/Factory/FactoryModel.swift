@@ -247,6 +247,10 @@ struct FactoryTask: Identifiable {
     var splitFrom: String? = nil
     /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
     var scoutedFrom: String? = nil
+    /// What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98).
+    var followUpOf: String? = nil
+    /// How soon it should be done: p0 (do it right away) to p3 (when there's room); none when unset (live only).
+    var priority: String? = nil
     /// The planner's proposed title, taken when the plan is approved (unless an approver keeps the current one).
     var suggestedTitle: String? = nil
     /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.

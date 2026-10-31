@@ -83,6 +83,8 @@ import SwiftUI
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
         task.scoutedFrom = t.scoutedFrom
+        task.followUpOf = t.followUpOf
+        task.priority = t.priority?.rawValue
         task.suggestedTitle = t.suggestedTitle
         task.effort = t.effort
         let goal = goals.first { $0.id == t.goal }

@@ -72,19 +72,43 @@ struct TaskOwnership: View {
     }
 }
 
-/// Where a task came from, when it didn't start as someone's idea: split off an over-budget task, or
-/// a leftover a Scout run picked up. Each names the task, linked.
+/// A task's priority as a small chip: P0 red, P1 amber, the rest muted. Nothing when it has none.
+struct PriorityChip: View {
+    let priority: String?
+
+    private static let titles = ["p0": "Do it right away", "p1": "Next", "p2": "Soon", "p3": "When there's room"]
+
+    var body: some View {
+        if let priority {
+            let color = priority == "p0" ? Theme.State.cancelled : priority == "p1" ? Theme.State.awaitingApproval : Theme.textMuted
+            Text(priority.uppercased())
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(color)
+                .padding(.horizontal, 5)
+                .frame(height: 16)
+                .background(RoundedRectangle(cornerRadius: 4).fill(priority == "p0" || priority == "p1" ? color.opacity(0.13) : Theme.fill))
+                .help("\(priority.uppercased()): \(Self.titles[priority] ?? "priority")")
+        }
+    }
+}
+
+/// Where a task came from, when it didn't start as someone's idea: split off an over-budget task, a
+/// leftover a Scout run picked up, or a follow-up of another task's review. Each names the task, linked.
 struct TaskOrigin: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
 
     var body: some View {
-        if task.splitFrom != nil || task.scoutedFrom != nil {
+        if task.splitFrom != nil || task.scoutedFrom != nil || task.followUpOf != nil {
             HStack(spacing: 12) {
                 if let id = task.splitFrom { line("arrow.triangle.branch", "Split from", id, nil) }
                 if let from = task.scoutedFrom {
                     let parts = from.split(separator: "#", maxSplits: 1).map(String.init)
                     line("binoculars", "Scouted from", parts[0], parts.count > 1 ? "a review finding" : nil)
+                }
+                if let from = task.followUpOf {
+                    let parts = from.split(separator: "#", maxSplits: 1).map(String.init)
+                    line("arrow.turn.down.right", "Follow-up of", parts[0], parts.count > 1 ? "a review finding" : nil)
                 }
             }
             .font(.system(size: 12))
