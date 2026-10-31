@@ -11,7 +11,7 @@ import { Intake } from "../src/factory/intake.ts";
 import { ARCHIVED_NOTE, parseAnswer } from "../src/factory/slack-asks.ts";
 import { Store } from "../src/factory/store.ts";
 import { deliver } from "../src/trackers.ts";
-import { slackActions, slackCommand, slackEvents } from "../src/slack.ts";
+import { slackActions, slackCommand, slackEvents, wantsGoals } from "../src/slack.ts";
 import { manifest, merged, definition, slackSetupUrl, SLACK_SCOPES } from "../src/integrations/registry.ts";
 import type { Goal, ServerToRunner } from "../src/wire.ts";
 
@@ -75,7 +75,7 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
         if (path === "/slack/seen") return Response.json({ seen: engine.slack.seen(body.id) });
         if (path === "/slack/ask") await engine.slack.ask(body);
         if (path === "/slack/action") await engine.slack.action(body);
-        if (path === "/slack/joined") await engine.slack.picker(body.channel);
+        if (path === "/slack/joined") await engine.slack.picker(body.channel, body.threadTs);
         if (path === "/intake") return Response.json(intake.create(body));
         return new Response(null, { status: 204 });
       },
@@ -517,7 +517,7 @@ test("Maple joining a channel posts the goal picker; the pick is saved for the c
     assert.equal(picker.channel, "C1");
     assert.equal(picker.thread_ts, undefined, "a message of its own in the channel");
     assert.equal(picker.text, "Which goals should I work on here?");
-    const menu = picker.blocks.find((b: any) => b.type === "actions").elements[0];
+    const menu = picker.blocks.find((b: any) => b.type === "section").accessory;
     assert.equal(menu.type, "multi_static_select");
     assert.deepEqual(menu.options.map((o: any) => o.value), ["*", "web", "mob"]);
     // Someone else joining asks nothing.
@@ -536,6 +536,66 @@ test("Maple joining a channel posts the goal picker; the pick is saved for the c
     await f.settle();
     assert.equal(f.posts().at(-1)!.text, "Which goals should I work on here?");
     assert.equal(f.sent.length, 0, "`goals` isn't a question for the agent");
+  } finally {
+    f.restore();
+  }
+});
+
+test("`@Maple goals` in a thread posts the picker as a reply in that thread, and the agent gets nothing", async () => {
+  const f = factory();
+  try {
+    await slackEvents(signed("/integrations/slack/events", mention("EvGoals", "<@UBOT> goals")), f.env, f.ctx);
+    await f.settle();
+    const [picker] = f.posts();
+    assert.deepEqual([picker.channel, picker.thread_ts, picker.text], ["C1", "50.0001", "Which goals should I work on here?"]);
+    const menu = picker.blocks.find((b: any) => b.type === "section").accessory;
+    assert.deepEqual([menu.type, menu.action_id], ["multi_static_select", "goals.pick"]);
+    assert.ok(!picker.blocks.some((b: any) => b.type === "actions"), "the menu is the section's accessory");
+    assert.equal(f.sent.length, 0);
+  } finally {
+    f.restore();
+  }
+});
+
+test("wordings of `goals` bring up the picker; a question naming goals in passing goes to the agent", async () => {
+  for (const text of ["*goals*", "goals?", "change goals", "Goal", "pick goals.", "`set goals`", "which goals"]) assert.ok(wantsGoals(text), text);
+  for (const text of ["what goals cover billing?", "goals for billing", "list the goals and their repos"]) assert.ok(!wantsGoals(text), text);
+  const f = factory();
+  try {
+    for (const [i, text] of ["<@UBOT> *goals*", "<@UBOT> goals?", "<@UBOT> change goals"].entries()) {
+      await slackEvents(signed("/integrations/slack/events", mention(`EvG${i}`, text)), f.env, f.ctx);
+      await f.settle();
+      assert.equal(f.posts().at(-1)!.text, "Which goals should I work on here?", text);
+    }
+    assert.equal(f.posts().length, 3);
+    assert.equal(f.sent.length, 0, "none of them is a question for the agent");
+    await slackEvents(signed("/integrations/slack/events", mention("EvQ", "<@UBOT> what goals cover billing?")), f.env, f.ctx);
+    await f.settle();
+    assert.equal(f.sent.length, 1, "a question goes to the agent");
+    assert.ok(f.posts().slice(3).every((p) => p.text !== "Which goals should I work on here?"));
+  } finally {
+    f.restore();
+  }
+});
+
+test("when Slack rejects the picker, a plain reply in the thread says why and the problem is recorded", async () => {
+  const f = factory();
+  const mocked = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const res = await mocked(input, init);
+    const body = typeof init.body === "string" ? JSON.parse(init.body) : null;
+    if (String(input).endsWith("/chat.postMessage") && body?.blocks) return Response.json({ ok: false, error: "invalid_blocks" });
+    return res;
+  }) as typeof fetch;
+  try {
+    await slackEvents(signed("/integrations/slack/events", mention("EvGoals", "<@UBOT> goals")), f.env, f.ctx);
+    await f.settle();
+    const [picker, reply] = f.posts();
+    assert.ok(picker.blocks);
+    assert.deepEqual([reply.channel, reply.thread_ts, reply.blocks], ["C1", "50.0001", undefined]);
+    assert.equal(reply.text, "I couldn't show the goal picker here: Slack's chat.postMessage said invalid_blocks");
+    assert.ok(f.events.includes("Slack's chat.postMessage said invalid_blocks"));
+    assert.equal(f.sent.length, 0);
   } finally {
     f.restore();
   }

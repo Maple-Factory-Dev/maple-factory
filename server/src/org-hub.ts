@@ -320,8 +320,8 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/slack/joined": {
-        const { channel } = (await request.json()) as { channel: string };
-        await this.engine.slack.picker(channel);
+        const { channel, threadTs } = (await request.json()) as { channel: string; threadTs?: string };
+        await this.engine.slack.picker(channel, threadTs);
         this.broadcast({ type: "integrations.updated", integrations: await this.integrationList() });
         return new Response(null, { status: 204 });
       }

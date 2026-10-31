@@ -117,13 +117,20 @@ export async function slackEvents(request: Request, env: Env, ctx: { waitUntil(p
   return new Response(null, { status: 200 });
 }
 
+/** Whether a mention asks for the goal picker: `goals`, `goals?`, `*goals*`, `change goals` and the like, not a question that names goals in passing. */
+export function wantsGoals(question: string): boolean {
+  const said = question.replace(/[*_`~]/g, "").replace(/[\s.!?:]+$/, "").trim().toLowerCase();
+  return /^((pick|change|set|which) )?goals?$/.test(said);
+}
+
 /** A mention: its thread and files read and handed to OrgHub, or `@Maple goals` bringing the picker back. */
 async function mentioned(env: Env, slack: Record<string, string>, event: SlackEvent) {
   const token = slack.botToken;
   if (!token) return integrationEvent(env, "slack", "Someone mentioned @Maple, but there's no bot token to answer with: add it in Settings › Integrations.");
   const question = unmention(event.text ?? "");
-  if (/^goals\b/i.test(question)) {
-    await orgHub(env).fetch("https://org/slack/joined", { method: "POST", body: JSON.stringify({ channel: event.channel }) });
+  if (wantsGoals(question)) {
+    const asked = { channel: event.channel, ...(event.thread_ts ? { threadTs: event.thread_ts } : {}) };
+    await orgHub(env).fetch("https://org/slack/joined", { method: "POST", body: JSON.stringify(asked) });
     return;
   }
   const threadTs = event.thread_ts ?? event.ts;
