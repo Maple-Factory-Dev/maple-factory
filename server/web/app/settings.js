@@ -74,6 +74,38 @@ export function cleanOwners(text, org = "") {
   return owners;
 }
 
+/** An integration's status line, as the Mac app words it: `tone` is "error", "muted" or "faint". `ago`
+ *  turns a time into "3m ago". */
+export function integrationStatus(i, ago) {
+  if (i.lastError) return { tone: "error", text: `Error: ${i.lastError}` };
+  if (i.enabled) return { tone: "muted", text: i.lastEventAt ? `Connected · last event ${ago(i.lastEventAt)}` : "Connected · no events yet" };
+  return i.updatedBy ? { tone: "muted", text: "Off" } : { tone: "faint", text: "Not set up" };
+}
+
+/** What to send to keep an integration as it is: secrets blank (kept), plain values as stored, and the
+ *  ones the env vars give left out, so saving doesn't copy them into Settings. */
+export function keptValues(i) {
+  return Object.fromEntries(Object.entries(i.values ?? {}).filter(([name]) => !i.fromEnv?.includes(name)));
+}
+
+/** The form's fields for an integration: secrets blank, plain values as stored unless the env vars give them. */
+export function integrationForm(i) {
+  return Object.fromEntries(i.fields.map((f) => [f.name, f.secret || i.fromEnv?.includes(f.name) ? "" : i.values?.[f.name] ?? ""]));
+}
+
+/** The integrations.save for `draft` (the form's fields) over what's kept: a blank secret keeps the
+ *  stored one, a blank plain field clears it. */
+export function integrationSave(i, draft, enabled) {
+  return { type: "integrations.save", kind: i.kind, enabled, values: { ...keptValues(i), ...draft } };
+}
+
+/** The URL to paste into Slack, Linear or Jira: on this server when it only gives a path, and for Jira
+ *  with the webhook secret it has to carry. */
+export function webhookUrl(i, origin) {
+  const url = i.webhookUrl.startsWith("/") ? String(origin).replace(/\/+$/, "") + i.webhookUrl : i.webhookUrl;
+  return url + (i.kind === "jira" ? "?secret=<webhook secret>" : "");
+}
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null));
 
