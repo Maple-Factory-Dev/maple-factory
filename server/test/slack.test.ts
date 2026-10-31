@@ -541,6 +541,32 @@ test("Maple joining a channel posts the goal picker; the pick is saved for the c
   }
 });
 
+test("a private channel: a mention in its thread reads conversations.replies and is asked like a public one; joining it posts the goal picker", async () => {
+  const f = factory();
+  try {
+    const joined = JSON.stringify({ type: "event_callback", event_id: "EvJoinG", authorizations: [{ user_id: "UBOT" }], event: { type: "member_joined_channel", user: "UBOT", channel: "G1", channel_type: "G" } });
+    await slackEvents(signed("/integrations/slack/events", joined), f.env, f.ctx);
+    await f.settle();
+    const [picker] = f.posts();
+    assert.deepEqual([picker.channel, picker.text], ["G1", "Which goals should I work on here?"]);
+
+    const event = { type: "app_mention", user: "U2", text: "<@UBOT> can you look into it?", ts: "50.0002", thread_ts: "50.0001", channel: "G1", channel_type: "group" };
+    await slackEvents(signed("/integrations/slack/events", JSON.stringify({ type: "event_callback", event_id: "EvG", authorizations: [{ user_id: "UBOT" }], event })), f.env, f.ctx);
+    await f.settle();
+    const replies = f.calls.find((c) => c.url.includes("/conversations.replies"));
+    assert.ok(replies, "the thread is read");
+    assert.match(replies.url, /channel=G1/);
+    assert.match(replies.url, /ts=50\.0001/);
+    const run = f.sent.find((c) => c.type === "draft.run") as Extract<ServerToRunner, { type: "draft.run" }>;
+    assert.ok(run, "the ask reached the factory and a draft.run went to the machine");
+    assert.match(run.prompt, /dana: The export button times out/);
+    const looking = f.posts().at(-1)!;
+    assert.deepEqual([looking.channel, looking.thread_ts, looking.text], ["G1", "50.0001", "Looking into it…"]);
+  } finally {
+    f.restore();
+  }
+});
+
 test("a channel whose picked goals are all archived: the answer uses every active goal and says once to pick again", async () => {
   const f = factory();
   try {
@@ -600,12 +626,25 @@ test("the manifest names this factory's events, actions and command URLs, the bo
   assert.equal(m.features.slash_commands[0].command, "/maple");
   assert.deepEqual(m.settings.event_subscriptions.bot_events, ["app_mention", "member_joined_channel"]);
   assert.deepEqual(m.oauth_config.scopes.bot, SLACK_SCOPES);
-  assert.deepEqual(SLACK_SCOPES, ["app_mentions:read", "chat:write", "channels:history", "files:read", "users:read", "commands"]);
+  assert.deepEqual(SLACK_SCOPES, ["app_mentions:read", "chat:write", "channels:history", "groups:history", "channels:read", "groups:read", "mpim:read", "files:read", "users:read", "commands"]);
   assert.equal(m.features.bot_user.display_name, "Maple");
   const url = new URL(slackSetupUrl("https://factory.acme.dev"));
   assert.equal(url.origin + url.pathname, "https://api.slack.com/apps");
   assert.equal(url.searchParams.get("new_app"), "1");
   assert.deepEqual(JSON.parse(url.searchParams.get("manifest_json")!), manifest("https://factory.acme.dev"));
+});
+
+// The scopes Slack refuses a manifest without, per bot event (api.slack.com/events). A new event goes here first.
+const EVENT_SCOPES: Record<string, string[]> = {
+  app_mention: ["app_mentions:read"],
+  member_joined_channel: ["channels:read", "groups:read", "mpim:read"],
+};
+
+test("every bot event in the manifest has the scopes Slack requires for it", () => {
+  for (const event of manifest("https://factory.acme.dev").settings.event_subscriptions.bot_events) {
+    assert.ok(EVENT_SCOPES[event], `add ${event}'s required scopes to EVENT_SCOPES`);
+    for (const scope of EVENT_SCOPES[event]) assert.ok(SLACK_SCOPES.includes(scope), `${event} needs ${scope}`);
+  }
 });
 
 test("the bot token is optional and has to look like one", () => {

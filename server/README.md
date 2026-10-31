@@ -148,7 +148,10 @@ Integrations**, turns one on, fills in its fields and copies its webhook URL int
 For Slack, the web app's card has **Create the Slack app**: Slack's new-app page with a manifest (`manifest()` in
 `src/integrations/registry.ts`) naming the bot user Maple, its scopes, and this factory's events
 (`/integrations/slack/events`), interactivity (`/integrations/slack/actions`) and slash command URLs; it needs
-`PUBLIC_URL`. The setup guide is maplefactory.dev/docs/slack (apps/site/docs/slack.html).
+`PUBLIC_URL`. @Maple works in public channels and in private ones it's invited to (`groups:history`); Slack
+requires `channels:read`, `groups:read` and `mpim:read` for `member_joined_channel`. An app made from an older
+manifest needs those four scopes added and a reinstall. The setup guide is maplefactory.dev/docs/slack
+(apps/site/docs/slack.html).
 
 @Maple: `src/slack.ts` checks each request's signature and timestamp, answers Slack within its 3 seconds and does
 the rest in `waitUntil`, drops retried event_ids, reads the mention's thread and copies its files into R2 as
