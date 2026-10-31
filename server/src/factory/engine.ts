@@ -7,7 +7,7 @@
 
 import type { Env } from "../env.ts";
 import type {
-  ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  ChangeRequest, CheckRun, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   McpConnector, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -19,7 +19,7 @@ import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from 
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
-import { RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
+import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
@@ -66,6 +66,10 @@ const MERGE_FIX = "Send it back to fix";
 const MERGE_RETRY = "Try the merge again";
 /** Times the factory sends a task that didn't merge back to fix it before asking a person. */
 const MERGE_FIX_TRIES = 2;
+/** Finishes in a row the repo's checks can stop before the builder raises a hand instead of trying again. */
+const CHECK_TRIES = 3;
+/** What a task says while its finish runs the repo's checks. */
+const RUNNING_CHECKS = "Running checks…";
 /** What a task says while it's merging, from its countdown running out until it lands. */
 const MERGING = "Merging…";
 /** How long an auto-merge waits for its dry-run merge's answer before merging anyway. */
@@ -1409,11 +1413,15 @@ export class Engine {
     this.store.savePrivate(task.id, { ...priv, finishing: false });
     // A push that was already under way when the task was cancelled (or merged): it stays that way.
     if (task.state === "cancelled" || task.state === "merged") return;
+    const failed = msg.ok ? null : msg.checks?.findLast((c) => c.timedOut || c.code !== 0);
+    if (failed) return this.checksFailed(task, failed);
+    if (task.liveLog === RUNNING_CHECKS) task.liveLog = null;
     if (!msg.ok) {
       this.raise(task, "builder", "needsInput", `Pushing failed: ${msg.message ?? "no reason given"}.`);
       this.save(task);
       return;
     }
+    if (priv.checkFailures) this.store.savePrivate(task.id, { ...this.store.private(task.id), checkFailures: 0 });
     const goal = this.store.goal(task.goal);
     const base = msg.base ?? priv.base ?? goal?.base ?? "main";
     task.pr = task.pr
@@ -1432,6 +1440,39 @@ export class Engine {
     if (task.machine && priv.worktree) this.hooks.waitUntil(this.toRunner(task.machine, { type: "task.diff", taskId: task.id, cwd: priv.worktree, base }));
     if (msg.pushed === "app" && msg.owner && msg.repo) this.hooks.waitUntil(this.openPull(task.id, msg.owner, msg.repo));
     this.hooks.waitUntil(this.pump());
+  }
+
+  /** A finish one of the repo's checks stopped (nothing committed or pushed): the task keeps building,
+   *  and the failure is typed into its builder to fix and finish again. The third in a row, or one with
+   *  no builder session to tell, raises a hand instead. */
+  private checksFailed(task: Task, check: CheckRun) {
+    const priv = this.store.private(task.id);
+    const tries = (priv.checkFailures ?? 0) + 1;
+    this.store.savePrivate(task.id, { ...priv, finishing: false, checkFailures: tries });
+    task.liveLog = null;
+    const how = check.timedOut ? "timed out" : check.code == null ? "was killed" : `exited ${check.code}`;
+    this.event(task, "factory", `checks failed: \`${check.command}\` ${how}`);
+    const output = check.output.trim() ? `\n\n${check.output.trim()}` : " (no output)";
+    const told = `The check \`${check.command}\` ${how}, so nothing was committed or pushed.${output}\n\nFix it, then call finish again.`;
+    const hand = (why: string) => {
+      this.raise(task, "builder", "needsInput", `${why}: \`${check.command}\` ${how}.`, [
+        { title: "Retry", detail: "Send it back to fix the check and finish again.", recommended: true },
+        { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
+      ]);
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), checkFailures: 0 });
+    };
+    if (tries >= CHECK_TRIES) hand(`The repo's checks stopped its finish ${tries} times in a row`);
+    else if (!task.worker) hand("The repo's checks stopped its finish and its builder isn't running");
+    else {
+      this.hooks.waitUntil(this.type(task, told).then((ok) => {
+        if (ok) return;
+        const t = this.store.task(task.id);
+        if (!t || t.state !== "building") return;
+        this.raise(t, "builder", "needsInput", `The repo's checks stopped its finish and its builder couldn't be told: \`${check.command}\` ${how}.`);
+        this.save(t);
+      }));
+    }
+    this.save(task);
   }
 
   // ---------------------------------------------------------------------------
@@ -1966,7 +2007,8 @@ export class Engine {
         const priv = this.store.private(task.id);
         if (!priv.worktree || !priv.repoDir) fail("The factory doesn't know where this worktree came from; raise a hand.");
         this.store.savePrivate(task.id, { ...priv, finishing: true });
-        task.liveLog = "Committing and pushing…";
+        const checks = checkCommands(this.store.scriptsFor(taskRepo(task, goal ?? null)));
+        task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";
         task.comments.push({ id: crypto.randomUUID(), author: "builder", text: str(a.summary, "summary"), at: now(), anchor: "Summary", via: null });
         this.hooks.waitUntil(this.toRunner(task.machine!, {
           type: "task.finish",
@@ -1977,7 +2019,9 @@ export class Engine {
           base: priv.base ?? goal?.base ?? null,
           title: `${task.id}: ${task.title}`,
           fallback: true,
+          ...(checks.length ? { checks: checks.join("\n") } : {}),
         }));
+        if (checks.length) return { summary: `Finishing: the repo's checks run first (${checks.length}), then the factory commits and pushes and the review starts. End your turn now; if a check fails, it's typed into this session.` };
         return { summary: "Finishing: the factory is committing and pushing, then the review starts. End your turn now." };
       }
 

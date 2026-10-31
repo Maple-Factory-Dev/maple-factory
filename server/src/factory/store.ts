@@ -15,6 +15,8 @@ export interface TaskPrivate {
   base: string | null;
   /// The builder said it's done; finishing (commit and push) is under way.
   finishing: boolean;
+  /** Finishes in a row the repo's checks stopped, since its last push (or its last hand about them). */
+  checkFailures?: number;
   /// A merge was sent and hasn't been answered.
   merging?: boolean;
   /** When that merge was sent, so one that never answers is noticed (none on a merge from before this was kept). */
