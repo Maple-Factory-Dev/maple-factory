@@ -25,6 +25,15 @@ public struct FeedState: Sendable {
     /// Goals letting the factory auto-merge up to a risk level.
     public var acceptances: [Wire.RiskAcceptance] = []
     public var hasSnapshot = false
+    /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
+    /// Empty from an older server, which sends every task.
+    public var older: [String: OlderTasks] = [:]
+    /// Goals whose next page of older tasks is on its way.
+    public var loadingOlder: Set<String> = []
+    /// Where each goal's next page of older tasks starts: the last task of its last page.
+    public var olderCursor: [String: OlderCursor] = [:]
+    /// Tasks asked for by ID (`task.get`) that haven't come yet.
+    public var fetching: Set<String> = []
 
     public init() {}
 
@@ -46,6 +55,10 @@ public struct FeedState: Sendable {
             machines = snapshot.machines
             goals = snapshot.goals
             tasks = snapshot.tasks
+            older = Self.older(tallies: snapshot.tallies, tasks: snapshot.tasks)
+            loadingOlder = []
+            olderCursor = [:]
+            fetching = []
             intake = snapshot.intake
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             online = snapshot.online
@@ -55,8 +68,14 @@ public struct FeedState: Sendable {
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             hasSnapshot = true
+        case .taskUpdated(let update) where fetching.contains(update.task.id):
+            // A task asked for by ID (`task.get`), maybe one the snapshot left out.
+            fetching.remove(update.task.id)
+            mergeOlder([update.task])
         case .taskUpdated(let update):
             Self.upsert(update.task, into: &tasks, front: true)
+        case .tasksPage(let page):
+            pageArrived(page)
         case .taskRemoved(let removed):
             tasks.removeAll { $0.id == removed.id }
         case .goalUpdated(let update):
@@ -86,6 +105,9 @@ public struct FeedState: Sendable {
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
+            if let id = error.requestId, id.hasPrefix("task.get:") {
+                fetching.remove(String(id.dropFirst("task.get:".count)))
+            }
             return .error(error.message)
         default:
             break
@@ -107,6 +129,61 @@ public struct FeedState: Sendable {
         } else {
             list.append(item)
         }
+    }
+
+    // MARK: Older tasks
+
+    /// What the snapshot left out of each goal: its tally (counted over every task) less the tasks it sent.
+    public static func older(tallies: [Wire.GoalTally]?, tasks: [Wire.Task]) -> [String: OlderTasks] {
+        guard let tallies else { return [:] }
+        var held: [String: OlderTasks] = [:]
+        for task in tasks { held[task.goal, default: OlderTasks()].count(task.state, by: 1) }
+        var older: [String: OlderTasks] = [:]
+        for tally in tallies {
+            let sent = held[tally.goal] ?? OlderTasks()
+            let finished = Int(tally.merged) + Int(tally.cancelled) + Int(tally.closed)
+            older[tally.goal] = OlderTasks(merged: max(0, Int(tally.merged) - sent.merged), finished: max(0, finished - sent.finished))
+        }
+        return older
+    }
+
+    /// A page of older tasks: they join the list, and the goal's cursor moves to its last one.
+    public mutating func pageArrived(_ page: Wire.ServerToClientTasksPage) {
+        let goal = page.goal ?? ""
+        loadingOlder.remove(goal)
+        if let last = page.tasks.last { olderCursor[goal] = OlderCursor(before: last.updatedAt, id: last.id) }
+        mergeOlder(page.tasks)
+        // The server knows best: none left means none left, whatever the counts drifted to.
+        if !page.more, let id = page.goal { older[id] = OlderTasks() }
+    }
+
+    /// Older tasks from `tasks.page` or `task.get` join the end of the list, and the counts left out go
+    /// down; one a live update already brought stays as it is. Returns the ones added.
+    @discardableResult
+    public mutating func mergeOlder(_ page: [Wire.Task]) -> [Wire.Task] {
+        let held = Set(tasks.map(\.id))
+        let new = page.filter { !held.contains($0.id) }
+        for task in new { older[task.goal]?.count(task.state, by: -1) }
+        tasks.append(contentsOf: new)
+        return new
+    }
+
+    /// Whether `goal` (its id) has finished tasks older than the snapshot's that aren't loaded yet.
+    public func hasOlder(goal: String) -> Bool { (older[goal]?.finished ?? 0) > 0 }
+
+    /// The `tasks.older` that loads `goal`'s next page, marking it on its way; nil when there's none or it's coming.
+    public mutating func olderRequest(goal: String, limit: UInt32 = 50) -> Wire.ClientMessage? {
+        guard hasOlder(goal: goal), !loadingOlder.contains(goal) else { return nil }
+        loadingOlder.insert(goal)
+        let cursor = olderCursor[goal]
+        return .tasksOlder(.init(goal: goal, before: cursor?.before, beforeId: cursor?.id, limit: limit))
+    }
+
+    /// The `task.get` for a task opened by ID that isn't loaded; nil when it's here or already asked for.
+    public mutating func fetchRequest(id: String) -> Wire.ClientMessage? {
+        guard hasSnapshot, !fetching.contains(id), task(id) == nil else { return nil }
+        fetching.insert(id)
+        return .taskGet(.init(id: id))
     }
 
     // MARK: Reading
@@ -234,3 +311,34 @@ extension Wire.Task: Identifiable {}
 extension Wire.Goal: Identifiable {}
 extension Wire.Machine: Identifiable {}
 extension Wire.IntakeRequest: Identifiable {}
+
+/// A goal's finished tasks the snapshot left out and that aren't loaded yet.
+public struct OlderTasks: Equatable, Sendable {
+    public var merged = 0
+    /// Merged, cancelled and closed.
+    public var finished = 0
+
+    public init(merged: Int = 0, finished: Int = 0) {
+        self.merged = merged
+        self.finished = finished
+    }
+
+    public mutating func count(_ state: Wire.TaskState, by n: Int) {
+        switch state {
+        case .merged: merged = max(0, merged + n); finished = max(0, finished + n)
+        case .cancelled, .closed: finished = max(0, finished + n)
+        default: break
+        }
+    }
+}
+
+/// Where a goal's next page of older tasks starts.
+public struct OlderCursor: Equatable, Sendable {
+    public var before: UInt64
+    public var id: String
+
+    public init(before: UInt64, id: String) {
+        self.before = before
+        self.id = id
+    }
+}

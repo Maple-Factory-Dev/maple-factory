@@ -24,7 +24,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-const val PROTOCOL_VERSION: Int = 1
+const val PROTOCOL_VERSION: Int = 2
 
 /** How the factory's JSON reads and writes: unknown keys skipped, nulls left out, lists and maps always sent. */
 val WireJson: Json = Json {
@@ -1932,6 +1932,16 @@ data class StatsFindings(
     val recent: List<StatsFindingRow> = emptyList(),
 )
 
+/** How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out). */
+@Serializable
+data class GoalTally(
+    val goal: String,
+    val merged: Long,
+    val cancelled: Long,
+    val closed: Long,
+    val total: Long,
+)
+
 /** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
 @Serializable
 data class StatsSummary(
@@ -2862,6 +2872,23 @@ sealed class ClientMessage {
         val days: Long,
         val goal: String? = null,
     ) : ClientMessage()
+    /** Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only. */
+    @Serializable
+    data class TasksOlder(
+        /** One goal's tasks. None: every goal's. */
+        val goal: String? = null,
+        /** Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start. */
+        val before: Long? = null,
+        /** The previous page's last task ID, to page past tasks updated in the same millisecond. */
+        val beforeId: String? = null,
+        /** Page size: 50 by default, 200 at most. */
+        val limit: Long? = null,
+    ) : ClientMessage()
+    /** One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`. */
+    @Serializable
+    data class TaskGet(
+        val id: String,
+    ) : ClientMessage()
     /** A message this build doesn't know yet; newer servers and runners may send them. */
     data class Unknown(val type: String) : ClientMessage()
 
@@ -2939,6 +2966,8 @@ sealed class ClientMessage {
             "task.checkedIt" -> json.decodeFromJsonElement(TaskCheckedIt.serializer(), body)
             "task.mockupChange" -> json.decodeFromJsonElement(TaskMockupChange.serializer(), body)
             "stats.get" -> json.decodeFromJsonElement(StatsGet.serializer(), body)
+            "tasks.older" -> json.decodeFromJsonElement(TasksOlder.serializer(), body)
+            "task.get" -> json.decodeFromJsonElement(TaskGet.serializer(), body)
             else -> Unknown(type)
         }
 
@@ -3015,6 +3044,8 @@ sealed class ClientMessage {
             is TaskCheckedIt -> "task.checkedIt" to json.encodeToJsonElement(TaskCheckedIt.serializer(), value)
             is TaskMockupChange -> "task.mockupChange" to json.encodeToJsonElement(TaskMockupChange.serializer(), value)
             is StatsGet -> "stats.get" to json.encodeToJsonElement(StatsGet.serializer(), value)
+            is TasksOlder -> "tasks.older" to json.encodeToJsonElement(TasksOlder.serializer(), value)
+            is TaskGet -> "task.get" to json.encodeToJsonElement(TaskGet.serializer(), value)
             is Unknown -> value.type to null
         }
     }
@@ -3032,7 +3063,12 @@ sealed class ServerToClient {
         /** The most recent session ends (last 7 days, newest first). */
         val ended: List<dev.maplefactory.wire.EndedSession> = emptyList(),
         val goals: List<dev.maplefactory.wire.Goal> = emptyList(),
+        /** Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`. */
         val tasks: List<dev.maplefactory.wire.Task> = emptyList(),
+        /** Each goal's task counts over every task, also those left out. None: an older server, which sends every task. */
+        val tallies: List<dev.maplefactory.wire.GoalTally>? = null,
+        /** How many finished tasks the snapshot left out. None: an older server. */
+        val olderTasks: Long? = null,
         val policy: dev.maplefactory.wire.RiskPolicy,
         val acceptances: List<dev.maplefactory.wire.RiskAcceptance> = emptyList(),
         /** The org's prompt additions. None: an older server. */
@@ -3095,6 +3131,15 @@ sealed class ServerToClient {
     @Serializable
     data class TaskRemoved(
         val id: String,
+    ) : ServerToClient()
+    /** A page of older finished tasks `tasks.older` asked for, newest first, to that connection only. */
+    @Serializable
+    data class TasksPage(
+        /** The goal asked for. None: every goal. */
+        val goal: String? = null,
+        val tasks: List<dev.maplefactory.wire.Task> = emptyList(),
+        /** There are older ones still: ask again from this page's last task. */
+        val more: Boolean,
     ) : ServerToClient()
     @Serializable
     data class GoalUpdated(
@@ -3247,6 +3292,7 @@ sealed class ServerToClient {
             "machine.agent_login" -> json.decodeFromJsonElement(MachineAgentLogin.serializer(), body)
             "task.updated" -> json.decodeFromJsonElement(TaskUpdated.serializer(), body)
             "task.removed" -> json.decodeFromJsonElement(TaskRemoved.serializer(), body)
+            "tasks.page" -> json.decodeFromJsonElement(TasksPage.serializer(), body)
             "goal.updated" -> json.decodeFromJsonElement(GoalUpdated.serializer(), body)
             "note.updated" -> json.decodeFromJsonElement(NoteUpdated.serializer(), body)
             "intake.updated" -> json.decodeFromJsonElement(IntakeUpdated.serializer(), body)
@@ -3282,6 +3328,7 @@ sealed class ServerToClient {
             is MachineAgentLogin -> "machine.agent_login" to json.encodeToJsonElement(MachineAgentLogin.serializer(), value)
             is TaskUpdated -> "task.updated" to json.encodeToJsonElement(TaskUpdated.serializer(), value)
             is TaskRemoved -> "task.removed" to json.encodeToJsonElement(TaskRemoved.serializer(), value)
+            is TasksPage -> "tasks.page" to json.encodeToJsonElement(TasksPage.serializer(), value)
             is GoalUpdated -> "goal.updated" to json.encodeToJsonElement(GoalUpdated.serializer(), value)
             is NoteUpdated -> "note.updated" to json.encodeToJsonElement(NoteUpdated.serializer(), value)
             is IntakeUpdated -> "intake.updated" to json.encodeToJsonElement(IntakeUpdated.serializer(), value)

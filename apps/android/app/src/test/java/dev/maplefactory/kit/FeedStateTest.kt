@@ -132,4 +132,37 @@ class FeedStateTest {
         assertFalse(FeedState.isOlder("0.10.1", "0.10.1"))
         assertFalse(FeedState.isOlder("1.0.0-beta", "1.0"))
     }
+
+    // The snapshot window (MF-212): the snapshot leaves out tasks finished over 14 days ago.
+
+    private val windowed = snapshot.replace(""""runnerLatest":"0.10.1"}""", """"runnerLatest":"0.10.1","tallies":[{"goal":"g1","merged":4,"cancelled":1,"closed":0,"total":7}],"olderTasks":5}""")
+
+    @Test fun snapshotCountsWhatItLeftOut() {
+        val state = FeedState().on(windowed)
+        assertEquals(OlderTasks(merged = 4, finished = 5), state.older["g1"])
+        assertTrue(state.hasOlder("g1"))
+        assertTrue(FeedState().on(snapshot).older.isEmpty())
+    }
+
+    @Test fun olderPagesJoinTheTasksUntilNoneAreLeft() {
+        var state = FeedState().on(windowed)
+        val (asked, request) = state.olderRequest("g1")!!
+        assertEquals(dev.maplefactory.wire.ClientMessage.TasksOlder(goal = "g1", limit = 50), request)
+        assertNull(asked.olderRequest("g1")) // one at a time
+        state = asked.on("""{"type":"tasks.page","goal":"g1","more":true,"tasks":[${task("MF-9", "merged")},${task("MF-8", "cancelled")}]}""")
+        assertEquals(listOf("MF-1", "MF-2", "MF-9", "MF-8"), state.tasks.map { it.id })
+        assertEquals(OlderTasks(merged = 3, finished = 3), state.older["g1"])
+        assertEquals(dev.maplefactory.wire.ClientMessage.TasksOlder(goal = "g1", before = 2, beforeId = "MF-8", limit = 50), state.olderRequest("g1")!!.second)
+        state = state.on("""{"type":"tasks.page","goal":"g1","more":false,"tasks":[]}""")
+        assertFalse(state.hasOlder("g1"))
+    }
+
+    @Test fun aTaskAskedForByIdJoinsTheList() {
+        val (asked, request) = FeedState().on(windowed).fetchRequest("MF-7")!!
+        assertEquals(dev.maplefactory.wire.ClientMessage.TaskGet(id = "MF-7"), request)
+        val state = asked.on("""{"type":"task.updated","task":${task("MF-7", "merged")}}""")
+        assertEquals("MF-7", state.tasks.last().id)
+        assertTrue(state.fetching.isEmpty())
+        assertEquals(OlderTasks(merged = 3, finished = 4), state.older["g1"])
+    }
 }
