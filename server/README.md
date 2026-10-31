@@ -147,6 +147,12 @@ attachments. OrgHub's `factory/slack-asks.ts` runs a read-only agent on an onlin
 proposed task comes with Create task / Not now, and Create task opens a request whose reply address is the thread
 (`slack:<channel>|<thread ts>|<ask>`) and makes the task in planning. Each channel's goals are picked when Maple
 joins it (kv `slack:channel:<id>`; `@Maple goals` picks again); archived goals drop out at use time.
+An ask whose machine goes offline, or whose 30 minutes run out, says so in place of "Looking into it…"; the files
+of an ask that never became a task are deleted from R2 when it's set aside (Not now) or forgotten. A Slack
+thread's replies don't reach the task's agent, so its accepted message points to the factory for the agent's questions.
+
+Every request source (Linear, Jira, the /maple response_url and @Maple's Slack threads) now hears when its task's
+plan is ready, not only when it merges: worth calling out in the next maple-server release notes.
 Secret values are stored sealed in OrgHub's SQLite (AES-GCM under a key `SECRETS_KEY` derives for them) and never
 sent back to an app: a set one shows as ••••, and saving with it blank keeps it. Each row shows its status: the
 last event that reached the factory, or the last thing that went wrong (a bad signature, a refused comment).
