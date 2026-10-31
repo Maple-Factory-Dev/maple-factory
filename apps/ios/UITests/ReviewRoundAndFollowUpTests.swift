@@ -35,6 +35,8 @@ final class ReviewRoundAndFollowUpTests: XCTestCase {
         XCTAssertTrue(request.label.contains("Reviewing…"), "the button should say a round is running: \(request.label)")
         XCTAssertFalse(request.isEnabled, "no second request while a round runs")
         snap(app, "request-review-running")
+        XCTAssertTrue(revealInBar(request, in: app))
+        snap(app, "request-review-disabled")
     }
 
     func testFollowUpFromFindings() {
@@ -162,10 +164,17 @@ final class ReviewRoundAndFollowUpTests: XCTestCase {
     /// Swipes the action bar along until `element` is on screen.
     private func revealInBar(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
         guard element.waitForExistence(timeout: 5) else { return false }
-        for _ in 0..<5 where !element.isHittable {
-            element.swipeLeft()
+        // Hittable counts a button that's only partly on screen, so swipe until all of it is.
+        let screen = app.windows.firstMatch.frame
+        // A swipe flings past it, so drag the bar a short way at a time, no further than it's off.
+        for _ in 0..<6 where !(element.isHittable && screen.contains(element.frame)) {
+            let off = element.frame.maxX - screen.maxX + 24
+            let by = off > 0 ? -min(off, 150) : min(screen.minX - element.frame.minX + 24, 150)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let from = origin.withOffset(CGVector(dx: screen.midX, dy: element.frame.midY))
+            from.press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: screen.midX + by, dy: element.frame.midY)), withVelocity: .slow, thenHoldForDuration: 0.3)
         }
-        return element.isHittable
+        return element.isHittable && screen.contains(element.frame)
     }
 
     /// Swipes the task up until `element` is on screen.
