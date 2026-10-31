@@ -59,7 +59,7 @@ struct GoalOverviewSections {
     init(tasks: [FactoryTask], today: Int, pendingMerge: (FactoryTask) -> Bool = { _ in false }) {
         for task in tasks {
             switch task.state {
-            case .cancelled:
+            case .cancelled, .closed:
                 continue
             case .merged:
                 if today - task.span.upperBound <= Self.recentDays { recentlyLanded.append(task) }
