@@ -1009,7 +1009,7 @@ public enum Wire {
         case proofBurden
         /// Needs more input than the plan has.
         case needsInput
-        /// The fix goes over the size budget.
+        /// The task goes over its budget: the change's size, or the time or money spent on it.
         case overBudget
         /// Its session ended in a way that needs a person.
         case sessionEnded
@@ -3190,8 +3190,12 @@ public enum Wire {
         public var autoMerges: Bool?
         /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
         public var scoutItems: UInt32?
+        /// Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60.
+        public var taskMinutes: UInt32?
+        /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
+        public var taskCostUsd: Double?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -3201,6 +3205,8 @@ public enum Wire {
             self.autoFixMerges = autoFixMerges
             self.autoMerges = autoMerges
             self.scoutItems = scoutItems
+            self.taskMinutes = taskMinutes
+            self.taskCostUsd = taskCostUsd
         }
 
         public init(from decoder: Decoder) throws {
@@ -3214,6 +3220,8 @@ public enum Wire {
             autoFixMerges = try c.decodeIfPresent(Bool.self, forKey: .autoFixMerges)
             autoMerges = try c.decodeIfPresent(Bool.self, forKey: .autoMerges)
             scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
+            taskMinutes = try c.decodeIfPresent(UInt32.self, forKey: .taskMinutes)
+            taskCostUsd = try c.decodeIfPresent(Double.self, forKey: .taskCostUsd)
         }
     }
 

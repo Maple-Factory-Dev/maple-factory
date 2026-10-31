@@ -346,7 +346,7 @@ pub enum HandReason {
     ProofBurden,
     /// Needs more input than the plan has.
     NeedsInput,
-    /// The fix goes over the size budget.
+    /// The task goes over its budget: the change's size, or the time or money spent on it.
     OverBudget,
     /// Its session ended in a way that needs a person.
     SessionEnded,
@@ -1591,6 +1591,12 @@ pub struct RiskPolicy {
     /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scout_items: Option<u32>,
+    /// Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_minutes: Option<u32>,
+    /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_cost_usd: Option<f64>,
 }
 
 /// An MCP server the factory adds to every session, alongside its own `maple` server.
