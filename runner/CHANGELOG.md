@@ -5,7 +5,7 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
-## Unreleased
+## 0.68.0
 
 `maple-runner stop` stops the installed service so launchd or systemd can't start it again (a runner stuck crashing and restarting stays down) until `maple-runner start`, which starts it in the background and waits for it to connect, or your next login. Both take `--dry-run`.
 
