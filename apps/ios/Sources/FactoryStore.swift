@@ -221,6 +221,13 @@ final class FactoryStore {
     func steer(_ id: String, text: String) { send(.taskSteer(.init(id: id, text: text))) }
     /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
     func answerPrompt(_ id: String, choice: Wire.PromptChoice) { send(.taskAnswerPrompt(.init(id: id, choice: choice))) }
+    /// Signs off a Done when item yourself (index from 0), with an optional note on why.
+    func checkedIt(_ id: String, item: Int, note: String) {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        send(.taskCheckedIt(.init(id: id, item: UInt32(item), note: note.isEmpty ? nil : note)))
+    }
+    /// Asks the planner to change one of its mockups.
+    func requestMockupChange(_ id: String, mockup: String, text: String) { send(.taskMockupChange(.init(id: id, mockup: mockup, text: text))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
     /// Sends a draft to planning, or picks up a backlog task.
@@ -336,6 +343,28 @@ final class FactoryStore {
             var machine = feed.machines[mi]
             machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
             feed.apply(.machineUpdated(.init(machine: machine)))
+        case .taskCheckedIt(let m):
+            // As the server does: the item is proven by your word, with the note as its reason.
+            guard let task = feed.task(m.id), task.doneWhen.indices.contains(Int(m.item)) else { break }
+            let item = task.doneWhen[Int(m.item)]
+            let reason = m.note
+            update(m.id) {
+                $0.doneWhen[Int(m.item)].status = .proven
+                $0.doneWhen[Int(m.item)].evidence = .init(kind: item.proof, summary: "Attested by \(me)\(reason.map { ": \($0)" } ?? "")", by: me, at: DemoData.now, attested: true, reason: reason)
+                $0.events.append(.init(who: me, text: "attested \"\(item.text)\"\(reason.map { ": \($0)" } ?? "")", at: DemoData.now))
+            }
+            notice = .toast("Marked as checked", taskId: m.id)
+        case .taskMockupChange(let m):
+            // As the server does: the mockup waits on a new version, the change is queued for the
+            // planner, and a plan waiting for approval goes back to planning.
+            guard let mockup = feed.task(m.id)?.mockups.first(where: { $0.id == m.mockup }) else { break }
+            update(m.id) {
+                if let i = $0.mockups.firstIndex(where: { $0.id == m.mockup }) { $0.mockups[i].status = .changesRequested }
+                $0.changes.append(.init(id: "C\($0.changes.count + 1)", author: me, text: m.text, at: DemoData.now, anchor: "Mockup: \(mockup.title)", status: .queued))
+                $0.events.append(.init(who: me, text: "asked for a change to the \"\(mockup.title)\" mockup", at: DemoData.now))
+                if $0.state == .awaitingApproval { $0.approvals = []; $0.state = .planning }
+            }
+            notice = .toast("Change requested: the planner will post a new version", taskId: m.id)
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
         case .taskCreate(let m):
