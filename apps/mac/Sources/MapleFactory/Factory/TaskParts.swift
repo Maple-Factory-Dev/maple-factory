@@ -639,12 +639,48 @@ struct BacklogBlock: View {
     }
 }
 
+/// Asks what one more automated-review round should look for.
+struct RequestReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let taskID: String
+    var send: (String) -> Void
+    @State private var focus = ""
+
+    var body: some View {
+        let empty = focus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Request a review of \(taskID)")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text("The review agent runs one more round and looks at this first. Approvals already given stay.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("What should it look for? e.g. check security", text: $focus, axis: .vertical)
+                .lineLimit(3...6)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { if !empty { send(focus); dismiss() } }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Send") { send(focus); dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(empty)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
+    }
+}
+
 /// Merging is gated on passing proofs, passing required CI, and however many human reviews the
 /// task's risk calls for. When the goal's policy allows it, the factory merges on its own.
 struct ReviewActions: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var requestingReview = false
 
     var body: some View {
         let gate = state.mergeGate(for: task)
@@ -732,6 +768,11 @@ struct ReviewActions: View {
                     }
                     RequestChangesButton(enabled: !approving && !merging, action: onRequestChanges)
                 }
+                // Another automated-review round, with this person's focus, once the last one is in.
+                if let round = task.autoReview?.current, round.verdict != .inProgress, !merging {
+                    SecondaryButton(title: "Request review…", enabled: !approving) { requestingReview = true }
+                        .help("Run the review agent again, looking first at what you ask")
+                }
             }
 
             if let mergeAt = countdown(gate) {
@@ -742,6 +783,9 @@ struct ReviewActions: View {
             } else {
                 statusLine(gate)
             }
+        }
+        .sheet(isPresented: $requestingReview) {
+            RequestReviewSheet(taskID: task.id) { focus in state.requestReview(task.id, focus: focus) }
         }
     }
 

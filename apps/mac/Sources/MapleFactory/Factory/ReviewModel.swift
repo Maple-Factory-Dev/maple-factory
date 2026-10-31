@@ -47,6 +47,9 @@ struct ReviewRound: Identifiable {
     let when: String
     /// The commit the builder pushed in response, if it did.
     var fix: String? = nil
+    /// What a teammate asked this round to look for, and who, when one requested it.
+    var focus: String? = nil
+    var requestedBy: Person? = nil
     var id: Int { number }
 }
 

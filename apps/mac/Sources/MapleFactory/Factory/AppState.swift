@@ -1787,6 +1787,27 @@ final class AppState {
         approveChangesInMockup(id)
     }
 
+    /// One more automated-review round on a task in review, looking first at what this person asks.
+    func requestReview(_ id: String, focus: String) {
+        let focus = focus.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !focus.isEmpty else { return }
+        if let client, isLive {
+            client.send(.taskRequestReview(.init(id: id, focus: focus)))
+            return
+        }
+        let me = FactoryData.me
+        withAnimation(.snappy(duration: 0.3)) {
+            update(id) { task in
+                guard var review = task.autoReview, review.current?.verdict != .inProgress else { return }
+                if review.rounds.count >= review.maxRounds { review.maxRounds = review.rounds.count + 1 }
+                review.rounds.append(ReviewRound(number: review.rounds.count + 1, verdict: .inProgress, found: 0, when: "now", focus: focus, requestedBy: me))
+                task.autoReview = review
+                task.activity.insert(ActivityItem(who: me.name, text: "Asked for a review: \(focus)", when: "now"), at: 0)
+            }
+        }
+        showToast("Asked for another review round on \(id)", icon: "eye.fill")
+    }
+
     private func approveChangesInMockup(_ id: String) {
         let me = FactoryData.me
         withAnimation(.snappy(duration: 0.3)) {
