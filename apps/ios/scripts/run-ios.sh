@@ -34,7 +34,7 @@ if [ "${BUILD:-1}" != 0 ]; then
   log=build/xcodebuild.log
   mkdir -p build
   xcodebuild -project MapleFactory.xcodeproj -scheme "Maple Factory" -configuration "$CONFIG" \
-    -destination "platform=iOS Simulator,id=$udid" -derivedDataPath build build >"$log" 2>&1 || true
+    -destination "platform=iOS Simulator,id=$udid" -derivedDataPath build -skipPackagePluginValidation build >"$log" 2>&1 || true
   grep -E "error:|warning: .*/apps/ios/|BUILD (SUCCEEDED|FAILED)" "$log" || true
   grep -q "BUILD SUCCEEDED" "$log" || { echo "The build failed: $log" >&2; exit 1; }
 fi
