@@ -24,7 +24,8 @@ struct FeedStateTests {
          "machines":[{"id":"m1","name":"Studio","owner":"andrea","online":true,"version":"0.2.0"}],
          "goals":[{"id":"g1","name":"Maple","prefix":"MF","color":"#D24E26","summary":"","lead":"sam"}],
          "tasks":[\(task("MF-1", state: "awaitingApproval")),\(task("MF-2", state: "building"))],
-         "policy":{"maxFiles":20,"maxLines":400,"areas":[],"planApprovals":{},"finalReviews":{},"autoMerge":{}},
+         "policy":{"maxFiles":20,"maxLines":400,"areas":[],"planApprovals":{},"finalReviews":{},"autoMerge":{"low":true}},
+         "acceptances":[{"goal":"g1","upTo":"low","by":"sam","at":5}],
          "follows":[{"goal":"g1","following":false}],
          "runnerLatest":"0.10.1"}
         """
@@ -127,5 +128,47 @@ struct FeedStateTests {
         state.apply(try decode(#"{"type":"github.status","status":\#(incident)}"#))
         state.apply(try decode(#"{"type":"github.status"}"#))
         #expect(state.githubStatus == nil)
+    }
+
+    @Test func policyAndAcceptancesFollowTheFeed() throws {
+        var state = FeedState()
+        state.apply(try decode(snapshot))
+        #expect(state.policy?.autoMerge["low"] == true)
+        #expect(state.acceptance(for: "g1")?.upTo == .low)
+        #expect(state.acceptance(for: "g1")?.by == "sam")
+        #expect(state.acceptance(for: "g2") == nil)
+
+        state.apply(try decode(#"{"type":"policy.updated","policy":{"maxFiles":10,"maxLines":200,"areas":[],"planApprovals":{},"finalReviews":{},"autoMerge":{"low":true,"medium":true},"autoMerges":false},"acceptances":[{"goal":"g1","upTo":"medium","by":"andrea","at":9}]}"#))
+        #expect(state.policy?.maxFiles == 10)
+        #expect(state.policy?.autoMerges == false)
+        #expect(state.acceptance(for: "g1")?.upTo == .medium)
+        #expect(state.acceptance(for: "g1")?.by == "andrea")
+
+        // Taking it back: the server sends the list without it.
+        state.apply(try decode(#"{"type":"policy.updated","policy":{"maxFiles":10,"maxLines":200,"areas":[],"planApprovals":{},"finalReviews":{},"autoMerge":{}},"acceptances":[]}"#))
+        #expect(state.acceptance(for: "g1") == nil)
+    }
+
+    @Test func canLeadIsTheLeadOrAnAdmin() throws {
+        var state = FeedState()
+        state.apply(try decode(snapshot))
+        let goal = state.goals[0]
+        let admin = state.member("andrea")
+        let lead = Wire.Member(login: "sam", role: "member")
+        let other = Wire.Member(login: "kim", role: "member")
+        #expect(state.canLead(goal, me: admin))
+        #expect(state.canLead(goal, me: lead))
+        #expect(!state.canLead(goal, me: other))
+        #expect(!state.canLead(goal, me: nil))
+    }
+
+    @Test func unfinishedTasksLeaveOutMergedAndCancelled() throws {
+        var state = FeedState()
+        state.apply(try decode(snapshot))
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-3", state: "merged"))}"#))
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-4", state: "cancelled"))}"#))
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-5", state: "draft"))}"#))
+        #expect(Set(state.unfinishedTasks(in: "g1").map(\.id)) == ["MF-1", "MF-2", "MF-5"])
+        #expect(state.unfinishedTasks(in: "g2").isEmpty)
     }
 }

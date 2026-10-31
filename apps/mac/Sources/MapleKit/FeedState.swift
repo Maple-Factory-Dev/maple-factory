@@ -20,6 +20,10 @@ public struct FeedState: Sendable {
     public var serverVersion: String?
     /// What githubstatus.com reports while GitHub is having issues; nil while all is clear.
     public var githubStatus: Wire.GitHubStatus?
+    /// The factory's rules for sign-off and auto-merge, by risk.
+    public var policy: Wire.RiskPolicy?
+    /// Goals letting the factory auto-merge up to a risk level.
+    public var acceptances: [Wire.RiskAcceptance] = []
     public var hasSnapshot = false
 
     public init() {}
@@ -48,6 +52,8 @@ public struct FeedState: Sendable {
             runnerLatest = snapshot.runnerLatest
             serverVersion = snapshot.serverVersion
             githubStatus = Self.githubNotice(snapshot.githubStatus)
+            policy = snapshot.policy
+            acceptances = snapshot.acceptances
             hasSnapshot = true
         case .taskUpdated(let update):
             Self.upsert(update.task, into: &tasks, front: true)
@@ -74,6 +80,9 @@ public struct FeedState: Sendable {
             runnerLatest = release.runnerLatest
         case .githubStatus(let update):
             githubStatus = Self.githubNotice(update.status)
+        case .policyUpdated(let update):
+            policy = update.policy
+            acceptances = update.acceptances
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
@@ -110,6 +119,20 @@ public struct FeedState: Sendable {
     public var activeGoals: [Wire.Goal] { goals.filter { $0.archived != true } }
 
     public func tasks(in goal: String) -> [Wire.Task] { tasks.filter { $0.goal == goal } }
+
+    /// How far the factory may auto-merge the goal's work, on the record; nil: not at all.
+    public func acceptance(for goal: String) -> Wire.RiskAcceptance? { acceptances.last { $0.goal == goal } }
+
+    /// Whether `me` may change the goal's auto-merge or archive it: its lead or an admin, as the server checks.
+    public func canLead(_ goal: Wire.Goal, me: Wire.Member?) -> Bool {
+        guard let me else { return false }
+        return me.role == "admin" || goal.lead == me.login
+    }
+
+    /// The goal's tasks that archiving would ask about: any not merged or cancelled, as the server counts them.
+    public func unfinishedTasks(in goal: String) -> [Wire.Task] {
+        tasks.filter { $0.goal == goal && $0.state != .merged && $0.state != .cancelled }
+    }
 
     /// Whether you follow the goal: you said so, or you lead it, own a task in it, or are on its team.
     public func following(_ goal: Wire.Goal) -> Bool {
