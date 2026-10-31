@@ -2250,6 +2250,7 @@ pub enum RunnerMessage {
         /// Base64.
         data: String,
     },
+    /// How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed).
     #[serde(rename = "update.status")]
     UpdateStatus {
         state: String,
@@ -2467,7 +2468,11 @@ pub enum ServerToRunner {
         nonce: String,
     },
     #[serde(rename = "runner.update")]
-    RunnerUpdate,
+    RunnerUpdate {
+        /// Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
     /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
     #[serde(rename = "agent.login")]
     AgentLogin {
@@ -2752,6 +2757,9 @@ pub enum ClientMessage {
     #[serde(rename = "machine.update")]
     MachineUpdate {
         machine: String,
+        /// The release the person was shown; a newer one isn't installed without asking again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
     /// Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.
     #[serde(rename = "machine.agent_login")]

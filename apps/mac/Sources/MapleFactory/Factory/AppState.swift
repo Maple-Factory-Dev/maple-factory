@@ -2529,7 +2529,7 @@ final class AppState {
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":
                 for _ in 0..<300 {
-                    if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.send(.machineUpdate(.init(machine: machine.id))); break }
+                    if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.updateRunner(machine); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             // Its ⋯ › Check for Runner Update (or Update Runner to X, when one's out), as the menu runs it.

@@ -1962,6 +1962,7 @@ sealed class RunnerMessage {
         /** Base64. */
         val data: String,
     ) : RunnerMessage()
+    /** How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed). */
     @Serializable
     data class UpdateStatus(
         val state: String,
@@ -2200,7 +2201,11 @@ sealed class ServerToRunner {
         /** Echoed in the reply, so it goes to the viewer that asked. */
         val nonce: String,
     ) : ServerToRunner()
-    data object RunnerUpdate : ServerToRunner()
+    @Serializable
+    data class RunnerUpdate(
+        /** Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before. */
+        val version: String? = null,
+    ) : ServerToRunner()
     /** Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting. */
     @Serializable
     data class AgentLogin(
@@ -2317,7 +2322,7 @@ sealed class ServerToRunner {
             "session.resize" -> json.decodeFromJsonElement(SessionResize.serializer(), body)
             "session.kill" -> json.decodeFromJsonElement(SessionKill.serializer(), body)
             "session.replay" -> json.decodeFromJsonElement(SessionReplay.serializer(), body)
-            "runner.update" -> RunnerUpdate
+            "runner.update" -> json.decodeFromJsonElement(RunnerUpdate.serializer(), body)
             "agent.login" -> json.decodeFromJsonElement(AgentLogin.serializer(), body)
             "runner.restart" -> RunnerRestart
             "mcp.response" -> json.decodeFromJsonElement(McpResponse.serializer(), body)
@@ -2339,7 +2344,7 @@ sealed class ServerToRunner {
             is SessionResize -> "session.resize" to json.encodeToJsonElement(SessionResize.serializer(), value)
             is SessionKill -> "session.kill" to json.encodeToJsonElement(SessionKill.serializer(), value)
             is SessionReplay -> "session.replay" to json.encodeToJsonElement(SessionReplay.serializer(), value)
-            is RunnerUpdate -> "runner.update" to null
+            is RunnerUpdate -> "runner.update" to json.encodeToJsonElement(RunnerUpdate.serializer(), value)
             is AgentLogin -> "agent.login" to json.encodeToJsonElement(AgentLogin.serializer(), value)
             is RunnerRestart -> "runner.restart" to null
             is McpResponse -> "mcp.response" to json.encodeToJsonElement(McpResponse.serializer(), value)
@@ -2503,6 +2508,8 @@ sealed class ClientMessage {
     @Serializable
     data class MachineUpdate(
         val machine: String,
+        /** The release the person was shown; a newer one isn't installed without asking again. */
+        val version: String? = null,
     ) : ClientMessage()
     /** Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that. */
     @Serializable

@@ -242,9 +242,20 @@ export class OrgHub extends DurableObject<Env> {
           const known = (await this.machines()).find((m) => m.id === machine);
           const update = fromNotice(this.updates.get(machine), msg, known?.version ?? null);
           if (update) await this.setUpdate(machine, update, true);
+          const name = known?.name ?? machine;
           if (update?.state === "failed") {
-            const name = known?.name ?? machine;
             this.broadcast({ type: "toast", text: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`, taskId: null });
+          }
+          if (msg.state === "newer") {
+            // A newer release came out after the one they were shown; nothing was installed. The card goes back
+            // to offering an update, now to the newer release, and pressing it is their go-ahead.
+            this.updates.delete(machine);
+            await this.ctx.storage.delete(`u:${machine}`);
+            await this.refreshRunnerRelease();
+            const after = (await this.machines()).find((m) => m.id === machine);
+            if (after) this.broadcast({ type: "machine.updated", machine: after });
+            const version = msg.version ?? "a newer release";
+            this.broadcast({ type: "toast", text: `${name}: runner ${version} is out now; press Update again to install it.`, taskId: null });
           }
         }
         if (msg.type === "agent.login_status" && msg.status) {
@@ -727,12 +738,13 @@ export class OrgHub extends DurableObject<Env> {
         }
         const res = await machineHub(this.env, msg.machine).fetch("https://hub/command", {
           method: "POST",
-          body: JSON.stringify({ type: "runner.update" }),
+          // The version they were shown: a newer release isn't installed without them pressing Update again.
+          body: JSON.stringify({ type: "runner.update", version: msg.version ?? null }),
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
-        await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), from: machine.version ?? null, message: null, at: Date.now() }, true);
-        await audit(this.env, client.member.login, "runner.update", msg.machine);
+        await this.setUpdate(machine.id, { state: "checking", target: msg.version ?? (await this.runnerLatest()), from: machine.version ?? null, message: null, at: Date.now() }, true);
+        await audit(this.env, client.member.login, "runner.update", msg.machine, msg.version ? { version: msg.version } : undefined);
         return;
       }
       case "machine.agent_login": {

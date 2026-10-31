@@ -338,8 +338,8 @@ final class FactoryStore {
     /// A machine its tasks can be moved off: offline, or paused by its owner.
     static func isStuck(_ machine: Wire.Machine) -> Bool { !machine.online || machine.settings?.paused == true }
 
-    /// Asks the machine to install the latest runner; `machine.update` on it says how it goes.
-    func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id))) }
+    /// Asks the machine to install the runner release shown (not a newer one out since); `machine.update` on it says how it goes.
+    func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id, version: feed.runnerLatest))) }
     /// A nickname everyone sees; empty goes back to its id.
     func renameMachine(_ machine: Wire.Machine, name: String) { send(.machineRename(.init(machine: machine.id, name: name))) }
     /// Moves a task off its offline or paused machine: it re-queues first and carries on from its last push.

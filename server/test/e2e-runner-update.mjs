@@ -6,6 +6,9 @@
 // update.status notices move it to installing (with the version) and restarting, and it stays restarting
 // while the runner is offline; reconnecting on that version marks it updated, in a fresh snapshot too.
 // A second update that fails shows failed with the runner's reason (and a toast), and up_to_date shows as upToDate.
+// machine.update with the version the app showed reaches the runner as runner.update with that version; when the
+// runner answers newer (the feed moved on), the machine's update clears, the app hears the new runnerLatest and a
+// toast naming it.
 // Then a newer runner is published to the bucket and the hub's alarm fires (its hourly check due): the app gets
 // runner.released with that version and its notes, and the alarm is set again no more than an hour ahead.
 
@@ -133,6 +136,24 @@ await wait("the third runner.update", () => asked.length === 3);
 runner.status("up_to_date", "0.2.0", "maple-runner 0.2.0 is up to date");
 await wait("upToDate", () => app.machine.update?.state === "upToDate");
 step("up_to_date → upToDate");
+
+// The app showed `shown`; by the time the runner reads the feed, `later` is out.
+const shown = `7.${Date.now() % 100000}.0`;
+const later = `7.${Date.now() % 100000}.1`;
+app.sock.send(JSON.stringify({ type: "machine.update", machine: runnerId, version: shown }));
+await wait("the pinned runner.update", () => asked.length === 4);
+if (asked[3].version !== shown) throw new Error(`runner.update carried ${JSON.stringify(asked[3])}`);
+if (asked[0].version != null) throw new Error(`a bare machine.update sent version ${asked[0].version}`);
+await wait("checking the shown version", () => app.machine.update?.state === "checking" && app.machine.update.target === shown);
+step(`machine.update version ${shown} → runner.update version ${shown}, checking toward ${shown}`);
+await publish("maple-runner/latest.json", { version: later });
+await publish("maple-runner/changes.json", { releases: [{ version: later, publishedAt: new Date().toISOString(), notes: "- Out after it was shown." }] });
+runner.status("newer", later, `runner ${later} came out after ${shown} was offered; update again to install it`);
+await wait("the update cleared", () => app.machine.update == null);
+await wait("runner.released with the newer one", () => app.released.find((m) => m.runnerLatest === later));
+const again = await wait("the newer toast", () => app.toasts.find((t) => t.includes(later)));
+if (again !== `${app.machine.name}: runner ${later} is out now; press Update again to install it.`) throw new Error(`newer toasted "${again}"`);
+step(`update.status newer ${later} → update cleared, runner.released ${later}, "${again}"`);
 
 const newer = `9.${Date.now() % 100000}.0`;
 await publish("maple-runner/latest.json", { version: newer });

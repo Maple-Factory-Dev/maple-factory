@@ -404,6 +404,8 @@ pub enum UpdateState {
     UpToDate,
     Updating,
     Failed,
+    /// The feed now offers a newer release than the one asked for; nothing was installed.
+    Newer,
 }
 
 /// Messages the hub sends.
@@ -448,8 +450,12 @@ pub enum Inbound {
     #[serde(rename = "session.replay")]
     SessionReplay { id: Uuid, nonce: String },
     /// Check for a newer runner now and install it (answered with `runner.update_status`).
+    /// With `version`, install only that release (the one the person was shown).
     #[serde(rename = "runner.update")]
-    RunnerUpdate,
+    RunnerUpdate {
+        #[serde(default)]
+        version: Option<String>,
+    },
     /// Restart the runner process; its service starts it again. Sessions live on in tmux.
     #[serde(rename = "runner.restart")]
     RunnerRestart,
@@ -735,7 +741,11 @@ mod tests {
     #[test]
     fn update_messages() {
         let msg: Inbound = serde_json::from_str(r#"{"type":"runner.update"}"#).unwrap();
-        assert!(matches!(msg, Inbound::RunnerUpdate));
+        assert!(matches!(msg, Inbound::RunnerUpdate { version: None }));
+        let msg: Inbound = serde_json::from_str(r#"{"type":"runner.update","version":"0.10.0"}"#).unwrap();
+        assert!(matches!(msg, Inbound::RunnerUpdate { version: Some(v) } if v == "0.10.0"));
+        let msg: Inbound = serde_json::from_str(r#"{"type":"runner.update","version":null}"#).unwrap();
+        assert!(matches!(msg, Inbound::RunnerUpdate { version: None }));
         let msg: Inbound = serde_json::from_str(r#"{"type":"runner.something_new","x":1}"#).unwrap();
         assert!(matches!(msg, Inbound::Unknown));
 
@@ -750,6 +760,7 @@ mod tests {
         assert_eq!(out(UpdateState::UpToDate, Some("0.1.0"), None)["state"], "up_to_date");
         assert_eq!(out(UpdateState::Installing, Some("0.2.0"), None)["state"], "installing");
         assert_eq!(out(UpdateState::Failed, None, Some("x"))["state"], "failed");
+        assert_eq!(out(UpdateState::Newer, Some("0.11.0"), None)["state"], "newer");
     }
 
     #[test]
