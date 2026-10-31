@@ -2270,15 +2270,27 @@ pub enum RunnerMessage {
         ended: Vec<SessionEnd>,
     },
     #[serde(rename = "health")]
-    Health { health: Health },
+    Health {
+        health: Health,
+    },
     #[serde(rename = "session.opened")]
-    SessionOpened { session: SessionInfo },
+    SessionOpened {
+        session: SessionInfo,
+    },
     #[serde(rename = "session.error")]
-    SessionError { id: Uuid, message: String },
+    SessionError {
+        id: Uuid,
+        message: String,
+    },
     #[serde(rename = "session.ended")]
-    SessionEnded { end: SessionEnd },
+    SessionEnded {
+        end: SessionEnd,
+    },
     #[serde(rename = "session.activity")]
-    SessionActivity { id: Uuid, activity: Activity },
+    SessionActivity {
+        id: Uuid,
+        activity: Activity,
+    },
     /// The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal.
     #[serde(rename = "session.replay")]
     SessionReplay {
@@ -2298,7 +2310,9 @@ pub enum RunnerMessage {
     },
     /// How an `agent.login` is going.
     #[serde(rename = "agent.login_status")]
-    AgentLoginStatus { status: AgentLoginStatus },
+    AgentLoginStatus {
+        status: AgentLoginStatus,
+    },
     /// Plan usage readings that changed (all of them again on reconnect).
     #[serde(rename = "usage")]
     Usage {
@@ -2307,10 +2321,17 @@ pub enum RunnerMessage {
     },
     /// A session's latest spend reading (again on reconnect, and once more just before it ends).
     #[serde(rename = "session.cost")]
-    SessionCost { cost: SessionCost },
+    SessionCost {
+        cost: SessionCost,
+    },
     /// A tool call from an agent in one of this runner's sessions (or `tools/list`, for its tools).
     #[serde(rename = "mcp.request")]
-    McpRequest { req_id: String, session: Uuid, tool: String, args: serde_json::Value },
+    McpRequest {
+        req_id: String,
+        session: Uuid,
+        tool: String,
+        args: serde_json::Value,
+    },
     /// A task's worktree is made: where it came from.
     #[serde(rename = "task.started")]
     TaskStarted {
@@ -2416,7 +2437,10 @@ pub enum RunnerMessage {
     },
     /// A line about setting a task's worktree up or cleaning it up (a worktree script starting or finishing), for its timeline.
     #[serde(rename = "task.progress")]
-    TaskProgress { task_id: String, text: String },
+    TaskProgress {
+        task_id: String,
+        text: String,
+    },
     #[serde(rename = "task.cleaned")]
     TaskCleaned {
         task_id: String,
@@ -2476,9 +2500,15 @@ pub enum ServerToRunner {
         connectors: Option<Vec<McpConnector>>,
     },
     #[serde(rename = "session.resize")]
-    SessionResize { id: Uuid, cols: u16, rows: u16 },
+    SessionResize {
+        id: Uuid,
+        cols: u16,
+        rows: u16,
+    },
     #[serde(rename = "session.kill")]
-    SessionKill { id: Uuid },
+    SessionKill {
+        id: Uuid,
+    },
     /// Send the session's screen and scrollback, so a new viewer starts with what's there.
     #[serde(rename = "session.replay")]
     SessionReplay {
@@ -2494,7 +2524,10 @@ pub enum ServerToRunner {
     },
     /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
     #[serde(rename = "agent.login")]
-    AgentLogin { agent: String, cancel: bool },
+    AgentLogin {
+        agent: String,
+        cancel: bool,
+    },
     #[serde(rename = "runner.restart")]
     RunnerRestart,
     /// The answer to `mcp.request`: `result` ({summary, data}) or `error`.
@@ -2524,13 +2557,27 @@ pub enum ServerToRunner {
     },
     /// Report a task's diff against its base (answered with `task.diff`).
     #[serde(rename = "task.diff")]
-    TaskDiff { task_id: String, cwd: String, base: String },
+    TaskDiff {
+        task_id: String,
+        cwd: String,
+        base: String,
+    },
     /// Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`).
     #[serde(rename = "task.merge_check")]
-    TaskMergeCheck { task_id: String, cwd: String, base: String },
+    TaskMergeCheck {
+        task_id: String,
+        cwd: String,
+        base: String,
+    },
     /// Merge a task's branch into its base on origin, for repos with no GitHub App.
     #[serde(rename = "task.merge")]
-    TaskMerge { task_id: String, cwd: String, branch: String, base: String, title: String },
+    TaskMerge {
+        task_id: String,
+        cwd: String,
+        branch: String,
+        base: String,
+        title: String,
+    },
     /// The task is moving to another machine: commit what its worktree has (as WIP) and push its branch.
     #[serde(rename = "task.handoff")]
     TaskHandoff {
@@ -2557,7 +2604,9 @@ pub enum ServerToRunner {
         base: Option<String>,
     },
     #[serde(rename = "draft.cancel")]
-    DraftCancel { id: String },
+    DraftCancel {
+        id: String,
+    },
     /// Remove a finished task's worktree and local branch if nothing would be lost.
     #[serde(rename = "task.cleanup")]
     TaskCleanup {
@@ -2609,13 +2658,21 @@ pub enum ClientMessage {
     #[serde(rename = "subscribe")]
     Subscribe,
     #[serde(rename = "note.save")]
-    NoteSave { note: Note },
+    NoteSave {
+        note: Note,
+    },
     /// Fold a request into an existing task: its tickets become the task's context.
     #[serde(rename = "intake.attach")]
-    IntakeAttach { id: String, task: String },
+    IntakeAttach {
+        id: String,
+        task: String,
+    },
     /// Ask the requester something in their thread.
     #[serde(rename = "intake.ask")]
-    IntakeAsk { id: String, text: String },
+    IntakeAsk {
+        id: String,
+        text: String,
+    },
     #[serde(rename = "intake.decline")]
     IntakeDecline {
         id: String,
@@ -2623,7 +2680,9 @@ pub enum ClientMessage {
         note: Option<String>,
     },
     #[serde(rename = "note.delete")]
-    NoteDelete { id: Uuid },
+    NoteDelete {
+        id: Uuid,
+    },
     /// The task this app is showing, if any, for teammates' presence.
     #[serde(rename = "presence")]
     Presence {
@@ -2642,13 +2701,28 @@ pub enum ClientMessage {
     },
     /// Stream a session's terminal to this connection, starting with a replay.
     #[serde(rename = "session.attach")]
-    SessionAttach { machine: String, id: Uuid, cols: u16, rows: u16 },
+    SessionAttach {
+        machine: String,
+        id: Uuid,
+        cols: u16,
+        rows: u16,
+    },
     #[serde(rename = "session.detach")]
-    SessionDetach { id: Uuid },
+    SessionDetach {
+        id: Uuid,
+    },
     #[serde(rename = "session.resize")]
-    SessionResize { machine: String, id: Uuid, cols: u16, rows: u16 },
+    SessionResize {
+        machine: String,
+        id: Uuid,
+        cols: u16,
+        rows: u16,
+    },
     #[serde(rename = "session.kill")]
-    SessionKill { machine: String, id: Uuid },
+    SessionKill {
+        machine: String,
+        id: Uuid,
+    },
     /// The machine's owner or an admin: who else may open this session's terminal, the whole list (empty unshares it).
     #[serde(rename = "session.share")]
     SessionShare {
@@ -2658,7 +2732,9 @@ pub enum ClientMessage {
         shares: Vec<ShareGrant>,
     },
     #[serde(rename = "goal.save")]
-    GoalSave { goal: Goal },
+    GoalSave {
+        goal: Goal,
+    },
     /// Draft with AI: turn `idea` into a task. `id` is the app's own (a UUID), for its `draft.updated`s.
     #[serde(rename = "draft.start")]
     DraftStart {
@@ -2671,12 +2747,19 @@ pub enum ClientMessage {
     },
     /// Carry on a draft with this goal (one it suggested making, or another).
     #[serde(rename = "draft.goal")]
-    DraftGoal { id: String, goal: String },
+    DraftGoal {
+        id: String,
+        goal: String,
+    },
     #[serde(rename = "draft.cancel")]
-    DraftCancel { id: String },
+    DraftCancel {
+        id: String,
+    },
     /// Run Scout on a goal: its leftovers still worth doing come back as drafted plans.
     #[serde(rename = "goal.scout")]
-    GoalScout { goal: String },
+    GoalScout {
+        goal: String,
+    },
     /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
     #[serde(rename = "repo.setup.start")]
     RepoSetupStart {
@@ -2687,10 +2770,15 @@ pub enum ClientMessage {
     },
     /// Stop a repo's Set up with AI run.
     #[serde(rename = "repo.setup.cancel")]
-    RepoSetupCancel { repo: String },
+    RepoSetupCancel {
+        repo: String,
+    },
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
-    GoalFollow { id: String, following: bool },
+    GoalFollow {
+        id: String,
+        following: bool,
+    },
     /// Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.
     #[serde(rename = "goal.archive")]
     GoalArchive {
@@ -2710,7 +2798,10 @@ pub enum ClientMessage {
     },
     /// Its owner or an admin: a nickname shown everywhere in place of its id. Empty goes back to the id.
     #[serde(rename = "machine.rename")]
-    MachineRename { machine: String, name: String },
+    MachineRename {
+        machine: String,
+        name: String,
+    },
     /// Its owner or an admin: update its runner to the latest release now.
     #[serde(rename = "machine.update")]
     MachineUpdate {
@@ -2729,22 +2820,34 @@ pub enum ClientMessage {
     },
     /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
     #[serde(rename = "runner.check")]
-    RunnerCheck { machine: String },
+    RunnerCheck {
+        machine: String,
+    },
     /// Admins only.
     #[serde(rename = "policy.save")]
-    PolicySave { policy: RiskPolicy },
+    PolicySave {
+        policy: RiskPolicy,
+    },
     /// Admins only: the org's prompt additions.
     #[serde(rename = "prompts.save")]
-    PromptsSave { prompts: PromptAdditions },
+    PromptsSave {
+        prompts: PromptAdditions,
+    },
     /// Admins only: make someone who has signed in an admin of this factory.
     #[serde(rename = "admins.grant")]
-    AdminsGrant { login: String },
+    AdminsGrant {
+        login: String,
+    },
     /// Admins only: take back an admin grant (not a GitHub owner's, nor your own).
     #[serde(rename = "admins.revoke")]
-    AdminsRevoke { login: String },
+    AdminsRevoke {
+        login: String,
+    },
     /// Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).
     #[serde(rename = "members.revoke")]
-    MembersRevoke { login: String },
+    MembersRevoke {
+        login: String,
+    },
     /// Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.
     #[serde(rename = "connectors.save")]
     ConnectorsSave {
@@ -2764,10 +2867,14 @@ pub enum ClientMessage {
     ReposRefresh,
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     #[serde(rename = "repos.add")]
-    ReposAdd { name: String },
+    ReposAdd {
+        name: String,
+    },
     /// Admins only: one added by hand.
     #[serde(rename = "repos.remove")]
-    ReposRemove { name: String },
+    ReposRemove {
+        name: String,
+    },
     /// Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.
     #[serde(rename = "repos.owners.set")]
     ReposOwnersSet {
@@ -2777,10 +2884,17 @@ pub enum ClientMessage {
     },
     /// Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.
     #[serde(rename = "secrets.set")]
-    SecretsSet { repo: String, name: String, value: String },
+    SecretsSet {
+        repo: String,
+        name: String,
+        value: String,
+    },
     /// Admins only.
     #[serde(rename = "secrets.delete")]
-    SecretsDelete { repo: String, name: String },
+    SecretsDelete {
+        repo: String,
+        name: String,
+    },
     /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     #[serde(rename = "repos.scripts.set")]
     ReposScriptsSet {
@@ -2876,10 +2990,14 @@ pub enum ClientMessage {
     },
     /// Send a draft to planning, or pick up a backlog task (one with a plan is planned again).
     #[serde(rename = "task.plan")]
-    TaskPlan { id: String },
+    TaskPlan {
+        id: String,
+    },
     /// Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.
     #[serde(rename = "task.backlog")]
-    TaskBacklog { id: String },
+    TaskBacklog {
+        id: String,
+    },
     /// Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.
     #[serde(rename = "task.comment")]
     TaskComment {
@@ -2918,10 +3036,16 @@ pub enum ClientMessage {
     },
     /// Answer the agent's question.
     #[serde(rename = "task.answer")]
-    TaskAnswer { id: String, text: String },
+    TaskAnswer {
+        id: String,
+        text: String,
+    },
     /// Answer the permission prompt the task's agent is waiting on, in its session. Refused unless its activity is waiting with a `permission` question.
     #[serde(rename = "task.answerPrompt")]
-    TaskAnswerPrompt { id: String, choice: PromptChoice },
+    TaskAnswerPrompt {
+        id: String,
+        choice: PromptChoice,
+    },
     #[serde(rename = "task.resolveHand")]
     TaskResolveHand {
         id: String,
@@ -2930,7 +3054,9 @@ pub enum ClientMessage {
         note: String,
     },
     #[serde(rename = "task.approveChanges")]
-    TaskApproveChanges { id: String },
+    TaskApproveChanges {
+        id: String,
+    },
     /// Start one more automated-review round on a task in review, with the requester's own focus. Approvals already given stay; the merge waits for the round. Refused while a round runs, or unless the task is in review.
     #[serde(rename = "task.requestReview")]
     TaskRequestReview {
@@ -2939,14 +3065,22 @@ pub enum ClientMessage {
         focus: String,
     },
     #[serde(rename = "task.merge")]
-    TaskMerge { id: String },
+    TaskMerge {
+        id: String,
+    },
     /// Stop the auto-merge counting down on a task; a person merges it instead.
     #[serde(rename = "task.holdMerge")]
-    TaskHoldMerge { id: String },
+    TaskHoldMerge {
+        id: String,
+    },
     #[serde(rename = "task.cancel")]
-    TaskCancel { id: String },
+    TaskCancel {
+        id: String,
+    },
     #[serde(rename = "task.retry")]
-    TaskRetry { id: String },
+    TaskRetry {
+        id: String,
+    },
     /// Reorder or schedule a task's place in the queue for sessions. A draft is sent to planning.
     #[serde(rename = "task.queue")]
     TaskQueue {
@@ -2974,19 +3108,32 @@ pub enum ClientMessage {
     },
     /// Run the pull request's failed CI checks again.
     #[serde(rename = "task.rerunChecks")]
-    TaskRerunChecks { id: String },
+    TaskRerunChecks {
+        id: String,
+    },
     /// Run one of the pull request's CI checks again, by name.
     #[serde(rename = "task.rerunCheck")]
-    TaskRerunCheck { id: String, check: String },
+    TaskRerunCheck {
+        id: String,
+        check: String,
+    },
     /// The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.
     #[serde(rename = "task.checkLog")]
-    TaskCheckLog { id: String, check: String },
+    TaskCheckLog {
+        id: String,
+        check: String,
+    },
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     #[serde(rename = "task.split")]
-    TaskSplit { id: String, parts: u32 },
+    TaskSplit {
+        id: String,
+        parts: u32,
+    },
     /// Moves a task off a machine that's offline, paused or removed: its next session starts elsewhere, from the task's last push.
     #[serde(rename = "task.move")]
-    TaskMove { id: String },
+    TaskMove {
+        id: String,
+    },
     /// Attest to a Done when item yourself, with an optional reason.
     #[serde(rename = "task.checkedIt")]
     TaskCheckedIt {
@@ -2996,7 +3143,11 @@ pub enum ClientMessage {
         note: Option<String>,
     },
     #[serde(rename = "task.mockupChange")]
-    TaskMockupChange { id: String, mockup: String, text: String },
+    TaskMockupChange {
+        id: String,
+        mockup: String,
+        text: String,
+    },
     /// Admins only: the factory's statistics, answered with `stats`.
     #[serde(rename = "stats.get")]
     StatsGet {
@@ -3089,33 +3240,58 @@ pub enum ServerToClient {
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
-    MachineUpdated { machine: Machine },
+    MachineUpdated {
+        machine: Machine,
+    },
     #[serde(rename = "machine.removed")]
-    MachineRemoved { id: String },
+    MachineRemoved {
+        id: String,
+    },
     /// How a sign-in on your machine is going, to its owner's apps only.
     #[serde(rename = "machine.agent_login")]
-    MachineAgentLogin { machine: String, status: AgentLoginStatus },
+    MachineAgentLogin {
+        machine: String,
+        status: AgentLoginStatus,
+    },
     #[serde(rename = "task.updated")]
-    TaskUpdated { task: Task },
+    TaskUpdated {
+        task: Task,
+    },
     #[serde(rename = "task.removed")]
-    TaskRemoved { id: String },
+    TaskRemoved {
+        id: String,
+    },
     #[serde(rename = "goal.updated")]
-    GoalUpdated { goal: Goal },
+    GoalUpdated {
+        goal: Goal,
+    },
     #[serde(rename = "note.updated")]
-    NoteUpdated { note: Note },
+    NoteUpdated {
+        note: Note,
+    },
     #[serde(rename = "intake.updated")]
-    IntakeUpdated { request: IntakeRequest },
+    IntakeUpdated {
+        request: IntakeRequest,
+    },
     #[serde(rename = "note.removed")]
-    NoteRemoved { id: Uuid },
+    NoteRemoved {
+        id: Uuid,
+    },
     /// Your draft, to your apps only.
     #[serde(rename = "draft.updated")]
-    DraftUpdated { draft: Draft },
+    DraftUpdated {
+        draft: Draft,
+    },
     /// How a goal's Scout run is going.
     #[serde(rename = "scout.updated")]
-    ScoutUpdated { run: ScoutRun },
+    ScoutUpdated {
+        run: ScoutRun,
+    },
     /// How a repo's Set up with AI run is going.
     #[serde(rename = "repo.setup.updated")]
-    RepoSetupUpdated { run: RepoSetupRun },
+    RepoSetupUpdated {
+        run: RepoSetupRun,
+    },
     /// Your goal follows, to your apps only.
     #[serde(rename = "follows.updated")]
     FollowsUpdated {
@@ -3135,7 +3311,9 @@ pub enum ServerToClient {
         acceptances: Vec<RiskAcceptance>,
     },
     #[serde(rename = "prompts.updated")]
-    PromptsUpdated { prompts: PromptAdditions },
+    PromptsUpdated {
+        prompts: PromptAdditions,
+    },
     /// Everyone who has signed in again, after an admin grant changed.
     #[serde(rename = "members.updated")]
     MembersUpdated {
@@ -3210,10 +3388,15 @@ pub enum ServerToClient {
         task_id: Option<String>,
     },
     #[serde(rename = "session.ended")]
-    SessionEnded { machine: String, end: SessionEnd },
+    SessionEnded {
+        machine: String,
+        end: SessionEnd,
+    },
     /// The statistics `stats.get` asked for, to that connection only.
     #[serde(rename = "stats")]
-    Stats { summary: StatsSummary },
+    Stats {
+        summary: StatsSummary,
+    },
     /// The CI check log `task.checkLog` asked for, to that connection only.
     #[serde(rename = "checkLog")]
     CheckLog {
