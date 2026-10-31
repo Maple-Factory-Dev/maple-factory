@@ -25,6 +25,7 @@ mod sessions;
 mod statusline;
 mod style;
 mod tasks;
+mod telemetry;
 mod thumbs;
 mod tmux;
 mod draft;
@@ -134,6 +135,9 @@ enum Cmd {
     },
     /// Restart the runner service and wait for it to connect again.
     Restart,
+    /// Send a test error to Sentry (when this build reports errors) and wait for it to go.
+    #[command(name = "sentry-test", hide = true)]
+    SentryTest,
     /// Replace this binary with the latest signed release.
     ///
     /// Releases come from the control plane's /releases/ (or MAPLE_UPDATE_URL). The release
@@ -272,8 +276,7 @@ fn settings(args: &Args, config: Option<Config>, host: &str) -> Result<Settings>
     Ok(Settings { url: config::ws_endpoint(&url)?, token, runner_id, test })
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Agents call `maple-runner hook …` from inside sessions.
     if std::env::args().nth(1).as_deref() == Some("hook") {
         hooks::run_hook();
@@ -286,9 +289,21 @@ async fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         mcp::serve();
     }
+    // Error reports start before the runtime, so its threads' panics are caught too (telemetry.rs).
+    let _sentry = telemetry::init();
     // Service logs go to a file (or the journal): color only a terminal.
-    tracing_subscriber::fmt().with_target(false).with_ansi(style::enabled()).init();
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_target(false).with_ansi(style::enabled()))
+        .with(tracing_subscriber::filter::LevelFilter::INFO)
+        .with(telemetry::layer())
+        .init();
     let cli = Cli::parse_from(argv(std::env::args_os().collect(), launched_by_service()));
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(command(cli))
+}
+
+async fn command(cli: Cli) -> Result<()> {
     match cli.command {
         None => {
             Cli::command().print_help()?;
@@ -303,6 +318,10 @@ async fn main() -> Result<()> {
         Some(Cmd::Uninstall { dry_run }) => service::Service::detect()?.uninstall(dry_run),
         Some(Cmd::Status { url }) => status(url.as_deref()),
         Some(Cmd::Restart) => restart(),
+        Some(Cmd::SentryTest) => {
+            error!("maple-runner: Sentry test error");
+            Ok(())
+        }
         Some(Cmd::Update { url, check, force }) => self_update(url.as_deref(), check, force).await,
     }
 }
@@ -485,6 +504,7 @@ async fn run(args: Args) -> Result<()> {
     let runner_id = settings.runner_id.clone();
     proxy::set_control_url(&settings.url);
     proof::configure(&settings.url, &runner_id, &settings.token);
+    telemetry::tag_org(&settings.url);
     info!("maple-runner {}", update::VERSION);
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

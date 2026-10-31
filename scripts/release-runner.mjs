@@ -30,7 +30,10 @@ const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" }).match(/^host: 
 // Apple silicon only on macOS: there's no Intel Mac build.
 const targets = (option("--targets") ?? "aarch64-apple-darwin,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu").split(",");
 const version = readFileSync(join(root, "runner/Cargo.toml"), "utf8").match(/^version = "([^"]+)"/m)[1];
-const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { stdio: "inherit", cwd: join(root, "runner"), ...opts });
+// Release builds report errors to Maple Factory's Sentry project; the DSN is built in (runner/src/telemetry.rs).
+const sentryDsn = JSON.parse(readFileSync(join(root, "server/web/sentry.json"), "utf8")).projects.runner.dsn;
+if (where.to === "feed" && !sentryDsn) throw new Error("server/web/sentry.json has no runner DSN.");
+const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { stdio: "inherit", cwd: join(root, "runner"), env: { ...process.env, MAPLE_SENTRY_DSN: sentryDsn }, ...opts });
 
 /** CHANGELOG.md's section for `v` (the lines under its `## v — date` heading), or null. */
 function changelogNotes(markdown, v) {
@@ -67,7 +70,7 @@ for (const target of targets) {
     // the binary's glibc (2.31) is old enough for most distros still in use.
     const platform = target.startsWith("aarch64") ? "linux/arm64" : "linux/amd64";
     run("docker", ["run", "--rm", "--platform", platform, "-v", `${join(root, "runner")}:/src`, "-v", `maple-cargo-${platform.split("/")[1]}:/usr/local/cargo/registry`,
-      "-w", "/src", "rust:1-bullseye", "cargo", "build", "--release", "--target-dir", `target/docker-${target}`]);
+      "-e", "MAPLE_SENTRY_DSN", "-w", "/src", "rust:1-bullseye", "cargo", "build", "--release", "--target-dir", `target/docker-${target}`]);
   } else {
     if (target !== host) run("rustup", ["target", "add", target]);
     run("cargo", ["build", "--release", "--target", target]);
