@@ -226,6 +226,8 @@ struct GoalEditorView: View {
                     color = GoalColors.choice(for: value)
                 }
             case "builder": prompts.builder = value
+            // `goalfill:lead:octocat`, as picking them in the Lead menu would.
+            case "lead": lead = value
             case "section": jumpTo = Section.allCases.first { "\($0)" == value }
             case "create": save()
             default: break
@@ -471,6 +473,8 @@ struct GoalEditorView: View {
         VStack(alignment: .leading, spacing: 6) {
             label("Lead")
             HStack(spacing: 10) {
+                // A menu's label draws only text, so the lead's avatar sits beside it.
+                AgentAvatar(agent: LiveAdapter.person(shownLead, members: client.members), size: 20)
                 Menu {
                     ForEach(leadChoices, id: \.login) { member in
                         Button {
@@ -481,10 +485,7 @@ struct GoalEditorView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 6) {
-                        AgentAvatar(agent: LiveAdapter.person(shownLead, members: client.members), size: 16)
-                        Text(leadName(shownLead))
-                    }
+                    Text(leadName(shownLead))
                 }
                 .fixedSize()
                 .disabled(!canEditPrompts)
