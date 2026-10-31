@@ -527,6 +527,7 @@ struct NotificationSettings: View {
                     SettingsValueRow("Status", value: notifier.statusText)
                 }
             }
+            QuietHoursSection()
             if notifier.denied {
                 SettingsSection("macOS") {
                     SettingsButtonRow("macOS isn't letting Maple Factory show notifications.", button: "Open System Settings") { notifier.openSystemSettings() }

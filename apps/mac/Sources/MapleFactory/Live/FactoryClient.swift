@@ -64,6 +64,10 @@ import Foundation
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
+    /// Your quiet hours, the same on every device; the Notifier checks them before a banner.
+    private(set) var quietHours: Wire.QuietHours? {
+        didSet { Notifier.shared.quietHours = quietHours }
+    }
     /// Each goal's latest Scout run since this app connected, by goal id.
     private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
     /// Each repo's latest Set up with AI run, by lowercased repo name.
@@ -307,6 +311,7 @@ import Foundation
         notes = []
         drafts = [:]
         follows = [:]
+        quietHours = nil
         scoutRuns = [:]
         setupRuns = [:]
         policy = nil
@@ -451,6 +456,7 @@ import Foundation
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
+            quietHours = snapshot.quietHours
             intakeRequests = snapshot.intake
             repos = snapshot.repos
             secrets = snapshot.secrets
@@ -539,6 +545,8 @@ import Foundation
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
+        case .quietHoursUpdated(let update):
+            quietHours = update.quietHours
         case .noteRemoved(let removed):
             notes.removeAll { $0.id.uuidString.lowercased() == removed.id.lowercased() }
         case .presence(let update):
@@ -688,6 +696,12 @@ import Foundation
         follows[goal.id] = following
         rebuildGoals()
         send(.goalFollow(.init(id: goal.id, following: following)))
+    }
+
+    /// Set (or with nil, clear) your quiet hours: every device you're signed in on hears it.
+    func setQuietHours(_ schedule: Wire.QuietHours?) {
+        quietHours = schedule
+        send(.quietHoursSet(.init(quietHours: schedule)))
     }
 
     /// Run Scout on a goal: its leftovers come back as drafted plans, and `scoutRuns` says how it went.

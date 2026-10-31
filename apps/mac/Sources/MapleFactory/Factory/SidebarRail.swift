@@ -38,7 +38,7 @@ struct SidebarRail: View {
                 nav("Statistics", icon: "chart.bar.xaxis", destination: .statistics)
             }
             item("Notifications", detail: Notifier.shared.statusText,
-                 dot: Notifier.shared.isSnoozed ? Theme.State.awaitingApproval : nil) {
+                 dot: Notifier.shared.isSnoozed || Notifier.shared.isQuiet ? Theme.State.awaitingApproval : nil) {
                 Menu {
                     NotificationMenu()
                 } label: {
