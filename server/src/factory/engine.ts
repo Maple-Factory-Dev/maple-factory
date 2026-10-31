@@ -911,7 +911,7 @@ export class Engine {
     task.state = "planning";
     task.waiting = null;
     this.event(task, who, revise ? "sent it back to the planner" : "sent it to planning");
-    if (task.priority === "p0" && !ranked) this.toFront(task, "factory");
+    if (task.priority === "p0" && !ranked) this.toFront(task, "factory", true);
     this.save(task);
     await this.pump();
   }
@@ -963,10 +963,10 @@ export class Engine {
 
   /** A P0 entering the queue (or a queued task set to P0) goes ahead of the current top; other
    *  priorities leave the order alone, so reordering by hand keeps working. */
-  private toFront(task: Task, who: string) {
+  private toFront(task: Task, who: string, entering = false) {
     const queue = this.store.queued();
-    // Planning is checked as well: startPlanning calls this before it's saved into the queue.
-    if (task.state !== "planning" && !queue.some((t) => t.id === task.id)) return;
+    // Entering: startPlanning calls this before it's saved into the queue.
+    if (!entering && !queue.some((t) => t.id === task.id)) return;
     const top = queue.find((t) => t.id !== task.id);
     if (!top || top.queueRank! > task.queueRank!) return;
     task.queueRank = this.store.rankBefore(task.id, top, queue);

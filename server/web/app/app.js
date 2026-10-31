@@ -313,9 +313,18 @@ function row(t, sub) {
   return h("a", { class: "item", href: `#/t/${t.id}` },
     h("span", { class: `dot bg-${t.state}` }),
     h("div", {},
-      h("div", { class: "title" }, t.title),
-      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", " · ", sub)));
+      h("div", { class: "title" }, priorityChip(t), t.title),
+      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", t.followUpOf ? ` · Follow-up of ${t.followUpOf}` : "", " · ", sub)));
 }
+
+// ---- priority: P0 do it right away … P3 when there's room ----
+
+const PRIORITY_TITLE = { p0: "Do it right away", p1: "Next", p2: "Soon", p3: "When there's room" };
+const priorityChip = (t) => t.priority && h("span", { class: `prio ${t.priority}`, title: PRIORITY_TITLE[t.priority] }, t.priority.toUpperCase());
+/** A select of none and P0–P3; `onpick` gets the value, or null for none. */
+const prioritySelect = (value, onpick, attrs = {}) => h("select", { ...attrs, onchange: (e) => onpick(e.target.value || null) },
+  h("option", { value: "", selected: !value }, "No priority"),
+  Object.entries(PRIORITY_TITLE).map(([p, title]) => h("option", { value: p, selected: p === value }, `${p.toUpperCase()} · ${title}`)));
 
 /** Its state's title, or "Merging…" (the server's live log while it merges) or the auto-merge countdown. */
 function stateLabel(t) {
@@ -376,7 +385,7 @@ function tasksView() {
 // ---- a new task ----
 
 // What's in the composer, so a re-render (or a trip to another page and back) doesn't lose it.
-const composer = { key: null, title: "", goal: null, repo: null, brief: "", shareable: false, note: null, busy: false };
+const composer = { key: null, title: "", goal: null, repo: null, brief: "", shareable: false, note: null, busy: false, priority: null };
 let creating = null; // { title, note, at, timer } until its task.updated arrives
 
 const openGoals = () => state.goals.filter((g) => !g.archived);
@@ -387,7 +396,7 @@ function newTaskView(r) {
   const key = r.note ?? "";
   if (composer.key !== key) {
     const note = r.note && state.notes.find((n) => n.id === r.note);
-    Object.assign(composer, { key, title: note && note.title !== "Untitled note" ? note.title : "", brief: note?.body ?? "", repo: null, shareable: false, note: r.note ?? null, busy: false });
+    Object.assign(composer, { key, title: note && note.title !== "Untitled note" ? note.title : "", brief: note?.body ?? "", repo: null, shareable: false, note: r.note ?? null, busy: false, priority: null });
   }
   const goals = openGoals();
   if (!goals.length) return h("div", {}, h("h1", {}, "New task"), h("div", { class: "card empty" }, state.live ? "There's no goal to add a task to yet. Make one in the Mac app." : "Loading…"));
@@ -413,7 +422,7 @@ function newTaskView(r) {
     composer.busy = true;
     creating = { title: composer.title.trim(), note: composer.note && { id: composer.note, title: composer.title.trim() || "Untitled note", body: composer.brief }, at: Date.now(),
       timer: setTimeout(() => { if (composer.busy) createFailed("The factory didn't answer; try again."); }, 15_000) };
-    if (!send({ type: "task.create", goal: composer.goal, title: composer.title.trim(), brief: composer.brief, shareable: composer.shareable, plan, tickets: [], repo })) return createFailed();
+    if (!send({ type: "task.create", goal: composer.goal, title: composer.title.trim(), brief: composer.brief, shareable: composer.shareable, plan, tickets: [], repo, ...(composer.priority ? { priority: composer.priority } : {}) })) return createFailed();
     render();
   };
   const park = () => {
@@ -430,7 +439,8 @@ function newTaskView(r) {
     h("label", { class: "field" }, h("span", {}, "Title"), title),
     h("div", { class: "fields" },
       h("label", { class: "field" }, h("span", {}, "Goal"), goalSelect),
-      repoSelect && h("label", { class: "field" }, h("span", {}, "Repo"), repoSelect)),
+      repoSelect && h("label", { class: "field" }, h("span", {}, "Repo"), repoSelect),
+      h("label", { class: "field" }, h("span", {}, "Priority"), prioritySelect(composer.priority, (p) => (composer.priority = p)))),
     h("div", { class: "field" }, h("span", {}, "Brief"), brief),
     h("label", { class: "checkrow" },
       h("input", { type: "checkbox", checked: composer.shareable, onchange: (e) => (composer.shareable = e.target.checked) }),
@@ -609,6 +619,7 @@ function taskView(id) {
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
       t.after.map((id, i) => [i ? ", " : "", h("a", { href: `#/t/${id}` }, id)])),
     effortLine(t),
+    priorityLine(t),
     h("div", { class: "stepper" }, STATES.map((s, i) => h("span", { class: i <= reached ? `bg-${STATES[Math.min(i, reached)]}` : "" }))),
     t.waiting && h("p", { class: "muted" }, t.waiting),
     t.liveLog && !t.waiting && t.worker && h("p", { class: "muted" }, workerLabel(t.worker), `: ${t.liveLog}`),
@@ -646,6 +657,15 @@ function ownerControl(t) {
       : h("span", { class: "muted" }, name(t.owner)),
     t.owner !== me && h("button", { class: "btn small", onclick: () => assign(me) }, "Take over"),
     h("span", { class: "muted" }, "·"));
+}
+
+function priorityLine(t) {
+  const open = t.state !== "merged" && t.state !== "cancelled";
+  const from = t.followUpOf && h("span", {}, " · Follow-up of ", h("a", { href: `#/t/${t.followUpOf.split("#")[0]}` }, t.followUpOf));
+  if (!open) return (t.priority || from) && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Priority: ", t.priority ? t.priority.toUpperCase() : "none", from);
+  return h("div", { class: "muted row", style: "font-size:13px;margin-top:4px;gap:6px" }, "Priority",
+    prioritySelect(t.priority, (p) => send(p ? { type: "task.edit", id: t.id, priority: p } : { type: "task.edit", id: t.id, clearPriority: true }), { title: "How soon it should be done; a P0 goes to the front of the queue" }),
+    from);
 }
 
 function effortLine(t) {
@@ -768,7 +788,7 @@ function decisions(t) {
     const failing = t.pr?.checks?.some((c) => c.status === "failed");
     const pending = t.pr?.checks?.some((c) => c.status !== "passed" && c.status !== "failed");
     if (passed && t.reviews.length < t.reviewsNeeded) {
-      buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => send({ type: "task.approveChanges", id: t.id }) },
+      buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
         t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
@@ -989,7 +1009,63 @@ function review(t) {
       h("span", { class: `mark ${c.verdict === "met" ? "ok" : c.verdict === "notMet" ? "bad" : "wait"}` }, c.verdict === "met" ? "✓" : c.verdict === "notMet" ? "✕" : "•"),
       h("div", {}, h("span", { class: "muted" }, `${kind}: `), c.text, c.note && h("div", { class: "muted" }, c.note)))),
     open.length > 0 && [h("h2", { style: "margin-top:14px" }, `Open findings · ${open.length}`), open.map((f) => h("div", { class: "check" },
-      h("span", { class: "mark bad" }, "!"), h("div", {}, f.text, f.file && h("div", { class: "mono muted" }, f.file))))])];
+      h("span", { class: "mark bad" }, "!"), h("div", {}, f.text, f.file && h("div", { class: "mono muted" }, f.file))))]),
+    followUpCard(t)];
+}
+
+// ---- follow-ups: a task's leftover findings (or a note) as drafts in its goal ----
+
+const followUpPicks = new Map(); // task id → { picked: Map(finding id → priority), title, note }
+const SEVERITY_PRIORITY = { blocker: "p1", major: "p2", minor: "p3" };
+const picksFor = (t) => followUpPicks.get(t.id) ?? (followUpPicks.set(t.id, { picked: new Map(), title: "", note: "", priority: "p3" }), followUpPicks.get(t.id));
+/** The task already made for `from` (MF-98#f3), as a follow-up or by Scout. */
+const followedUpBy = (from) => [...state.tasks.values()].find((x) => x.followUpOf === from || x.scoutedFrom === from);
+
+/** Sends task.followUp for what's ticked (and the note, if it has a title); true when there was something. */
+function sendFollowUps(t) {
+  const p = followUpPicks.get(t.id);
+  if (!p) return false;
+  const findings = t.autoReview?.findings ?? [];
+  const items = [...p.picked].map(([id, priority]) => {
+    const f = findings.find((x) => x.id === id);
+    return f && { finding: id, title: f.text.replace(/\s+/g, " ").slice(0, 100), brief: "", priority };
+  }).filter(Boolean);
+  if (p.title.trim()) items.push({ title: p.title.trim(), brief: p.note.trim() || p.title.trim(), priority: p.priority });
+  if (!items.length) return false;
+  if (!send({ type: "task.followUp", id: t.id, items })) return false;
+  followUpPicks.delete(t.id);
+  return true;
+}
+
+function followUpCard(t) {
+  if (t.state !== "reviewing" && t.state !== "merged") return null;
+  const left = (t.autoReview?.findings ?? []).filter((f) => f.status !== "fixed");
+  const p = picksFor(t);
+  const rows = left.map((f) => {
+    const made = followedUpBy(`${t.id}#${f.id}`);
+    const on = p.picked.has(f.id);
+    return h("div", { class: "check" },
+      made ? h("a", { class: "mono", href: `#/t/${made.id}`, title: "Its follow-up", style: "flex:none" }, `→ ${made.id}`)
+        : h("input", { type: "checkbox", checked: on, "aria-label": "Follow up", onchange: (e) => { e.target.checked ? p.picked.set(f.id, SEVERITY_PRIORITY[f.severity] ?? "p3") : p.picked.delete(f.id); render(); } }),
+      h("div", { style: "flex:1;min-width:0" },
+        h("span", { class: "muted" }, `${f.severity} ${f.kind}${f.status === "disputed" ? " · disputed" : ""} · `), f.text,
+        f.file && h("div", { class: "mono muted" }, f.file),
+        !made && on && h("div", { class: "followup-pick" }, "Follow up as",
+          prioritySelect(p.picked.get(f.id), (v) => { p.picked.set(f.id, v); }, { "aria-label": "Its priority" }))));
+  });
+  const ticked = p.picked.size + (p.title.trim() ? 1 : 0);
+  const approving = t.state === "reviewing";
+  return [h("h2", { style: "margin-top:14px" }, "Follow-ups"),
+    h("p", { class: "muted", style: "margin:0 0 6px;font-size:13px" }, approving
+      ? "Tick what to follow up: each becomes a draft in the goal when you approve the changes."
+      : "Tick what to follow up: each becomes a draft in the goal."),
+    rows.length ? rows : h("p", { class: "faint", style: "margin:0;font-size:13px" }, "No findings left over."),
+    h("div", { class: "followup-add" },
+      h("input", { type: "text", "data-keep": `${t.id}:fu-title`, placeholder: "Add a follow-up: a title", value: p.title, oninput: (e) => { const was = !!p.title.trim(); p.title = e.target.value; if (was !== !!p.title.trim()) render(true); } }),
+      h("input", { type: "text", "data-keep": `${t.id}:fu-note`, placeholder: "What it should do", value: p.note, oninput: (e) => (p.note = e.target.value) }),
+      prioritySelect(p.priority, (v) => (p.priority = v), { "aria-label": "Its priority" })),
+    !approving && h("div", { class: "actions", style: "margin-top:8px" },
+      h("button", { class: "btn", disabled: !ticked, onclick: () => { if (sendFollowUps(t)) render(); } }, ticked ? `Make follow-up${ticked === 1 ? "" : "s"} · ${ticked}` : "Make follow-ups"))];
 }
 
 function pull(t) {
