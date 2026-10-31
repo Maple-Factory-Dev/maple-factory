@@ -19,6 +19,8 @@ export const SETTING_KEYS = [
   "GITHUB_OWNER_TYPE",
   "PUBLIC_URL",
   "SESSION_SECRET",
+  // "off" from Settings › General (error-reports.ts); deleting the row turns reports back on.
+  "SENTRY_DSN",
   // Written once (secrets.ts), never by saveSettings: a new one would make every stored secret unreadable.
   "SECRETS_KEY",
 ] as const;
@@ -46,8 +48,24 @@ export async function applySettings(env: Env, force = false): Promise<void> {
     vars[key] = value;
     state.keys.add(key);
   }
+  // A row deleted since: take back what it filled in.
+  for (const key of state.keys) {
+    if (rows.some((row) => row.key === key)) continue;
+    delete vars[key];
+    state.keys.delete(key);
+  }
   state.at = Date.now();
   filled.set(env, state);
+}
+
+/** Whether env[key] is a real secret or var, which a stored setting can't replace. */
+export function setInWorker(env: Env, key: SettingKey): boolean {
+  return Boolean((env as unknown as Record<string, unknown>)[key]) && !filled.get(env)?.keys.has(key);
+}
+
+export async function deleteSetting(env: Env, key: SettingKey): Promise<void> {
+  await env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(key).run();
+  await applySettings(env, true);
 }
 
 export async function saveSettings(env: Env, values: Partial<Record<SettingKey, string>>): Promise<void> {

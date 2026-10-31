@@ -3,6 +3,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scrub, sentryDsn, sentryOptions } from "../src/sentry.ts";
 import type { Env } from "../src/env.ts";
+import type { ErrorEvent } from "@sentry/cloudflare";
+import { applySettings, deleteSetting, setInWorker } from "../src/settings.ts";
 
 const BUILT_IN = "https://public@o1.ingest.us.sentry.io/2";
 
@@ -83,4 +85,40 @@ test("the web app's events lose the user, query strings, console messages and cl
   assert.deepEqual(out.breadcrumbs.map((b: { category: string }) => b.category), ["fetch", "navigation"]);
   assert.equal(out.breadcrumbs[0].data.url, "/api/tasks/MF-1/diff");
   assert.equal(out.breadcrumbs[1].data.to, "/app/");
+});
+
+/** Just enough D1 for applySettings: the settings table's rows. */
+function fakeDb(rows: Record<string, string>) {
+  return {
+    prepare: (sql: string) => ({
+      all: async () => ({ results: Object.entries(rows).map(([key, value]) => ({ key, value })) }),
+      bind: (...args: string[]) => ({ run: async () => { if (sql.startsWith("DELETE")) delete rows[args[0]]; } }),
+    }),
+  } as unknown as Env["DB"];
+}
+
+test("a stored SENTRY_DSN=off (Settings › General) turns reports off; deleting it turns them back on", async () => {
+  const rows: Record<string, string> = { SENTRY_DSN: "off" };
+  const env = { DB: fakeDb(rows), GITHUB_ORG: "acme" } as Env;
+  await applySettings(env, true);
+  assert.equal(sentryDsn(env, BUILT_IN), null);
+  assert.equal(setInWorker(env, "SENTRY_DSN"), false);
+  await deleteSetting(env, "SENTRY_DSN");
+  assert.equal(env.SENTRY_DSN, undefined);
+  assert.equal(sentryDsn(env, BUILT_IN), BUILT_IN);
+});
+
+test("a SENTRY_DSN set as a Worker var or secret wins over a stored one, and locks the toggle", async () => {
+  const env = { DB: fakeDb({ SENTRY_DSN: "off" }), SENTRY_DSN: "https://mine@o9.ingest.sentry.io/9" } as Env;
+  await applySettings(env, true);
+  assert.equal(sentryDsn(env, BUILT_IN), "https://mine@o9.ingest.sentry.io/9");
+  assert.equal(setInWorker(env, "SENTRY_DSN"), true);
+});
+
+test("beforeSend drops events once a stored off is filled in after the SDK started", async () => {
+  const env = { DB: fakeDb({ SENTRY_DSN: "off" }), GITHUB_ORG: "acme" } as Env;
+  const options = sentryOptions(env, BUILT_IN, "1.2.3")!;
+  assert.ok(options.beforeSend!({ message: "before" } as ErrorEvent, {}));
+  await applySettings(env, true);
+  assert.equal(options.beforeSend!({ message: "after" } as ErrorEvent, {}), null);
 });
