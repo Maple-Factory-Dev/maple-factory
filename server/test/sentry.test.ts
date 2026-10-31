@@ -63,3 +63,22 @@ test("an event without a request passes through", () => {
   const event = { message: "boom" };
   assert.deepEqual(scrub(event), { message: "boom" });
 });
+
+test("the web app's events lose the user, query strings, console messages and clicks", async () => {
+  const { scrub: scrubWeb } = await import("../web/app/sentry.js");
+  const out = scrubWeb({
+    user: { ip_address: "1.2.3.4" },
+    request: { url: "https://factory.example/app/?code=x#/tasks/MF-1", headers: { Cookie: "a" }, query_string: "code=x" },
+    breadcrumbs: [
+      { category: "console", message: "a prompt" },
+      { category: "ui.click", message: "button.save" },
+      { category: "fetch", data: { url: "/api/tasks/MF-1/diff?x=1", method: "GET" } },
+      { category: "navigation", data: { from: "/app/?a=1", to: "/app/?b=2" } },
+    ],
+  });
+  assert.equal("user" in out, false);
+  assert.deepEqual(out.request, { url: "https://factory.example/app/" });
+  assert.deepEqual(out.breadcrumbs.map((b: { category: string }) => b.category), ["fetch", "navigation"]);
+  assert.equal(out.breadcrumbs[0].data.url, "/api/tasks/MF-1/diff");
+  assert.equal(out.breadcrumbs[1].data.to, "/app/");
+});
