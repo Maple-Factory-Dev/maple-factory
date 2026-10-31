@@ -437,10 +437,19 @@ enum IntakeFilter: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The requests the filter shows, in the order given.
-    static func visible(_ requests: [IntakeRequest], filter: IntakeFilter, taskState: (String) -> TaskState?) -> [IntakeRequest] {
+    /// The requests the filter shows, in the order given. `keeping` stays in the list even when it no longer
+    /// matches: the request just acted on, so answering one doesn't swap the detail pane for another.
+    static func visible(_ requests: [IntakeRequest], filter: IntakeFilter, keeping: String? = nil,
+                        taskState: (String) -> TaskState?) -> [IntakeRequest] {
         guard filter != .all else { return requests }
-        return requests.filter { bucket(for: $0, taskState: taskState) == filter }
+        return requests.filter { $0.id == keeping || bucket(for: $0, taskState: taskState) == filter }
+    }
+
+    /// The filter to show when `selected` is picked from outside the list (a task's linked request):
+    /// this one if it shows the request, otherwise All, so the request isn't dropped for another.
+    func revealing(_ selected: String?, in requests: [IntakeRequest], taskState: (String) -> TaskState?) -> IntakeFilter {
+        guard let selected, let request = requests.first(where: { $0.id == selected }) else { return self }
+        return self == .all || Self.bucket(for: request, taskState: taskState) == self ? self : .all
     }
 
     /// How many requests each pill shows.

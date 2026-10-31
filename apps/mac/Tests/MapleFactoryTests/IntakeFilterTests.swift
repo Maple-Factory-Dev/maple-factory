@@ -54,6 +54,30 @@ import Testing
         #expect(IntakeFilter.visible(done, filter: .done) { _ in .merged }.map(\.id) == ["a", "b", "d"])
     }
 
+    /// R1.1: a task's linked request opened while the remembered filter hides it shows All, not another request.
+    @Test func revealingAHiddenSelectionShowsAll() {
+        let requests = [request("new", .new), request("ask", .clarifying), request("sso", .accepted(taskID: "T")), request("no", .declined)]
+        let running: (String) -> TaskState? = { _ in .building }
+        #expect(IntakeFilter.unanswered.revealing("sso", in: requests, taskState: running) == .all)
+        #expect(IntakeFilter.waiting.revealing("sso", in: requests, taskState: running) == .all)
+        #expect(IntakeFilter.done.revealing("sso", in: requests, taskState: running) == .all)
+        #expect(IntakeFilter.inFlight.revealing("sso", in: requests, taskState: running) == .inFlight)
+        #expect(IntakeFilter.done.revealing("sso", in: requests) { _ in .merged } == .done)
+        #expect(IntakeFilter.unanswered.revealing("new", in: requests, taskState: running) == .unanswered)
+        // Nothing selected, or a request that's gone: the filter stays.
+        #expect(IntakeFilter.waiting.revealing(nil, in: requests, taskState: running) == .waiting)
+        #expect(IntakeFilter.waiting.revealing("gone", in: requests, taskState: running) == .waiting)
+    }
+
+    /// R1.2: the request just acted on stays in the list, in place, after it leaves the filter.
+    @Test func keepingHoldsTheActedOnRequestInPlace() {
+        let requests = [request("a", .new), request("b", .accepted(taskID: "T")), request("c", .new)]
+        let running: (String) -> TaskState? = { _ in .building }
+        #expect(IntakeFilter.visible(requests, filter: .unanswered, taskState: running).map(\.id) == ["a", "c"])
+        #expect(IntakeFilter.visible(requests, filter: .unanswered, keeping: "b", taskState: running).map(\.id) == ["a", "b", "c"])
+        #expect(IntakeFilter.visible(requests, filter: .unanswered, keeping: "gone", taskState: running).map(\.id) == ["a", "c"])
+    }
+
     @Test func rawValuesRoundTrip() {
         for filter in IntakeFilter.allCases { #expect(IntakeFilter(rawValue: filter.rawValue) == filter) }
         #expect(IntakeFilter(rawValue: "nonsense") == nil)

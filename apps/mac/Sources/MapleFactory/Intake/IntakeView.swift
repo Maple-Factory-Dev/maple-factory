@@ -8,13 +8,18 @@ struct IntakeView: View {
     /// The ⓘ button's frame in the window, for a headless shot to hang the popover from.
     @State private var infoFrame: CGRect = .zero
 
-    /// Headless runs drive the list with `requests:info` (the ⓘ popover) and `requests:filter:<name>`.
+    /// Headless runs drive the list with `requests:info` (the ⓘ popover), `requests:filter:<name>`, `requests:select:<id>` and `requests:decline:<id>`.
     static let demo = Notification.Name("IntakeView.demo")
 
     /// A linked task's state, or nil when this app doesn't know the task. (`state.task(_:)` falls back to the first task.)
     private func taskState(_ id: String) -> TaskState? { state.tasks.first { $0.id == id }?.state }
 
-    private var visible: [IntakeRequest] { IntakeFilter.visible(state.intake, filter: filter, taskState: taskState) }
+    /// The request just acted on that has left the filter, kept in the list until the filter or selection changes.
+    @State private var kept: String?
+
+    private var visible: [IntakeRequest] { IntakeFilter.visible(state.intake, filter: filter, keeping: kept, taskState: taskState) }
+    /// The ids the filter matches, without the kept request.
+    private var matching: [String] { IntakeFilter.visible(state.intake, filter: filter, taskState: taskState).map(\.id) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -33,13 +38,30 @@ struct IntakeView: View {
             guard let parts = note.object as? [String], let what = parts.first else { return }
             switch what {
             case "info": showingHowTo = true
+            // `requests:select:<id>` picks a request as a task's linked-request card does.
+            case "select": if parts.count > 1 { state.selectedIntake = parts[1] }
+            case "decline": if parts.count > 1 { state.declineIntake(parts[1]) }
             case "filter": if parts.count > 1, let pick = IntakeFilter(rawValue: parts[1]) { withAnimation(.snappy(duration: 0.2)) { filter = pick } }
             default: break
             }
         }
         .onChange(of: showingHowTo) { _, open in if Headless.isOn { Headless.popoverAnchor = open ? infoFrame : nil } }
-        .onChange(of: visible.map(\.id), initial: true) { _, ids in
-            if !ids.contains(where: { $0 == state.selectedIntake }) { state.selectedIntake = ids.first }
+        // A selection made elsewhere (a task's linked request) that the filter hides switches the filter to All.
+        .onChange(of: state.selectedIntake, initial: true) { _, id in
+            if id != kept { kept = nil }
+            let shown = filter.revealing(id, in: state.intake, taskState: taskState)
+            if shown != filter { filter = shown }
+            if id.flatMap(state.intakeRequest) == nil { state.selectedIntake = visible.first?.id }
+        }
+        // Changing the filter moves the selection to its first request.
+        .onChange(of: filter) { _, _ in
+            kept = nil
+            if !matching.contains(where: { $0 == state.selectedIntake }) { state.selectedIntake = matching.first }
+        }
+        // A request that leaves the filter because it was acted on stays put until the filter changes.
+        .onChange(of: matching) { _, ids in
+            guard let id = state.selectedIntake, !ids.contains(id) else { return }
+            if state.intakeRequest(id) != nil { kept = id } else { state.selectedIntake = ids.first }
         }
     }
 
