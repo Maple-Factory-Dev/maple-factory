@@ -314,6 +314,14 @@ export class OrgHub extends DurableObject<Env> {
         }
         return new Response(null, { status: 204 });
       }
+      case "/dev/age-sessions": {
+        // Local dev (the Worker checked), for a task's time budget: its sessions (and any over-budget nudge) as if `ms` earlier.
+        const { task, ms } = (await request.json()) as { task: string; ms: number };
+        this.store.ageSessions(task, ms);
+        const priv = this.store.private(task);
+        if (priv.budgetAskedAt != null) this.store.savePrivate(task, { ...priv, budgetAskedAt: priv.budgetAskedAt - ms });
+        return new Response(null, { status: 204 });
+      }
       case "/intake": {
         // A new request from an integration or the API (the Worker checked who's asking).
         const input = (await request.json()) as NewRequest;

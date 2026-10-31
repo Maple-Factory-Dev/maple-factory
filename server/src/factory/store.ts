@@ -379,6 +379,11 @@ export class Store {
     return this.sql.exec("SELECT * FROM sessions WHERE task = ?", task).toArray() as unknown as TaskSession[];
   }
 
+  /** Local dev only (/dev/age-sessions): moves a task's sessions `ms` into the past. */
+  ageSessions(task: string, ms: number) {
+    this.sql.exec("UPDATE sessions SET started = started - ?, ended = ended - ? WHERE task = ?", ms, ms, task);
+  }
+
   liveSessions(): TaskSession[] {
     return this.sql.exec("SELECT * FROM sessions WHERE ended IS NULL").toArray() as unknown as TaskSession[];
   }
