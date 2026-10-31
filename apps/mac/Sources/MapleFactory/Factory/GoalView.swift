@@ -8,47 +8,98 @@ struct GoalView: View {
     /// Read from the live goals as the view draws, so a rename, new lead or due date shows at once.
     private var goal: Goal { FactoryData.goal(named: name) }
 
-    private var tasks: [FactoryTask] { state.tasks(for: goal) }
+    /// Every task in the goal: the header, facepile and FlowBar keep describing the whole goal.
+    private var allTasks: [FactoryTask] { state.tasks(for: goal) }
+    /// The tasks the layout shows, after the Everyone | You switch.
+    private var shownTasks: [FactoryTask] { Self.visibleTasks(allTasks, filter: state.goalTaskFilter) }
+
+    /// Everyone's tasks, or only the ones `me` owns.
+    static func visibleTasks(_ tasks: [FactoryTask], filter: GoalTaskFilter, me: String = FactoryData.me.id) -> [FactoryTask] {
+        switch filter {
+        case .everyone: tasks
+        case .mine: tasks.filter { $0.owner.id == me }
+        }
+    }
 
     private var contributors: [Person] {
-        FactoryData.people.filter { person in tasks.contains { $0.owner.id == person.id } }
+        FactoryData.people.filter { person in allTasks.contains { $0.owner.id == person.id } }
     }
 
     var body: some View {
+        let shown = shownTasks
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, 24)
                 .padding(.top, 22)
                 .padding(.bottom, 20)
 
-            switch state.layout {
-            case .overview: GoalOverview(goal: goal, tasks: tasks)
-            case .board:
-                boardControls
-                BoardColumns(tasks: tasks)
-            case .list: TaskListView(tasks: tasks)
-            case .timeline: GoalTimeline(goal: goal, tasks: tasks)
+            controls(shown: shown.count)
+
+            if state.goalTaskFilter == .mine && shown.isEmpty && !allTasks.isEmpty {
+                noTasksOfYours
+            } else {
+                switch state.layout {
+                case .overview: GoalOverview(goal: goal, tasks: shown)
+                case .board: BoardColumns(tasks: shown)
+                case .list: TaskListView(tasks: shown)
+                case .timeline: GoalTimeline(goal: goal, tasks: shown)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var boardControls: some View {
+    /// One row under the header for every layout: Everyone | You on the left, and on the Board
+    /// the hide-empty-columns toggle on the right.
+    private func controls(shown: Int) -> some View {
         @Bindable var state = state
-        return HStack {
-            Spacer()
-            Toggle(isOn: $state.boardHidesEmptyColumns) {
-                Label("Hide empty columns", systemImage: "line.3.horizontal.decrease")
+        return HStack(spacing: 10) {
+            Picker("Tasks", selection: $state.goalTaskFilter) {
+                ForEach(GoalTaskFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .toggleStyle(.button)
-            .labelStyle(.iconOnly)
-            .tint(Theme.State.building)
-            .accessibilityLabel("Hide empty columns")
-            .accessibilityValue(state.boardHidesEmptyColumns ? "On" : "Off")
-            .help(state.boardHidesEmptyColumns ? "Show empty columns" : "Hide empty columns")
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityLabel("Show tasks")
+            .help("Show everyone's tasks, or only the ones you own")
+            if state.goalTaskFilter == .mine {
+                Text("\(shown) of \(allTasks.count) tasks")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+                    .monospacedDigit()
+            }
+            Spacer()
+            if state.layout == .board {
+                Toggle(isOn: $state.boardHidesEmptyColumns) {
+                    Label("Hide empty columns", systemImage: "line.3.horizontal.decrease")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+                .tint(Theme.State.building)
+                .accessibilityLabel("Hide empty columns")
+                .accessibilityValue(state.boardHidesEmptyColumns ? "On" : "Off")
+                .help(state.boardHidesEmptyColumns ? "Show empty columns" : "Hide empty columns")
+            }
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 12)
+    }
+
+    /// 'You' is on and none of the goal's tasks are yours.
+    private var noTasksOfYours: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .font(.system(size: 26))
+                .foregroundStyle(Theme.textMuted)
+            Text("No tasks of yours in this goal")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.text)
+            Button("Show everyone's") { state.goalTaskFilter = .everyone }
+                .controlSize(.regular)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
@@ -104,7 +155,7 @@ struct GoalView: View {
                 }
                 Facepile(people: contributors, size: 24)
                 if state.contentWidth > 900 {
-                    Text("\(contributors.count) people · \(Set(tasks.compactMap(\.agent?.id)).count) agents")
+                    Text("\(contributors.count) people · \(Set(allTasks.compactMap(\.agent?.id)).count) agents")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textMuted)
                         .padding(.leading, 6)
@@ -117,7 +168,7 @@ struct GoalView: View {
                 .lineSpacing(3)
                 .frame(maxWidth: 620, alignment: .leading)
 
-            FlowBar(tasks: tasks)
+            FlowBar(tasks: allTasks)
                 .padding(.top, 8)
         }
     }
