@@ -1507,6 +1507,9 @@ pub struct Integration {
     pub from_env: Vec<String>,
     /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to.
     pub webhook_url: String,
+    /// A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_url: Option<String>,
     /// When it last reached the factory and was verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event_at: Option<u64>,

@@ -102,6 +102,7 @@ export class Integrations {
         values,
         fromEnv: def.fields.filter((f) => !stored?.[f.name] && env[f.name]).map((f) => f.name),
         webhookUrl: base + def.webhookPath,
+        setupUrl: base && def.setupUrl ? def.setupUrl(base) : null,
         lastEventAt: row?.last_event_at ?? null,
         lastError: stored ? (row?.last_error ?? null) : "Its saved settings can't be read with this factory's SECRETS_KEY; save them again.",
         updatedBy: row?.updated_by ?? null,

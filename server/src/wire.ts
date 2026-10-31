@@ -813,6 +813,8 @@ export interface Integration {
   fromEnv: string[];
   /** Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. */
   webhookUrl: string;
+  /** A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL. */
+  setupUrl?: string | null;
   /** When it last reached the factory and was verified. */
   lastEventAt?: number | null;
   /** What went wrong last, since the last event that went well. */

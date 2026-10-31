@@ -39,6 +39,8 @@ export interface Env {
   INTAKE_REPLY_HOSTS?: string;
   /** Verifies Slack's slash commands at /integrations/slack/command. */
   SLACK_SIGNING_SECRET?: string;
+  /** Slack's bot token (xoxb-…): lets @Maple read a thread and its files and answer in it. */
+  SLACK_BOT_TOKEN?: string;
   /** Linear: verifies its webhook at /integrations/linear; the API key lets the bot comment back. */
   LINEAR_WEBHOOK_SECRET?: string;
   LINEAR_API_KEY?: string;
