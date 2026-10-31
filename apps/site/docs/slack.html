@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>@Maple in Slack · Maple Factory</title>
-  <meta name="description" content="Set up @Maple in Slack: ask the factory questions in a public channel, and turn its proposed tasks into work with one click.">
+  <meta name="description" content="Set up @Maple in Slack: ask the factory questions in a channel, and turn its proposed tasks into work with one click.">
   <meta name="theme-color" content="#faf5ec" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1b0e1f" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" href="/img/favicon.png">
@@ -43,7 +43,7 @@
       <div class="wrap deploy-inner">
         <p class="kicker">Slack</p>
         <h1 id="slack-title">Ask @Maple in Slack.</h1>
-        <p class="deploy-lede">Mention @Maple in a public channel and it answers from your code. When the thread is really asking for a change, its answer comes with a proposed task: click Create task, and it’s in the factory, planning.</p>
+        <p class="deploy-lede">Mention @Maple in a channel and it answers from your code. When the thread is really asking for a change, its answer comes with a proposed task: click Create task, and it’s in the factory, planning.</p>
 
         <nav class="sec-toc" aria-label="On this page">
           <a href="#what">What it does</a>
@@ -83,7 +83,8 @@
               <p>From the app, copy <b>Basic Information › Signing Secret</b> and <b>OAuth &amp; Permissions › Bot User OAuth Token</b> (it starts with <code>xoxb-</code>) into the Slack card, and save. Both are stored sealed in your factory and never shown again.</p>
             </li>
           </ol>
-          <p>Then invite it to a public channel: <code>/invite @Maple</code>. Without the bot token, only <code>/maple</code> works.</p>
+          <p>Then invite it to a channel, public or private: <code>/invite @Maple</code>. In a private channel it only sees what happens after it’s invited. Without the bot token, only <code>/maple</code> works.</p>
+          <p><b>Made your Slack app from an older manifest?</b> If its <b>OAuth &amp; Permissions › Bot Token Scopes</b> don’t list <code>groups:history</code>, it’s missing scopes Maple now needs: add <code>channels:read</code>, <code>groups:read</code>, <code>mpim:read</code> and <code>groups:history</code>, then reinstall it from <b>Install App</b> (or delete it and click Create the Slack app again). Reinstalling keeps the same bot token; if it changes, paste the new one into the Slack card.</p>
         </section>
 
         <section class="sec-part" id="manifest" aria-labelledby="manifest-title">
@@ -116,6 +117,10 @@
         "app_mentions:read",
         "chat:write",
         "channels:history",
+        "groups:history",
+        "channels:read",
+        "groups:read",
+        "mpim:read",
         "files:read",
         "users:read",
         "commands"
@@ -147,6 +152,8 @@
             <li><code>app_mentions:read</code>: to hear when someone mentions @Maple.</li>
             <li><code>chat:write</code>: to answer in the thread, and to update its own answer when a button is clicked.</li>
             <li><code>channels:history</code>: to read the thread it was mentioned in, so the agent has the whole conversation. It reads only that thread, when it’s mentioned.</li>
+            <li><code>groups:history</code>: the same, in a private channel it’s been invited to.</li>
+            <li><code>channels:read</code>, <code>groups:read</code> and <code>mpim:read</code>: Slack requires these to tell Maple when it joins a channel, so it can ask which goals to work on there.</li>
             <li><code>files:read</code>: to fetch files posted in that thread, so they can go into the task.</li>
             <li><code>users:read</code>: to name who asked, in the request and the task.</li>
             <li><code>commands</code>: for <code>/maple</code>.</li>
@@ -175,7 +182,7 @@
           <h2 id="limits-title">Limits</h2>
           <ul>
             <li>It needs a machine online: answers come from an agent on one of your runners (Claude Code, or Codex). With none online, Maple says so in the thread.</li>
-            <li>Public channels only, for now. Private channels and direct messages aren’t supported yet.</li>
+            <li>Direct messages aren’t supported yet. In a private channel, Maple has to be invited with <code>/invite @Maple</code> first.</li>
             <li>A task made from Slack belongs to whoever owns the machine that answered, and is open to team slots.</li>
           </ul>
         </section>
