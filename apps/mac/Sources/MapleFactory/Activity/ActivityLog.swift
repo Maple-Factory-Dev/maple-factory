@@ -11,7 +11,7 @@ import SwiftUI
         let who: Person
         let isAgent: Bool
         let text: String
-        /// When it happened, in ms since 1970; nil for the mockup's, which only have a relative label.
+        /// When it happened, in ms since 1970; the mockup's is worked out from its relative label.
         let at: UInt64?
         /// The mockup's relative label ("4m", "2h").
         let label: String?
@@ -51,23 +51,23 @@ import SwiftUI
         return ActivityLog(entries: all)
     }
 
-    /// The mockup's: relative labels only, ordered by how long ago they read.
-    static func mock(_ tasks: [FactoryTask], minutesAgo: (String) -> Int) -> ActivityLog {
+    /// The mockup's: relative labels only, ordered by how long ago they read and dated from them, so they fall into days.
+    static func mock(_ tasks: [FactoryTask], minutesAgo: (String) -> Int, now: Date = Date()) -> ActivityLog {
         var people: [String: Person] = [:]
         for person in FactoryData.people.reversed() {
             people[person.firstName] = person
             people[person.name] = person
         }
-        let all = tasks.flatMap { task in
-            task.activity.enumerated().map { index, item in
-                let person = people[item.who]
-                return Entry(id: "\(task.id)-\(index)", task: task, who: person ?? Agent(name: item.who, color: Theme.State.building),
-                             isAgent: person == nil, text: item.text, at: nil, label: item.when)
-            }
-        }
-        let minutes = all.map { minutesAgo($0.label ?? "") }
-        let order = all.indices.sorted { minutes[$0] != minutes[$1] ? minutes[$0] < minutes[$1] : $0 < $1 }
-        return ActivityLog(entries: order.map { all[$0] })
+        let items = tasks.flatMap { task in task.activity.enumerated().map { (task: task, index: $0, item: $1) } }
+        let minutes = items.map { minutesAgo($0.item.when) }
+        let order = items.indices.sorted { minutes[$0] != minutes[$1] ? minutes[$0] < minutes[$1] : $0 < $1 }
+        let nowMS = now.timeIntervalSince1970 * 1000
+        return ActivityLog(entries: order.map { at in
+            let (task, index, item) = items[at]
+            let person = people[item.who]
+            return Entry(id: "\(task.id)-\(index)", task: task, who: person ?? Agent(name: item.who, color: Theme.State.building),
+                         isAgent: person == nil, text: item.text, at: UInt64(max(0, nowMS - Double(minutes[at]) * 60_000)), label: item.when)
+        })
     }
 
     /// What the filter picks, in the goals `inScope` shows; `me` is whose tasks are "My tasks".

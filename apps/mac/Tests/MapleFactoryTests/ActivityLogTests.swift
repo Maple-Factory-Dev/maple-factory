@@ -111,6 +111,19 @@ import Testing
         #expect(cache.builds == 3)
     }
 
+    @Test func mockupIsNewestFirstAndDatedFromItsLabels() {
+        var a = FactoryTask(id: "ATL-1", title: "A", state: .building, detail: "", updated: "1m")
+        a.activity = [ActivityItem(who: "Planner", text: "planned", when: "2h"), ActivityItem(who: "Planner", text: "built", when: "5m")]
+        var b = FactoryTask(id: "ATL-2", title: "B", state: .building, detail: "", updated: "1m")
+        b.activity = [ActivityItem(who: "Builder", text: "pushed", when: "3d")]
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let feed = ActivityLog.mock([a, b], minutesAgo: AppState().minutesAgo, now: now)
+        #expect(feed.entries.map(\.text) == ["built", "planned", "pushed"])
+        #expect(feed.entries.map(\.when) == ["5m", "2h", "3d"])
+        #expect(feed.entries.map(\.date) == [now.addingTimeInterval(-300), now.addingTimeInterval(-7200), now.addingTimeInterval(-3 * 86400)])
+        #expect(feed.entries.allSatisfy { $0.isAgent })
+    }
+
     /// 2,000+ events: building the feed and drawing its first page stays far under a second.
     @Test func largeFactoryBuildsFast() throws {
         let tasks = (0..<100).map { n in

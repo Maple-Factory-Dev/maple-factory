@@ -10,6 +10,8 @@ struct ActivityView: View {
     @State private var shown = ActivityLog.pageSize
     @State private var cache = ActivityLog.Cache()
 
+    static let demo = Notification.Name("ActivityView.demo")
+
     typealias Filter = ActivityLog.Filter
     typealias Entry = ActivityLog.Entry
 
@@ -20,7 +22,7 @@ struct ActivityView: View {
         }
     }
 
-    /// Entries by day ("Today", "Yesterday", "Oct 21"); the mockup's undated ones are all "Recent".
+    /// Entries by day ("Today", "Yesterday", "Oct 21").
     private func days(_ entries: ArraySlice<Entry>) -> [(title: String, entries: [Entry])] {
         var groups: [(title: String, entries: [Entry])] = []
         for entry in entries {
@@ -37,49 +39,75 @@ struct ActivityView: View {
     var body: some View {
         let filtered = feed.entries(filter: filter)
         let entries = filtered.filter { state.inScope($0.task) }
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Activity")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                        Text(state.goalScope == .all ? "What people and agents did across every goal, newest first." : "What people and agents did in the goals you follow and on your tasks, newest first.")
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(Theme.textMuted)
-                    }
-                    Spacer()
-                    GoalScopeMenu(hidden: filtered.count - entries.count)
-                        .padding(.trailing, 8)
-                    Picker("", selection: $filter) {
-                        ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-
-                if entries.isEmpty {
-                    PlaceholderView(title: "Nothing yet", icon: "waveform.path.ecg").frame(height: 240)
-                }
-                ForEach(days(entries.prefix(shown)), id: \.title) { day in
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel(title: day.title)
-                        LazyVStack(spacing: 0) {
-                            ForEach(day.entries) { entry in row(entry) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 22) {
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Activity")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundStyle(Theme.text)
+                            Text(state.goalScope == .all ? "What people and agents did across every goal, newest first." : "What people and agents did in the goals you follow and on your tasks, newest first.")
+                                .font(.system(size: 13.5))
+                                .foregroundStyle(Theme.textMuted)
                         }
-                        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke)))
+                        Spacer()
+                        GoalScopeMenu(hidden: filtered.count - entries.count)
+                            .padding(.trailing, 8)
+                        Picker("", selection: $filter) {
+                            ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
+                    .id("top")
+
+                    if entries.isEmpty {
+                        PlaceholderView(title: "Nothing yet", icon: "waveform.path.ecg").frame(height: 240)
+                    }
+                    ForEach(days(entries.prefix(shown)), id: \.title) { day in
+                        VStack(alignment: .leading, spacing: 8) {
+                            SectionLabel(title: day.title)
+                            LazyVStack(spacing: 0) {
+                                ForEach(day.entries) { entry in row(entry) }
+                            }
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke)))
+                        }
+                    }
+                    if entries.count > shown { footer(total: entries.count).id("footer") }
                 }
-                if entries.count > shown { footer(total: entries.count) }
+                .padding(.horizontal, 40)
+                .padding(.vertical, 28)
+                .frame(maxWidth: 980, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 40)
-            .padding(.vertical, 28)
-            .frame(maxWidth: 980, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            // A new filter or scope starts again at the top, one page in.
+            .onChange(of: filter) { shown = ActivityLog.pageSize; proxy.scrollTo("top", anchor: .top) }
+            .onChange(of: state.goalScope) { shown = ActivityLog.pageSize; proxy.scrollTo("top", anchor: .top) }
+            .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+                guard let parts = note.object as? [String] else { return }
+                switch parts.first {
+                case "seed": seed(Int(parts.count > 1 ? parts[1] : "") ?? 2400)
+                case "more": shown += ActivityLog.pageSize
+                case "bottom": proxy.scrollTo("footer", anchor: .bottom)
+                case "top": proxy.scrollTo("top", anchor: .top)
+                case "filter": filter = Filter(rawValue: parts.count > 1 ? parts[1] : "") ?? filter
+                default: break
+                }
+            }
         }
-        .onChange(of: filter) { shown = ActivityLog.pageSize }
-        .onChange(of: state.goalScope) { shown = ActivityLog.pageSize }
+    }
+
+    /// The mockup's tasks with `count` events between them, a few minutes apart, for a big factory's Activity page.
+    private func seed(_ count: Int) {
+        var tasks = state.tasks
+        guard !tasks.isEmpty else { return }
+        let names = [FactoryData.me.firstName, "Planner", "Builder", FactoryData.chris.firstName, "Reviewer"]
+        for n in 0..<count {
+            tasks[n % tasks.count].activity.append(ActivityItem(who: names[n % names.count], text: "worked on step \(n % 7 + 1)", when: "\(n * 7 + 1)m"))
+        }
+        state.tasks = tasks
     }
 
     /// "Showing 50 of 2,140", and the next page.
@@ -89,8 +117,8 @@ struct ActivityView: View {
                 .font(.system(size: 12).monospacedDigit())
                 .foregroundStyle(Theme.textMuted)
             Spacer()
-            Button("Show \(min(ActivityLog.pageSize, total - shown)) more") { shown += ActivityLog.pageSize }
-                .controlSize(.regular)
+            SecondaryButton(title: "Show \(min(ActivityLog.pageSize, total - shown)) more") { shown += ActivityLog.pageSize }
+                .fixedSize()
         }
         .padding(.horizontal, 4)
     }

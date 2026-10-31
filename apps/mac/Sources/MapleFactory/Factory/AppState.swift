@@ -2248,6 +2248,9 @@ final class AppState {
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
             case "diff": NotificationCenter.default.post(name: DiffView.demo, object: Array(parts.dropFirst()))
             case "tab": NotificationCenter.default.post(name: TaskFocusView.demoTab, object: parts[1])
+            // The Activity page: `activity:seed:2400` gives the mockup's tasks that many events, `activity:more` is Show 50 more,
+            // `activity:bottom` and `activity:top` scroll to its footer and its header, `activity:filter:Agents` picks a filter.
+            case "activity": NotificationCenter.default.post(name: ActivityView.demo, object: Array(parts.dropFirst()))
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
