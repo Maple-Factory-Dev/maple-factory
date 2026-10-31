@@ -3,8 +3,9 @@
 // worker, no hand), its proposals are drafts in the goal, a change of agent or priority is refused
 // with "It's closed", and Retry picks it back up in planning with a new planner.
 //   node server/test/e2e-closed.mjs http://localhost:8788
+//   node server/test/e2e-closed.mjs http://localhost:8788 keep   # stop once it's closed (and a draft cancelled), to look at it in the apps
 
-const [base = "http://localhost:8788"] = process.argv.slice(2);
+const [base = "http://localhost:8788", mode = "test"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
 const step = (t) => console.log(`✓ ${t}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -88,7 +89,7 @@ runner.onmessage = async (e) => {
 };
 await sleep(500);
 
-send({ type: "goal.save", goal: { id: "", name: `Closed ${prefix}`, prefix, color: "#6B7280", summary: "Scan and propose.", lead: "", repos: [], folder: "/tmp/closed-e2e/repo", base: null } });
+send({ type: "goal.save", goal: { id: "", name: mode === "keep" ? "iOS gaps" : `Closed ${prefix}`, prefix, color: "#6B7280", summary: "Scan and propose.", lead: "", repos: [], folder: "/tmp/closed-e2e/repo", base: null } });
 const goal = await until("the goal", () => goals.find((g) => g.prefix === prefix));
 const inGoal = () => [...tasks.values()].filter((t) => t.goal === goal.id);
 send({ type: "task.create", goal: goal.id, title: "Scan the iOS app for missing features", brief: "Scan the iOS app and propose tickets.", shareable: false, plan: true, tickets: [], agent: "claude" });
@@ -115,6 +116,14 @@ step(`its session ended and it stayed closed, hand down`);
 step(`agent change refused: ${await refused("agent change", { type: "task.edit", id: scan, agent: "codex" }, /^It's closed/)}`);
 step(`priority refused: ${await refused("priority", { type: "task.edit", id: scan, priority: "p1" }, /^It's closed/)}`);
 step(`cancel refused: ${await refused("cancel", { type: "task.cancel", id: scan }, /already finished/)}`);
+
+if (mode === "keep") {
+  // One of its proposals cancelled, so Closed sits beside Cancelled.
+  send({ type: "task.cancel", id: drafts[1].id });
+  await until(`${drafts[1].id} cancelled`, () => tasks.get(drafts[1].id).state === "cancelled");
+  step(`kept: ${scan} closed, ${drafts[1].id} cancelled, ${drafts[0].id} a draft in ${goal.name}`);
+  process.exit(0);
+}
 
 // Retry picks it back up in planning, with a new planner.
 send({ type: "task.retry", id: scan });
