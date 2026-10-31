@@ -1023,6 +1023,10 @@ data class ReviewRound(
     val found: Long,
     val at: Long,
     val fix: String? = null,
+    /** What a teammate asked this round to look for, when one requested it. */
+    val focus: String? = null,
+    /** The member who requested this round. None: the factory started it. */
+    val by: String? = null,
 )
 
 @Serializable
@@ -2698,6 +2702,13 @@ sealed class ClientMessage {
     data class TaskApproveChanges(
         val id: String,
     ) : ClientMessage()
+    /** Start one more automated-review round on a task in review, with the requester's own focus. Approvals already given stay; the merge waits for the round. Refused while a round runs, or unless the task is in review. */
+    @Serializable
+    data class TaskRequestReview(
+        val id: String,
+        /** What the reviewer should look for, e.g. "check security". */
+        val focus: String,
+    ) : ClientMessage()
     @Serializable
     data class TaskMerge(
         val id: String,
@@ -2843,6 +2854,7 @@ sealed class ClientMessage {
             "task.answerPrompt" -> json.decodeFromJsonElement(TaskAnswerPrompt.serializer(), body)
             "task.resolveHand" -> json.decodeFromJsonElement(TaskResolveHand.serializer(), body)
             "task.approveChanges" -> json.decodeFromJsonElement(TaskApproveChanges.serializer(), body)
+            "task.requestReview" -> json.decodeFromJsonElement(TaskRequestReview.serializer(), body)
             "task.merge" -> json.decodeFromJsonElement(TaskMerge.serializer(), body)
             "task.holdMerge" -> json.decodeFromJsonElement(TaskHoldMerge.serializer(), body)
             "task.cancel" -> json.decodeFromJsonElement(TaskCancel.serializer(), body)
@@ -2917,6 +2929,7 @@ sealed class ClientMessage {
             is TaskAnswerPrompt -> "task.answerPrompt" to json.encodeToJsonElement(TaskAnswerPrompt.serializer(), value)
             is TaskResolveHand -> "task.resolveHand" to json.encodeToJsonElement(TaskResolveHand.serializer(), value)
             is TaskApproveChanges -> "task.approveChanges" to json.encodeToJsonElement(TaskApproveChanges.serializer(), value)
+            is TaskRequestReview -> "task.requestReview" to json.encodeToJsonElement(TaskRequestReview.serializer(), value)
             is TaskMerge -> "task.merge" to json.encodeToJsonElement(TaskMerge.serializer(), value)
             is TaskHoldMerge -> "task.holdMerge" to json.encodeToJsonElement(TaskHoldMerge.serializer(), value)
             is TaskCancel -> "task.cancel" to json.encodeToJsonElement(TaskCancel.serializer(), value)
