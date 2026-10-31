@@ -282,7 +282,8 @@ struct GoalRow: View {
                     .background(RoundedRectangle(cornerRadius: 7).fill(Color(goalHex: goal.color)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(goal.name).font(.body.weight(.medium))
-                    Text("\(open.count) open · \(tasks.count - open.count) done").font(.caption).foregroundStyle(.secondary)
+                    // Finished tasks the snapshot left out still count as done.
+                    Text("\(open.count) open · \(tasks.count - open.count + (store.feed.older[goal.id]?.finished ?? 0)) done").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Avatar(login: goal.lead, url: store.feed.member(goal.lead)?.avatarUrl, size: 22)
@@ -352,6 +353,25 @@ struct GoalView: View {
             .tint(Theme.state(.planning))
     }
 
+    /// Under the finished stages: the snapshot sends tasks finished in the last 14 days; this brings 50 older ones.
+    private var loadOlderSection: some View {
+        let loading = store.feed.loadingOlder.contains(id)
+        let left = store.feed.older[id]?.finished ?? 0
+        return Section {
+            Button { store.loadOlder(goal: id) } label: {
+                HStack {
+                    Label("Load older", systemImage: "clock.arrow.circlepath")
+                    Spacer()
+                    if loading { ProgressView() } else { Text("\(left) more").foregroundStyle(.secondary) }
+                }
+            }
+            .disabled(loading)
+            .accessibilityIdentifier("load-older")
+        } footer: {
+            Text("Finished tasks older than 14 days load when you ask.")
+        }
+    }
+
     private func header(_ stage: Wire.TaskState, _ count: Int) -> some View {
         Label("\(stage.title) · \(count)", systemImage: stage.icon).foregroundStyle(Theme.state(stage))
     }
@@ -386,6 +406,7 @@ struct GoalView: View {
                         }
                     }
                 }
+                if store.feed.hasOlder(goal: id) { loadOlderSection }
             }
             .environment(\.editMode, $editMode)
             .navigationTitle(goal.name)

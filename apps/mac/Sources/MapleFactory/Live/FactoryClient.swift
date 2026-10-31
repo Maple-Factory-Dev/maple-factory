@@ -50,7 +50,7 @@ import Foundation
     /// Goals whose next page of older tasks is on its way.
     private(set) var loadingOlder: Set<String> = []
     /// Where each goal's next page of older tasks starts: the last task of its last page.
-    private var olderCursor: [String: (before: UInt64, id: String)] = [:]
+    private var olderCursor: [String: OlderCursor] = [:]
     /// Tasks asked for by ID (`task.get`) that haven't come yet.
     private var fetching: Set<String> = []
     private(set) var factoryGoals: [Goal] = []
@@ -577,7 +577,7 @@ import Foundation
         case .tasksPage(let page):
             let goal = page.goal ?? ""
             loadingOlder.remove(goal)
-            if let last = page.tasks.last { olderCursor[goal] = (last.updatedAt, last.id) }
+            if let last = page.tasks.last { olderCursor[goal] = OlderCursor(before: last.updatedAt, id: last.id) }
             mergeOlder(page.tasks)
             // The server knows best: none left means none left, whatever the counts drifted to.
             if !page.more, let id = page.goal { older[id] = OlderTasks() }
@@ -918,16 +918,7 @@ import Foundation
 
     /// What the snapshot left out of each goal: its tally (counted over every task) less the tasks it sent.
     nonisolated static func older(tallies: [Wire.GoalTally]?, tasks: [Wire.Task]) -> [String: OlderTasks] {
-        guard let tallies else { return [:] }
-        var held: [String: OlderTasks] = [:]
-        for task in tasks { held[task.goal, default: OlderTasks()].count(task.state, by: 1) }
-        var older: [String: OlderTasks] = [:]
-        for tally in tallies {
-            let sent = held[tally.goal] ?? OlderTasks()
-            let finished = Int(tally.merged) + Int(tally.cancelled) + Int(tally.closed)
-            older[tally.goal] = OlderTasks(merged: max(0, Int(tally.merged) - sent.merged), finished: max(0, finished - sent.finished))
-        }
-        return older
+        FeedState.older(tallies: tallies, tasks: tasks)
     }
 
     /// Older tasks from `tasks.page` or `task.get` join the list; one a live update already brought stays as it is.
@@ -1475,20 +1466,5 @@ extension FactoryClient {
     /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
     func answerPrompt(taskID: String, choice: Wire.PromptChoice) {
         send(.taskAnswerPrompt(.init(id: taskID, choice: choice)))
-    }
-}
-
-/// A goal's finished tasks the snapshot left out and that aren't loaded yet.
-struct OlderTasks: Equatable {
-    var merged = 0
-    /// Merged, cancelled and closed.
-    var finished = 0
-
-    mutating func count(_ state: Wire.TaskState, by n: Int) {
-        switch state {
-        case .merged: merged = max(0, merged + n); finished = max(0, finished + n)
-        case .cancelled, .closed: finished = max(0, finished + n)
-        default: break
-        }
     }
 }
