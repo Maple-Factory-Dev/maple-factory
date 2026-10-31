@@ -1,0 +1,952 @@
+{
+ "type": "snapshot",
+ "org": "your-org",
+ "me": {
+  "login": "afomera",
+  "name": "afomera",
+  "avatarUrl": null,
+  "role": "admin",
+  "teams": [],
+  "adminSource": "github",
+  "adminGrantedBy": null
+ },
+ "members": [
+  {
+   "login": "afomera",
+   "name": "afomera",
+   "avatarUrl": null,
+   "role": "admin",
+   "teams": [],
+   "adminSource": "github",
+   "adminGrantedBy": null
+  }
+ ],
+ "machines": [
+  {
+   "id": "dev-mac",
+   "name": "dev-mac",
+   "owner": "afomera",
+   "online": true,
+   "lastSeen": 1793417956962,
+   "version": "0.68.0",
+   "os": "macos",
+   "health": {
+    "cpu": 89.3237533569336,
+    "cores": 12,
+    "load1": 41.2958984375,
+    "memUsed": 15704932352,
+    "memTotal": 19327352832,
+    "diskUsed": 714418075937,
+    "diskTotal": 994662584320,
+    "uptime": 599624,
+    "battery": {
+     "percent": 100,
+     "charging": true
+    },
+    "agents": [
+     {
+      "name": "claude",
+      "version": "2.1.314",
+      "loggedIn": true
+     },
+     {
+      "name": "codex",
+      "version": "0.166.0",
+      "loggedIn": false
+     }
+    ]
+   },
+   "sessions": [],
+   "usage": [],
+   "settings": {
+    "capacity": null,
+    "teamSlots": 0,
+    "lendIdle": false,
+    "loadCap": 0.85,
+    "paused": false,
+    "pausedUntil": null
+   },
+   "capacity": 3,
+   "update": null
+  }
+ ],
+ "ended": [],
+ "goals": [
+  {
+   "id": "de33cb6e-5c39-440b-be65-7c12ea11550e",
+   "name": "Storefront",
+   "prefix": "SHOP",
+   "color": "#D24E26",
+   "summary": "Storefront, seeded for the Android app",
+   "lead": "afomera",
+   "folder": "/tmp/maple-android/repos/shop",
+   "base": "main",
+   "due": null,
+   "team": null,
+   "repos": [],
+   "repo": null,
+   "prompts": null
+  }
+ ],
+ "tasks": [
+  {
+   "id": "SHOP-3",
+   "goal": "de33cb6e-5c39-440b-be65-7c12ea11550e",
+   "state": "awaitingApproval",
+   "owner": "afomera",
+   "createdAt": 1793417744501,
+   "updatedAt": 1793417948131,
+   "plan": [
+    {
+     "text": "Write hello.txt with a greeting",
+     "file": "hello.txt",
+     "progress": "pending",
+     "added": false,
+     "from": null
+    },
+    {
+     "text": "Commit it on the task branch",
+     "file": "hello.txt",
+     "progress": "pending",
+     "added": false,
+     "from": null
+    }
+   ],
+   "planVersion": 1,
+   "doneWhen": [
+    {
+     "text": "hello.txt says hello",
+     "proof": "terminal",
+     "status": "pending",
+     "evidence": null
+    },
+    {
+     "text": "The branch has the commit",
+     "proof": "terminal",
+     "status": "pending",
+     "evidence": null
+    }
+   ],
+   "approvals": [],
+   "approvalsNeeded": 1,
+   "reviews": [],
+   "reviewsNeeded": 0,
+   "comments": [],
+   "changes": [],
+   "events": [
+    {
+     "who": "afomera",
+     "text": "created it",
+     "at": 1793417744501
+    },
+    {
+     "who": "afomera",
+     "text": "sent it to planning",
+     "at": 1793417744502
+    },
+    {
+     "who": "planner",
+     "text": "started on dev-mac",
+     "at": 1793417947729
+    },
+    {
+     "who": "planner",
+     "text": "wrote the plan",
+     "at": 1793417948131
+    }
+   ],
+   "mockups": [
+    {
+     "id": "M1",
+     "title": "cat hello.txt",
+     "kind": "terminal",
+     "url": null,
+     "html": null,
+     "lines": [
+      {
+       "text": "$ cat hello.txt",
+       "style": "command",
+       "callout": null
+      },
+      {
+       "text": "hello from SHOP-3",
+       "style": "highlight",
+       "callout": 1
+      }
+     ],
+     "notes": [
+      "The greeting names the task."
+     ],
+     "status": "proposed",
+     "version": 1,
+     "visualMatch": null,
+     "differences": []
+    },
+    {
+     "id": "M2",
+     "title": "Greeting page",
+     "kind": "screen",
+     "url": "localhost:3000/hello",
+     "html": "<body style=\"font:15px -apple-system;margin:0;display:grid;place-items:center;height:100vh;background:#faf7f5\">\n          <div style=\"padding:28px 36px;border-radius:14px;background:white;box-shadow:0 8px 30px #0001\">\n          <h1 style=\"margin:0 0 6px;font-size:22px\">Hello from SHOP-3</h1>\n          <p style=\"margin:0;color:#777\">① The greeting names the task.</p></div></body>",
+     "lines": [],
+     "notes": [
+      "The greeting names the task."
+     ],
+     "status": "proposed",
+     "version": 1,
+     "visualMatch": null,
+     "differences": []
+    }
+   ],
+   "followUps": [],
+   "queueRank": 1793417744501,
+   "draftRank": 1793417744501,
+   "title": "Typo-tolerant product search",
+   "brief": "Typo-tolerant product search.",
+   "tickets": [],
+   "shareable": false,
+   "agent": "scripted",
+   "intake": null,
+   "repo": null,
+   "after": [],
+   "effort": null,
+   "waiting": null,
+   "model": null,
+   "suggestedTitle": null,
+   "worker": null,
+   "startAt": null,
+   "force": null,
+   "machine": "dev-mac",
+   "branch": "agent/shop-3",
+   "liveLog": null,
+   "planSummary": "Add a greeting file for SHOP-3, so the factory has something real to commit, push and merge.",
+   "risk": {
+    "level": "low",
+    "reasons": [
+     "One new text file."
+    ],
+    "areas": []
+   },
+   "footprint": {
+    "files": 1,
+    "lines": 1,
+    "estimated": true
+   }
+  },
+  {
+   "id": "SHOP-2",
+   "goal": "de33cb6e-5c39-440b-be65-7c12ea11550e",
+   "state": "awaitingApproval",
+   "owner": "afomera",
+   "createdAt": 1793417744100,
+   "updatedAt": 1793417948125,
+   "plan": [
+    {
+     "text": "Write hello.txt with a greeting",
+     "file": "hello.txt",
+     "progress": "pending",
+     "added": false,
+     "from": null
+    },
+    {
+     "text": "Commit it on the task branch",
+     "file": "hello.txt",
+     "progress": "pending",
+     "added": false,
+     "from": null
+    }
+   ],
+   "planVersion": 1,
+   "doneWhen": [
+    {
+     "text": "hello.txt says hello",
+     "proof": "terminal",
+     "status": "pending",
+     "evidence": null
+    },
+    {
+     "text": "The branch has the commit",
+     "proof": "terminal",
+     "status": "pending",
+     "evidence": null
+    }
+   ],
+   "approvals": [],
+   "approvalsNeeded": 1,
+   "reviews": [],
+   "reviewsNeeded": 0,
+   "comments": [],
+   "changes": [],
+   "events": [
+    {
+     "who": "afomera",
+     "text": "created it",
+     "at": 1793417744100
+    },
+    {
+     "who": "afomera",
+     "text": "sent it to planning",
+     "at": 1793417744101
+    },
+    {
+     "who": "planner",
+     "text": "started on dev-mac",
+     "at": 1793417947723
+    },
+    {
+     "who": "planner",
+     "text": "wrote the plan",
+     "at": 1793417948125
+    }
+   ],
+   "mockups": [
+    {
+     "id": "M1",
+     "title": "cat hello.txt",
+     "kind": "terminal",
+     "url": null,
+     "html": null,
+     "lines": [
+      {
+       "text": "$ cat hello.txt",
+       "style": "command",
+       "callout": null
+      },
+      {
+       "text": "hello from SHOP-2",
+       "style": "highlight",
+       "callout": 1
+      }
+     ],
+     "notes": [
+      "The greeting names the task."
+     ],
+     "status": "proposed",
+     "version": 1,
+     "visualMatch": null,
+     "differences": []
+    },
+    {
+     "id": "M2",
+     "title": "Greeting page",
+     "kind": "screen",
+     "url": "localhost:3000/hello",
+     "html": "<body style=\"font:15px -apple-system;margin:0;display:grid;place-items:center;height:100vh;background:#faf7f5\">\n          <div style=\"padding:28px 36px;border-radius:14px;background:white;box-shadow:0 8px 30px #0001\">\n          <h1 style=\"margin:0 0 6px;font-size:22px\">Hello from SHOP-2</h1>\n          <p style=\"margin:0;color:#777\">① The greeting names the task.</p></div></body>",
+     "lines": [],
+     "notes": [
+      "The greeting names the task."
+     ],
+     "status": "proposed",
+     "version": 1,
+     "visualMatch": null,
+     "differences": []
+    }
+   ],
+   "followUps": [],
+   "queueRank": 1793417744100,
+   "draftRank": 1793417744100,
+   "title": "Cart survives a sign-in",
+   "brief": "Cart survives a sign-in.",
+   "tickets": [],
+   "shareable": false,
+   "agent": "scripted",
+   "intake": null,
+   "repo": null,
+   "after": [],
+   "effort": null,
+   "waiting": null,
+   "model": null,
+   "suggestedTitle": null,
+   "worker": null,
+   "startAt": null,
+   "force": null,
+   "machine": "dev-mac",
+   "branch": "agent/shop-2",
+   "liveLog": null,
+   "planSummary": "Add a greeting file for SHOP-2, so the factory has something real to commit, push and merge.",
+   "risk": {
+    "level": "low",
+    "reasons": [
+     "One new text file."
+    ],
+    "areas": []
+   },
+   "footprint": {
+    "files": 1,
+    "lines": 1,
+    "estimated": true
+   }
+  },
+  {
+   "id": "SHOP-1",
+   "goal": "de33cb6e-5c39-440b-be65-7c12ea11550e",
+   "state": "awaitingApproval",
+   "owner": "afomera",
+   "createdAt": 1793417743700,
+   "updatedAt": 1793417947544,
+   "plan": [
+    {
+     "text": "Write hello.txt with a greeting",
+     "file": "hello.txt",
+     "progress": "pending",
+     "added": false,
+     "from": null
+    },
+    {
+     "text": "Commit it on the task branch",
+     "file": "hello.txt",
+     "progress": "pending",
+     "added": false,
+     "from": null
+    }
+   ],
+   "planVersion": 1,
+   "doneWhen": [
+    {
+     "text": "hello.txt says hello",
+     "proof": "terminal",
+     "status": "pending",
+     "evidence": null
+    },
+    {
+     "text": "The branch has the commit",
+     "proof": "terminal",
+     "status": "pending",
+     "evidence": null
+    }
+   ],
+   "approvals": [],
+   "approvalsNeeded": 1,
+   "reviews": [],
+   "reviewsNeeded": 0,
+   "comments": [],
+   "changes": [],
+   "events": [
+    {
+     "who": "afomera",
+     "text": "created it",
+     "at": 1793417743700
+    },
+    {
+     "who": "afomera",
+     "text": "sent it to planning",
+     "at": 1793417743702
+    },
+    {
+     "who": "planner",
+     "text": "started on dev-mac",
+     "at": 1793417946878
+    },
+    {
+     "who": "planner",
+     "text": "wrote the plan",
+     "at": 1793417947544
+    }
+   ],
+   "mockups": [
+    {
+     "id": "M1",
+     "title": "cat hello.txt",
+     "kind": "terminal",
+     "url": null,
+     "html": null,
+     "lines": [
+      {
+       "text": "$ cat hello.txt",
+       "style": "command",
+       "callout": null
+      },
+      {
+       "text": "hello from SHOP-1",
+       "style": "highlight",
+       "callout": 1
+      }
+     ],
+     "notes": [
+      "The greeting names the task."
+     ],
+     "status": "proposed",
+     "version": 1,
+     "visualMatch": null,
+     "differences": []
+    },
+    {
+     "id": "M2",
+     "title": "Greeting page",
+     "kind": "screen",
+     "url": "localhost:3000/hello",
+     "html": "<body style=\"font:15px -apple-system;margin:0;display:grid;place-items:center;height:100vh;background:#faf7f5\">\n          <div style=\"padding:28px 36px;border-radius:14px;background:white;box-shadow:0 8px 30px #0001\">\n          <h1 style=\"margin:0 0 6px;font-size:22px\">Hello from SHOP-1</h1>\n          <p style=\"margin:0;color:#777\">① The greeting names the task.</p></div></body>",
+     "lines": [],
+     "notes": [
+      "The greeting names the task."
+     ],
+     "status": "proposed",
+     "version": 1,
+     "visualMatch": null,
+     "differences": []
+    }
+   ],
+   "followUps": [],
+   "queueRank": 1793417743700,
+   "draftRank": 1793417743700,
+   "title": "Wallet payments at checkout",
+   "brief": "Wallet payments at checkout.",
+   "tickets": [],
+   "shareable": false,
+   "agent": "scripted",
+   "intake": null,
+   "repo": null,
+   "after": [],
+   "effort": null,
+   "waiting": null,
+   "model": null,
+   "suggestedTitle": null,
+   "worker": null,
+   "startAt": null,
+   "force": null,
+   "machine": "dev-mac",
+   "branch": "agent/shop-1",
+   "liveLog": null,
+   "planSummary": "Add a greeting file for SHOP-1, so the factory has something real to commit, push and merge.",
+   "risk": {
+    "level": "low",
+    "reasons": [
+     "One new text file."
+    ],
+    "areas": []
+   },
+   "footprint": {
+    "files": 1,
+    "lines": 1,
+    "estimated": true
+   }
+  }
+ ],
+ "policy": {
+  "maxFiles": 12,
+  "maxLines": 500,
+  "areas": [
+   {
+    "name": "Auth",
+    "paths": [
+     "lib/auth/**",
+     "app/api/auth/**"
+    ],
+    "level": "high",
+    "enabled": true
+   },
+   {
+    "name": "Billing",
+    "paths": [
+     "lib/billing/**",
+     "app/api/billing/**"
+    ],
+    "level": "high",
+    "enabled": true
+   },
+   {
+    "name": "Migrations",
+    "paths": [
+     "db/migrations/**"
+    ],
+    "level": "medium",
+    "enabled": true
+   }
+  ],
+  "planApprovals": {
+   "low": 1,
+   "medium": 1,
+   "high": 2
+  },
+  "finalReviews": {
+   "low": 0,
+   "medium": 1,
+   "high": 2
+  },
+  "autoMerge": {
+   "low": true,
+   "medium": false,
+   "high": false
+  },
+  "autoFixMerges": true,
+  "autoMerges": true,
+  "scoutItems": 3
+ },
+ "acceptances": [],
+ "prompts": {
+  "planner": "",
+  "builder": "",
+  "reviewer": ""
+ },
+ "connectors": [],
+ "integrations": [
+  {
+   "kind": "slack",
+   "label": "Slack",
+   "fields": [
+    {
+     "name": "signingSecret",
+     "label": "Signing secret",
+     "secret": true,
+     "required": true,
+     "help": "Your Slack app's Basic Information › Signing Secret. Point its /maple slash command at the URL below."
+    }
+   ],
+   "enabled": false,
+   "values": {},
+   "fromEnv": [],
+   "webhookUrl": "/integrations/slack/command",
+   "lastEventAt": null,
+   "lastError": null,
+   "updatedBy": null,
+   "updatedAt": null
+  },
+  {
+   "kind": "linear",
+   "label": "Linear",
+   "fields": [
+    {
+     "name": "webhookSecret",
+     "label": "Webhook signing secret",
+     "secret": true,
+     "required": true,
+     "help": "From the webhook you add in Linear's Settings › API, pointed at the URL below (Issues and Comments)."
+    },
+    {
+     "name": "apiKey",
+     "label": "API key",
+     "secret": true,
+     "required": false,
+     "help": "A personal API key, so the factory's bot can comment back on the issue."
+    },
+    {
+     "name": "label",
+     "label": "Label",
+     "secret": false,
+     "required": false,
+     "help": "The label that sends an issue to the factory. Default: maple."
+    }
+   ],
+   "enabled": false,
+   "values": {},
+   "fromEnv": [],
+   "webhookUrl": "/integrations/linear",
+   "lastEventAt": null,
+   "lastError": null,
+   "updatedBy": null,
+   "updatedAt": null
+  },
+  {
+   "kind": "jira",
+   "label": "Jira",
+   "fields": [
+    {
+     "name": "webhookSecret",
+     "label": "Webhook secret",
+     "secret": true,
+     "required": true,
+     "help": "Any long random string. Jira Cloud doesn't sign webhooks: add it to the URL below as ?secret=…"
+    },
+    {
+     "name": "site",
+     "label": "Site",
+     "secret": false,
+     "required": true,
+     "help": "Your Jira site, e.g. https://acme.atlassian.net. Only its issues are taken, and only it gets the API token."
+    },
+    {
+     "name": "email",
+     "label": "Account email",
+     "secret": false,
+     "required": false,
+     "help": "The account the bot comments as."
+    },
+    {
+     "name": "apiToken",
+     "label": "API token",
+     "secret": true,
+     "required": false,
+     "help": "That account's API token (id.atlassian.com › Security)."
+    },
+    {
+     "name": "label",
+     "label": "Label",
+     "secret": false,
+     "required": false,
+     "help": "The label that sends an issue to the factory. Default: maple."
+    }
+   ],
+   "enabled": false,
+   "values": {},
+   "fromEnv": [],
+   "webhookUrl": "/integrations/jira",
+   "lastEventAt": null,
+   "lastError": null,
+   "updatedBy": null,
+   "updatedAt": null
+  }
+ ],
+ "online": [
+  {
+   "login": "afomera",
+   "viewing": null,
+   "since": 1793417959447
+  }
+ ],
+ "notes": [],
+ "follows": [],
+ "intake": [],
+ "secrets": [],
+ "repos": [],
+ "repoOwners": [],
+ "githubApp": null,
+ "scripts": [],
+ "setupRuns": [],
+ "scoutRuns": [],
+ "runnerLatest": "0.70.0",
+ "runnerReleases": [
+  {
+   "version": "0.70.0",
+   "publishedAt": "2026-10-31T03:35:03.183Z",
+   "notes": "Keeps up with the factory's latest protocol, which now carries the reasons behind a change's risk level and plain-language risk checks; nothing changes in how the runner works."
+  },
+  {
+   "version": "0.69.0",
+   "publishedAt": "2026-10-31T03:20:01.924Z",
+   "notes": "A task's diff now lists each commit on its branch with its own patch, for the Changes tab's commit picker; agents propose found work with `propose_tasks` (the old `create_task` and `propose_cards` tools are gone). `maple-runner stop` stops the installed service so launchd or systemd can't start it again (a runner stuck crashing and restarting stays down) until `maple-runner start`, which starts it in the background and waits for it to connect, or your next login. Both take `--dry-run`."
+  },
+  {
+   "version": "0.68.0",
+   "publishedAt": "2026-10-31T02:50:23.180Z",
+   "notes": "Fixes 0.67.0 crashing as it connects to the factory (two TLS crypto providers were built in): the runner now picks one at startup. A machine stuck on 0.67.0 needs `maple-runner update` run by hand, then its service restarted."
+  },
+  {
+   "version": "0.67.0",
+   "publishedAt": "2026-10-31T01:51:10.595Z",
+   "notes": "Reports panics and errors to Maple Factory's Sentry project, without the machine's name and with ~ for your home folder; MAPLE_TELEMETRY=off turns it off. Checks that a builder's branch merges into its base (origin/<base>, fetched fresh) before its finish is pushed: on a conflict nothing is pushed, and the conflicting files go back to the builder to merge the base in, resolve and finish again. A base that can't be fetched doesn't hold the push up."
+  },
+  {
+   "version": "0.66.0",
+   "publishedAt": "2026-10-31T01:10:42.568Z",
+   "notes": "Runs a repo's checks (linters, formatters, lefthook) in the worktree before a builder's finish is committed; a failing check, or a failing pre-commit hook, stops the push and is reported back."
+  },
+  {
+   "version": "0.65.0",
+   "publishedAt": "2026-10-30T22:41:27.261Z",
+   "notes": "Runs a repo's preflight script (runtimes, brew, services) in a new worktree before its setup script: the first time a machine's checkout of the repo is used, and again when the command or a watched file such as .tool-versions or Brewfile changes."
+  },
+  {
+   "version": "0.64.0",
+   "publishedAt": "2026-10-30T21:46:42.440Z",
+   "notes": "Keeps up with the factory's latest protocol, which now carries each repository's description and owner avatar; nothing changes in how the runner works."
+  },
+  {
+   "version": "0.63.0",
+   "publishedAt": "2026-10-30T21:16:58.672Z",
+   "notes": "Keeps up with the factory's latest protocol, which now tells apps about a Scout run still going when they reconnect; nothing changes in how the runner works."
+  },
+  {
+   "version": "0.62.0",
+   "publishedAt": "2026-10-30T19:46:28.249Z",
+   "notes": "Scout and Draft with AI can read a goal whose code is a local folder, in place and read-only, even when it has no git origin."
+  },
+  {
+   "version": "0.61.0",
+   "publishedAt": "2026-10-30T18:33:21.699Z",
+   "notes": "The runner is built with the latest protocol, which adds sharing a live session with teammates; nothing else changes on the runner."
+  },
+  {
+   "version": "0.60.0",
+   "publishedAt": "2026-10-30T07:32:15.260Z",
+   "notes": "The runner is built with the latest protocol, which adds Set up with AI for repos; it runs through the same read-only draft sessions as before."
+  },
+  {
+   "version": "0.59.0",
+   "publishedAt": "2026-10-30T07:06:53.514Z",
+   "notes": "The runner is built with the latest protocol, which adds revoking a member's access; nothing else changes on the runner."
+  },
+  {
+   "version": "0.58.0",
+   "publishedAt": "2026-10-30T06:14:24.103Z",
+   "notes": "After the factory merges a task, the runner deletes its leftover branch on origin when nothing unmerged would be lost, and says what became of it."
+  },
+  {
+   "version": "0.57.0",
+   "publishedAt": "2026-10-30T05:44:59.740Z",
+   "notes": "The runner can dry-run merge a task's branch into its base, so the factory finds a conflict before it merges instead of after."
+  },
+  {
+   "version": "0.56.0",
+   "publishedAt": "2026-10-30T05:29:14.139Z",
+   "notes": "The protocol carries a plan's suggested title for its task."
+  },
+  {
+   "version": "0.55.0",
+   "publishedAt": "2026-10-30T05:17:08.346Z",
+   "notes": "The protocol carries each check's link, its log and re-running one check."
+  },
+  {
+   "version": "0.54.0",
+   "publishedAt": "2026-10-30T05:08:31.124Z",
+   "notes": "MCP connectors: sessions get the factory's connectors (Claude through a per-session 0600 config, Codex through -c overrides, with secrets in the pane's one-shot env file, never argv), and only the runner's own Maple server is pre-allowed."
+  },
+  {
+   "version": "0.53.0",
+   "publishedAt": "2026-10-30T04:27:09.290Z",
+   "notes": "Sign a machine's Codex in from the app: the runner runs `codex login --device-auth` and reports its link and one-time code to the machine's owner, then checks its agents again as soon as it's signed in. From this release there's no Intel Mac build."
+  },
+  {
+   "version": "0.52.0",
+   "publishedAt": "2026-10-30T03:56:51.135Z",
+   "notes": "The protocol carries code review notes and GitHub review threads."
+  },
+  {
+   "version": "0.51.0",
+   "publishedAt": "2026-10-30T03:38:01.647Z",
+   "notes": "The protocol carries factory-granted admins."
+  },
+  {
+   "version": "0.50.0",
+   "publishedAt": "2026-10-30T03:23:05.214Z",
+   "notes": "The protocol carries the GitHub accounts an admin approved for repos."
+  },
+  {
+   "version": "0.49.0",
+   "publishedAt": "2026-10-30T02:47:45.196Z",
+   "notes": "The protocol carries a task's chosen model and the factory's display name."
+  },
+  {
+   "version": "0.48.0",
+   "publishedAt": "2026-10-30T02:36:52.902Z",
+   "notes": "The protocol carries each draft's place in its goal's order."
+  },
+  {
+   "version": "0.47.0",
+   "publishedAt": "2026-10-30T02:04:16.411Z",
+   "notes": "Codex sessions get their whole prompt, trailing newlines and all, so they start without someone pressing Enter. The protocol carries the factory's icon."
+  },
+  {
+   "version": "0.46.0",
+   "publishedAt": "2026-10-30T01:09:37.546Z",
+   "notes": "Codex sessions in project mode route approval prompts to Codex's automatic review (\"Approve for me\") instead of never asking. Per-repo worktree scripts: a repo's create, setup, teardown and archive commands run around a task's worktree, with MAPLE_* variables, its secrets and a timeout, and report on the timeline."
+  },
+  {
+   "version": "0.45.0",
+   "publishedAt": "2026-10-30T00:58:15.775Z",
+   "notes": "Secrets hardening: a task's values live only in its pane (not tmux's environment, where other sessions could read them), terminal output and replays are scrubbed, and multi-line values survive a restart. Checking for a runner update only looks; it never installs. Auto-merges count down and can be held."
+  },
+  {
+   "version": "0.44.0",
+   "publishedAt": "2026-10-30T00:32:43.860Z",
+   "notes": "Repo secrets: a task's sessions get its repo's secrets in their environment, scrubbed from what the runner sends, and `maple-runner secrets pull|list` for your own checkout."
+  },
+  {
+   "version": "0.43.0",
+   "publishedAt": "2026-10-30T00:16:52.817Z",
+   "notes": "The runner checks for its own updates hourly instead of every six hours."
+  },
+  {
+   "version": "0.42.0",
+   "publishedAt": "2026-10-29T23:56:34.444Z",
+   "notes": "Statistics break down code review findings by kind, severity, area, outcome and agent."
+  },
+  {
+   "version": "0.41.0",
+   "publishedAt": "2026-10-29T23:36:52.472Z",
+   "notes": "A backlog state: park a draft or a plan for later, and pick it up when it's time."
+  },
+  {
+   "version": "0.40.0",
+   "publishedAt": "2026-10-29T23:26:40.949Z",
+   "notes": "Runner updates report Installing before they download, so the app shows what's coming; the release notes and date now reach the Mac app's What's new."
+  },
+  {
+   "version": "0.39.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "Turn off auto-merges, and goal due dates."
+  },
+  {
+   "version": "0.38.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "Take over or reassign a task."
+  },
+  {
+   "version": "0.37.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "Each session's cost, by role and by agent and model."
+  },
+  {
+   "version": "0.36.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "@mention teammates in comments."
+  },
+  {
+   "version": "0.35.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "Efforts link tasks into a bigger piece of work; admins add to agents' prompts for the org or a goal."
+  },
+  {
+   "version": "0.34.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "Factory statistics for admins, and a new /setup and welcome page."
+  },
+  {
+   "version": "0.33.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "A session's permission prompt shows on its task, with Yes and No."
+  },
+  {
+   "version": "0.32.0",
+   "publishedAt": "2026-10-29T00:00:00.000Z",
+   "notes": "Screenshot and video proofs, uploaded by the runner and shown to members."
+  },
+  {
+   "version": "0.31.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "Run now starts a queued task without waiting for a free slot."
+  },
+  {
+   "version": "0.30.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "Attest to a Done when item yourself, with an optional reason."
+  },
+  {
+   "version": "0.29.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "Bare maple-runner prints a colorized command list and the runner is `maple-runner run` (services installed before still run)."
+  },
+  {
+   "version": "0.28.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "A task queue with order and schedules; the web app loads again (0.6.0 and 0.7.0 declared cancelling twice)."
+  },
+  {
+   "version": "0.27.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "A merged task's branch is deleted on GitHub, and its stale tracking ref dropped."
+  },
+  {
+   "version": "0.26.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "Tolerates enum values a newer server adds; Retry puts a detached worktree back on its branch."
+  },
+  {
+   "version": "0.25.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "A merge that fails raises a Didn't merge hand to send back, retry or cancel."
+  },
+  {
+   "version": "0.24.0",
+   "publishedAt": "2026-10-28T00:00:00.000Z",
+   "notes": "Attachments, Draft with AI transcripts, approval waiting on the automatic review."
+  }
+ ],
+ "serverVersion": "0.57.0",
+ "serverUpdate": {
+  "version": "0.59.0",
+  "how": "Merge the update pull request in this factory's repo (the Maple Factory update workflow opens one; run it from the repo's Actions tab to check now)."
+ },
+ "icon": null,
+ "name": null,
+ "protocolVersion": 1
+}
