@@ -188,7 +188,11 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
         disconnect()
         val gen = generation
         if (status != Status.Live && attempt == 0) status = Status.Connecting
-        val request = Request.Builder().url(FactoryApi.websocketUrl(server, "/client/connect")).header("Authorization", "Bearer $token").build()
+        val request = Request.Builder().url(FactoryApi.websocketUrl(server, "/client/connect"))
+            .header("Authorization", "Bearer $token")
+            // Teammates see a phone badge for someone who's only on a phone.
+            .header("x-maple-client", "mobile")
+            .build()
         socket = FactoryApi.client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send(encode(ClientMessage.Subscribe))
