@@ -1,7 +1,7 @@
 // A task's time and cost budget (policy.taskMinutes, taskCostUsd): budgetUse adds up its sessions' time and
 // spend, and checkBudgets, through the engine on a node:sqlite store (as factory.test.ts does), types a nudge
 // into a running task past it, then raises an overBudget hand itself if none comes 10 minutes on. Picking
-// anything but Cancel on that hand gives the task one more budget's worth.
+// anything but Cancel on that hand gives the task one more budget's worth, counted from when it was answered.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -79,29 +79,31 @@ function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<stri
   return { store, engine, typed, wakes, clock, check, t };
 }
 
-test("budgetUse adds up ended and live sessions' time and their costs, and each grant adds a budget", () => {
+test("budgetUse adds up ended and live sessions' time and their costs, and a base moves the limit one budget on", () => {
   const sessions = [
     { started: T0 - 50 * MIN, ended: T0 - 30 * MIN }, // 20 min, ended
     { started: T0 - 25 * MIN, ended: null }, // 25 min, still running
   ];
   const costs = [{ costUsd: 1.5 }, { costUsd: null }, { costUsd: 2 }];
-  const use = budgetUse(sessions, costs, policy({ taskMinutes: 60, taskCostUsd: 10 }), 0, T0);
+  const use = budgetUse(sessions, costs, policy({ taskMinutes: 60, taskCostUsd: 10 }), null, T0);
   assert.equal(use.minutes, 45);
   assert.equal(use.costUsd, 3.5);
   assert.equal(use.allowMinutes, 60);
   assert.equal(use.allowCostUsd, 10);
   assert.equal(use.over, null);
 
-  assert.equal(budgetUse(sessions, costs, policy({ taskMinutes: 30 }), 0, T0).over, "time");
-  assert.equal(budgetUse(sessions, costs, policy({ taskMinutes: 30 }), 1, T0).allowMinutes, 60);
-  assert.equal(budgetUse(sessions, costs, policy({ taskMinutes: 30 }), 1, T0).over, null);
-  assert.equal(budgetUse(sessions, costs, policy({ taskCostUsd: 3 }), 0, T0).over, "cost");
-  assert.equal(budgetUse(sessions, costs, policy({ taskCostUsd: 3 }), 1, T0).over, null);
+  assert.equal(budgetUse(sessions, costs, policy({ taskMinutes: 30 }), null, T0).over, "time");
+  const base = { minutes: 40, costUsd: 3 };
+  assert.equal(budgetUse(sessions, costs, policy({ taskMinutes: 30 }), base, T0).allowMinutes, 70);
+  assert.equal(budgetUse(sessions, costs, policy({ taskMinutes: 30 }), base, T0).over, null);
+  assert.equal(budgetUse(sessions, costs, policy({ taskCostUsd: 3 }), null, T0).over, "cost");
+  assert.equal(budgetUse(sessions, costs, policy({ taskCostUsd: 3 }), base, T0).allowCostUsd, 6);
+  assert.equal(budgetUse(sessions, costs, policy({ taskCostUsd: 3 }), base, T0).over, null);
   // None: 60 minutes and no cost limit; 0 minutes turns time off.
-  const none = budgetUse(sessions, costs, policy({ taskMinutes: null, taskCostUsd: null }), 0, T0);
+  const none = budgetUse(sessions, costs, policy({ taskMinutes: null, taskCostUsd: null }), null, T0);
   assert.equal(none.allowMinutes, 60);
   assert.equal(none.allowCostUsd, null);
-  const off = budgetUse([{ started: 0, ended: null }], costs, policy({ taskMinutes: 0 }), 0, T0);
+  const off = budgetUse([{ started: 0, ended: null }], costs, policy({ taskMinutes: 0 }), null, T0);
   assert.equal(off.allowMinutes, null);
   assert.equal(off.over, null);
 });
@@ -126,7 +128,8 @@ test("past its budget, a running task gets one nudge, and a factory hand 10 minu
   // 10 minutes on with no hand: the factory raises one.
   f.clock.at = T0 + 10 * MIN;
   await f.check();
-  assert.equal(f.typed.length, 1);
+  assert.equal(f.typed.length, 2);
+  assert.match(f.typed[1], /the factory raised an overBudget hand for you\. Stop at a safe point now/);
   const hand = f.t().hand!;
   assert.equal(hand.reason, "overBudget");
   assert.deepEqual(hand.options.map((o) => o.title), ["Give it another hour", "Cancel it"]);
@@ -173,37 +176,74 @@ test("Give it another hour on an overBudget hand moves the allowance on; the nex
   assert.equal(f.t().hand!.reason, "overBudget");
   await at(f.clock, () => f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Give it another hour", note: "" } as never, ME));
   assert.equal(f.t().hand ?? null, null);
-  assert.equal(f.store.private("MF-1").budgetGrants, 1);
+  assert.deepEqual(f.store.private("MF-1").budgetBase, { minutes: 72, costUsd: 0 });
   assert.equal(f.store.private("MF-1").budgetAskedAt, null);
-  assert.equal(f.engine.budget(f.t()).allowMinutes, 120);
+  assert.equal(f.engine.budget(f.t()).allowMinutes, 132);
   const typed = f.typed.length;
 
-  // 72 minutes in: within the 120 it has now.
+  // 72 minutes in: within the 132 it has now.
   await f.check();
   assert.equal(f.typed.length, typed);
-  // Past 120: asked again.
-  f.clock.at = T0 + 60 * MIN;
+  // Past 132: asked again.
+  f.clock.at = T0 + 72 * MIN;
   await f.check();
   assert.equal(f.typed.length, typed + 1);
-  assert.match(f.typed.at(-1)!, /2 h 2 min of the 2 h budget/);
+  assert.match(f.typed.at(-1)!, /2 h 14 min of the 2 h 12 min budget/);
 });
 
-test("the agent's own overBudget hand, answered with anything but Cancel, grants a budget too", async () => {
-  const f = factory(62, {}, { hand: { reason: "overBudget", summary: "Still proving it.", at: T0, assignee: "me", options: [{ title: "Carry on", detail: "", recommended: true }] } });
-  await at(f.clock, () => f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Carry on", note: "" } as never, ME));
-  assert.equal(f.store.private("MF-1").budgetGrants, 1);
+test("answered after a long wait, the next budget starts from the answer, not from before the wait", async () => {
+  const f = factory(62);
+  await f.check();
+  f.clock.at = T0 + 10 * MIN;
+  await f.check();
+  assert.equal(f.t().hand!.reason, "overBudget");
+  // The owner answers 3 hours later; the session sat waiting the whole time.
+  f.clock.at = T0 + 190 * MIN;
+  await at(f.clock, () => f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Give it another hour", note: "" } as never, ME));
+  const use = f.engine.budget(f.t());
+  assert.equal(use.allowMinutes, 252 + 60);
+  assert.equal(use.over, null);
+  const typed = f.typed.length;
+  await f.check();
+  assert.equal(f.typed.length, typed, "no nudge right after the grant");
+  assert.equal(f.t().hand ?? null, null);
+  // An hour of work later: asked again.
+  f.clock.at = T0 + 250 * MIN;
+  await f.check();
+  assert.equal(f.typed.length, typed + 1);
+});
+
+test("the agent's own budget hand after the nudge grants a budget unless it stops; size hands and others don't", async () => {
+  const hand = (options: string[]) => ({ hand: { reason: "overBudget", summary: "Still proving it.", at: T0, assignee: "me", options: options.map((title) => ({ title, detail: "", recommended: false })) } });
+  const pick = (f: ReturnType<typeof factory>, option: string) => at(f.clock, () => f.engine.command({ type: "task.resolveHand", id: "MF-1", option, note: "" } as never, ME));
+
+  const nudged = factory(62, {}, hand(["Carry on", "Stop here"]));
+  nudged.store.savePrivate("MF-1", { ...nudged.store.private("MF-1"), budgetAskedAt: T0 - MIN });
+  await pick(nudged, "Carry on");
+  assert.deepEqual(nudged.store.private("MF-1").budgetBase, { minutes: 62, costUsd: 0 });
+
+  const stopped = factory(62, {}, hand(["Carry on", "Stop here"]));
+  stopped.store.savePrivate("MF-1", { ...stopped.store.private("MF-1"), budgetAskedAt: T0 - MIN });
+  await pick(stopped, "Stop here");
+  assert.equal(stopped.store.private("MF-1").budgetBase, undefined);
+
+  // A PR size-budget hand (no nudge was sent): picking a way forward gives no more time.
+  const size = factory(20, {}, hand(["Split it", "Keep it whole"]));
+  await pick(size, "Keep it whole");
+  assert.equal(size.store.private("MF-1").budgetBase, undefined);
 
   const other = factory(62, {}, { hand: { reason: "needsInput", summary: "Which?", at: T0, assignee: "me", options: [{ title: "A", detail: "", recommended: true }] } });
-  await at(other.clock, () => other.engine.command({ type: "task.resolveHand", id: "MF-1", option: "A", note: "" } as never, ME));
-  assert.equal(other.store.private("MF-1").budgetGrants, undefined);
+  other.store.savePrivate("MF-1", { ...other.store.private("MF-1"), budgetAskedAt: T0 - MIN });
+  await pick(other, "A");
+  assert.equal(other.store.private("MF-1").budgetBase, undefined);
 });
 
 test("the builder's prompt says what's left of the budget and to ask before going past it", () => {
   const f = factory(20, { taskCostUsd: 5 });
-  const p = builderPrompt(f.t(), null, null, null, [], null, [], budgetUse([{ started: T0 - 20 * MIN, ended: null }], [{ costUsd: 1 }], policy({ taskCostUsd: 5 }), 0, T0));
+  const p = builderPrompt(f.t(), null, null, null, [], null, [], budgetUse([{ started: T0 - 20 * MIN, ended: null }], [{ costUsd: 1 }], policy({ taskCostUsd: 5 }), null, T0));
   assert.match(p, /## Budget\nThis task has 40 of its 60 minutes of agent time and \$4\.00 of its \$5\.00 left/);
   assert.match(p, /call `raise_hand` with reason `overBudget`/);
-  assert.doesNotMatch(builderPrompt(f.t(), null, null, null, [], null, [], budgetUse([], [], policy({ taskMinutes: 0 }), 0, T0)), /## Budget/);
+  assert.doesNotMatch(builderPrompt(f.t(), null, null, null, [], null, [], budgetUse([], [], policy({ taskMinutes: 0 }), null, T0)), /## Budget/);
 });
 
 test("validPolicy takes 0 or 5–1440 minutes and a cost of $0 or more", () => {

@@ -143,7 +143,7 @@ export interface BudgetUse {
   minutes: number;
   /** Dollars so far, from the sessions that report a cost. */
   costUsd: number;
-  /** What it may use before it asks: the budget times one plus its grants. Null: that limit is off. */
+  /** What it may use before it asks: one budget on from where it was last given more (0 at first). Null: that limit is off. */
   allowMinutes: number | null;
   allowCostUsd: number | null;
   /** Which limit it's past, time first; null while it's within both. */
@@ -159,23 +159,26 @@ export const budgetMinutes = (policy: RiskPolicy): number | null => {
 /** A task's cost budget in dollars; null when there's none. 0 asks before any spend. */
 export const budgetCostUsd = (policy: RiskPolicy): number | null => policy.taskCostUsd ?? null;
 
-/** Pure: how much of its budget a task has used. `grants` is how many more budgets' worth people gave it
- *  (an overBudget hand answered with anything but Cancel). */
+/** What a task had used when a person last gave it more budget; its next limit is one budget on from there,
+ *  so time spent waiting on that person doesn't eat the new budget. */
+export interface BudgetBase { minutes: number; costUsd: number }
+
+/** Pure: how much of its budget a task has used. `base` is where it was when it was last given more
+ *  (an overBudget budget hand answered with anything but Cancel); none, it's counted from the start. */
 export function budgetUse(
   sessions: { started: number; ended: number | null }[],
   costs: { costUsd: number | null }[],
   policy: RiskPolicy,
-  grants = 0,
+  base: BudgetBase | null = null,
   at = Date.now(),
 ): BudgetUse {
   const ms = sessions.reduce((sum, s) => sum + Math.max(0, (s.ended ?? at) - s.started), 0);
   const minutes = ms / 60_000;
   const costUsd = costs.reduce((sum, c) => sum + (c.costUsd ?? 0), 0);
-  const times = 1 + Math.max(0, grants);
   const m = budgetMinutes(policy);
   const c = budgetCostUsd(policy);
-  const allowMinutes = m == null ? null : m * times;
-  const allowCostUsd = c == null ? null : c * times;
+  const allowMinutes = m == null ? null : (base?.minutes ?? 0) + m;
+  const allowCostUsd = c == null ? null : (base?.costUsd ?? 0) + c;
   const over = allowMinutes != null && minutes >= allowMinutes ? "time" : allowCostUsd != null && costUsd > 0 && costUsd >= allowCostUsd ? "cost" : null;
   return { minutes, costUsd, allowMinutes, allowCostUsd, over };
 }

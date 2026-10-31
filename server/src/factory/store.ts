@@ -54,8 +54,9 @@ export interface TaskPrivate {
   checks?: import("../github.ts").Check[];
   /** When its pull request was opened or found, so CI that never shows up stops being waited for. */
   prOpenedAt?: number;
-  /** More budgets' worth people gave it, each from an overBudget hand answered with anything but Cancel. */
-  budgetGrants?: number;
+  /** What it had used when a person last gave it more budget (an overBudget budget hand answered with anything
+   *  but Cancel); its next limit is one budget on from there. */
+  budgetBase?: import("./policy.ts").BudgetBase | null;
   /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
   budgetAskedAt?: number | null;
   /** Cancelled with its goal's archive, to have its worktree removed (when nothing would be lost). */

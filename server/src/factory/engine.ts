@@ -117,8 +117,10 @@ const DEQUEUE_REASONS: Record<string, string> = {
 const CI_APPEAR_MS = 10 * 60_000;
 /** How long the factory waits for an agent to raise its own over-budget hand before it raises one for it. */
 const BUDGET_HAND_AFTER_MS = 10 * 60_000;
-/** The way forward on an overBudget hand that stops the task; any other pick gives it one more budget's worth. */
+/** The way forward on the factory's overBudget hand that stops the task. */
 const BUDGET_CANCEL = "Cancel it";
+/** A pick on a budget hand that stops the task rather than giving it more (the factory's Cancel it, or an agent's own). */
+const BUDGET_STOP = /\b(cancel|stop|abandon|drop)\b/i;
 /** "62 min" or "1 h 5 min". */
 const minutesText = (m: number) => {
   const r = Math.round(m);
@@ -695,11 +697,14 @@ export class Engine {
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
         if (hand.reason === "reviewLoop" && task.autoReview) task.autoReview.maxRounds += 2;
         const priv = this.store.private(task.id);
-        // Over budget and not cancelled: one more budget's worth, counted from here.
-        const granted = hand.reason === "overBudget" && option?.title !== BUDGET_CANCEL;
+        // A time or cost budget hand (the factory's, or the agent's after the nudge; not a PR size one) answered
+        // with anything but a way to stop: one more budget's worth, counted from what it has used now, so the
+        // time it spent waiting for this answer isn't taken out of it.
+        const granted = hand.reason === "overBudget" && priv.budgetAskedAt != null && !(option && BUDGET_STOP.test(option.title));
+        const use = granted ? this.budget(task) : null;
         this.store.savePrivate(task.id, {
           ...priv, restarts: 0, discard: false, cleaned: false,
-          ...(granted ? { budgetGrants: (priv.budgetGrants ?? 0) + 1, budgetAskedAt: null } : {}),
+          ...(use ? { budgetBase: { minutes: use.minutes, costUsd: use.costUsd }, budgetAskedAt: null } : {}),
         });
         this.save(task);
         if (!(await this.type(task, `${who} answered your raised hand: ${decision || "carry on."}`))) await this.pump();
@@ -2655,7 +2660,7 @@ export class Engine {
   /** A task's use of its time and cost budget so far. */
   budget(task: Task): BudgetUse {
     const priv = this.store.private(task.id);
-    return budgetUse(this.store.taskSessions(task.id), this.store.taskCosts(task.id), this.store.policy(), priv.budgetGrants ?? 0);
+    return budgetUse(this.store.taskSessions(task.id), this.store.taskCosts(task.id), this.store.policy(), priv.budgetBase ?? null);
   }
 
   /** Running tasks past their budget (policy.taskMinutes, taskCostUsd): the first time, a nudge is typed into the
@@ -2695,6 +2700,9 @@ export class Engine {
           { title: BUDGET_CANCEL, detail: "Stop the task; its branch stays.", recommended: false },
         ]);
         this.save(task);
+        // The hand doesn't stop the session, so the agent is told to wait for the answer.
+        await this.type(task, `You're past this task's budget (${budgetText(use)}), so the factory raised an overBudget hand for you. `
+          + "Stop at a safe point now, say where you are, and end your turn; the answer will be typed in here.");
       } else wake(asked + BUDGET_HAND_AFTER_MS - now());
     }
     if (next != null) this.hooks.wakeIn(Math.max(1_000, Math.ceil(next)));
