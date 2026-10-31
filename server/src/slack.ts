@@ -38,7 +38,9 @@ async function verified(request: Request, env: Env, what: string): Promise<{ raw
 
 /**
  * POST /integrations/slack/command: `/maple <what you need>`. Verified with the app's signing
- * secret; the bot's replies go back through the command's response_url.
+ * secret. With a bot token the ask is posted in the channel and the request's replies go in that
+ * message's thread; without one, or when the bot can't post there (not in the channel, a DM), they
+ * go back through the command's response_url.
  */
 export async function slackCommand(request: Request, env: Env): Promise<Response> {
   const checked = await verified(request, env, "A slash command");
@@ -50,19 +52,35 @@ export async function slackCommand(request: Request, env: Env): Promise<Response
   if (!said) return Response.json({ response_type: "ephemeral", text: "Say what you need: `/maple the export button times out on big workspaces`" });
   const [first, ...rest] = said.split("\n");
   const title = first.length > 90 ? `${first.slice(0, 87)}…` : first;
+  const requester = form.get("user_name") ?? "someone";
+  const channel = form.get("channel_id") ?? "";
+  const token = checked.slack.botToken;
+  let root: string | null = null;
+  if (token && channel) {
+    root = await postMessage(token, channel, null, `*${requester}* asked: ${said}`).catch(async (e) => {
+      await integrationEvent(env, "slack", `Couldn't post a /maple ask in its channel, so its replies go back through Slack's response URL: ${(e as Error).message}`);
+      return null;
+    });
+  }
   const res = await orgHub(env).fetch("https://org/intake", {
     method: "POST",
     body: JSON.stringify({
       source: "slack",
       channel: form.get("channel_name") ? `#${form.get("channel_name")}` : null,
-      requester: form.get("user_name") ?? "someone",
+      requester,
       title,
       text: said,
       tickets: [],
-      replyUrl: form.get("response_url"),
+      replyUrl: root ? threadAddress(channel, root, "command") : form.get("response_url"),
     }),
   });
   const created = (await res.json()) as { id: string };
+  if (token && root) {
+    await postMessage(token, channel, root, `Got it: ${created.id} is in the factory's requests. I'll post updates in this thread.`).catch((e) =>
+      integrationEvent(env, "slack", `Couldn't post in a thread: ${(e as Error).message}`),
+    );
+    return new Response(null, { status: 200 });
+  }
   return Response.json({ response_type: "in_channel", text: `Got it: ${created.id} is in the factory's requests. I'll post here when someone picks it up.` });
 }
 
