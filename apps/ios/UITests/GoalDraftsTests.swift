@@ -22,12 +22,25 @@ final class GoalDraftsTests: XCTestCase {
 
     private func header(_ text: String) -> XCUIElement { app.staticTexts[text] }
 
+    /// Scrolls the goal until `element` is on screen: the list only builds rows near the viewport.
+    private func reveal(_ element: XCUIElement) {
+        let list = app.collectionViews.firstMatch
+        for _ in 0..<3 where !(element.exists && element.isHittable) { list.swipeUp() }
+        for _ in 0..<4 where !(element.exists && element.isHittable) { list.swipeDown() }
+    }
+
+    /// Scrolls to the end of the goal, where the drafts sit clear of the tab bar.
+    private func scrollToBottom() {
+        for _ in 0..<2 { app.collectionViews.firstMatch.swipeUp() }
+    }
+
     /// Swipes the row titled `title` left and taps `action`.
     private func swipe(_ title: String, _ action: String) {
         let row = app.staticTexts[title]
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "\(title) isn't listed")
         // Lift the row clear of the tab bar so its swipe buttons are on screen.
-        app.collectionViews.firstMatch.swipeUp()
+        scrollToBottom()
+        reveal(row)
+        XCTAssertTrue(row.exists, "\(title) isn't listed")
         row.swipeLeft()
         let button = app.buttons[action]
         XCTAssertTrue(button.waitForExistence(timeout: 5), "no \(action) swipe action")
@@ -41,17 +54,21 @@ final class GoalDraftsTests: XCTestCase {
     /// Whether `row` sits under the section `header`.
     private func assertRow(_ title: String, under header: String, file: StaticString = #filePath, line: UInt = #line) {
         let heading = self.header(header)
-        XCTAssertTrue(heading.waitForExistence(timeout: 10), "no \(header) section", file: file, line: line)
+        reveal(heading)
+        XCTAssertTrue(heading.exists, "no \(header) section", file: file, line: line)
         let row = app.staticTexts[title]
+        reveal(row)
         XCTAssertTrue(row.exists, "\(title) isn't listed", file: file, line: line)
         XCTAssertGreaterThan(row.frame.minY, heading.frame.minY, "\(title) isn't under \(header)", file: file, line: line)
     }
 
     func testPlanSwipeSendsADraftToPlanning() {
         open(goal: "g-app", title: "Mobile app")
-        XCTAssertTrue(header("Drafting · 2").waitForExistence(timeout: 10))
+        reveal(header("Drafting · 2"))
+        XCTAssertTrue(header("Drafting · 2").exists)
         swipe(ipad, "Plan")
         assertRow(ipad, under: "Planning · 1")
+        reveal(header("Drafting · 1"))
         XCTAssertTrue(header("Drafting · 1").exists)
         XCTAssertGreaterThan(header("Drafting · 1").frame.minY, app.staticTexts[ipad].frame.minY, "still listed as a draft")
     }
@@ -60,6 +77,7 @@ final class GoalDraftsTests: XCTestCase {
         open(goal: "g-app", title: "Mobile app")
         swipe(widget, "Backlog")
         assertRow(widget, under: "Backlog · 1")
+        reveal(header("Drafting · 1"))
         XCTAssertTrue(header("Drafting · 1").exists)
     }
 
@@ -74,8 +92,8 @@ final class GoalDraftsTests: XCTestCase {
 
     func testEditModeDragsDraftsIntoOrder() {
         open(goal: "g-app", title: "Mobile app")
-        // The drafts start under the tab bar; scroll them up so a drag lands on the rows.
-        app.collectionViews.firstMatch.swipeUp()
+        // The drafts start below the fold; scroll them up so a drag lands on the rows.
+        scrollToBottom()
         XCTAssertLessThan(app.staticTexts[ipad].frame.minY, app.staticTexts[widget].frame.minY, "the demo's drafts start iPad first")
 
         let edit = app.buttons["drafts-edit"]
@@ -104,6 +122,8 @@ final class GoalDraftsTests: XCTestCase {
         // It stays put when you leave the goal and come back.
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.staticTexts["Mobile app"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10))
+        scrollToBottom()
         XCTAssertTrue(app.staticTexts[widget].waitForExistence(timeout: 10))
         XCTAssertLessThan(app.staticTexts[widget].frame.minY, app.staticTexts[ipad].frame.minY, "the order didn't survive leaving the goal")
     }
