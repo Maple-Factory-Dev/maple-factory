@@ -153,7 +153,7 @@ struct TaskTimeline: View {
         .background(card(Theme.stroke))
     }
 
-    /// Diff lines as the comment quoted them, coloured like the Diff tab.
+    /// Diff lines as the comment quoted them, coloured like the Changes tab.
     private func snippet(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in

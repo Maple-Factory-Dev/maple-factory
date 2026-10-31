@@ -835,7 +835,25 @@ export interface DiffStat {
   removed: number;
 }
 
-/** A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review. */
+/** One commit on a task's branch (`origin/<base>..HEAD`), with its own line counts and patch. */
+export interface DiffCommit {
+  sha: string;
+  subject: string;
+  /** The rest of its message after the subject, when there is one. */
+  body?: string | null;
+  author: string;
+  /** When it was committed, in ms since the epoch. */
+  at: number;
+  added: number;
+  removed: number;
+  files: DiffStat[];
+  /** Its own unified patch; empty when the branch's commits ran past the total cap. */
+  patch: string;
+  /** Its patch was cut, or left out for the total cap. */
+  truncated: boolean;
+}
+
+/** A comment on lines of a task's diff, drafted in the Changes tab and sent with the rest of its review. */
 export interface ReviewNote {
   path: string;
   /** First line, numbered on `side`. */
@@ -1331,6 +1349,8 @@ export interface RunnerMessage_TaskDiff {
   patch: string;
   truncated: boolean;
   message?: string | null;
+  /** The branch's commits, oldest first; none from runners that predate it. */
+  commits?: DiffCommit[] | null;
 }
 
 export interface RunnerMessage_TaskMerged {

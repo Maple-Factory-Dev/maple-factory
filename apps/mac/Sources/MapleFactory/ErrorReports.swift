@@ -10,15 +10,26 @@ enum ErrorReports {
         #if DEBUG
         return nil
         #else
-        let off = ProcessInfo.processInfo.environment["MAPLE_TELEMETRY"]?.lowercased() == "off"
-            || AppDefaults.string(forKey: "MapleTelemetry")?.lowercased() == "off"
         let dsn = Bundle.main.object(forInfoDictionaryKey: "MapleSentryDSN") as? String
-        return off || dsn?.isEmpty != false ? nil : dsn
+        return forcedOff || !enabled || dsn?.isEmpty != false ? nil : dsn
         #endif
     }
 
+    /// MAPLE_TELEMETRY=off in the environment: the Settings toggle can't turn reports back on.
+    static var forcedOff: Bool { ProcessInfo.processInfo.environment["MAPLE_TELEMETRY"]?.lowercased() == "off" }
+
+    /// Settings › General's "Send crash and error reports": the `MapleTelemetry` default, on unless it's "off".
+    /// Changing it stops or starts the SDK straight away.
+    static var enabled: Bool {
+        get { AppDefaults.string(forKey: "MapleTelemetry")?.lowercased() != "off" }
+        set {
+            if newValue { AppDefaults.removeObject(forKey: "MapleTelemetry") } else { AppDefaults.set("off", forKey: "MapleTelemetry") }
+            if newValue { start() } else { SentrySDK.close() }
+        }
+    }
+
     static func start() {
-        guard let dsn else { return }
+        guard let dsn, !SentrySDK.isEnabled else { return }
         let info = Bundle.main.infoDictionary ?? [:]
         let version = info["CFBundleShortVersionString"] as? String ?? "0"
         SentrySDK.start { options in

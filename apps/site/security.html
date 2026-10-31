@@ -190,10 +190,10 @@
 
           <h3>Turning it off</h3>
           <ul>
-            <li><strong>Server:</strong> set the Worker variable or secret <code>SENTRY_DSN</code> to <code>off</code>, or to your own Sentry DSN to report there instead.</li>
+            <li><strong>Server:</strong> a factory admin turns off <em>Send error reports to Maple Factory</em> in the web app’s Settings › General. Or set the Worker variable or secret <code>SENTRY_DSN</code> to <code>off</code>, or to your own Sentry DSN to report there instead; a <code>SENTRY_DSN</code> set on the Worker wins over the toggle, which then shows it’s locked.</li>
             <li><strong>Web app:</strong> follows the server. It sends nothing when the server’s reports are off.</li>
             <li><strong>Runner:</strong> set <code>MAPLE_TELEMETRY=off</code> in its environment, including its launchd or systemd service.</li>
-            <li><strong>Mac app:</strong> run <code>defaults write dev.maplefactory.app MapleTelemetry off</code>, or set <code>MAPLE_TELEMETRY=off</code>.</li>
+            <li><strong>Mac app:</strong> turn off <em>Send crash and error reports</em> in Settings › General › Privacy. It takes effect straight away. Or run <code>defaults write dev.maplefactory.app MapleTelemetry off</code>, or set <code>MAPLE_TELEMETRY=off</code>.</li>
             <li>Builds you make yourself (debug builds of the runner and Mac app) never report.</li>
           </ul>
         </section>

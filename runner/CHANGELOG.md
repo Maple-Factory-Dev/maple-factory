@@ -5,9 +5,13 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
-## 0.68.0
+## 0.69.0
 
 `maple-runner stop` stops the installed service so launchd or systemd can't start it again (a runner stuck crashing and restarting stays down) until `maple-runner start`, which starts it in the background and waits for it to connect, or your next login. Both take `--dry-run`.
+
+## 0.68.0 — 2026-10-31
+
+Fixes 0.67.0 crashing as it connects to the factory (two TLS crypto providers were built in): the runner now picks one at startup. A machine stuck on 0.67.0 needs `maple-runner update` run by hand, then its service restarted.
 
 ## 0.67.0 — 2026-10-30
 

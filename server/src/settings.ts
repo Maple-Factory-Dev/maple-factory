@@ -19,17 +19,22 @@ export const SETTING_KEYS = [
   "GITHUB_OWNER_TYPE",
   "PUBLIC_URL",
   "SESSION_SECRET",
+  // "off" from Settings › General (error-reports.ts); deleting the row turns reports back on.
+  "SENTRY_DSN",
   // Written once (secrets.ts), never by saveSettings: a new one would make every stored secret unreadable.
   "SECRETS_KEY",
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const REFRESH_MS = 30_000;
-/** Per env object: which keys came from D1 (so a refresh may replace them) and when it was read. */
-const filled = new WeakMap<Env, { keys: Set<string>; at: number }>();
+/** On env itself: which keys came from D1 (so a refresh may replace them) and when it was read. Not a
+ *  WeakMap keyed by env: withSentry hands each request its own wrapper around the same object. */
+const FILLED = Symbol("settings.filled");
+type Filled = { keys: Set<string>; at: number };
+const filled = (env: Env) => (env as unknown as Record<symbol, Filled | undefined>)[FILLED];
 
 export async function applySettings(env: Env, force = false): Promise<void> {
-  const state = filled.get(env) ?? { keys: new Set<string>(), at: 0 };
+  const state = filled(env) ?? { keys: new Set<string>(), at: 0 };
   if (!force && Date.now() - state.at < REFRESH_MS) return;
   let rows: Array<{ key: string; value: string }>;
   try {
@@ -46,8 +51,24 @@ export async function applySettings(env: Env, force = false): Promise<void> {
     vars[key] = value;
     state.keys.add(key);
   }
+  // A row deleted since: take back what it filled in.
+  for (const key of state.keys) {
+    if (rows.some((row) => row.key === key)) continue;
+    delete vars[key];
+    state.keys.delete(key);
+  }
   state.at = Date.now();
-  filled.set(env, state);
+  (env as unknown as Record<symbol, Filled>)[FILLED] = state;
+}
+
+/** Whether env[key] is a real secret or var, which a stored setting can't replace. */
+export function setInWorker(env: Env, key: SettingKey): boolean {
+  return Boolean((env as unknown as Record<string, unknown>)[key]) && !filled(env)?.keys.has(key);
+}
+
+export async function deleteSetting(env: Env, key: SettingKey): Promise<void> {
+  await env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(key).run();
+  await applySettings(env, true);
 }
 
 export async function saveSettings(env: Env, values: Partial<Record<SettingKey, string>>): Promise<void> {
