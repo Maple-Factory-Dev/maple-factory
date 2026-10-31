@@ -39,6 +39,9 @@ struct TaskDetailView: View {
             .refreshable { await store.refresh() }
             .onAppear { store.viewing(id) }
             .onDisappear { store.viewing(nil) }
+        } else if !store.feed.hasSnapshot {
+            // Opened from a link before the feed landed: it fills in when the snapshot does.
+            ProgressView().navigationTitle(id).navigationBarTitleDisplayMode(.inline)
         } else {
             ContentUnavailableView("Task not found", systemImage: "questionmark.square.dashed")
         }

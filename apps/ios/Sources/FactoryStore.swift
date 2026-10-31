@@ -21,6 +21,9 @@ final class FactoryStore {
     private(set) var saved: [SavedFactory] = []
     /// The toast or error to show, newest only.
     var notice: FeedState.Notice?
+    /// A `maplefactory://` link waiting to be opened. Signing out keeps it, so a link opened on the
+    /// sign-in screen opens once you're in; RootView takes it.
+    var pendingLink: FactoryLink?
     /// Each task's diff once loaded, keyed by the change it was loaded for.
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
     /// The last `stats` reply, for admins' Statistics (FeedState doesn't keep it).
