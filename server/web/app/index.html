@@ -17,8 +17,12 @@
     <a href="#/notes" data-nav="notes">Scratchpad</a>
   </nav>
   <span class="status" id="status" title="Connection">Connecting…</span>
-  <a class="btn primary small new" href="#/new" title="New task">New task</a>
+  <a class="btn primary small new" href="#/new" title="New task" aria-label="New task"><span class="new-plus" aria-hidden="true">+</span><span class="new-label">New task</span></a>
 </header>
+<div id="update" class="update-bar" role="status" hidden>
+  <span>Maple Factory was updated. Refresh to get the latest version.</span>
+  <button type="button" class="btn primary small" id="update-refresh">Refresh</button>
+</div>
 <main id="main"></main>
 <div id="toast" class="toast" hidden></div>
 <script type="module" src="/app/app.js"></script>

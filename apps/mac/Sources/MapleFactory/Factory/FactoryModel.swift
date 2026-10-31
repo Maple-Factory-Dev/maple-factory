@@ -227,6 +227,9 @@ struct FactoryTask: Identifiable {
         let session: String
     }
     var worker: Worker? = nil
+    /// What builds it, claude or codex, and the model its sessions ask for (nil: the agent's own default).
+    var builder = "claude"
+    var model: String? = nil
     /// The machine its worktree is on, once it has one (live only).
     var machine: String? = nil
     /// Its last pushed commit (live only).
@@ -242,6 +245,10 @@ struct FactoryTask: Identifiable {
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
+    /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
+    var scoutedFrom: String? = nil
+    /// The planner's proposed title, taken when the plan is approved (unless an approver keeps the current one).
+    var suggestedTitle: String? = nil
     /// The bigger effort it's part of, like an epic: tasks in its goal with the same name are its siblings.
     var effort: String? = nil
     /// The GitHub repo it changes (live goals that span several), and the tasks it builds on.
@@ -267,11 +274,19 @@ struct FactoryTask: Identifiable {
     var queued = false
     /// Its place in the queue: lower starts first.
     var queueRank: Double = 0
+    /// Its place among its goal's drafts: lower first.
+    var draftRank: Double = 0
     /// Held until then, when it was scheduled.
     var startAt: Date? = nil
     /// The factory auto-merges it then unless someone holds it; and when that countdown started.
     var mergeAt: Date? = nil
     var mergeFrom: Date? = nil
+    /// The tasks in flight it overlaps, and conflicts a dry-run merge found with its base.
+    var mergeForecast: MergeForecast? = nil
+
+    /// The factory is merging it: the server marks that with this live log line (engine.ts startMerge).
+    static let mergingLog = "Merging…"
+    var merging: Bool { state == .reviewing && liveLog == Self.mergingLog }
 
     /// What its next session does, while it's queued.
     var nextStep: String {
@@ -289,6 +304,22 @@ struct FactoryTask: Identifiable {
 
     /// Stands in when there are no tasks yet, so views that need one have something to show.
     static let none = FactoryTask(id: "—", goal: "", title: "No tasks yet", state: .drafting, detail: "")
+}
+
+/// How a task's branch should merge, kept current by the factory as other tasks merge.
+struct MergeForecast {
+    struct Overlap: Hashable {
+        var task: String
+        var files: [String]
+    }
+    /// Other tasks building or in review that change some of the same files.
+    var overlaps: [Overlap] = []
+    /// Files a dry-run merge into its base conflicts in; empty: merges cleanly (or not checked yet).
+    var conflicts: [String] = []
+    /// The task whose merge brought the conflicts in.
+    var since: String? = nil
+    var checkedAt: Date? = nil
+    var base: String? = nil
 }
 
 struct PullRequest {
@@ -309,6 +340,30 @@ struct PullRequest {
     var requiredChecksPassing: Bool { checks.filter(\.required).allSatisfy { $0.status == .passed } }
 }
 
+/// A CI check's log, as the log sheet shows it: the job's log, or the check run's output.
+struct CheckLog: Equatable {
+    var text: String
+    /// Only the log's end came back.
+    var truncated: Bool
+    /// The first line GitHub marked as an error.
+    var failedStep: String?
+    var url: URL?
+}
+
+/// A check log asked for: on its way, there, or refused (expired, or a check from outside GitHub).
+enum CheckLogLoad: Equatable {
+    case loading
+    case loaded(CheckLog)
+    case failed(String)
+}
+
+/// The check whose log the log sheet shows.
+struct CheckLogRequest: Identifiable, Equatable {
+    let taskID: String
+    let check: String
+    var id: String { "\(taskID)/\(check)" }
+}
+
 struct CICheck: Identifiable {
     enum Status { case queued, running, passed, failed }
 
@@ -316,6 +371,8 @@ struct CICheck: Identifiable {
     var status: Status
     var duration: String
     var required = true
+    /// Its run on GitHub (the job's page for GitHub Actions); none from an older server, and in the mockup.
+    var url: URL? = nil
     var id: String { name }
 
     private static let suite: [(name: String, duration: String, required: Bool)] = [

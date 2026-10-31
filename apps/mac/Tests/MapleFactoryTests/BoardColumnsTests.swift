@@ -41,6 +41,18 @@ struct BoardColumnsTests {
         }
     }
 
+    @Test func draftsOrderByDraftRank() {
+        let ranks: [(String, Double)] = [("D-1", 3000), ("D-2", 1000), ("D-3", 2500), ("D-4", -500)]
+        let drafts = ranks.map { id, rank in
+            var draft = task(id, state: .drafting, rank: 9000)
+            draft.draftRank = rank
+            return draft
+        }
+        let columns = BoardColumns.columns(tasks: drafts, hideEmpty: true) { _ in false }
+        #expect(columns.map(\.id) == [.task(.drafting)])
+        #expect(columns[0].tasks.map(\.id) == ["D-4", "D-2", "D-3", "D-1"])
+    }
+
     @Test(arguments: [false, true], [1, 12])
     func specialColumnsRouteExactlyOnce(hideEmpty: Bool, count: Int) {
         let queued = (0..<count).map { task("QUEUE-\($0)", state: .reviewing, queued: true, rank: Double(count - $0)) }
@@ -110,5 +122,39 @@ struct BoardColumnsTests {
         restored.boardHidesEmptyColumns = false
         #expect(!AppState(boardDefaults: defaults).boardHidesEmptyColumns)
         #expect(AppDefaults.object(forKey: "boardHidesEmptyColumns") as? Bool == saved)
+    }
+
+    // MF-118: the server marks a merge in flight with the live log "Merging…" (engine.ts startMerge).
+    private func wire(state: String, liveLog: String?) throws -> Wire.Task {
+        let log = liveLog.map { #","liveLog":"\#($0)""# } ?? ""
+        return try JSONDecoder().decode(Wire.Task.self, from: Data("""
+        {"id":"MF-1","goal":"g","title":"A task","state":"\(state)","owner":"andrea","brief":"",
+         "createdAt":1,"updatedAt":2,"planVersion":1,"approvalsNeeded":1,"reviewsNeeded":0,
+         "shareable":false,"agent":"claude"\(log)}
+        """.utf8))
+    }
+
+    @Test func mergingLiveLogMarksTheTaskMerging() throws {
+        let merging = LiveAdapter.task(try wire(state: "reviewing", liveLog: "Merging…"), goals: [], members: [], me: "andrea")
+        #expect(merging.merging)
+        #expect(merging.detail == "Merging…")
+
+        let reviewing = LiveAdapter.task(try wire(state: "reviewing", liveLog: nil), goals: [], members: [], me: "andrea")
+        #expect(!reviewing.merging)
+        #expect(reviewing.detail == "In review")
+
+        // Only a reviewing task merges; the same line elsewhere is just its live log.
+        let building = LiveAdapter.task(try wire(state: "building", liveLog: "Merging…"), goals: [], members: [], me: "andrea")
+        #expect(!building.merging)
+    }
+
+    @Test func mergingPendingMergeTaskStaysInPendingMerge() {
+        var merging = task("MERGING", state: .reviewing)
+        merging.liveLog = FactoryTask.mergingLog
+        #expect(merging.merging)
+        let columns = BoardColumns.columns(tasks: [merging, task("REVIEW", state: .reviewing)], hideEmpty: true) { $0.id == "MERGING" }
+        #expect(columns.map(\.id) == [.task(.reviewing), .pendingMerge])
+        #expect(columns.first { $0.id == .pendingMerge }?.tasks.map(\.id) == ["MERGING"])
+        #expect(columns.flatMap(\.tasks).filter { $0.id == "MERGING" }.count == 1)
     }
 }

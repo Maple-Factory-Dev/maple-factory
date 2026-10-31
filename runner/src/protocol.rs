@@ -194,6 +194,9 @@ pub enum Outbound {
         /// What went wrong, when `ok` is false.
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// The repo's checks that ran, in order; the last failed when the finish stopped on one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checks: Option<Vec<crate::wire::CheckRun>>,
     },
     /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
     #[serde(rename = "task.handed_off")]
@@ -240,9 +243,9 @@ pub enum Outbound {
     /// Scrollback for one attaching browser, routed by `nonce`.
     #[serde(rename = "session.replay")]
     SessionReplay { id: Uuid, nonce: String, data: String },
-    /// How `task.merge` went.
+    /// How `task.merge` went, and what became of the branch on origin (`tasks::BranchDeletion::note`).
     #[serde(rename = "task.merged")]
-    TaskMerged { task_id: String, ok: bool, commit: Option<String>, message: Option<String> },
+    TaskMerged { task_id: String, ok: bool, commit: Option<String>, message: Option<String>, branch: Option<String> },
     /// How an update the hub asked for (`runner.update`) is going. `version` is the latest
     /// release's, once known. `updating` is sent just before the runner exits to restart
     /// into the new build.
@@ -434,6 +437,9 @@ pub enum Inbound {
         /// Reopen: continue the agent's last conversation in `cwd` (Claude Code and Codex; others ignore it).
         #[serde(default)]
         resume: bool,
+        /// The factory's MCP connectors, secrets included (Settings → Connectors), beside `maple`.
+        #[serde(default)]
+        connectors: Option<Vec<crate::wire::McpConnector>>,
     },
     #[serde(rename = "session.resize")]
     SessionResize { id: Uuid, cols: u16, rows: u16 },
@@ -594,6 +600,13 @@ pub enum Inbound {
     DraftRun(crate::draft::Run),
     #[serde(rename = "draft.cancel")]
     DraftCancel { id: String },
+    /// Sign an agent in with a device code, or cancel that (see `agent_login`).
+    #[serde(rename = "agent.login")]
+    AgentLogin {
+        agent: String,
+        #[serde(default)]
+        cancel: bool,
+    },
     /// Remove a merged or closed task's worktree and local branch (see `worktrees::remove_task`).
     #[serde(rename = "task.cleanup")]
     TaskCleanup(crate::tasks::Cleanup),
@@ -611,6 +624,9 @@ pub enum Inbound {
     /// Report a task's diff against its base (see `tasks::run_diff`).
     #[serde(rename = "task.diff")]
     TaskDiff(crate::tasks::DiffRequest),
+    /// Dry-run merging a task's branch into its base (see `tasks::run_merge_check`).
+    #[serde(rename = "task.merge_check")]
+    TaskMergeCheck(crate::tasks::MergeCheck),
     /// Merge a task's branch into its base on origin (see `tasks::run_merge`).
     #[serde(rename = "task.merge")]
     TaskMerge(crate::tasks::Merge),
@@ -1016,6 +1032,7 @@ mod tests {
             commit: None,
             reason: None,
             message: Some("nope".into()),
+            checks: None,
         })
         .unwrap();
         assert_eq!(out, serde_json::json!({"type":"task.finished","taskId":"t1","ok":false,"branch":"agent/x","base":null,"message":"nope"}));

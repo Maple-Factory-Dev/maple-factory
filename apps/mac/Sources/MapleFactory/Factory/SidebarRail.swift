@@ -126,7 +126,7 @@ struct SidebarRail: View {
             }
             .opensSettings()
 
-            item("Expand sidebar", detail: "⌃⌘S") {
+            item("Expand sidebar", detail: "⌘B") {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textMuted)

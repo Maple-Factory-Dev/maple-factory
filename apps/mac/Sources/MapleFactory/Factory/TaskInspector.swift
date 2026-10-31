@@ -43,8 +43,8 @@ struct TaskInspector: View {
                 }
                 .buttonStyle(.plain)
                 // While typing, Esc leaves the composer (keeping the draft) instead of closing the panel;
-                // while the proof lightbox is up, Esc closes the lightbox.
-                .keyboardShortcut(composerFocused || appState.lightbox != nil ? nil : .cancelAction)
+                // while the proof lightbox or the ⌘K palette is up, Esc closes that.
+                .keyboardShortcut(composerFocused || appState.lightbox != nil || appState.showPalette ? nil : .cancelAction)
                 .help("Close (Esc)")
             }
             .font(.system(size: 13))
@@ -60,6 +60,7 @@ struct TaskInspector: View {
                             .foregroundStyle(Theme.text)
                             .fixedSize(horizontal: false, vertical: true)
                         TaskOwnership(task: task)
+                        TaskOrigin(task: task)
                     }
                     SinceLastViewedBanner(task: task, compact: true)
                     PipelineStepper(state: task.state)

@@ -1,5 +1,6 @@
-// The `maple` MCP tools each factory session gets, by role. The runner asks for the list per
-// session and forwards calls here; the engine runs them (engine.ts `tool`).
+// The `maple` MCP tools each factory session gets, by role, and the ones every other session on a
+// member's machine gets (PERSONAL_TOOLS). The runner asks for the list per session and forwards
+// calls here; the engine runs them (engine.ts `tool`).
 
 import type { Role } from "../wire.ts";
 
@@ -36,6 +37,7 @@ const TOOLS: Tool[] = [
     inputSchema: obj(
       {
         summary: str("The approach in two or three sentences."),
+        title: str("A clearer title for the task, only if its current one is vague or misleading; it takes this name once the plan is approved."),
         steps: list(obj({ text: str("What this step does."), file: str("The main file it touches.") }, ["text", "file"]), "3–8 steps in order."),
         doneWhen: list(
           obj({ text: str("A check that proves the change works."), proof: oneOf(["tests", "terminal", "screenshot", "video"], "What evidence the builder produces.") }, ["text", "proof"]),
@@ -133,7 +135,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "finish",
-    description: "Every step is done and every item proven: the factory commits, pushes and starts the review. End your turn after.",
+    description: "Every step is done and every item proven: the factory runs the repo's checks (if it has any), then commits, pushes and starts the review. A failing check stops it, with nothing pushed, and is typed into this session to fix. End your turn after.",
     inputSchema: obj({ summary: str("What changed, for the review and the pull request.") }, ["summary"]),
     roles: ["builder"],
   },
@@ -165,6 +167,44 @@ const TOOLS: Tool[] = [
     roles: ["reviewer"],
   },
 ];
+
+const scriptsSchema = obj({
+  create: str("Makes the worktree in place of `git worktree add`; it must leave a git worktree on $MAPLE_BRANCH at $MAPLE_WORKTREE. Usually left out."),
+  preflight: str("Machine-level setup (runtimes, brew, services), run in the new worktree before setup the first time a machine uses the repo, and again when the command or a watched file changes."),
+  preflightWatch: str("Repo-relative files, one per line, that re-run preflight when they change (at most 20). Left out: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml."),
+  setup: str("Runs once the worktree exists, before the agent starts: install dependencies, copy .env files, and so on."),
+  checks: str("Commands, one per line (at most 20), that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, `lefthook run pre-commit --all-files`."),
+  teardown: str("Runs before the worktree is removed when a finished task is cleaned up."),
+  archive: str("Runs in place of the runner's own removal at cleanup. Usually left out."),
+  timeoutSecs: { type: "integer", minimum: 1, maximum: 3600, description: "How long each may run (default 600)." },
+});
+const promptsSchema = obj({
+  planner: str("Markdown added to the planner's prompt for this repo's tasks."),
+  builder: str("Markdown added to the builder's prompt: how to run, test and prove changes here."),
+  reviewer: str("Markdown added to the reviewer's prompt: what to check."),
+});
+
+/** The tools of a session that isn't working on a factory task: your own Claude Code or Codex on a member's machine. */
+const PERSONAL_TOOLS: Omit<Tool, "roles">[] = [
+  {
+    name: "get_repo_setup",
+    description: "One of the factory's repos' setup: its worktree scripts (run by the runner with /bin/sh -c in the repo's main checkout), its prompt additions per role (added after the org's and before a goal's), the MAPLE_* variables the scripts get, and who changed them last.",
+    inputSchema: obj({ repo: str("The repo, GitHub owner/name.") }, ["repo"]),
+  },
+  {
+    name: "save_repo_setup",
+    description: "Save a repo's worktree scripts and prompt additions, straight away (admins' machines only; audited). Only the fields you pass change: an empty string clears one, a field left out keeps what's stored. Call get_repo_setup first.",
+    inputSchema: obj({ repo: str("The repo, GitHub owner/name."), scripts: scriptsSchema, prompts: promptsSchema }, ["repo"]),
+  },
+];
+
+export function personalTools() {
+  return PERSONAL_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+}
+
+export function isPersonalTool(tool: string) {
+  return PERSONAL_TOOLS.some((t) => t.name === tool);
+}
 
 export function toolsFor(role: Role) {
   return TOOLS.filter((t) => t.roles.includes(role)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

@@ -1,6 +1,7 @@
 // Machines: one-time enrollment codes, per-machine runner tokens, and the list in D1.
 
 import type { Env } from "./env.ts";
+import { revoked } from "./auth.ts";
 import type { Machine, Member } from "./wire.ts";
 import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sameText, sha256, text } from "./util.ts";
 
@@ -92,11 +93,14 @@ export async function enroll(request: Request, env: Env): Promise<Response> {
   return Response.json({ runnerId: id, token });
 }
 
+/** The machine's token, and an owner who still has access: a revoked owner's machines stay offline until they sign in again. */
 export async function authenticateRunner(env: Env, id: string, request: Request): Promise<boolean> {
   const token = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
   if (!token) return false;
-  const row = await env.DB.prepare("SELECT token_hash FROM machines WHERE id = ?").bind(id).first<{ token_hash: string }>();
-  return !!row && sameText(row.token_hash, await sha256(token));
+  const row = await env.DB.prepare(
+    "SELECT t.token_hash, m.revoked_at, m.last_seen FROM machines t LEFT JOIN members m ON m.login = t.owner WHERE t.id = ?",
+  ).bind(id).first<{ token_hash: string; revoked_at: number | null; last_seen: number | null }>();
+  return !!row && sameText(row.token_hash, await sha256(token)) && !revoked(row);
 }
 
 /** DELETE /api/machines/:id: forgets a machine and cuts it off. Its owner or an admin. */

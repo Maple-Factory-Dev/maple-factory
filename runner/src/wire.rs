@@ -92,6 +92,18 @@ pub enum StepProgress {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum DiffSide {
+    /// The changed file: added and unchanged lines.
+    New,
+    /// The file before: removed lines.
+    Old,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ProofKind {
     /// An image.
     Screenshot,
@@ -134,6 +146,36 @@ pub enum DraftState {
     NeedsGoal,
     /// Title, brief and Done when are filled in.
     Ready,
+    /// It couldn't; `error` says why.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// Where a goal's Scout run is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScoutState {
+    /// Its agent is looking over the goal's leftovers.
+    Running,
+    /// Finished: `tasks` went to planning.
+    Done,
+    /// It couldn't; `error` says why.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// Where a repo's Set up with AI run is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoSetupState {
+    /// Its agent is reading the repo.
+    Running,
+    /// Finished: `suggestion` is filled in.
+    Done,
     /// It couldn't; `error` says why.
     Failed,
     /// A value this build doesn't know yet; newer servers may send them.
@@ -339,6 +381,18 @@ pub enum RiskLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum McpTransport {
+    /// A local command the runner starts.
+    Stdio,
+    /// A server reached by URL (streamable HTTP).
+    Http,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PromptChoice {
     /// Allow it once (the menu's 1).
     Yes,
@@ -377,6 +431,25 @@ pub enum RunnerUpdateState {
     UpToDate,
     /// It couldn't; `message` says why.
     Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// Where an agent sign-in (`codex login --device-auth`) on a machine is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentLoginState {
+    /// Asked the machine; the login is starting.
+    Starting,
+    /// Showing a link and one-time code: waiting for its owner to finish in the browser.
+    Waiting,
+    /// Signed in.
+    Done,
+    /// It couldn't; `message` says why.
+    Failed,
+    /// Someone cancelled it, or the code expired.
+    Cancelled,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -436,6 +509,29 @@ pub struct LiveSession {
     pub session: SessionInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<Activity>,
+    /// Teammates its machine's owner (or an admin) let into its terminal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shares: Option<Vec<SessionShare>>,
+}
+
+/// A teammate let into a session's terminal: to watch it, or with `canType` to type into it too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionShare {
+    pub login: String,
+    pub can_type: bool,
+    /// Who shared it.
+    pub by: String,
+    /// When it was shared or last changed.
+    pub at: u64,
+}
+
+/// One teammate in a `session.share`: the server fills in who and when.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareGrant {
+    pub login: String,
+    pub can_type: bool,
 }
 
 /// How a session ended, kept with the task so its card can say why and recovery can decide what to do.
@@ -647,6 +743,26 @@ pub struct MachineUpdate {
     pub message: Option<String>,
     /// When it reached this state.
     pub at: u64,
+}
+
+/// An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLoginStatus {
+    pub agent: String,
+    pub state: AgentLoginState,
+    /// The page to enter the code on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The one-time code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// When the code expires (ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    /// Why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// One runner release in the feed's changelog (maple-runner/changes.json).
@@ -889,6 +1005,9 @@ pub struct CICheck {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<String>,
     pub required: bool,
+    /// Its run on GitHub (the job's page for GitHub Actions). None: an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -972,6 +1091,27 @@ pub struct OrgRepo {
     pub is_private: bool,
     /// Granted to the GitHub App, or added by hand (no app, or not yet granted).
     pub source: RepoSource,
+    /// GitHub's description of the repo. None: added by hand, it has none, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The owner's GitHub avatar. None: added by hand, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_avatar_url: Option<String>,
+}
+
+/// The factory's GitHub App, for installing it on another GitHub account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAppInfo {
+    /// Its name in github.com/apps/<slug>.
+    pub slug: String,
+    /// User or Organization: the account that owns it (GITHUB_ORG). None: not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    /// Its advanced settings on GitHub, where it's made public so another account can install it.
+    pub settings_url: String,
+    /// Where an account installs it.
+    pub install_url: String,
 }
 
 /// A secret kept for one of the org's repos: who set it and when, never its value.
@@ -993,9 +1133,18 @@ pub struct WorktreeScripts {
     /// Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create: Option<String>,
+    /// Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<String>,
+    /// Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_watch: Option<String>,
     /// Runs once the worktree exists, before the agent starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
+    /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<String>,
     /// Runs before the worktree is removed when a finished task is cleaned up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teardown: Option<String>,
@@ -1014,6 +1163,9 @@ pub struct RepoWorktreeScripts {
     /// GitHub owner/name.
     pub repo: String,
     pub scripts: WorktreeScripts,
+    /// The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptAdditions>,
     pub updated_by: String,
     pub updated_at: u64,
 }
@@ -1069,6 +1221,35 @@ pub struct Diff {
     pub files: Vec<String>,
 }
 
+/// Another in-flight task (building or in review) whose changes touch some of the same files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOverlap {
+    pub task: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+/// How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeForecast {
+    #[serde(default)]
+    pub overlaps: Vec<MergeOverlap>,
+    /// Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet).
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    /// The task whose merge brought the conflicts in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    /// When the last dry-run merge ran (ms); none: never.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<u64>,
+    /// The branch it was checked against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -1087,6 +1268,9 @@ pub struct Task {
     pub plan_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_summary: Option<String>,
+    /// The planner's proposed title, taken when the plan is approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_title: Option<String>,
     #[serde(default)]
     pub done_when: Vec<DoneItem>,
     #[serde(default)]
@@ -1131,6 +1315,9 @@ pub struct Task {
     pub shareable: bool,
     /// claude or codex: what builds it.
     pub agent: String,
+    /// The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Where its worktree lives once building started.
@@ -1139,6 +1326,9 @@ pub struct Task {
     /// The task it was split off from to stay inside the PR budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_from: Option<String>,
+    /// What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scouted_from: Option<String>,
     /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
@@ -1150,6 +1340,9 @@ pub struct Task {
     /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_rank: Option<f64>,
+    /// Its place among its goal's drafts: lower first. None (from an older server): its createdAt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_rank: Option<f64>,
     /// Don't start its next session before this (ms); cleared once that session starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_at: Option<u64>,
@@ -1162,6 +1355,9 @@ pub struct Task {
     /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_at: Option<u64>,
+    /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_forecast: Option<MergeForecast>,
 }
 
 /// Code that raises a change's risk when touched.
@@ -1197,6 +1393,35 @@ pub struct RiskPolicy {
     /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_merges: Option<bool>,
+    /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scout_items: Option<u32>,
+}
+
+/// An MCP server the factory adds to every session, alongside its own `maple` server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConnector {
+    /// Lowercase letters, digits and dashes; its tools are mcp__<name>__*. Not `maple`.
+    pub name: String,
+    pub transport: McpTransport,
+    /// stdio: the program to run, e.g. npx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// http: the server's URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// stdio: its environment. Secret: apps get each key with an empty value (blank on save keeps the stored one).
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// http: request headers, e.g. Authorization. Secret, like `env`.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    pub enabled: bool,
+    /// Unattended project sessions may use its tools without asking.
+    pub auto_allow: bool,
 }
 
 /// Text added to every factory session's prompt, by role: the org's, then a goal's after it.
@@ -1220,12 +1445,68 @@ pub struct RiskAcceptance {
     pub note: Option<String>,
 }
 
+/// One of a repo's checks, run in a task's worktree before its finish is committed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckRun {
+    pub command: String,
+    /// Its exit code; none: it was killed by a signal or couldn't start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    pub ms: u64,
+    /// The end of what it printed (stdout and stderr).
+    pub output: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffStat {
     pub path: String,
     pub added: u32,
     pub removed: u32,
+}
+
+/// A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewNote {
+    pub path: String,
+    /// First line, numbered on `side`.
+    pub start: u32,
+    /// Last line (the same as start for one line).
+    pub end: u32,
+    pub side: DiffSide,
+    /// The lines it's about, as the diff showed them (with +/-/space prefixes).
+    pub snippet: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThreadComment {
+    pub author: String,
+    pub body: String,
+    pub at: u64,
+}
+
+/// A review thread on the task's GitHub pull request (`GET /api/tasks/:id/threads`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThread {
+    pub id: String,
+    pub path: String,
+    /// The line it ends on; none once the code it was on is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// Where a multi-line thread starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    pub side: DiffSide,
+    pub resolved: bool,
+    pub outdated: bool,
+    #[serde(default)]
+    pub comments: Vec<ReviewThreadComment>,
 }
 
 /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
@@ -1346,6 +1627,51 @@ pub struct DraftLine {
     pub text: String,
 }
 
+/// What a Set up with AI run suggests for a repo, for an admin to review and save.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSetupSuggestion {
+    pub scripts: WorktreeScripts,
+    pub prompts: PromptAdditions,
+    /// Short notes from the agent: what it found and why it suggests these.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// Set up with AI for one repo: an agent that can't change anything reads the repo and suggests its worktree scripts and prompt additions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSetupRun {
+    pub repo: String,
+    /// Who started it (an admin); it runs on their machine.
+    pub by: String,
+    pub state: RepoSetupState,
+    pub started_at: u64,
+    /// What the agent is doing now, one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<RepoSetupSuggestion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoutRun {
+    pub goal: String,
+    /// Who started it; it runs on their machine.
+    pub by: String,
+    pub state: ScoutState,
+    pub started_at: u64,
+    /// The tasks it sent to planning.
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1401,9 +1727,16 @@ pub struct Member {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
+    /// "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here.
     pub role: String,
     #[serde(default)]
     pub teams: Vec<String>,
+    /// Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_source: Option<String>,
+    /// Who granted it, when `adminSource` is "granted".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_granted_by: Option<String>,
 }
 
 /// A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet.
@@ -1458,7 +1791,7 @@ pub struct StatsCount {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsDay {
-    /// YYYY-MM-DD (UTC).
+    /// YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC).
     pub day: String,
     pub merges: u32,
     pub hands: u32,
@@ -1705,6 +2038,11 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// How an `agent.login` is going.
+    #[serde(rename = "agent.login_status")]
+    AgentLoginStatus {
+        status: AgentLoginStatus,
+    },
     /// Plan usage readings that changed (all of them again on reconnect).
     #[serde(rename = "usage")]
     Usage {
@@ -1755,6 +2093,9 @@ pub enum RunnerMessage {
         reason: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks: Option<Vec<CheckRun>>,
     },
     /// What a task's branch changes against its base: line counts per file and the unified patch.
     #[serde(rename = "task.diff")]
@@ -1774,6 +2115,21 @@ pub enum RunnerMessage {
         ok: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        /// What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+    },
+    /// How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed.
+    #[serde(rename = "task.merge_check")]
+    TaskMergeCheck {
+        task_id: String,
+        /// The check ran; false: `message` says why not.
+        ok: bool,
+        clean: bool,
+        #[serde(default)]
+        conflicts: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
@@ -1866,6 +2222,9 @@ pub enum ServerToRunner {
         unattended: Option<Unattended>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// The factory's enabled MCP connectors, secrets included.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connectors: Option<Vec<McpConnector>>,
     },
     #[serde(rename = "session.resize")]
     SessionResize {
@@ -1886,6 +2245,12 @@ pub enum ServerToRunner {
     },
     #[serde(rename = "runner.update")]
     RunnerUpdate,
+    /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
+    #[serde(rename = "agent.login")]
+    AgentLogin {
+        agent: String,
+        cancel: bool,
+    },
     #[serde(rename = "runner.restart")]
     RunnerRestart,
     /// The answer to `mcp.request`: `result` ({summary, data}) or `error`.
@@ -1909,10 +2274,20 @@ pub enum ServerToRunner {
         title: String,
         /// Push with the machine's own credentials (no GitHub App).
         fallback: bool,
+        /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks: Option<String>,
     },
     /// Report a task's diff against its base (answered with `task.diff`).
     #[serde(rename = "task.diff")]
     TaskDiff {
+        task_id: String,
+        cwd: String,
+        base: String,
+    },
+    /// Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`).
+    #[serde(rename = "task.merge_check")]
+    TaskMergeCheck {
         task_id: String,
         cwd: String,
         base: String,
@@ -1970,6 +2345,9 @@ pub enum ServerToRunner {
         /// The repo's worktree scripts: teardown runs first, and archive replaces the removal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<WorktreeScripts>,
+        /// Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delete_remote: Option<bool>,
     },
     /// The answer to `task.token_request`.
     #[serde(rename = "task.token")]
@@ -2068,6 +2446,14 @@ pub enum ClientMessage {
         machine: String,
         id: Uuid,
     },
+    /// The machine's owner or an admin: who else may open this session's terminal, the whole list (empty unshares it).
+    #[serde(rename = "session.share")]
+    SessionShare {
+        machine: String,
+        id: Uuid,
+        #[serde(default)]
+        shares: Vec<ShareGrant>,
+    },
     #[serde(rename = "goal.save")]
     GoalSave {
         goal: Goal,
@@ -2091,6 +2477,24 @@ pub enum ClientMessage {
     #[serde(rename = "draft.cancel")]
     DraftCancel {
         id: String,
+    },
+    /// Run Scout on a goal: its leftovers still worth doing come back as drafted plans.
+    #[serde(rename = "goal.scout")]
+    GoalScout {
+        goal: String,
+    },
+    /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
+    #[serde(rename = "repo.setup.start")]
+    RepoSetupStart {
+        repo: String,
+        /// claude or codex; none: whichever the machine has.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+    },
+    /// Stop a repo's Set up with AI run.
+    #[serde(rename = "repo.setup.cancel")]
+    RepoSetupCancel {
+        repo: String,
     },
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
@@ -2126,6 +2530,14 @@ pub enum ClientMessage {
     MachineUpdate {
         machine: String,
     },
+    /// Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.
+    #[serde(rename = "machine.agent_login")]
+    MachineAgentLogin {
+        machine: String,
+        agent: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cancel: Option<bool>,
+    },
     /// Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine.
     #[serde(rename = "runner.check")]
     RunnerCheck {
@@ -2141,6 +2553,27 @@ pub enum ClientMessage {
     PromptsSave {
         prompts: PromptAdditions,
     },
+    /// Admins only: make someone who has signed in an admin of this factory.
+    #[serde(rename = "admins.grant")]
+    AdminsGrant {
+        login: String,
+    },
+    /// Admins only: take back an admin grant (not a GitHub owner's, nor your own).
+    #[serde(rename = "admins.revoke")]
+    AdminsRevoke {
+        login: String,
+    },
+    /// Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself).
+    #[serde(rename = "members.revoke")]
+    MembersRevoke {
+        login: String,
+    },
+    /// Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one.
+    #[serde(rename = "connectors.save")]
+    ConnectorsSave {
+        #[serde(default)]
+        connectors: Vec<McpConnector>,
+    },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]
     ReposRefresh,
@@ -2153,6 +2586,13 @@ pub enum ClientMessage {
     #[serde(rename = "repos.remove")]
     ReposRemove {
         name: String,
+    },
+    /// Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again.
+    #[serde(rename = "repos.owners.set")]
+    ReposOwnersSet {
+        /// GitHub logins.
+        #[serde(default)]
+        owners: Vec<String>,
     },
     /// Admins only: add or replace one of a repo's secrets. The value is never sent back to any app.
     #[serde(rename = "secrets.set")]
@@ -2167,11 +2607,14 @@ pub enum ClientMessage {
         repo: String,
         name: String,
     },
-    /// Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them.
+    /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     #[serde(rename = "repos.scripts.set")]
     ReposScriptsSet {
         repo: String,
         scripts: WorktreeScripts,
+        /// The repo's prompt additions; none (an older app) keeps the stored ones.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompts: Option<PromptAdditions>,
     },
     /// Let the factory auto-merge a goal's work up to `upTo`; none takes it back.
     #[serde(rename = "goal.acceptRisk")]
@@ -2218,6 +2661,12 @@ pub enum ClientMessage {
         /// Put it in this effort; an empty string takes it out.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        /// claude or codex; refused once it's merged or cancelled. Takes effect from its next session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// The model its next sessions use; an empty string goes back to the agent's default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
     #[serde(rename = "task.assign")]
@@ -2251,10 +2700,22 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<String>,
     },
+    /// Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.
+    #[serde(rename = "task.review")]
+    TaskReview {
+        id: String,
+        #[serde(default)]
+        notes: Vec<ReviewNote>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
     /// Approve its plan; a planned backlog task is picked up and builds once its approvals are met.
     #[serde(rename = "task.approvePlan")]
     TaskApprovePlan {
         id: String,
+        /// Turn down the plan's suggested title and keep the current one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        keep_title: Option<bool>,
     },
     /// Answer the agent's question.
     #[serde(rename = "task.answer")]
@@ -2313,10 +2774,30 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         force: Option<bool>,
     },
+    /// Reorder a draft among its goal's drafts; it stays a draft.
+    #[serde(rename = "task.rankDraft")]
+    TaskRankDraft {
+        id: String,
+        /// Move it ahead of this draft; "top": the first draft. None moves it to the bottom.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+    },
     /// Run the pull request's failed CI checks again.
     #[serde(rename = "task.rerunChecks")]
     TaskRerunChecks {
         id: String,
+    },
+    /// Run one of the pull request's CI checks again, by name.
+    #[serde(rename = "task.rerunCheck")]
+    TaskRerunCheck {
+        id: String,
+        check: String,
+    },
+    /// The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.
+    #[serde(rename = "task.checkLog")]
+    TaskCheckLog {
+        id: String,
+        check: String,
     },
     /// Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own.
     #[serde(rename = "task.split")]
@@ -2377,6 +2858,9 @@ pub enum ServerToClient {
         /// The org's prompt additions. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompts: Option<PromptAdditions>,
+        /// The factory's MCP connectors, secret values blank. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connectors: Option<Vec<McpConnector>>,
         #[serde(default)]
         online: Vec<Presence>,
         #[serde(default)]
@@ -2387,12 +2871,24 @@ pub enum ServerToClient {
         intake: Vec<IntakeRequest>,
         #[serde(default)]
         repos: Vec<OrgRepo>,
+        /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_owners: Option<Vec<String>>,
+        /// The factory's GitHub App. None: no app, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        github_app: Option<GitHubAppInfo>,
         /// Every repo's secrets, names and who changed them only.
         #[serde(default)]
         secrets: Vec<RepoSecret>,
         /// The repos that have worktree scripts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<Vec<RepoWorktreeScripts>>,
+        /// Each repo's latest Set up with AI run. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup_runs: Option<Vec<RepoSetupRun>>,
+        /// Each goal's latest Scout run. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scout_runs: Option<Vec<ScoutRun>>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
@@ -2408,6 +2904,9 @@ pub enum ServerToClient {
         /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+        /// The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         protocol_version: u32,
     },
     #[serde(rename = "machine.updated")]
@@ -2417,6 +2916,12 @@ pub enum ServerToClient {
     #[serde(rename = "machine.removed")]
     MachineRemoved {
         id: String,
+    },
+    /// How a sign-in on your machine is going, to its owner's apps only.
+    #[serde(rename = "machine.agent_login")]
+    MachineAgentLogin {
+        machine: String,
+        status: AgentLoginStatus,
     },
     #[serde(rename = "task.updated")]
     TaskUpdated {
@@ -2447,6 +2952,16 @@ pub enum ServerToClient {
     DraftUpdated {
         draft: Draft,
     },
+    /// How a goal's Scout run is going.
+    #[serde(rename = "scout.updated")]
+    ScoutUpdated {
+        run: ScoutRun,
+    },
+    /// How a repo's Set up with AI run is going.
+    #[serde(rename = "repo.setup.updated")]
+    RepoSetupUpdated {
+        run: RepoSetupRun,
+    },
     /// Your goal follows, to your apps only.
     #[serde(rename = "follows.updated")]
     FollowsUpdated {
@@ -2469,12 +2984,25 @@ pub enum ServerToClient {
     PromptsUpdated {
         prompts: PromptAdditions,
     },
+    /// Everyone who has signed in again, after an admin grant changed.
+    #[serde(rename = "members.updated")]
+    MembersUpdated {
+        #[serde(default)]
+        members: Vec<Member>,
+    },
     /// An admin set or removed the factory's icon (PUT or DELETE /api/icon).
     #[serde(rename = "icon.updated")]
     IconUpdated {
         /// Its new path (`/icon/<id>`); none: removed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+    },
+    /// An admin set or cleared the factory's display name (PUT or DELETE /api/name).
+    #[serde(rename = "name.updated")]
+    NameUpdated {
+        /// The new name; none: cleared (back to the GitHub org).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
     #[serde(rename = "repos.updated")]
     ReposUpdated {
@@ -2483,6 +3011,9 @@ pub enum ServerToClient {
         /// The repos that have worktree scripts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scripts: Option<Vec<RepoWorktreeScripts>>,
+        /// The approved other GitHub accounts. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_owners: Option<Vec<String>>,
     },
     /// Every repo's secrets again (names only), after one changed.
     #[serde(rename = "secrets.updated")]
@@ -2500,6 +3031,12 @@ pub enum ServerToClient {
         #[serde(default)]
         runner_releases: Vec<RunnerRelease>,
     },
+    /// Secret values blank.
+    #[serde(rename = "connectors.updated")]
+    ConnectorsUpdated {
+        #[serde(default)]
+        connectors: Vec<McpConnector>,
+    },
     /// Something worth a passing line in the app.
     #[serde(rename = "toast")]
     Toast {
@@ -2516,6 +3053,23 @@ pub enum ServerToClient {
     #[serde(rename = "stats")]
     Stats {
         summary: StatsSummary,
+    },
+    /// The CI check log `task.checkLog` asked for, to that connection only.
+    #[serde(rename = "checkLog")]
+    CheckLog {
+        /// The task.
+        id: String,
+        check: String,
+        /// The check's run on GitHub.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        /// The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions.
+        text: String,
+        /// Only the log's end is kept.
+        truncated: bool,
+        /// The first line GitHub marked as an error, when there is one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed_step: Option<String>,
     },
     #[serde(rename = "error")]
     Error {

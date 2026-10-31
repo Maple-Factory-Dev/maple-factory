@@ -10,6 +10,9 @@ struct LiveSessionView: View {
     @State private var link: TerminalLink.State = .connecting
     @State private var confirmKill = false
     @State private var copied = false
+    @State private var sharing = false
+    /// The Share button's frame in the window, for a headless shot to hang the popover from.
+    @State private var shareFrame: CGRect = .zero
 
     /// The session as last seen live, so the header keeps its agent and folder after it ends.
     @State private var lastSeen: Wire.LiveSession?
@@ -18,6 +21,10 @@ struct LiveSessionView: View {
     private var current: Wire.LiveSession? { machine?.sessions.first { $0.session.id == sessionID } }
     private var live: Wire.LiveSession? { current ?? lastSeen }
     private var ended: FactoryClient.EndRecord? { client.ends.first { $0.end.id == sessionID } }
+    /// Its machine's owner or an admin: they open it as their own, and choose who else may.
+    private var canShare: Bool { machine?.owner == client.me?.login || client.me?.role == "admin" }
+    /// How it's shared with me, when it's someone else's.
+    private var myShare: Wire.SessionShare? { canShare ? nil : live?.shares?.first { $0.login == client.me?.login } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,7 +33,7 @@ struct LiveSessionView: View {
                 Term.bg
                 LiveTerminal(request: { cols, rows in
                     client.terminalRequest(machine: machineID, session: sessionID, cols: cols, rows: rows)
-                }, state: $link)
+                }, state: $link, readOnly: myShare?.canType == false)
                 .padding(.leading, 12)
                 .padding(.top, 8)
                 .opacity(ended == nil ? 1 : 0.55)
@@ -42,6 +49,8 @@ struct LiveSessionView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(12)
         .onAppear { lastSeen = current }
+        .onReceive(NotificationCenter.default.publisher(for: SessionSharePopover.demoOpen)) { _ in sharing = true }
+        .onChange(of: sharing) { _, open in if Headless.isOn { Headless.popoverAnchor = open ? shareFrame : nil } }
         .onChange(of: current) { _, now in if let now { lastSeen = now } }
     }
 
@@ -58,6 +67,9 @@ struct LiveSessionView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
+                    if let agent = live?.session.agent {
+                        AgentIcon(agent: agent, size: 14).foregroundStyle(Theme.text)
+                    }
                     Text(agentTitle(live?.session.agent ?? "session"))
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(Theme.text)
@@ -97,6 +109,10 @@ struct LiveSessionView: View {
                 Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
             }
 
+            if ended == nil && canShare, let machine, let current {
+                shareButton(machine: machine, live: current)
+            }
+
             if ended == nil && machine?.owner == client.me?.login {
                 Text(confirmKill ? "Kill it?" : "Kill")
                     .font(.system(size: 12, weight: .medium))
@@ -120,6 +136,24 @@ struct LiveSessionView: View {
         .padding(.horizontal, 12)
         .frame(height: 50)
         .background(Theme.cardBG)
+    }
+
+    private func shareButton(machine: Wire.Machine, live: Wire.LiveSession) -> some View {
+        let shares = live.shares ?? []
+        return HStack(spacing: 5) {
+            Image(systemName: shares.isEmpty ? "person.badge.plus" : "person.2.fill").font(.system(size: 11))
+            Text(shares.isEmpty ? "Share" : shares.count == 1 ? "Shared with @\(shares[0].login)" : "Shared with \(shares.count)")
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(shares.isEmpty ? Theme.text : Theme.accent)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(RoundedRectangle(cornerRadius: 7).fill(shares.isEmpty ? Theme.fill : Theme.accent.opacity(0.12)))
+        .contentShape(Rectangle())
+        .onTapGesture { sharing.toggle() }
+        .background(GeometryReader { g in Color.clear.onAppear { shareFrame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in shareFrame = f } })
+        .help(shares.isEmpty ? "Let teammates watch or type into this session" : shares.map { "@\($0.login) \($0.canType ? "can type" : "can watch")" }.joined(separator: ", "))
+        .popover(isPresented: $sharing, arrowEdge: .bottom) { SessionSharePopover(machine: machine, live: live) }
     }
 
     private func toolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
@@ -148,6 +182,12 @@ struct LiveSessionView: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Color(hex: 0x9096A0))
             Spacer()
+            if let myShare {
+                Text("\(myShare.canType ? "Typing" : "Watching") · shared by @\(myShare.by)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(myShare.canType ? Theme.State.awaitingApproval : Theme.accent)
+                    .help(myShare.canType ? "You can type into this session." : "You can watch this session; what you type isn't sent.")
+            }
             Circle().fill(color).frame(width: 6, height: 6)
             Text(text)
                 .font(.system(size: 11))

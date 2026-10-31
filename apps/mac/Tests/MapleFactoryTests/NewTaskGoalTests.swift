@@ -23,6 +23,20 @@ import Testing
         state.showInspector = false
     }
 
+    /// Every New Task asks the composer to focus its title, even when the composer is already open (MF-100).
+    @Test func newTaskAsksForTheTitleFocusEvenWhileComposing() {
+        let state = state()
+        #expect(!state.isComposing)
+        let before = state.composeFocusRequest
+        state.startCompose()
+        #expect(state.isComposing)
+        #expect(state.composeFocusRequest == before + 1)
+        state.startCompose()
+        #expect(state.composeFocusRequest == before + 2)
+        state.composeFromFindings([Wire.StatsFindingRow(task: "MF-1", title: "", kind: .code, severity: .major, text: "A finding", area: "(no file)", raisedIn: 1, at: 0)])
+        #expect(state.composeFocusRequest == before + 3)
+    }
+
     @Test func onAGoalPageItsThatGoal() {
         let state = state()
         state.destination = .goal("Docs site")

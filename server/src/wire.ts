@@ -17,6 +17,9 @@ export const RoleValues: readonly Role[] = ["planner","builder","reviewer"];
 export type StepProgress = "done" | "active" | "pending";
 export const StepProgressValues: readonly StepProgress[] = ["done","active","pending"];
 
+export type DiffSide = "new" | "old";
+export const DiffSideValues: readonly DiffSide[] = ["new","old"];
+
 export type ProofKind = "screenshot" | "video" | "terminal" | "tests";
 export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","terminal","tests"];
 
@@ -26,6 +29,14 @@ export const ProofStatusValues: readonly ProofStatus[] = ["pending","proving","p
 /** Where Draft with AI is. */
 export type DraftState = "choosing" | "reading" | "needsGoal" | "ready" | "failed";
 export const DraftStateValues: readonly DraftState[] = ["choosing","reading","needsGoal","ready","failed"];
+
+/** Where a goal's Scout run is. */
+export type ScoutState = "running" | "done" | "failed";
+export const ScoutStateValues: readonly ScoutState[] = ["running","done","failed"];
+
+/** Where a repo's Set up with AI run is. */
+export type RepoSetupState = "running" | "done" | "failed";
+export const RepoSetupStateValues: readonly RepoSetupState[] = ["running","done","failed"];
 
 /** A line of a draft's transcript. */
 export type DraftLineKind = "text" | "tool";
@@ -68,6 +79,9 @@ export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","pa
 export type RiskLevel = "low" | "medium" | "high";
 export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
 
+export type McpTransport = "stdio" | "http";
+export const McpTransportValues: readonly McpTransport[] = ["stdio","http"];
+
 export type PromptChoice = "yes" | "no";
 export const PromptChoiceValues: readonly PromptChoice[] = ["yes","no"];
 
@@ -77,6 +91,10 @@ export const RepoSourceValues: readonly RepoSource[] = ["github","manual"];
 /** Where a runner update someone asked for is. */
 export type RunnerUpdateState = "checking" | "installing" | "restarting" | "updated" | "upToDate" | "failed";
 export const RunnerUpdateStateValues: readonly RunnerUpdateState[] = ["checking","installing","restarting","updated","upToDate","failed"];
+
+/** Where an agent sign-in (`codex login --device-auth`) on a machine is. */
+export type AgentLoginState = "starting" | "waiting" | "done" | "failed" | "cancelled";
+export const AgentLoginStateValues: readonly AgentLoginState[] = ["starting","waiting","done","failed","cancelled"];
 
 /** What a session's agent is doing, from its hooks. */
 export type AgentState = "working" | "waiting" | "done" | "idle";
@@ -106,6 +124,24 @@ export interface Activity {
 export interface LiveSession {
   session: SessionInfo;
   activity?: Activity | null;
+  /** Teammates its machine's owner (or an admin) let into its terminal. */
+  shares?: SessionShare[] | null;
+}
+
+/** A teammate let into a session's terminal: to watch it, or with `canType` to type into it too. */
+export interface SessionShare {
+  login: string;
+  canType: boolean;
+  /** Who shared it. */
+  by: string;
+  /** When it was shared or last changed. */
+  at: number;
+}
+
+/** One teammate in a `session.share`: the server fills in who and when. */
+export interface ShareGrant {
+  login: string;
+  canType: boolean;
 }
 
 /** How a session ended, kept with the task so its card can say why and recovery can decide what to do. */
@@ -253,6 +289,20 @@ export interface MachineUpdate {
   message?: string | null;
   /** When it reached this state. */
   at: number;
+}
+
+/** An agent sign-in on a machine. The code is a credential: it goes to the machine's owner only. */
+export interface AgentLoginStatus {
+  agent: string;
+  state: AgentLoginState;
+  /** The page to enter the code on. */
+  url?: string | null;
+  /** The one-time code. */
+  code?: string | null;
+  /** When the code expires (ms). */
+  expiresAt?: number | null;
+  /** Why it failed. */
+  message?: string | null;
 }
 
 /** One runner release in the feed's changelog (maple-runner/changes.json). */
@@ -425,6 +475,8 @@ export interface CICheck {
   status: CheckStatus;
   duration?: string | null;
   required: boolean;
+  /** Its run on GitHub (the job's page for GitHub Actions). None: an older server. */
+  url?: string | null;
 }
 
 export interface PullRequest {
@@ -484,6 +536,22 @@ export interface OrgRepo {
   isPrivate: boolean;
   /** Granted to the GitHub App, or added by hand (no app, or not yet granted). */
   source: RepoSource;
+  /** GitHub's description of the repo. None: added by hand, it has none, or an older server. */
+  description?: string | null;
+  /** The owner's GitHub avatar. None: added by hand, or an older server. */
+  ownerAvatarUrl?: string | null;
+}
+
+/** The factory's GitHub App, for installing it on another GitHub account. */
+export interface GitHubAppInfo {
+  /** Its name in github.com/apps/<slug>. */
+  slug: string;
+  /** User or Organization: the account that owns it (GITHUB_ORG). None: not known. */
+  ownerType?: string | null;
+  /** Its advanced settings on GitHub, where it's made public so another account can install it. */
+  settingsUrl: string;
+  /** Where an account installs it. */
+  installUrl: string;
 }
 
 /** A secret kept for one of the org's repos: who set it and when, never its value. */
@@ -500,8 +568,14 @@ export interface RepoSecret {
 export interface WorktreeScripts {
   /** Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE. */
   create?: string | null;
+  /** Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes. */
+  preflight?: string | null;
+  /** Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml. */
+  preflightWatch?: string | null;
   /** Runs once the worktree exists, before the agent starts. */
   setup?: string | null;
+  /** Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. */
+  checks?: string | null;
   /** Runs before the worktree is removed when a finished task is cleaned up. */
   teardown?: string | null;
   /** Runs in place of the runner's own removal at cleanup; it owns the folder and the branch. */
@@ -515,6 +589,8 @@ export interface RepoWorktreeScripts {
   /** GitHub owner/name. */
   repo: string;
   scripts: WorktreeScripts;
+  /** The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server. */
+  prompts?: PromptAdditions | null;
   updatedBy: string;
   updatedAt: number;
 }
@@ -556,6 +632,25 @@ export interface Diff {
   files: string[];
 }
 
+/** Another in-flight task (building or in review) whose changes touch some of the same files. */
+export interface MergeOverlap {
+  task: string;
+  files: string[];
+}
+
+/** How a task's branch should merge: in-flight tasks it overlaps, and conflicts a dry-run merge found with its base. */
+export interface MergeForecast {
+  overlaps: MergeOverlap[];
+  /** Files `git merge-tree` says conflict with the base as of `checkedAt`; empty: merges cleanly (or not checked yet). */
+  conflicts: string[];
+  /** The task whose merge brought the conflicts in. */
+  since?: string | null;
+  /** When the last dry-run merge ran (ms); none: never. */
+  checkedAt?: number | null;
+  /** The branch it was checked against. */
+  base?: string | null;
+}
+
 export interface Task {
   id: string;
   goal: string;
@@ -570,6 +665,8 @@ export interface Task {
   plan: PlanStep[];
   planVersion: number;
   planSummary?: string | null;
+  /** The planner's proposed title, taken when the plan is approved. */
+  suggestedTitle?: string | null;
   doneWhen: DoneItem[];
   approvals: string[];
   approvalsNeeded: number;
@@ -595,11 +692,15 @@ export interface Task {
   shareable: boolean;
   /** claude or codex: what builds it. */
   agent: string;
+  /** The model its sessions ask the agent for, like "opus" or "gpt-5"; none: the agent's own default on that machine. */
+  model?: string | null;
   branch?: string | null;
   /** Where its worktree lives once building started. */
   machine?: string | null;
   /** The task it was split off from to stay inside the PR budget. */
   splitFrom?: string | null;
+  /** What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3). */
+  scoutedFrom?: string | null;
   /** Which of its goal's repos it changes; none: the goal's `repo` (or its folder). */
   repo?: string | null;
   /** Tasks that must merge before it starts building, e.g. the API change a web change uses. */
@@ -607,6 +708,8 @@ export interface Task {
   followUps: FollowUp[];
   /** Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt. */
   queueRank?: number | null;
+  /** Its place among its goal's drafts: lower first. None (from an older server): its createdAt. */
+  draftRank?: number | null;
   /** Don't start its next session before this (ms); cleared once that session starts. */
   startAt?: number | null;
   /** Its next session skips the wait for a free slot; cleared once it starts. */
@@ -615,6 +718,8 @@ export interface Task {
   effort?: string | null;
   /** The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down. */
   mergeAt?: number | null;
+  /** Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge. */
+  mergeForecast?: MergeForecast | null;
 }
 
 /** Code that raises a change's risk when touched. */
@@ -639,6 +744,27 @@ export interface RiskPolicy {
   autoFixMerges?: boolean | null;
   /** When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on. */
   autoMerges?: boolean | null;
+  /** The most leftovers one Scout run turns into drafted plans (1–10). None: 3. */
+  scoutItems?: number | null;
+}
+
+/** An MCP server the factory adds to every session, alongside its own `maple` server. */
+export interface McpConnector {
+  /** Lowercase letters, digits and dashes; its tools are mcp__<name>__*. Not `maple`. */
+  name: string;
+  transport: McpTransport;
+  /** stdio: the program to run, e.g. npx. */
+  command?: string | null;
+  args: string[];
+  /** http: the server's URL. */
+  url?: string | null;
+  /** stdio: its environment. Secret: apps get each key with an empty value (blank on save keeps the stored one). */
+  env: Record<string, string>;
+  /** http: request headers, e.g. Authorization. Secret, like `env`. */
+  headers: Record<string, string>;
+  enabled: boolean;
+  /** Unattended project sessions may use its tools without asking. */
+  autoAllow: boolean;
 }
 
 /** Text added to every factory session's prompt, by role: the org's, then a goal's after it. */
@@ -657,10 +783,54 @@ export interface RiskAcceptance {
   note?: string | null;
 }
 
+/** One of a repo's checks, run in a task's worktree before its finish is committed. */
+export interface CheckRun {
+  command: string;
+  /** Its exit code; none: it was killed by a signal or couldn't start. */
+  code?: number | null;
+  timedOut: boolean;
+  ms: number;
+  /** The end of what it printed (stdout and stderr). */
+  output: string;
+}
+
 export interface DiffStat {
   path: string;
   added: number;
   removed: number;
+}
+
+/** A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review. */
+export interface ReviewNote {
+  path: string;
+  /** First line, numbered on `side`. */
+  start: number;
+  /** Last line (the same as start for one line). */
+  end: number;
+  side: DiffSide;
+  /** The lines it's about, as the diff showed them (with +/-/space prefixes). */
+  snippet: string;
+  text: string;
+}
+
+export interface ReviewThreadComment {
+  author: string;
+  body: string;
+  at: number;
+}
+
+/** A review thread on the task's GitHub pull request (`GET /api/tasks/:id/threads`). */
+export interface ReviewThread {
+  id: string;
+  path: string;
+  /** The line it ends on; none once the code it was on is gone. */
+  line?: number | null;
+  /** Where a multi-line thread starts. */
+  startLine?: number | null;
+  side: DiffSide;
+  resolved: boolean;
+  outdated: boolean;
+  comments: ReviewThreadComment[];
 }
 
 /** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
@@ -748,6 +918,39 @@ export interface DraftLine {
   text: string;
 }
 
+/** What a Set up with AI run suggests for a repo, for an admin to review and save. */
+export interface RepoSetupSuggestion {
+  scripts: WorktreeScripts;
+  prompts: PromptAdditions;
+  /** Short notes from the agent: what it found and why it suggests these. */
+  notes: string[];
+}
+
+/** Set up with AI for one repo: an agent that can't change anything reads the repo and suggests its worktree scripts and prompt additions. */
+export interface RepoSetupRun {
+  repo: string;
+  /** Who started it (an admin); it runs on their machine. */
+  by: string;
+  state: RepoSetupState;
+  startedAt: number;
+  /** What the agent is doing now, one line. */
+  progress?: string | null;
+  suggestion?: RepoSetupSuggestion | null;
+  error?: string | null;
+}
+
+/** A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task. */
+export interface ScoutRun {
+  goal: string;
+  /** Who started it; it runs on their machine. */
+  by: string;
+  state: ScoutState;
+  startedAt: number;
+  /** The tasks it sent to planning. */
+  tasks: string[];
+  error?: string | null;
+}
+
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
 export interface Draft {
   id: string;
@@ -784,8 +987,13 @@ export interface Member {
   login: string;
   name?: string | null;
   avatarUrl?: string | null;
+  /** "admin" or "member": admin when GitHub says they're an org owner, or an admin made them one here. */
   role: string;
   teams: string[];
+  /** Why they're an admin: "github" (an org owner, not changeable here) or "granted" (`admins.grant`). None: not an admin, or an older server. */
+  adminSource?: string | null;
+  /** Who granted it, when `adminSource` is "granted". */
+  adminGrantedBy?: string | null;
 }
 
 /** A window's touchpoints. Medians are in ms; rates are 0–1. None: nothing to measure yet. */
@@ -826,7 +1034,7 @@ export interface StatsCount {
 }
 
 export interface StatsDay {
-  /** YYYY-MM-DD (UTC). */
+  /** YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC). */
   day: string;
   merges: number;
   hands: number;
@@ -1025,6 +1233,12 @@ export interface RunnerMessage_UpdateStatus {
   message?: string | null;
 }
 
+/** How an `agent.login` is going. */
+export interface RunnerMessage_AgentLoginStatus {
+  type: "agent.login_status";
+  status: AgentLoginStatus;
+}
+
 /** Plan usage readings that changed (all of them again on reconnect). */
 export interface RunnerMessage_Usage {
   type: "usage";
@@ -1069,6 +1283,8 @@ export interface RunnerMessage_TaskFinished {
   commit?: string | null;
   reason?: string | null;
   message?: string | null;
+  /** The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed). */
+  checks?: CheckRun[] | null;
 }
 
 /** What a task's branch changes against its base: line counts per file and the unified patch. */
@@ -1087,6 +1303,19 @@ export interface RunnerMessage_TaskMerged {
   taskId: string;
   ok: boolean;
   commit?: string | null;
+  message?: string | null;
+  /** What became of the merged branch on origin: deleted, gone (already), moved (kept: it has commits that didn't merge) or `failed: <why>`. */
+  branch?: string | null;
+}
+
+/** How a dry-run merge of a task's branch into its base went: `clean`, or the `conflicts` paths. Nothing was changed. */
+export interface RunnerMessage_TaskMergeCheck {
+  type: "task.merge_check";
+  taskId: string;
+  /** The check ran; false: `message` says why not. */
+  ok: boolean;
+  clean: boolean;
+  conflicts: string[];
   message?: string | null;
 }
 
@@ -1151,8 +1380,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -1169,6 +1398,8 @@ export interface ServerToRunner_SessionOpen {
   task?: TaskStart | null;
   unattended?: Unattended | null;
   model?: string | null;
+  /** The factory's enabled MCP connectors, secrets included. */
+  connectors?: McpConnector[] | null;
 }
 
 export interface ServerToRunner_SessionResize {
@@ -1195,6 +1426,13 @@ export interface ServerToRunner_RunnerUpdate {
   type: "runner.update";
 }
 
+/** Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting. */
+export interface ServerToRunner_AgentLogin {
+  type: "agent.login";
+  agent: string;
+  cancel: boolean;
+}
+
 export interface ServerToRunner_RunnerRestart {
   type: "runner.restart";
 }
@@ -1218,11 +1456,21 @@ export interface ServerToRunner_TaskFinish {
   title: string;
   /** Push with the machine's own credentials (no GitHub App). */
   fallback: boolean;
+  /** The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish. */
+  checks?: string | null;
 }
 
 /** Report a task's diff against its base (answered with `task.diff`). */
 export interface ServerToRunner_TaskDiff {
   type: "task.diff";
+  taskId: string;
+  cwd: string;
+  base: string;
+}
+
+/** Dry-run merging a task's branch into the latest `origin/<base>` (`git merge-tree`), touching nothing (answered with `task.merge_check`). */
+export interface ServerToRunner_TaskMergeCheck {
+  type: "task.merge_check";
   taskId: string;
   cwd: string;
   base: string;
@@ -1278,6 +1526,8 @@ export interface ServerToRunner_TaskCleanup {
   repo?: string | null;
   /** The repo's worktree scripts: teardown runs first, and archive replaces the removal. */
   scripts?: WorktreeScripts | null;
+  /** Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch. */
+  deleteRemote?: boolean | null;
 }
 
 /** The answer to `task.token_request`. */
@@ -1299,8 +1549,8 @@ export interface ServerToRunner_SecretsReply {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","runner.restart","mcp.response","task.finish","task.diff","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -1381,6 +1631,14 @@ export interface ClientMessage_SessionKill {
   id: string;
 }
 
+/** The machine's owner or an admin: who else may open this session's terminal, the whole list (empty unshares it). */
+export interface ClientMessage_SessionShare {
+  type: "session.share";
+  machine: string;
+  id: string;
+  shares: ShareGrant[];
+}
+
 export interface ClientMessage_GoalSave {
   type: "goal.save";
   goal: Goal;
@@ -1405,6 +1663,26 @@ export interface ClientMessage_DraftGoal {
 export interface ClientMessage_DraftCancel {
   type: "draft.cancel";
   id: string;
+}
+
+/** Run Scout on a goal: its leftovers still worth doing come back as drafted plans. */
+export interface ClientMessage_GoalScout {
+  type: "goal.scout";
+  goal: string;
+}
+
+/** Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`. */
+export interface ClientMessage_RepoSetupStart {
+  type: "repo.setup.start";
+  repo: string;
+  /** claude or codex; none: whichever the machine has. */
+  agent?: string | null;
+}
+
+/** Stop a repo's Set up with AI run. */
+export interface ClientMessage_RepoSetupCancel {
+  type: "repo.setup.cancel";
+  repo: string;
 }
 
 /** Follow a goal (it's in your sidebar) or stop following it. */
@@ -1444,6 +1722,14 @@ export interface ClientMessage_MachineUpdate {
   machine: string;
 }
 
+/** Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that. */
+export interface ClientMessage_MachineAgentLogin {
+  type: "machine.agent_login";
+  machine: string;
+  agent: string;
+  cancel?: boolean | null;
+}
+
 /** Look for a newer runner release now, skipping the cache. Only looks: it never installs anything. Answers with `runner.released` (when the feed changed) and a toast naming the machine. */
 export interface ClientMessage_RunnerCheck {
   type: "runner.check";
@@ -1460,6 +1746,30 @@ export interface ClientMessage_PolicySave {
 export interface ClientMessage_PromptsSave {
   type: "prompts.save";
   prompts: PromptAdditions;
+}
+
+/** Admins only: make someone who has signed in an admin of this factory. */
+export interface ClientMessage_AdminsGrant {
+  type: "admins.grant";
+  login: string;
+}
+
+/** Admins only: take back an admin grant (not a GitHub owner's, nor your own). */
+export interface ClientMessage_AdminsRevoke {
+  type: "admins.revoke";
+  login: string;
+}
+
+/** Admins only: cut someone off now. Their app tokens and web sessions stop working, their apps and terminals close; they can sign in again if GitHub still lets them (not a GitHub owner, nor yourself). */
+export interface ClientMessage_MembersRevoke {
+  type: "members.revoke";
+  login: string;
+}
+
+/** Admins only: the factory's MCP connectors, the whole list. A blank secret value keeps the stored one. */
+export interface ClientMessage_ConnectorsSave {
+  type: "connectors.save";
+  connectors: McpConnector[];
 }
 
 /** Read the repos the GitHub App is installed on again. */
@@ -1479,6 +1789,13 @@ export interface ClientMessage_ReposRemove {
   name: string;
 }
 
+/** Admins only: the other GitHub accounts (orgs or users) whose installations of the app add repos, besides the factory's own. Replaces the list, then reads the repos again. */
+export interface ClientMessage_ReposOwnersSet {
+  type: "repos.owners.set";
+  /** GitHub logins. */
+  owners: string[];
+}
+
 /** Admins only: add or replace one of a repo's secrets. The value is never sent back to any app. */
 export interface ClientMessage_SecretsSet {
   type: "secrets.set";
@@ -1494,11 +1811,13 @@ export interface ClientMessage_SecretsDelete {
   name: string;
 }
 
-/** Admins only: replace a repo's worktree scripts. Blank commands are cleared; all blank removes them. */
+/** Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them. */
 export interface ClientMessage_ReposScriptsSet {
   type: "repos.scripts.set";
   repo: string;
   scripts: WorktreeScripts;
+  /** The repo's prompt additions; none (an older app) keeps the stored ones. */
+  prompts?: PromptAdditions | null;
 }
 
 /** Let the factory auto-merge a goal's work up to `upTo`; none takes it back. */
@@ -1535,6 +1854,10 @@ export interface ClientMessage_TaskEdit {
   repo?: string | null;
   /** Put it in this effort; an empty string takes it out. */
   effort?: string | null;
+  /** claude or codex; refused once it's merged or cancelled. Takes effect from its next session. */
+  agent?: string | null;
+  /** The model its next sessions use; an empty string goes back to the agent's default. */
+  model?: string | null;
 }
 
 /** Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot). */
@@ -1572,10 +1895,20 @@ export interface ClientMessage_TaskSteer {
   anchor?: string | null;
 }
 
+/** Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request. */
+export interface ClientMessage_TaskReview {
+  type: "task.review";
+  id: string;
+  notes: ReviewNote[];
+  summary?: string | null;
+}
+
 /** Approve its plan; a planned backlog task is picked up and builds once its approvals are met. */
 export interface ClientMessage_TaskApprovePlan {
   type: "task.approvePlan";
   id: string;
+  /** Turn down the plan's suggested title and keep the current one. */
+  keepTitle?: boolean | null;
 }
 
 /** Answer the agent's question. */
@@ -1639,10 +1972,32 @@ export interface ClientMessage_TaskQueue {
   force?: boolean | null;
 }
 
+/** Reorder a draft among its goal's drafts; it stays a draft. */
+export interface ClientMessage_TaskRankDraft {
+  type: "task.rankDraft";
+  id: string;
+  /** Move it ahead of this draft; "top": the first draft. None moves it to the bottom. */
+  before?: string | null;
+}
+
 /** Run the pull request's failed CI checks again. */
 export interface ClientMessage_TaskRerunChecks {
   type: "task.rerunChecks";
   id: string;
+}
+
+/** Run one of the pull request's CI checks again, by name. */
+export interface ClientMessage_TaskRerunCheck {
+  type: "task.rerunCheck";
+  id: string;
+  check: string;
+}
+
+/** The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only. */
+export interface ClientMessage_TaskCheckLog {
+  type: "task.checkLog";
+  id: string;
+  check: string;
 }
 
 /** Splits an over-budget task: it keeps its first steps (up to the one it's on), the rest become `parts - 1` new tasks that are planned on their own. */
@@ -1681,8 +2036,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRerunChecks | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","goal.save","draft.start","draft.goal","draft.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","runner.check","policy.save","prompts.save","repos.refresh","repos.add","repos.remove","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rerunChecks","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskAssign | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","repo.setup.start","repo.setup.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.assign","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -1698,15 +2053,25 @@ export interface ServerToClient_Snapshot {
   acceptances: RiskAcceptance[];
   /** The org's prompt additions. None: an older server. */
   prompts?: PromptAdditions | null;
+  /** The factory's MCP connectors, secret values blank. None: an older server. */
+  connectors?: McpConnector[] | null;
   online: Presence[];
   notes: Note[];
   follows: GoalFollow[];
   intake: IntakeRequest[];
   repos: OrgRepo[];
+  /** Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server. */
+  repoOwners?: string[] | null;
+  /** The factory's GitHub App. None: no app, or an older server. */
+  githubApp?: GitHubAppInfo | null;
   /** Every repo's secrets, names and who changed them only. */
   secrets: RepoSecret[];
   /** The repos that have worktree scripts. None: an older server. */
   scripts?: RepoWorktreeScripts[] | null;
+  /** Each repo's latest Set up with AI run. None: an older server. */
+  setupRuns?: RepoSetupRun[] | null;
+  /** Each goal's latest Scout run. None: an older server. */
+  scoutRuns?: ScoutRun[] | null;
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes (What's new). None: an older server. */
@@ -1717,6 +2082,8 @@ export interface ServerToClient_Snapshot {
   serverUpdate?: ServerUpdate | null;
   /** The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server. */
   icon?: string | null;
+  /** The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server. */
+  name?: string | null;
   protocolVersion: number;
 }
 
@@ -1728,6 +2095,13 @@ export interface ServerToClient_MachineUpdated {
 export interface ServerToClient_MachineRemoved {
   type: "machine.removed";
   id: string;
+}
+
+/** How a sign-in on your machine is going, to its owner's apps only. */
+export interface ServerToClient_MachineAgentLogin {
+  type: "machine.agent_login";
+  machine: string;
+  status: AgentLoginStatus;
 }
 
 export interface ServerToClient_TaskUpdated {
@@ -1766,6 +2140,18 @@ export interface ServerToClient_DraftUpdated {
   draft: Draft;
 }
 
+/** How a goal's Scout run is going. */
+export interface ServerToClient_ScoutUpdated {
+  type: "scout.updated";
+  run: ScoutRun;
+}
+
+/** How a repo's Set up with AI run is going. */
+export interface ServerToClient_RepoSetupUpdated {
+  type: "repo.setup.updated";
+  run: RepoSetupRun;
+}
+
 /** Your goal follows, to your apps only. */
 export interface ServerToClient_FollowsUpdated {
   type: "follows.updated";
@@ -1789,6 +2175,12 @@ export interface ServerToClient_PromptsUpdated {
   prompts: PromptAdditions;
 }
 
+/** Everyone who has signed in again, after an admin grant changed. */
+export interface ServerToClient_MembersUpdated {
+  type: "members.updated";
+  members: Member[];
+}
+
 /** An admin set or removed the factory's icon (PUT or DELETE /api/icon). */
 export interface ServerToClient_IconUpdated {
   type: "icon.updated";
@@ -1796,11 +2188,20 @@ export interface ServerToClient_IconUpdated {
   icon?: string | null;
 }
 
+/** An admin set or cleared the factory's display name (PUT or DELETE /api/name). */
+export interface ServerToClient_NameUpdated {
+  type: "name.updated";
+  /** The new name; none: cleared (back to the GitHub org). */
+  name?: string | null;
+}
+
 export interface ServerToClient_ReposUpdated {
   type: "repos.updated";
   repos: OrgRepo[];
   /** The repos that have worktree scripts. None: an older server. */
   scripts?: RepoWorktreeScripts[] | null;
+  /** The approved other GitHub accounts. None: an older server. */
+  repoOwners?: string[] | null;
 }
 
 /** Every repo's secrets again (names only), after one changed. */
@@ -1816,6 +2217,12 @@ export interface ServerToClient_RunnerReleased {
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes. */
   runnerReleases: RunnerRelease[];
+}
+
+/** Secret values blank. */
+export interface ServerToClient_ConnectorsUpdated {
+  type: "connectors.updated";
+  connectors: McpConnector[];
 }
 
 /** Something worth a passing line in the app. */
@@ -1837,6 +2244,22 @@ export interface ServerToClient_Stats {
   summary: StatsSummary;
 }
 
+/** The CI check log `task.checkLog` asked for, to that connection only. */
+export interface ServerToClient_CheckLog {
+  type: "checkLog";
+  /** The task. */
+  id: string;
+  check: string;
+  /** The check's run on GitHub. */
+  url?: string | null;
+  /** The job's log (timestamps stripped), or the check run's output for a check outside GitHub Actions. */
+  text: string;
+  /** Only the log's end is kept. */
+  truncated: boolean;
+  /** The first line GitHub marked as an error, when there is one. */
+  failedStep?: string | null;
+}
+
 export interface ServerToClient_Error {
   type: "error";
   message: string;
@@ -1844,5 +2267,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_IconUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","follows.updated","presence","policy.updated","prompts.updated","icon.updated","repos.updated","secrets.updated","runner.released","toast","session.ended","stats","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_ConnectorsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","connectors.updated","toast","session.ended","stats","checkLog","error"] as const;

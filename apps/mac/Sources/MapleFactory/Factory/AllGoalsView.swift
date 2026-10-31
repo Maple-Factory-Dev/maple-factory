@@ -71,7 +71,30 @@ struct AllGoalsView: View {
             Hairline()
 
             let goals = shown
-            if goals.isEmpty {
+            if goals.isEmpty && client.isSignedIn && client.hasSnapshot && client.goals.isEmpty {
+                // A new factory: say what a goal is, and start one.
+                VStack(spacing: 10) {
+                    Image(systemName: "flag.2.crossed").font(.system(size: 26)).foregroundStyle(Theme.textFaint)
+                    Text("No goals yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text("A goal groups tasks with a shared outcome and says where their code lives. Make one to start planning work.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textMuted)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 380)
+                    Button { state.goalSheet = .new } label: {
+                        Text("Create your first goal")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.onAccent)
+                            .padding(.horizontal, 14)
+                            .frame(height: 28)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.accent))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 60)
+            } else if goals.isEmpty {
                 Text(query.isEmpty && team == nil ? "No goals here." : "No goals match.")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textMuted)

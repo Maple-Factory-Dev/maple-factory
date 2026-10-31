@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+// Wire, the factory API and sign-in storage live in MapleKit, shared with iOS.
+@_exported import MapleKit
 
 @main
 struct MapleFactoryApp: App {
@@ -28,6 +30,7 @@ struct MapleFactoryApp: App {
         }
         _client = State(initialValue: client)
         _state = State(initialValue: state)
+        AppDelegate.client = client
         if Headless.isOn { AppDelegate.headless = (state, client) }
     }
 
@@ -56,6 +59,11 @@ struct MapleFactoryApp: App {
                     .disabled(!Updater.shared.canCheck)
             }
             CommandGroup(after: .sidebar) {
+                // Jump to any task, goal or page, or run a common action.
+                Button("Command Menu…") { state.togglePalette() }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .disabled(state.showOnboarding)
+
                 Button(state.showInspector ? "Hide Task Panel" : "Show Task Panel") {
                     state.toggleTaskPanel()
                 }
@@ -74,7 +82,7 @@ struct MapleFactoryApp: App {
                 .keyboardShortcut(.return, modifiers: .command)
 
                 Button(state.sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { state.toggleSidebar() }
-                    .keyboardShortcut("s", modifiers: [.command, .control])
+                    .keyboardShortcut("b", modifiers: .command)
 
                 Button("Add New Factory…") { state.startOnboarding() }
                 if client.isSignedIn {
@@ -105,16 +113,21 @@ struct MapleFactoryApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// What a `-snapshot` run drives; set by the app before launch finishes.
     @MainActor static var headless: (AppState, FactoryClient)?
+    /// The app's client, whose factory icon the Dock starts on; set by the app before launch finishes.
+    @MainActor static var client: FactoryClient?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Headless: no Dock icon, no activation, no updates or banners; the user keeps the screen.
         if let (state, client) = Self.headless {
+            // Only traced (`-dockTrace`), the way a real launch would show it.
+            DockIcon.apply(client.icon)
             Headless.start(state: state, client: client)
             return
         }
         // Running from `swift run` has no bundle, so promote to a regular foreground app.
         NSApp.setActivationPolicy(.regular)
-        NSApp.applicationIconImage = MapleIcon.dockImage
+        // The factory's cached icon (or Maple's): FactoryClient set it before there was a regular app to show it.
+        DockIcon.apply(Self.client?.icon)
         Updater.shared.start()
         Notifier.shared.start()
         NSApp.activate(ignoringOtherApps: true)
@@ -137,6 +150,7 @@ struct ContentView: View {
     @AppStorage("appearance") private var appearance = Appearance.system
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         if state.showOnboarding {
@@ -148,13 +162,16 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
                 .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
                 .onOpenURL { url in
-                    // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it).
-                    guard url.scheme == "maplefactory", url.host() == "task", let id = url.pathComponents.dropFirst().first else { return }
-                    let goal = Destination.goal(state.task(id).goal)
-                    if state.destination != goal { state.destination = goal }
-                    state.isComposing = false
-                    state.selectedTask = id
-                    state.focusedTask = id
+                    // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it),
+                    // or maplefactory://session/<machine>/<id>, a shared session's.
+                    guard url.scheme == "maplefactory" else { return }
+                    let path = Array(url.pathComponents.dropFirst())
+                    if url.host() == "session", path.count == 2 {
+                        state.destination = .machines
+                        state.openingLiveSession = .init(machine: path[0], id: path[1])
+                    } else if url.host() == "task", let id = path.first {
+                        state.openFullView(id)
+                    }
                 }
                 .onChange(of: Notifier.shared.opening?.id) {
                     // A clicked banner: its task, in the list that holds it.
@@ -234,6 +251,13 @@ struct ContentView: View {
             .padding(.leading, state.sidebarSpace)
             .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
+        // ⌘K: above the sidebar, the slab and the toasts, below a proof shown large.
+        .overlay {
+            if state.showPalette {
+                CommandPalette()
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
         // A proof shown large: above the sidebar, the slab and the toasts.
         .overlay {
             if let lightbox = state.lightbox {
@@ -243,8 +267,19 @@ struct ContentView: View {
             }
         }
         .background(VisualEffect(material: .sidebar))
+        // ⌃⌘S was the sidebar chord before ⌘B; it still works, but only ⌘B shows in the View menu.
+        .background {
+            Button("Toggle Sidebar") { state.toggleSidebar() }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
         .ignoresSafeArea()
-        .onAppear { NSApp.appearance = appearance.nsAppearance }
+        .onAppear {
+            NSApp.appearance = appearance.nsAppearance
+            // The palette's Settings… opens the window this environment can.
+            state.openSettings = { openSettings() }
+        }
         .onChange(of: appearance) { NSApp.appearance = appearance.nsAppearance }
         .onChange(of: state.destination) { if state.sidebarFloating { state.toggleSidebar() } }
         // Only checks you start reach up to date (Sparkle's showUpdateNotFound), so background checks stay quiet.
@@ -258,7 +293,7 @@ struct ContentView: View {
             state.showToast(toast.text, icon: "info.circle")
         }
         .onChange(of: client.notice) { _, notice in
-            // A saving goal sheet shows its refusal inside, where it can be seen.
+            // A saving goal editor shows its refusal inside, where it can be seen.
             guard let notice, !client.savingGoal else { return }
             state.serverRefused(notice)
             // Cleared once shown, so the same refusal again still reaches the buttons.
@@ -278,8 +313,8 @@ struct ContentView: View {
             let ids = unfinished.prefix(6).map(\.id).joined(separator: ", ") + (unfinished.count > 6 ? " and \(unfinished.count - 6) more" : "")
             Text("\(ids) \(unfinished.count == 1 ? "isn't" : "aren't") finished. Ending cancels \(unfinished.count == 1 ? "it" : "them"): sessions stop and pull requests close. Cleaning up also removes \(unfinished.count == 1 ? "its worktree" : "their worktrees"), but never anything uncommitted or unpushed. Letting them finish archives the goal and leaves the work running.")
         }
-        .sheet(item: Binding(get: { state.goalSheet }, set: { state.goalSheet = $0 })) { sheet in
-            if case .edit(let id) = sheet { GoalSheet(editing: client.goals.first { $0.id == id }) } else { GoalSheet(prefill: state.goalPrefill) }
+        .sheet(item: Binding(get: { state.checkLogShown }, set: { state.checkLogShown = $0 })) { request in
+            CheckLogSheet(request: request).environment(state)
         }
         .sheet(item: Binding(get: { state.machineSheet }, set: { state.machineSheet = $0 })) { sheet in
             MachineSetupSheet(sheet: sheet, machine: {
@@ -333,7 +368,7 @@ struct ContentView: View {
 
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
-        if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing,
+        if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing, state.goalSheet == nil,
            ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
@@ -370,7 +405,25 @@ struct ContentView: View {
 }
 
 extension ContentView {
-    @ViewBuilder fileprivate var mainContent: some View {
+    /// The goal editor takes the page over; what was under it stays mounted (a draft waiting on a new goal
+    /// still hears it arrive) and comes back on Cancel or Save.
+    fileprivate var mainContent: some View {
+        ZStack {
+            pageContent
+                .opacity(state.goalSheet == nil ? 1 : 0)
+                .disabled(state.goalSheet != nil)
+                .accessibilityHidden(state.goalSheet != nil)
+            if let sheet = state.goalSheet {
+                Group {
+                    if case .edit(let id) = sheet { GoalEditorView(editing: client.goals.first { $0.id == id }) } else { GoalEditorView(prefill: state.goalPrefill) }
+                }
+                .id(sheet.id)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    @ViewBuilder private var pageContent: some View {
         if state.isComposing {
             ComposeView()
                 .transition(.opacity.combined(with: .move(edge: .bottom)))

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// What the proof lightbox shows: a screenshot (and its upload, for Open in Preview) or a recording from where it was.
-enum ProofLightbox {
+enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
     case video(URL, poster: NSImage?, caption: String, at: Double = 0)
 
@@ -76,6 +76,9 @@ final class AppState {
         didSet {
             focusedTask = nil
             isComposing = false
+            // Any move to a page (sidebar, palette, a link) closes the goal editor; it would cover the page.
+            goalSheet = nil
+            goalPrefill = nil
             rememberPage()
         }
     }
@@ -96,6 +99,8 @@ final class AppState {
     }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
+    /// A live session a maplefactory://session/<machine>/<id> link asked for; Machines opens it.
+    var openingLiveSession: LiveMachinesView.OpenSession? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
     var confirmingCancel: String? = nil
     /// The Done when item whose Attest popover is open ("<task>#<index>"), and the reason typed into it.
@@ -195,8 +200,12 @@ final class AppState {
     }
     /// The machine being set up or edited in the sheet; "new" for this Mac.
     var machineSheet: MachineSheet? = nil
-    /// The goal being made or edited in the sheet (a live goal's id for .edit).
+    /// The goal being made or edited, full page in place of the content (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
+    /// The CI check whose log is open in the log sheet.
+    var checkLogShown: CheckLogRequest? = nil
+    /// The mockup's check logs, as they load.
+    private var mockCheckLogs: [String: CheckLogLoad] = [:]
     var queue = FactoryData.seedQueue
 
     /// A queued task got a slot: it starts building like a freshly approved plan.
@@ -296,7 +305,7 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
-        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing
+        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
@@ -362,8 +371,21 @@ final class AppState {
         set { if !isLive { mockTasks = newValue } }
     }
 
-    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).map { seed in
+    /// What's worked out from `tasks` (a task by id, the inbox, raised hands), once per change to them.
+    @ObservationIgnored private var taskCache = TaskCache()
+    /// Counts changes to the mockup's tasks, as the client's tasksRevision does the factory's.
+    private var mockRevision = 0
+
+    /// The cache, emptied if the tasks changed since it was filled. Reading the revision is what
+    /// redraws a view that only read the cache.
+    private func syncTaskCache() {
+        taskCache.sync(revision: isLive ? client?.tasksRevision ?? 0 : mockRevision, live: isLive)
+    }
+
+    private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed
+        // The mockup's drafts keep the order they're seeded in.
+        task.draftRank = Double(at)
         task.autoReview = FactoryData.seedReviews[task.id]
         task.hand = FactoryData.seedHands[task.id]
         task.shareable = FactoryData.seedShareable.contains(task.id)
@@ -383,10 +405,14 @@ final class AppState {
             task.queueRank = Double(at)
         }
         return task
+    } {
+        didSet { mockRevision &+= 1 }
     }
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
     var postedComments: [String: [Comment]] = [:]
+    /// Each task's review being drafted in its Diff tab.
+    @ObservationIgnored private var reviewDrafts: [String: ReviewDraft] = [:]
     /// The risk policy and goals' accepted risk: the factory's when signed in (edits go to it).
     var policy: RiskPolicy {
         get { isLive ? client?.riskPolicy ?? RiskPolicy() : mockPolicy }
@@ -428,6 +454,8 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
+    /// Bumped by every New Task, so the composer puts the caret in the title even when it's already open.
+    var composeFocusRequest = 0
     /// Your Scratchpad: the factory's copy when signed in.
     var notes: [Note] {
         get { isLive ? client?.notes ?? [] : mockNotes }
@@ -507,7 +535,10 @@ final class AppState {
     // MARK: Queries
 
     func task(_ id: String) -> FactoryTask {
-        tasks.first { $0.id == id } ?? tasks.first ?? FactoryTask.none
+        let tasks = tasks
+        syncTaskCache()
+        if let index = taskCache.index(of: id, in: tasks) { return tasks[index] }
+        return tasks.first ?? FactoryTask.none
     }
 
     func tasks(for goal: Goal) -> [FactoryTask] {
@@ -641,7 +672,13 @@ final class AppState {
     /// What needs people, from the factory's tasks: plans to approve, agents' questions, changes to
     /// review, failing checks and @mentions of you.
     private var liveInbox: [InboxItem] {
-        let me = FactoryData.me
+        let tasks = tasks, me = FactoryData.me, dismissed = dismissedMentions
+        syncTaskCache()
+        return taskCache.inbox(tasks, me: me, dismissed: dismissed)
+    }
+
+    static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>,
+                          mentions: (FactoryTask) -> [InboxItem]) -> [InboxItem] {
         var items: [InboxItem] = []
         for task in tasks {
             let mine = task.owner.id == me.id
@@ -657,7 +694,7 @@ final class AppState {
             if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
                 items.append(InboxItem(kind: .failing, taskID: task.id, assignee: task.owner, message: "Checks are failing", when: task.updated))
             }
-            items += Self.mentionItems(task, me: me).filter { !dismissedMentions.contains($0.id) }
+            items += mentions(task).filter { !dismissedMentions.contains($0.id) }
         }
         return items
     }
@@ -671,7 +708,11 @@ final class AppState {
     }
 
     /// Tasks whose agent has stopped and asked for a human, longest-waiting first.
-    var allHandRaises: [FactoryTask] { tasks.filter { $0.hand != nil } }
+    var allHandRaises: [FactoryTask] {
+        let tasks = tasks
+        syncTaskCache()
+        return taskCache.handRaises(in: tasks)
+    }
     /// Scoped like the inbox; a hand raised to you always shows.
     var handRaises: [FactoryTask] {
         allHandRaises.filter { inScope($0) || $0.hand?.assignee.id == FactoryData.me.id }
@@ -760,6 +801,7 @@ final class AppState {
             focusedTask = nil
             isComposing = true
         }
+        composeFocusRequest += 1
     }
 
     /// New Task, filled in from review findings picked on Statistics: the goal most of their tasks are
@@ -782,7 +824,7 @@ final class AppState {
     var aiDraftID: String? = nil
     /// The draft whose result is already in the composer.
     private var appliedAIDraft: String? = nil
-    /// A goal Draft with AI suggested, for the goal sheet to start from.
+    /// A goal Draft with AI suggested, for the goal editor to start from.
     var goalPrefill: Wire.NewGoalIdea? = nil
 
     /// Whether the Draft with AI card shows what the agent has said and done.
@@ -913,6 +955,8 @@ final class AppState {
             when: "now"
         )]
 
+        // A new draft goes to the bottom of its goal's drafts.
+        task.draftRank = (draftOrder(draft.goal).map(\.draftRank).max() ?? 0) + 1
         tasks.append(task)
         seenActivityCount[id] = task.activity.count
         LastTaskGoal.store(draft.goal, factory: taskGoalFactory, defaults: taskGoalDefaults)
@@ -969,6 +1013,74 @@ final class AppState {
         showToast("Note deleted", icon: "trash")
     }
 
+    // MARK: Command palette
+
+    /// The ⌘K palette is up; closing it forgets what was typed.
+    var showPalette = false {
+        didSet { if !showPalette { paletteQuery = ""; paletteSelection = 0 } }
+    }
+    /// What's typed into it; a new query puts the highlight back on the first row.
+    var paletteQuery = "" {
+        didSet { if paletteQuery != oldValue { paletteSelection = 0 } }
+    }
+    /// The highlighted row, an index into `paletteItems`.
+    var paletteSelection = 0
+    /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
+    @ObservationIgnored var openSettings: (() -> Void)? = nil
+
+    /// What the palette shows for the query, from the goals and pages in the sidebar and the actions on offer here.
+    var paletteSections: [PaletteSection] {
+        let goals = FactoryData.goals.filter { !$0.archived }.map(\.name)
+        let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
+        // The task panel can only be toggled with "Peek in the side panel" on.
+        let actions = PaletteAction.allCases.filter { $0 != .toggleTaskPanel || taskPanelEnabled }
+        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, me: FactoryData.me.id)
+    }
+    var paletteItems: [PaletteItem] { CommandPaletteModel.flatten(paletteSections) }
+
+    func togglePalette() {
+        withAnimation(.snappy(duration: 0.18)) { showPalette.toggle() }
+    }
+
+    /// ↑/↓: the highlight moves through every section's rows, wrapping at the ends.
+    func movePaletteSelection(_ delta: Int) {
+        let count = paletteItems.count
+        guard count > 0 else { return }
+        paletteSelection = ((paletteSelection + delta) % count + count) % count
+    }
+
+    /// Return: runs the highlighted row.
+    func runPaletteSelection() {
+        let items = paletteItems
+        guard items.indices.contains(paletteSelection) else { return }
+        perform(items[paletteSelection])
+    }
+
+    /// A row was chosen: the palette closes and its task, goal or page opens, or its action runs.
+    func perform(_ item: PaletteItem) {
+        withAnimation(.snappy(duration: 0.18)) { showPalette = false }
+        switch item {
+        case .task(let id): openFullView(id)
+        case .goal(let name): destination = .goal(name)
+        case .page(let page): destination = page.destination
+        case .action(.newTask): startCompose()
+        case .action(.newGoal): goalSheet = .new
+        case .action(.toggleSidebar): toggleSidebar()
+        case .action(.toggleTaskPanel): toggleTaskPanel()
+        case .action(.settings): openSettings?()
+        }
+    }
+
+    /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.
+    func openFullView(_ id: String) {
+        let goal = Destination.goal(task(id).goal)
+        if destination != goal { destination = goal }
+        isComposing = false
+        goalSheet = nil
+        selectedTask = id
+        focusedTask = id
+    }
+
     // MARK: Navigation actions
 
     /// A `MF-12` reference in rendered Markdown was clicked: the task panel shows it, or, in a task's
@@ -978,6 +1090,7 @@ final class AppState {
     }
 
     func openFocus(_ id: String) {
+        goalSheet = nil
         withAnimation(.snappy(duration: 0.3)) {
             selectedTask = id
             focusedTask = id
@@ -1098,6 +1211,36 @@ final class AppState {
             return
         }
         postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+    }
+
+    /// The review being drafted on a task's diff; the same one each time, until it's sent.
+    func reviewDraft(for id: String) -> ReviewDraft {
+        if let draft = reviewDrafts[id] { return draft }
+        let draft = ReviewDraft()
+        reviewDrafts[id] = draft
+        return draft
+    }
+
+    /// Sends a task's drafted review: its notes go to the comments, and the batch to the agent as one change request.
+    func submitReview(_ id: String) {
+        let draft = reviewDraft(for: id)
+        let notes = draft.notes.map(\.note)
+        let summary = draft.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !notes.isEmpty else { return }
+        if let client, isLive {
+            client.send(.taskReview(.init(id: id, notes: notes, summary: summary.isEmpty ? nil : summary)))
+        } else {
+            // The mockup: what the factory would post.
+            for note in notes {
+                postedComments[id, default: []].append(Comment(author: FactoryData.me, text: "```diff\n\(note.snippet)\n```\n\(note.text)", when: "now", anchor: DiffReview.anchor(note)))
+            }
+            if !summary.isEmpty { postedComments[id, default: []].append(Comment(author: FactoryData.me, text: summary, when: "now", anchor: "Review")) }
+            let text = ([summary.isEmpty ? nil : summary] + notes.enumerated().map { "\($0.offset + 1). \(DiffReview.anchor($0.element)): \($0.element.text)" })
+                .compactMap { $0 }.joined(separator: "\n")
+            steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: text, anchor: "Review · \(notes.count) comment\(notes.count == 1 ? "" : "s")", timing: task(id).steerTiming))
+        }
+        draft.clear()
+        showToast("Review sent: \(notes.count) comment\(notes.count == 1 ? "" : "s")", icon: "text.bubble")
     }
 
     /// Answers the agent's open question.
@@ -1221,6 +1364,38 @@ final class AppState {
             }
         }
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
+    }
+
+    /// Model presets per agent for the task inspector's Model menu; anything else goes in as free text.
+    static func models(for agent: String) -> [String] {
+        switch agent {
+        case "claude": ["opus", "sonnet", "haiku"]
+        case "codex": ["gpt-5", "gpt-5-codex"]
+        default: []
+        }
+    }
+
+    /// Changes what builds a task and the model it asks for (nil or blank: the agent's default).
+    /// A running session keeps going; the change applies from its next one.
+    func setAgent(_ id: String, agent: String, model: String?) {
+        let trimmed = model?.trimmingCharacters(in: .whitespaces) ?? ""
+        let model = trimmed.isEmpty ? nil : trimmed
+        let was = task(id)
+        guard agent != was.builder || model != was.model else { return }
+        let text = agent != was.builder
+            ? "Switched it to \(agent)\(model.map { " · \($0)" } ?? "")"
+            : model.map { "Set its model to \($0)" } ?? "Set its model back to the default"
+        if let client, isLive {
+            client.expect(id) { $0.builder = agent; $0.model = model }
+            client.send(.taskEdit(.init(id: id, agent: agent, model: model ?? "")))
+        } else {
+            update(id) { task in
+                task.builder = agent
+                task.model = model
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: text, when: "now"), at: 0)
+            }
+        }
+        showToast("\(id): \(agentTitle(agent)) · \(model ?? "default model")", icon: "cpu")
     }
 
     // MARK: Owner
@@ -1347,6 +1522,44 @@ final class AppState {
         }
     }
 
+    // MARK: Drafts
+
+    /// Moves a draft ahead of `before` among its goal's drafts ("top": the first), or to the bottom. It stays a draft.
+    func rankDraft(_ id: String, before: String?) {
+        guard let task = tasks.first(where: { $0.id == id }), task.state == .drafting else { return }
+        let rank = draftRank(for: task, before: before)
+        if let client, isLive {
+            withAnimation(.snappy(duration: 0.2)) { client.expect(id) { $0.draftRank = rank } }
+            client.send(.taskRankDraft(.init(id: id, before: before)))
+            return
+        }
+        let text = before == "top" ? "Moved it to the top of the drafts" : before.map { "Moved it ahead of \($0) in the drafts" } ?? "Moved it to the bottom of the drafts"
+        withAnimation(.snappy(duration: 0.2)) {
+            update(id) { task in
+                task.draftRank = rank
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: text, when: "now"), at: 0)
+            }
+        }
+    }
+
+    /// The draftRank that puts `task` ahead of `before` ("top": the first; none: the bottom), as the factory works it out.
+    private func draftRank(for task: FactoryTask, before: String?) -> Double {
+        let line = draftOrder(task.goal).filter { $0.id != task.id }
+        let target = before == "top" ? line.first : line.first { $0.id == before }
+        if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+            return at > 0 ? (line[at - 1].draftRank + target.draftRank) / 2 : target.draftRank - 1000
+        }
+        return (line.map(\.draftRank).max() ?? 0) + 1
+    }
+
+    func moveDraftToTop(_ id: String) { rankDraft(id, before: "top") }
+    func moveDraftToBottom(_ id: String) { rankDraft(id, before: nil) }
+
+    /// A goal's drafts, first first.
+    func draftOrder(_ goal: String) -> [FactoryTask] {
+        tasks.filter { $0.goal == goal && $0.state == .drafting }.sorted { $0.draftRank < $1.draftRank }
+    }
+
     /// The mockup's queue: a draft goes to planning.
     private func joinQueue(_ task: inout FactoryTask) {
         if task.state == .drafting { task.state = .planning }
@@ -1368,7 +1581,7 @@ final class AppState {
 
     /// An approval or merge sent to the factory that the task doesn't show yet.
     struct InFlight {
-        enum Kind { case approvePlan, approveChanges, merge }
+        enum Kind { case approvePlan, approveChanges, merge, holdMerge }
         let kind: Kind
         let startedAt: Date
     }
@@ -1395,7 +1608,16 @@ final class AppState {
         case .approvePlan: return task.approvals.contains { $0.id == me } || (task.state != .awaitingApproval && task.state != .backlog)
         case .approveChanges: return task.reviews.contains { $0.id == me }
         case .merge: return task.state == .merged || task.pr?.state == .merged
+        case .holdMerge: return task.mergeAt == nil
         }
+    }
+
+    /// The factory has its merge: it says Merging…, a merge was sent, or its auto-merge countdown ran out
+    /// (the server says Merging… a moment later). Merge, Hold and Merge now all lock until it lands.
+    func isMerging(_ task: FactoryTask, now: Date = .now) -> Bool {
+        if task.merging || autoMerging.contains(task.id) || isInFlight(task.id, .merge) { return true }
+        guard task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt else { return false }
+        return mergeAt <= now
     }
 
     /// Records `kind` as sent for the task; false when it's already in flight, so a second click sends nothing.
@@ -1437,17 +1659,18 @@ final class AppState {
         return true
     }
 
-    func approvePlan(_ id: String) {
+    /// `keepTitle` turns down the plan's suggested title.
+    func approvePlan(_ id: String, keepTitle: Bool = false) {
         if let client, isLive {
             guard beginInFlight(id, .approvePlan) else { return }
-            client.send(.taskApprovePlan(.init(id: id)))
+            client.send(.taskApprovePlan(.init(id: id, keepTitle: keepTitle ? true : nil)))
             return
         }
-        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id) }) { return }
-        approvePlanInMockup(id)
+        if afterDemoDelay(id, .approvePlan, { self.approvePlanInMockup(id, keepTitle: keepTitle) }) { return }
+        approvePlanInMockup(id, keepTitle: keepTitle)
     }
 
-    private func approvePlanInMockup(_ id: String) {
+    private func approvePlanInMockup(_ id: String, keepTitle: Bool) {
         let me = FactoryData.me
         let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         // Read before `update`, which holds exclusive access to `tasks` while it mutates.
@@ -1459,9 +1682,15 @@ final class AppState {
                 guard !task.approvals.contains(where: { $0.id == me.id }) else { return }
                 // Picked up from the backlog.
                 if task.state == .backlog { task.state = .awaitingApproval }
+                if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
+                    if let title = task.suggestedTitle {
+                        task.activity.insert(ActivityItem(who: "Factory", text: "Renamed it from \"\(task.title)\"", when: "now"), at: 0)
+                        task.title = title
+                        task.suggestedTitle = nil
+                    }
                     startBuilding(&task, prNumber: prNumber)
                     started = true
                 }
@@ -1622,6 +1851,62 @@ final class AppState {
                   icon: byFactory ? "bolt.fill" : "arrow.triangle.merge", color: Theme.State.merged)
     }
 
+    /// Opens the log sheet on one of a task's CI checks and reads its log.
+    func showCheckLog(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        checkLogShown = request
+        loadCheckLog(request)
+    }
+
+    func loadCheckLog(_ request: CheckLogRequest) {
+        if let client, isLive { return client.loadCheckLog(request) }
+        mockCheckLogs[request.id] = .loading
+        let failed = task(request.taskID).pr?.checks.first { $0.name == request.check }?.status == .failed
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.4))
+            self.mockCheckLogs[request.id] = .loaded(CheckLog.sample(request.check, failed: failed))
+        }
+    }
+
+    func checkLog(_ request: CheckLogRequest) -> CheckLogLoad {
+        if let client, isLive { return client.checkLogs[request.id] ?? .loading }
+        return mockCheckLogs[request.id] ?? .loading
+    }
+
+    /// Runs one of the pull request's checks again (a GitHub Actions job, or the check run).
+    func rerunCheck(_ id: String, check: String) {
+        let request = CheckLogRequest(taskID: id, check: check)
+        if let client, isLive {
+            client.send(.taskRerunCheck(.init(id: id, check: check)))
+            client.forgetCheckLog(request)
+            showToast("Running \(check) again", icon: "arrow.clockwise")
+            return
+        }
+        mockCheckLogs[request.id] = nil
+        withAnimation(.snappy(duration: 0.25)) {
+            update(id) { task in
+                guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }) else { return }
+                pr.checks[index].status = .running
+                pr.checks[index].duration = ""
+                task.pr = pr
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Re-ran \(check)", when: "now"), at: 0)
+            }
+        }
+        showToast("Running \(check) again on #\(task(id).pr?.number ?? 0)", icon: "arrow.clockwise", color: Theme.State.building)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr, let index = pr.checks.firstIndex(where: { $0.name == check }), pr.checks[index].status == .running else { return }
+                    pr.checks[index].status = .passed
+                    pr.checks[index].duration = "2:\(10 + index * 7)"
+                    task.pr = pr
+                    task.checksFailing = pr.checks.contains { $0.status == .failed }
+                }
+            }
+        }
+    }
+
     func rerunFailedChecks(_ id: String) {
         if let client, isLive {
             client.send(.taskRerunChecks(.init(id: id)))
@@ -1737,7 +2022,7 @@ final class AppState {
     /// Stops the auto-merge counting down on a task; a person merges it instead.
     func holdMerge(_ id: String) {
         if let client, isLive {
-            client.send(.taskHoldMerge(.init(id: id)))
+            if beginInFlight(id, .holdMerge) { client.send(.taskHoldMerge(.init(id: id))) }
             return
         }
         withAnimation(.snappy(duration: 0.25)) {
@@ -1784,6 +2069,11 @@ final class AppState {
                     task.mergeFrom = nil
                 }
                 self.autoMerging.insert(id)
+                // A demo script shows the factory's "Merging…" for a moment, as the server's merge does.
+                if AppDefaults.string(forKey: "actions") != nil {
+                    self.update(id) { $0.liveLog = FactoryTask.mergingLog }
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
                 self.merge(id, byFactory: true)
             }
         }
@@ -1864,7 +2154,8 @@ final class AppState {
     /// `findings:open`, `findings:cell:code:major`, `findings:area:server/src`, `findings:list`, `findings:row:0`,
     /// `findings:back`: Statistics' Review findings view, as its clicks would. `findings:severity:blocker` is a severity chip,
     /// `findings:select:0` ticks a shown finding, `findings:selectall` ticks all shown, `findings:clear` none, and `findings:compose`
-    /// is Make a task from them.
+    /// is Make a task from them. `findings:hidefixed` toggles Hide fixed, `findings:status:open` is a legend item in What happened
+    /// to them (again to undo), and `findings:clearfilters` is Clear filters.
     static let demoFindings = Notification.Name("AppState.demoFindings")
 
     /// Plays a demo script such as `approve:ATL-147; split:ATL-144:3; accept:Auth overhaul:high`,
@@ -1892,6 +2183,10 @@ final class AppState {
             case "top": moveToTop(parts[1])
             case "bottom": moveToBottom(parts[1])
             case "drop": queue(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            // The Drafts column's: a draft dropped on another (`draftdrop:<id>:<before>`, none: the bottom), Move to top / bottom.
+            case "draftdrop": rankDraft(parts[1], before: parts.count > 2 ? parts[2] : nil)
+            case "drafttop": moveDraftToTop(parts[1])
+            case "draftbottom": moveDraftToBottom(parts[1])
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil
@@ -1921,8 +2216,13 @@ final class AppState {
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
             // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
             case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
+            // The inspector's Agent and Model menus: `model:<id>:<agent>:<model>`, no model for the default.
+            case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
+            // A PR card check row's View Log (`checklog:<id>:<check>`) and Re-run (`reruncheck:<id>:<check>`).
+            case "checklog": showCheckLog(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
+            case "reruncheck": rerunCheck(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
             case "split": split(parts[1], into: parts.count > 2 ? Int(parts[2]) ?? 2 : 2)
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
@@ -1937,7 +2237,14 @@ final class AppState {
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
+            // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
+            case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
+            case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
+            // The Diff tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
+            // `diff:add`, `diff:summary:<text>`, `diff:submit` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
+            case "diff": NotificationCenter.default.post(name: DiffView.demo, object: Array(parts.dropFirst()))
+            case "tab": NotificationCenter.default.post(name: TaskFocusView.demoTab, object: parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
@@ -1950,6 +2257,8 @@ final class AppState {
                 // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
                 case "settings-cog": NotificationCenter.default.post(name: SidebarSettings.demo, object: nil)
                 case "settings-pane": NotificationCenter.default.post(name: SidebarSettings.demo, object: parts.count > 2 ? parts[2] : nil)
+                // A row of the Settings window's own sidebar clicked (`ui:settings-row:general`).
+                case "settings-row": NotificationCenter.default.post(name: OrgSettingsView.demoPick, object: parts.count > 2 ? parts[2] : nil)
                 // The factory name clicked by accident, then Back: the switch and the way out, without the mouse.
                 case "switch": startOnboarding()
                 case "back": cancelOnboarding()
@@ -1957,24 +2266,63 @@ final class AppState {
                 default: break
                 }
             case "title": draft.title = parts.dropFirst().joined(separator: ":")
-            // The goal sheet's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
-            case "goalfill": NotificationCenter.default.post(name: GoalSheet.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
+            // The goal editor's fields typed in (`goalfill:name:Maple Factory`), or its Create clicked (`goalfill:create`).
+            case "goalfill": NotificationCenter.default.post(name: GoalEditorView.demoFill, object: nil, userInfo: ["field": parts[1], "value": parts.dropFirst(2).joined(separator: ":")])
             // Edit Goal… on a goal, by its name or task prefix: `editgoal:MF`. Signing in, it waits for the goal to arrive.
             case "editgoal":
                 for _ in 0..<300 {
                     if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { goalSheet = .edit(goal.id); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // The goal header's Scout button, on a goal by its name or task prefix: `scout:MF`. Signing in, it waits for the goal.
+            case "scout":
+                for _ in 0..<300 {
+                    if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { client?.scout(goal: goal.name); break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            // Settings → Scout's Items per Scout run stepper set to a number: `scoutitems:5`.
+            case "scoutitems":
+                for _ in 0..<300 where client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let client, var policy = client.riskPolicy, let n = Int(parts[1]) {
+                    policy.scoutItems = n
+                    client.save(policy: policy)
+                }
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
+            // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
+            // Signing in, it waits for the connectors to arrive (and Settings to be on screen).
+            case "connector":
+                for _ in 0..<300 where client?.connectors == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .seconds(1))
+                NotificationCenter.default.post(name: ConnectorSettings.demoEdit, object: nil, userInfo: ["name": parts[1]])
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
             // The first screenshot or video proof on screen, shown large (`lightbox:open`, or `lightbox:image` / `lightbox:video`
-            // for the first of that kind), and put away (`lightbox:close`).
+            // for the first of that kind), and put away (`lightbox:close`). A screenshot shown large zooms (`lightbox:zoom:3`,
+            // past fitted) and pans (`lightbox:pan:<dx>:<dy>`, in points).
             case "lightbox":
-                if parts[1] == "close" { closeLightbox() } else { NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1]) }
-            // A key pressed in the window, headless: `key:esc`.
+                switch parts[1] {
+                case "close": closeLightbox()
+                case "zoom", "pan": NotificationCenter.default.post(name: ProofLightboxView.demoZoom, object: Array(parts.dropFirst()))
+                default: NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1])
+                }
+            // A trackpad scroll at a point in the window, headless: `scroll:<x>:<y>:<dx>:<dy>`, with `:cmd` to hold ⌘.
+            case "scroll" where parts.count > 4:
+                let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
+                Headless.scroll(at: CGPoint(x: n[0], y: n[1]), by: CGPoint(x: n[2], y: n[3]), command: parts.count > 5 && parts[5] == "cmd")
+            // A double-click at a point in the window, headless: `doubleclick:<x>:<y>`. (A drag can't be sent: SwiftUI
+            // drops one that isn't from a real mouse.)
+            case "doubleclick" where parts.count > 2:
+                await Headless.doubleClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
+            // A key pressed in the window, headless: `key:esc`, or a chord like `key:cmd+b`.
             case "key": Headless.press(parts[1])
+            // A left click at a point in the window (`click:<x>:<y>`, points from the top left), or on a card (`click:<task>`).
+            case "click" where parts.count > 2 && Double(parts[1]) != nil:
+                Headless.click(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts[2]) ?? 0))
+            // A right-click at a point in the window (`rightclick:<x>:<y>`, points from the top left) and an item of
+            // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
+            case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
+            case "menupick": Headless.pickMenuItem(parts.dropFirst().joined(separator: ":"))
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
@@ -1989,6 +2337,17 @@ final class AppState {
             case "compose-intake": composeFromIntake(parts[1])
             case "attach": attachIntake(parts[1], to: parts[2])
             case "setup": machineSheet = parts[1] == "new" ? .new : .edit(parts[1])
+            // A machine card's Sign in on an agent pill (`signin:<machine>:codex`) and its panel's Cancel (`cancelsignin:<machine>:codex`);
+            // `waitsignedin:<machine>:codex` waits (up to 15 minutes) for its health to say it's signed in, as someone finishes in the browser.
+            case "signin": client?.signIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "cancelsignin": client?.cancelSignIn(machine: parts[1], agent: parts.count > 2 ? parts[2] : "codex")
+            case "waitsignedin":
+                let agent = parts.count > 2 ? parts[2] : "codex"
+                for _ in 0..<9000 {
+                    let health = client?.machines.first { $0.id == parts[1] }?.health
+                    if health?.agents.contains(where: { $0.name == agent && $0.loggedIn }) == true { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             // A single or double click on a card, the toolbar's panel toggle, and the "When you click a task" setting.
             case "click": toggleTask(parts[1])
             case "dblclick": openFocus(parts[1])
@@ -2006,6 +2365,7 @@ final class AppState {
                 NotificationCenter.default.post(name: MentionKey.demo, object: key)
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
+            case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.
@@ -2013,6 +2373,17 @@ final class AppState {
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
             case "go": destination = Destination(argument: parts[1])
+            // The ⌘K palette: `palette:open`, `palette:type:state:reviewing`, `palette:down` (or `up`), `palette:run`, `palette:close`.
+            case "palette":
+                switch parts[1] {
+                case "open": if !showPalette { togglePalette() }
+                case "close": if showPalette { togglePalette() }
+                case "type": paletteQuery = parts.dropFirst(2).joined(separator: ":")
+                case "down": movePaletteSelection(1)
+                case "up": movePaletteSelection(-1)
+                case "run": runPaletteSelection()
+                default: break
+                }
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
             // `secret:add` opens Settings › Secrets' Add sheet (with `-window settings-sheet`).
             case "secret" where parts.count > 3 && parts[1] == "save":
@@ -2020,12 +2391,29 @@ final class AppState {
             case "secret": NotificationCenter.default.post(name: SecretsSettings.demoAdd, object: nil)
             // `icon:<file>` is Settings › Appearance's Choose Image… picking that file; `icon:remove` its Remove.
             case "icon": NotificationCenter.default.post(name: AppearanceSettings.demoPick, object: parts.dropFirst().joined(separator: ":"))
+            // `name:<text>` types that into Settings › Appearance's Name and clicks Save; `name:clear` is its Use Org Name.
+            case "name": NotificationCenter.default.post(name: FactoryNameCard.demo, object: parts.dropFirst().joined(separator: ":"))
+            // `admin:grant:<login>` is Settings › People's Make admin on that member's row; `admin:revoke:<login>` its Remove admin.
+            case "admin" where parts.count > 2: NotificationCenter.default.post(name: FactoryAdminsCard.demo, object: nil, userInfo: ["action": parts[1], "login": parts[2]])
             // `factory:<host:port>` picks that saved factory in the factory menu.
             case "factory":
                 if let client, let factory = client.savedFactories.first(where: { $0.id == parts.dropFirst().joined(separator: ":") }) {
                     if client.switchTo(factory) { didSwitchFactory() }
                 }
+            // `dock:off` / `dock:on` is Settings › General's "Show the factory's icon in the Dock".
+            case "dock": AppDefaults.set(["yes", "on", "true"].contains(parts[1].lowercased()), forKey: DockIcon.settingKey)
             case "sidebar": if (parts[1] == "collapse") != sidebarCollapsed { toggleSidebar() }
+            // A task's merge forecast, for the review panel's Merge row: `forecast:ATL-141:clean`,
+            // `forecast:ATL-141:overlap:ATL-150` or `forecast:ATL-141:conflict:ATL-150`.
+            case "forecast" where parts.count > 2:
+                let other = parts.count > 3 ? parts[3] : "ATL-150"
+                update(parts[1]) { t in
+                    t.mergeForecast = switch parts[2] {
+                    case "overlap": MergeForecast(overlaps: [.init(task: other, files: ["src/auth/session.ts", "src/auth/tokens.ts"])], base: "main")
+                    case "conflict": MergeForecast(conflicts: ["src/auth/session.ts", "src/auth/tokens.ts"], since: other, checkedAt: .now, base: "main")
+                    default: MergeForecast(checkedAt: .now, base: "main")
+                    }
+                }
             case "autofix": policy.autoFixMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":

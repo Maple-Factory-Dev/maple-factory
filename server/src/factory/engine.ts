@@ -7,22 +7,26 @@
 
 import type { Env } from "../env.ts";
 import type {
-  ChangeRequest, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, Role, RunnerMessage, ServerToClient,
-  ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  ChangeRequest, CheckRun, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  McpConnector, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, cleanPrompts, MERGE_ANCHOR, plannerPrompt, reviewerPrompt } from "./prompts.ts";
-import { goalRepos, REPO, taskRepo } from "./repos.ts";
-import { allowed, toolsFor } from "./tools.ts";
+import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
+import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
+import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
+import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
+import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
+import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
-import { checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, repoToken, rerunFailed } from "../github.ts";
+import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -62,6 +66,17 @@ const MERGE_FIX = "Send it back to fix";
 const MERGE_RETRY = "Try the merge again";
 /** Times the factory sends a task that didn't merge back to fix it before asking a person. */
 const MERGE_FIX_TRIES = 2;
+/** Finishes in a row the repo's checks can stop before the builder raises a hand instead of trying again. */
+const CHECK_TRIES = 3;
+/** What a task says while its finish runs the repo's checks. */
+const RUNNING_CHECKS = "Running checks…";
+/** What a task says while it's merging, from its countdown running out until it lands. */
+const MERGING = "Merging…";
+/** How long an auto-merge waits for its dry-run merge's answer before merging anyway. */
+const MERGE_CHECK_WAIT_MS = 60_000;
+/** How long a merge goes unanswered before the factory looks into it: GitHub's merge call takes
+ *  seconds; the runner's merge may run the repo's hooks. */
+const MERGE_STUCK_MS = { github: 3 * 60_000, runner: 10 * 60_000 };
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
@@ -73,12 +88,23 @@ const now = () => Date.now();
 const branchName = (task: Task) => task.id.toLowerCase();
 /** A task's id releases its repo's secrets to its machine only in these states. */
 const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
+/** Where a review note sits: `path:L12` or `path:L12–18`. */
+const lineAnchor = (n: { path: string; start: number; end: number }) => `${n.path}:L${n.start}${n.end > n.start ? `–${n.end}` : ""}`;
+
+/** Code as a fenced block, with a fence longer than any backtick run inside it. */
+const fence = (code: string) => {
+  const ticks = "`".repeat(Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+  return `${ticks}diff\n${code.replace(/\n+$/, "")}\n${ticks}`;
+};
+
 const fail = (message: string): never => {
   throw new FactoryError(message);
 };
 
 export class Engine {
   private drafts: Drafts;
+  private scout: Scout;
+  private setup: RepoSetup;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
@@ -88,6 +114,37 @@ export class Engine {
       paused: (m) => this.store.settings(m.id).paused,
       toRunner: (machine, command) => this.toRunner(machine, command),
     });
+    this.scout = new Scout(store, {
+      broadcast: (message) => hooks.broadcast(message),
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      toRunner: (machine, command) => this.toRunner(machine, command),
+      make: (goal, by, picks, shown, made) => this.scouted(goal, by, picks, shown, made),
+    });
+    this.setup = new RepoSetup(store, {
+      broadcast: (message) => hooks.broadcast(message),
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      isAdmin: (login) => this.isAdmin(login),
+      toRunner: (machine, command) => this.toRunner(machine, command),
+    });
+  }
+
+  /** Whether someone who has signed in is an admin here (a GitHub owner, or granted). */
+  private async isAdmin(login: string): Promise<boolean> {
+    return (await this.hooks.members()).some((m) => m.login.toLowerCase() === login.toLowerCase() && m.role === "admin");
+  }
+
+  /** Every repo's latest Set up with AI run, for an app that's just connected. */
+  setupRuns() {
+    return this.setup.runs();
+  }
+
+  /** Every goal's latest Scout run, for an app that's just connected. */
+  scoutRuns() {
+    return this.scout.runs();
   }
 
   // ---------------------------------------------------------------------------
@@ -104,6 +161,22 @@ export class Engine {
           if (msg.type === "draft.start") await this.drafts.start(who, msg.id, msg.idea, msg.goal ?? null, msg.agent ?? null);
           else if (msg.type === "draft.goal") await this.drafts.pickGoal(who, msg.id, msg.goal);
           else await this.drafts.cancel(who, msg.id);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
+      case "goal.scout":
+        try {
+          await this.scout.start(who, msg.goal);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
+      case "repo.setup.start":
+      case "repo.setup.cancel":
+        try {
+          if (msg.type === "repo.setup.start") await this.setup.start(who, msg.repo, msg.agent ?? null);
+          else await this.setup.cancel(who, msg.repo);
         } catch (e) {
           fail((e as Error).message);
         }
@@ -153,6 +226,22 @@ export class Engine {
         this.reposUpdated();
         return;
       }
+      case "repos.owners.set": {
+        if (member.role !== "admin") fail("Only admins can change which GitHub accounts add repos.");
+        const org = (this.env.GITHUB_ORG ?? "").toLowerCase();
+        const owners: string[] = [];
+        for (const raw of msg.owners) {
+          const login = raw.trim().replace(/^@/, "").replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "");
+          if (!login) continue;
+          if (!OWNER.test(login)) fail(`${login} isn't a GitHub account's login.`);
+          if (login.toLowerCase() !== org && !owners.some((o) => o.toLowerCase() === login.toLowerCase())) owners.push(login);
+        }
+        this.store.saveRepoOwners(owners);
+        await audit(this.env, who, "repo.owners_set", null, { owners });
+        this.reposUpdated();
+        // Their repos come in (or the removed ones' go) once the app's installations are read again.
+        return this.refreshRepos(true);
+      }
       case "repos.remove": {
         if (member.role !== "admin") fail("Only admins can remove repos.");
         const repos = this.store.repos();
@@ -183,15 +272,7 @@ export class Engine {
       }
       case "repos.scripts.set": {
         if (member.role !== "admin") fail("Only admins can change a repo's worktree scripts.");
-        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase())?.name
-          ?? fail(`${msg.repo} isn't one of the org's repos.`);
-        const scripts = cleanScripts(msg.scripts);
-        const before = this.store.scriptsFor(repo) ?? {};
-        const changed = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
-        this.store.saveRepoScripts(repo, scripts, who);
-        // Which ones changed, not the commands (they can carry hosts and paths).
-        await audit(this.env, who, "repo.scripts", repo, { repo, changed });
-        this.reposUpdated();
+        await this.saveRepoSetup(who, msg.repo, msg.scripts, msg.prompts, null);
         return;
       }
       case "policy.save": {
@@ -208,6 +289,16 @@ export class Engine {
         this.store.savePrompts(prompts);
         await audit(this.env, who, "prompts.saved", null, prompts);
         this.hooks.broadcast({ type: "prompts.updated", prompts });
+        return;
+      }
+      case "connectors.save": {
+        if (member.role !== "admin") fail("Only admins can change the factory's connectors.");
+        const result = merged(msg.connectors, this.store.connectors());
+        const connectors = typeof result === "string" ? fail(result) : result;
+        this.store.saveConnectors(connectors);
+        const shown = redacted(connectors);
+        await audit(this.env, who, "connectors.saved", null, shown);
+        this.hooks.broadcast({ type: "connectors.updated", connectors: shown });
         return;
       }
       case "goal.acceptRisk": {
@@ -311,13 +402,31 @@ export class Engine {
         // A backlog task without a plan is still a draft, just parked.
         const unplanned = task.state === "drafting" || (task.state === "backlog" && !task.plan.length);
         if (!unplanned && msg.brief != null && msg.brief !== task.brief) fail("The brief can only change while it's a draft; steer it instead.");
-        if (msg.title != null && msg.title.trim()) task.title = msg.title.trim();
+        if (msg.title != null && msg.title.trim()) {
+          task.title = msg.title.trim();
+          // The person named it; the planner's suggestion is moot.
+          task.suggestedTitle = null;
+        }
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
         if (msg.repo != null && msg.repo !== task.repo) {
           if (!unplanned) fail("Its repo can only change while it's a draft: the plan is for the repo it has.");
           const goal = this.store.goal(task.goal);
           task.repo = (goal && goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase())) ?? fail(`Its goal doesn't work in ${msg.repo}.`);
+        }
+        if (msg.agent != null || msg.model != null) {
+          // Any state until it's done: the change applies from its next session, and one running keeps going.
+          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; there's nothing left to build.`);
+          const agent = msg.agent != null ? msg.agent.trim() : task.agent;
+          if (!["claude", "codex"].includes(agent)) fail(`${agent || "That"} isn't an agent the factory runs: claude or codex.`);
+          const was = task.model ?? null;
+          let model = msg.model != null ? msg.model.trim() || null : was;
+          // A model the old agent knew means nothing to the new one.
+          if (msg.model == null && agent !== task.agent && model && !modelFits(agent, model)) model = null;
+          if (agent !== task.agent) this.event(task, who, `switched it to ${agent}${model ? ` · ${model}` : ""}`);
+          else if (model !== was) this.event(task, who, model ? `set its model to ${model}` : "set its model back to the default");
+          task.agent = agent;
+          task.model = model;
         }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
         const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
@@ -372,31 +481,20 @@ export class Engine {
       }
       case "task.steer": {
         const text = msg.text.trim() || fail("Say what to change.");
-        if (task.state === "backlog" && !task.plan.length) fail("It isn't planned yet; edit its brief or send it to planning.");
-        if (!["planning", "awaitingApproval", "backlog", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
-        if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
-        const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: msg.anchor ?? null, status: "queued", timing: null };
-        task.changes.push(change);
-        this.event(task, who, `asked for a change: ${text}`);
-        this.stat(task, "steer", { state: task.state }, who);
-        if (task.state === "awaitingApproval" || task.state === "backlog") {
-          // The plan isn't approved yet: the planner revises it (picking it up from the backlog).
-          task.approvals = [];
-          this.save(task);
-          return this.startPlanning(task, who, true);
-        }
-        if (task.state === "reviewing") {
-          // A person's request for changes: the builder takes it, and review starts over on what it pushes.
-          await this.backToBuilding(task);
-          this.save(task);
-          await this.pump();
-          return;
-        }
-        if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) {
-          change.status = "applying";
-        }
-        this.save(task);
-        return;
+        return this.steer(task, who, text, msg.anchor ?? null, `asked for a change: ${text}`);
+      }
+      case "task.review": {
+        const notes = msg.notes.map((n) => ({ ...n, text: n.text.trim() })).filter((n) => n.text);
+        if (!notes.length) fail("Add a comment to a line first.");
+        this.steerable(task);
+        const summary = msg.summary?.trim() || null;
+        // Each note on its own in the comment log, anchored to its lines, with the code it's about.
+        for (const n of notes) task.comments.push(await this.comment(who, `${fence(n.snippet)}\n${n.text}`, { anchor: lineAnchor(n) }));
+        if (summary) task.comments.push(await this.comment(who, summary, { anchor: "Review" }));
+        // The builder (or planner) gets the batch as one change request.
+        const text = [summary, ...notes.map((n, i) => `${i + 1}. ${lineAnchor(n)}${n.side === "old" ? " (removed lines)" : ""}: ${n.text}`)].filter(Boolean).join("\n");
+        const count = `${notes.length} comment${notes.length === 1 ? "" : "s"}`;
+        return this.steer(task, who, text, `Review · ${count}`, `asked for a change: a review of ${count}`);
       }
       case "task.approvePlan": {
         if (task.state === "backlog") {
@@ -407,6 +505,10 @@ export class Engine {
         }
         if (task.state !== "awaitingApproval") fail("There's no plan waiting for approval.");
         if (task.approvals.includes(who)) fail("You've already approved it.");
+        if (msg.keepTitle && task.suggestedTitle) {
+          task.suggestedTitle = null;
+          this.event(task, who, "kept the title");
+        }
         task.approvals.push(who);
         for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
         this.event(task, who, "approved the plan");
@@ -473,9 +575,11 @@ export class Engine {
         return;
       }
       case "task.merge": {
+        // A late or repeated click: it's merging (or merged) already, or its countdown ran out and the
+        // factory has it. Nothing to do, and nothing to complain about.
+        if (task.state === "merged" || this.store.private(task.id).merging || this.countdownDone(task)) return;
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
         if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
-        if (this.store.private(task.id).merging) fail("It's merging now.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
@@ -485,6 +589,8 @@ export class Engine {
         return;
       }
       case "task.holdMerge": {
+        // Too late to hold: the countdown ran out and the factory is merging it.
+        if (this.countdownDone(task) || (task.mergeAt == null && this.store.private(task.id).merging)) return;
         if (task.mergeAt == null) fail("It isn't counting down to merge.");
         const head = task.pr?.head ?? task.pr?.branch ?? null;
         task.mergeAt = null;
@@ -538,6 +644,20 @@ export class Engine {
         task.waiting = null;
         this.save(task);
         await this.pump();
+        return;
+      }
+      case "task.rankDraft": {
+        if (task.state !== "drafting") fail("Only a draft can be reordered among the drafts.");
+        if (msg.before === task.id) fail("It can't go ahead of itself.");
+        const drafts = this.store.drafts(task.goal);
+        let before: Task | null = null;
+        if (msg.before === "top") before = drafts.find((t) => t.id !== task.id) ?? null;
+        else if (msg.before) {
+          before = drafts.find((t) => t.id === msg.before) ?? fail(`${msg.before} isn't a draft in this goal.`);
+        }
+        if (msg.before !== "top" || before) task.draftRank = this.store.draftRankBefore(task.id, before, drafts);
+        this.event(task, who, msg.before === "top" ? "moved it to the top of the drafts" : before ? `moved it ahead of ${before.id} in the drafts` : "moved it to the bottom of the drafts");
+        this.save(task);
         return;
       }
       case "task.retry": {
@@ -613,6 +733,26 @@ export class Engine {
         await audit(this.env, who, "task.rerunChecks", task.id, { asked });
         return;
       }
+      case "task.rerunCheck": {
+        const app = githubApp(this.env);
+        const priv = this.store.private(task.id);
+        if (!app || !priv.gh || !task.pr) fail("Its checks aren't on GitHub.");
+        if (task.pr!.state !== "open") fail("Its pull request isn't open.");
+        const check = (priv.checks ?? []).find((c) => c.name === msg.check);
+        if (!check) fail(`There's no check ${msg.check} on it.`);
+        if (check!.status === "queued" || check!.status === "running") fail(`${check!.name} is still running.`);
+        await rerunCheck(app!, priv.gh!.owner, priv.gh!.repo, check!).catch((e) => fail((e as Error).message));
+        for (const c of task.pr!.checks) if (c.name === check!.name) c.status = "queued";
+        this.store.savePrivate(task.id, { ...priv, checks: (priv.checks ?? []).map((c) => (c.name === check!.name ? { ...c, status: "queued" as const, duration: null } : c)) });
+        this.event(task, who, `ran ${check!.name} again`);
+        this.save(task);
+        this.hooks.wakeIn(CI_POLL_MS);
+        await audit(this.env, who, "task.rerunCheck", task.id, { check: check!.name });
+        return;
+      }
+      case "task.checkLog":
+        // The org hub answers this one on the asking connection (checkLog).
+        return;
       case "task.split": {
         if (task.state !== "awaitingApproval" && task.state !== "building") fail("Only a planned task that isn't finished can be split.");
         const steps = task.plan;
@@ -658,6 +798,7 @@ export class Engine {
             machine: null,
             intake: null,
             splitFrom: task.id,
+            suggestedTitle: null,
             followUps: [],
           };
           this.save(part);
@@ -694,14 +835,20 @@ export class Engine {
       }
       case "task.mockupChange": {
         const mockup = task.mockups.find((m) => m.id === msg.mockup) ?? fail("That mockup isn't there any more.");
+        // Only while the plan is open: past it, nothing would deliver the change to anyone.
+        if (task.state !== "awaitingApproval" && task.state !== "planning") fail("You can ask for a mockup change while it's being planned or waiting for approval.");
+        const text = msg.text.trim() || fail("Say what to change.");
         mockup.status = "changesRequested";
-        task.changes.push({ id: `C${task.changes.length + 1}`, author: who, text: msg.text, at: now(), anchor: `Mockup: ${mockup.title}`, status: "queued", timing: null });
+        const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor: `Mockup: ${mockup.title}`, status: "queued", timing: null };
+        task.changes.push(change);
         this.event(task, who, `asked for a change to the "${mockup.title}" mockup`);
         if (task.state === "awaitingApproval") {
           task.approvals = [];
           this.save(task);
           return this.startPlanning(task, who, true);
         }
+        // Planning: a running planner has it typed in; one yet to start reads it in its prompt.
+        if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) change.status = "applying";
         this.save(task);
         return;
       }
@@ -762,7 +909,7 @@ export class Engine {
   }
 
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "intake" | "repo" | "after" | "effort">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort">): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -784,22 +931,55 @@ export class Engine {
       mockups: [],
       followUps: [],
       queueRank: t,
+      draftRank: t,
       ...f,
     };
     this.save(task);
     return task;
   }
 
+  /** A Scout run's picks: a backlog task is picked up, a finding becomes a task; all go to planning. */
+  private async scouted(goal: Goal, by: string, picks: ScoutPick[], shown: Candidate[], made: string[]) {
+    for (const pick of picks) {
+      const c = shown.find((x) => x.from === pick.from);
+      const source = c && this.store.task(c.task);
+      if (!c || !source) continue;
+      if (c.kind === "backlog") {
+        if (source.state !== "backlog") continue;
+        this.event(source, "factory", `Scout picked it up from the backlog for @${by}`);
+        made.push(source.id);
+        await this.startPlanning(source, by, source.plan.length > 0);
+        continue;
+      }
+      // Made since by someone else (or a run that overlapped): don't make it twice.
+      if (this.store.tasks().some((t) => t.scoutedFrom === pick.from)) continue;
+      const checks = pick.doneWhen.map((d) => `- ${d}`).join("\n");
+      const brief = checks ? `${pick.brief}\n\n## Done when\n${checks}` : pick.brief;
+      const task = this.newTask(goal, by, { title: pick.title, brief, tickets: [], shareable: source.shareable, agent: source.agent, model: source.model ?? null, intake: null, repo: source.repo ?? null, after: [], effort: source.effort ?? null });
+      task.scoutedFrom = pick.from;
+      this.event(task, "factory", `Scouted from ${source.id}`);
+      await audit(this.env, by, "task.created", task.id, { title: task.title, scoutedFrom: pick.from });
+      made.push(task.id);
+      await this.startPlanning(task, by);
+    }
+  }
+
   /** A plan just got its approvals: it builds, and its other repos' parts become tasks that wait on it. */
   private async approved(task: Task, why: string) {
     task.state = "building";
     task.waiting = null;
+    if (task.suggestedTitle) {
+      const old = task.title;
+      task.title = task.suggestedTitle;
+      task.suggestedTitle = null;
+      this.event(task, "factory", `renamed it from "${old}"`);
+    }
     this.event(task, "factory", why);
     this.stat(task, "plan.approved", { version: task.planVersion, approvals: task.approvals.length }, task.approvals.at(-1) ?? "factory");
     const goal = this.store.goal(task.goal);
     if (!goal) return;
     for (const f of task.followUps.filter((f) => !f.task)) {
-      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
+      const part = this.newTask(goal, task.owner, { title: f.title, brief: f.brief, tickets: [], shareable: task.shareable, agent: task.agent, model: task.model ?? null, intake: null, repo: f.repo, after: [task.id], effort: task.effort ?? null });
       f.task = part.id;
       this.event(task, "factory", `made ${part.id} for its ${f.repo} part`);
       await this.startPlanning(part, "factory");
@@ -883,7 +1063,9 @@ export class Engine {
       ? { reason: `This task was moved here from ${priv.movedFrom.machine}${priv.movedFrom.commit ? `; its work so far is on the branch, up to ${priv.movedFrom.commit.slice(0, 7)} (any "WIP" commit is unfinished)` : ""}.` }
       : priv.restarts > 0 ? { reason: "Your last session ended before you finished." } : null;
     const org = this.store.prompts();
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org) : role === "builder" ? builderPrompt(task, goal, resumed, org) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org);
+    const others = role === "reviewer" ? [] : this.moving(task);
+    const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal)))) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -899,7 +1081,8 @@ export class Engine {
       worktree: { name: branchName(task), base: goal.base ?? null, existing },
       task: { id: task.id, repo: taskRepo(task, goal), scripts: this.store.scriptsFor(taskRepo(task, goal)) },
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
-      model: null,
+      model: task.model ?? null,
+      connectors: this.connectors(),
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
     const now_ = this.store.task(task.id);
@@ -941,6 +1124,11 @@ export class Engine {
     return null;
   }
 
+  /** The enabled MCP connectors for a session.open, secrets included: these go to runners only. */
+  connectors(): McpConnector[] {
+    return this.store.connectors().filter((c) => c.enabled);
+  }
+
   private hasAgent(machine: Machine, agent: string) {
     // Before its first health report a machine's agents aren't known; let it try.
     // Health lists the agents it knows to look for; others (agents.toml) are assumed present.
@@ -962,12 +1150,16 @@ export class Engine {
   /** What a runner said that's about the factory. `mcp.request` gets an answer for the runner. */
   async fromRunner(machine: string, msg: RunnerMessage): Promise<Reply | null> {
     switch (msg.type) {
-      case "mcp.request": return this.tool(msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
+      case "mcp.request": return this.tool(machine, msg.session, msg.tool, (msg.args ?? {}) as Record<string, unknown>);
       case "draft.progress":
-        this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        // A Scout run only reports what it picked, at the end; a setup run shows what it's reading.
+        if (msg.id.startsWith(SETUP_PREFIX)) this.setup.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        else if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
         return null;
       case "draft.done":
-        await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        if (msg.id.startsWith(SCOUT_PREFIX)) await this.scout.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        else if (msg.id.startsWith(SETUP_PREFIX)) this.setup.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        else await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         return null;
       case "session.opened": {
         const s = msg.session.taskId ? this.store.session(msg.session.id) : null;
@@ -1065,10 +1257,17 @@ export class Engine {
         // Measured now, not estimated: the size can change its risk.
         this.applyPolicy(task);
         this.save(task, false);
+        this.refreshForecasts(task);
         await this.autoMerge(task);
         return null;
       }
       case "task.merged": return this.merged(msg), null;
+      case "task.merge_check": {
+        const task = this.store.task(msg.taskId);
+        if (!task || task.machine !== machine) return null;
+        await this.mergeChecked(task, msg);
+        return null;
+      }
       case "task.token_request": {
         // A token for the task's repo, only for the machine it's on; without the app the runner
         // fetches and pushes with the machine's own credentials.
@@ -1076,10 +1275,22 @@ export class Engine {
           this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
-        if (this.drafts.forRun(msg.taskId, machine)) {
-          // Draft with AI reads its goal's code: a fetch of one of that goal's repos, nothing more.
-          if (msg.purpose !== "fetch" || !this.drafts.mayFetch(msg.taskId, machine, `${msg.owner}/${msg.repo}`)) {
-            return await reply(null, "A draft can only fetch its goal's repos.", "api"), null;
+        const draft = this.drafts.forRun(msg.taskId, machine), scouting = this.scout.forRun(msg.taskId, machine), setup = this.setup.forRun(msg.taskId, machine);
+        if (draft || scouting || setup) {
+          // Draft with AI and Scout read their goal's code, Set up with AI its repo's: a fetch of one of those repos, nothing more.
+          const full = `${msg.owner}/${msg.repo}`;
+          const mayFetch = scouting ? this.scout.mayFetch(msg.taskId, machine, full)
+            : setup ? this.setup.mayFetch(msg.taskId, machine, full)
+            : this.drafts.mayFetch(msg.taskId, machine, full);
+          if (msg.purpose !== "fetch" || !mayFetch) {
+            const goalId = scouting?.run.goal ?? draft?.draft.goal ?? null;
+            const goal = goalId ? this.store.goal(goalId) : null;
+            const repos = goal ? goalRepos(goal) : [];
+            const theirs = setup ? setup.run.repo
+              : repos.length ? `${goal!.name}'s repos (${repos.join(", ")})`
+              : goal?.folder ? `${goal.name}'s folder (${goal.folder})` : "its goal's repos";
+            const what = msg.purpose !== "fetch" ? `can only fetch, not push, ${full}` : `can't fetch ${full}: it reads ${theirs}`;
+            return await reply(null, `${scouting ? "Scout" : setup ? "Set up with AI" : "Draft with AI"} ${what}.`, "api"), null;
           }
           try {
             await reply((await repoToken(app, msg.owner, msg.repo, PERMISSIONS.fetch)).token, null, null);
@@ -1202,11 +1413,15 @@ export class Engine {
     this.store.savePrivate(task.id, { ...priv, finishing: false });
     // A push that was already under way when the task was cancelled (or merged): it stays that way.
     if (task.state === "cancelled" || task.state === "merged") return;
+    const failed = msg.ok ? null : msg.checks?.findLast((c) => c.timedOut || c.code !== 0);
+    if (failed) return this.checksFailed(task, failed);
+    if (task.liveLog === RUNNING_CHECKS) task.liveLog = null;
     if (!msg.ok) {
       this.raise(task, "builder", "needsInput", `Pushing failed: ${msg.message ?? "no reason given"}.`);
       this.save(task);
       return;
     }
+    if (priv.checkFailures) this.store.savePrivate(task.id, { ...this.store.private(task.id), checkFailures: 0 });
     const goal = this.store.goal(task.goal);
     const base = msg.base ?? priv.base ?? goal?.base ?? "main";
     task.pr = task.pr
@@ -1215,6 +1430,8 @@ export class Engine {
     this.closeWorker(task, "done");
     task.state = "reviewing";
     task.reviews = [];
+    // Conflicts found on the old head: what it pushed is checked again before it merges.
+    if (task.mergeForecast) task.mergeForecast = { ...task.mergeForecast, conflicts: [], since: null, checkedAt: null };
     const review = task.autoReview ?? { maxRounds: MAX_REVIEW_ROUNDS, rounds: [], summary: "", ask: [], proofs: [], findings: [] };
     review.rounds.push({ number: review.rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null });
     task.autoReview = review;
@@ -1223,6 +1440,39 @@ export class Engine {
     if (task.machine && priv.worktree) this.hooks.waitUntil(this.toRunner(task.machine, { type: "task.diff", taskId: task.id, cwd: priv.worktree, base }));
     if (msg.pushed === "app" && msg.owner && msg.repo) this.hooks.waitUntil(this.openPull(task.id, msg.owner, msg.repo));
     this.hooks.waitUntil(this.pump());
+  }
+
+  /** A finish one of the repo's checks stopped (nothing committed or pushed): the task keeps building,
+   *  and the failure is typed into its builder to fix and finish again. The third in a row, or one with
+   *  no builder session to tell, raises a hand instead. */
+  private checksFailed(task: Task, check: CheckRun) {
+    const priv = this.store.private(task.id);
+    const tries = (priv.checkFailures ?? 0) + 1;
+    this.store.savePrivate(task.id, { ...priv, finishing: false, checkFailures: tries });
+    task.liveLog = null;
+    const how = check.timedOut ? "timed out" : check.code == null ? "was killed" : `exited ${check.code}`;
+    this.event(task, "factory", `checks failed: \`${check.command}\` ${how}`);
+    const output = check.output.trim() ? `\n\n${check.output.trim()}` : " (no output)";
+    const told = `The check \`${check.command}\` ${how}, so nothing was committed or pushed.${output}\n\nFix it, then call finish again.`;
+    const hand = (why: string) => {
+      this.raise(task, "builder", "needsInput", `${why}: \`${check.command}\` ${how}.`, [
+        { title: "Retry", detail: "Send it back to fix the check and finish again.", recommended: true },
+        { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
+      ]);
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), checkFailures: 0 });
+    };
+    if (tries >= CHECK_TRIES) hand(`The repo's checks stopped its finish ${tries} times in a row`);
+    else if (!task.worker) hand("The repo's checks stopped its finish and its builder isn't running");
+    else {
+      this.hooks.waitUntil(this.type(task, told).then((ok) => {
+        if (ok) return;
+        const t = this.store.task(task.id);
+        if (!t || t.state !== "building") return;
+        this.raise(t, "builder", "needsInput", `The repo's checks stopped its finish and its builder couldn't be told: \`${check.command}\` ${how}.`);
+        this.save(t);
+      }));
+    }
+    this.save(task);
   }
 
   // ---------------------------------------------------------------------------
@@ -1261,6 +1511,29 @@ export class Engine {
     return task.pr.checks.length === 0 && now() - (priv.prOpenedAt ?? 0) < CI_APPEAR_MS;
   }
 
+  /** The review threads on a task's GitHub pull request; none for a local repo or a task without one. */
+  async threads(id: string): Promise<ReviewThread[]> {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr || !gh) return [];
+    return reviewThreads(app, gh.owner, gh.repo, task.pr.number);
+  }
+
+  /** One of a task's CI checks' log, for `task.checkLog`: read from GitHub each time, never kept. */
+  async checkLog(id: string, name: string): Promise<ServerToClient & { type: "checkLog" }> {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    if (!task) fail("That task isn't there any more.");
+    const priv = this.store.private(id);
+    if (!app || !priv.gh || !task!.pr) fail("Its checks aren't on GitHub.");
+    const check = (priv.checks ?? []).find((c) => c.name === name);
+    if (!check) fail(`There's no check ${name} on it.`);
+    const url = check!.url ?? (task!.pr!.url ? `${task!.pr!.url}/checks` : null);
+    const log = await checkLog(app!, priv.gh!.owner, priv.gh!.repo, check!).catch((e) => fail((e as Error).message));
+    return { type: "checkLog", id, check: check!.name, url, text: log.text, truncated: log.truncated, failedStep: log.failedStep };
+  }
+
   /** Reads CI again for every pull request still waiting on it; the hub's alarm calls this. */
   async pollCI() {
     for (const task of this.store.tasks().filter((t) => this.ciPending(t))) await this.refreshChecks(task.id);
@@ -1280,10 +1553,15 @@ export class Engine {
       return;
     }
     const before = now_.pr.checks.map((c) => `${c.name}:${c.status}`).join();
-    now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true }));
+    const links = now_.pr.checks.map((c) => c.url ?? "").join();
+    now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true, url: c.url ?? null }));
     this.store.savePrivate(id, { ...this.store.private(id), checks: found });
     if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
-    if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) return;
+    if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) {
+      // Same results, but a check's link changed (a re-run is a new job): the apps get the new one.
+      if (now_.pr.checks.map((c) => c.url ?? "").join() !== links) this.save(now_);
+      return;
+    }
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
     else if (found.length && found.every((c) => c.status === "passed")) this.event(now_, "factory", "CI passed");
@@ -1302,7 +1580,10 @@ export class Engine {
     }
     let granted: OrgRepo[];
     try {
-      granted = await installedRepos(app);
+      // The factory's own account, and the others an admin approved: the app is public, so anyone
+      // can install it, and their installations mustn't add repos here.
+      const owners = new Set([this.env.GITHUB_ORG, ...this.store.repoOwners()].filter(Boolean).map((o) => o.toLowerCase()));
+      granted = await installedRepos(app, (login) => owners.has(login.toLowerCase()));
     } catch (e) {
       if (asked) fail(`Couldn't read the app's repos: ${(e as Error).message}`);
       return;
@@ -1335,8 +1616,10 @@ export class Engine {
     const task = this.store.task(msg.taskId);
     // Already merged: a second answer (a webhook after the merge call's own) changes nothing.
     if (!task || !task.pr || task.state === "merged") return;
+    // A failure for a merge the factory already stopped waiting for: its hand is up, and a retry's own answer is what counts.
+    if (!msg.ok && !this.store.private(task.id).merging && task.hand?.reason === "mergeFailed") return;
     task.liveLog = null;
-    this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false });
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false, mergeStartedAt: null });
     if (!msg.ok) {
       const why = msg.message ?? "no reason given";
       // With the policy's say-so, a builder fixes it (a few times at most) before a person is asked.
@@ -1366,15 +1649,26 @@ export class Engine {
       return;
     }
     const by = this.store.private(task.id).mergeBy ?? null;
+    // It merged after all (an answer after the watchdog gave up on it): its "didn't merge" hand is moot.
+    if (task.hand?.reason === "mergeFailed") this.lowerHand(task, "factory");
     this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt }, by);
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base} (${msg.commit?.slice(0, 7) ?? ""})`);
+    // The runner's merge (no GitHub App) deleted the branch on origin, or says why not.
+    const branch = msg.branch ? branchNote(task.pr.branch, msg.branch) : null;
+    if (branch) this.event(task, "factory", branch.text);
     this.intake.forTask(task, `${task.id} is merged into ${task.pr.base}. Thanks for asking!`);
     this.save(task);
     this.hooks.broadcast({ type: "toast", text: `${task.id} merged into ${task.pr.base}.`, taskId: task.id });
-    this.store.savePrivate(task.id, { ...this.store.private(task.id), mergedAs: msg.commit ?? null, mergeFixes: 0 });
+    const priv = this.store.private(task.id);
+    this.store.savePrivate(task.id, { ...priv, mergedAs: msg.commit ?? null, mergeFixes: 0, remoteBranch: branch?.outcome ?? priv.remoteBranch ?? null });
     this.hooks.waitUntil(this.cleanup(task));
+    // What it overlapped may not merge any more: each of those still in review gets a dry-run merge now,
+    // rather than finding out when its own merge fails.
+    const affected = affectedBy(task, this.store.tasks());
+    this.refreshForecasts(task);
+    for (const other of affected) if (other.state === "reviewing") this.hooks.waitUntil(this.checkMerge(other, task.id));
     // Tasks waiting on this one ("after") can build now.
     if (this.store.tasks().some((t) => t.after.includes(task.id))) this.hooks.waitUntil(this.pump());
   }
@@ -1399,6 +1693,7 @@ export class Engine {
     this.lowerHand(task, who);
     this.event(task, who, why);
     this.save(task);
+    this.refreshForecasts(task);
     await audit(this.env, who, "task.cancelled", task.id);
   }
 
@@ -1436,8 +1731,19 @@ export class Engine {
     const machine = (await this.hooks.machines()).find((m) => m.id === task.machine);
     if (machine?.sessions.some((s) => s.session.taskId === task.id)) return; // its last end calls this again
     this.store.savePrivate(task.id, { ...priv, cleaned: true });
+    // The factory merged it, and its branch may still be on origin (a delete that failed, or no word
+    // of one): one more try, through the GitHub App here or by the runner with the cleanup.
+    let deleteRemote = false;
+    if (task.state === "merged" && priv.mergeBy && task.pr) {
+      const app = githubApp(this.env);
+      if (app && priv.gh && task.pr.url) {
+        await this.branchDeletes.get(task.id);
+        await this.deleteMergedBranch(task.id, app, priv.gh, task.pr);
+      } else deleteRemote = priv.remoteBranch !== "deleted" && priv.remoteBranch !== "kept";
+    }
     await this.toRunner(task.machine, {
       type: "task.cleanup",
+      deleteRemote,
       taskId: task.id,
       cwd: priv.worktree,
       repoDir: priv.repoDir,
@@ -1449,13 +1755,46 @@ export class Engine {
     });
   }
 
+  /** A repo's worktree scripts and prompt additions, saved by an admin (from an app, or an admin's
+   *  own agent session through the maple MCP, `via`). No prompts (an older app) keeps the stored ones. */
+  private async saveRepoSetup(who: string, name: string, raw: WorktreeScripts, rawPrompts: PromptAdditions | null | undefined, via: string | null) {
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === name.trim().toLowerCase())?.name
+      ?? fail(`${name} isn't one of the org's repos.`);
+    const scripts = cleanScripts(raw);
+    const beforePrompts = this.store.repoPrompts(repo);
+    let prompts = rawPrompts ? cleanPrompts(rawPrompts) : beforePrompts;
+    if (prompts && !prompts.planner && !prompts.builder && !prompts.reviewer) prompts = null;
+    const before = this.store.scriptsFor(repo) ?? {};
+    const changed: string[] = SCRIPT_FIELDS.filter((f) => (scripts?.[f] ?? null) !== (before[f as keyof WorktreeScripts] ?? null));
+    for (const role of ["planner", "builder", "reviewer"] as const) {
+      if ((prompts?.[role] ?? "") !== (beforePrompts?.[role] ?? "")) changed.push(`prompts.${role}`);
+    }
+    this.store.saveRepoScripts(repo, scripts, who, prompts);
+    // Which ones changed, not the commands or prompts (they can carry hosts and paths).
+    await audit(this.env, who, "repo.scripts", repo, { repo, changed, ...(via ? { via } : {}) });
+    this.reposUpdated();
+    return repo;
+  }
+
   // ---------------------------------------------------------------------------
   // Agents' tools
 
-  private async tool(sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
+  private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
-    if (name === "tools/list") return { result: { summary: "", data: { tools: s ? toolsFor(s.role) : [] } } };
-    if (!s) return { error: "This session isn't working on a factory task." };
+    if (!s) {
+      // Not one the factory started for a task: your own session on a member's machine.
+      const known = (await this.hooks.machines()).find((m) => m.id === machine);
+      const live = known?.sessions.find((x) => x.session.id === sessionId);
+      const personal = Boolean(known && !live?.session.taskId);
+      if (name === "tools/list") return { result: { summary: "", data: { tools: personal ? personalTools() : [] } } };
+      if (!personal || !isPersonalTool(name)) return { error: "This session isn't working on a factory task." };
+      try {
+        return { result: await this.personalTool(known!, name, args) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    if (name === "tools/list") return { result: { summary: "", data: { tools: toolsFor(s.role) } } };
     if (!allowed(s.role, name)) return { error: `${name} isn't one of the ${s.role}'s tools.` };
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
@@ -1469,6 +1808,49 @@ export class Engine {
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  /** A repo's setup as get_repo_setup shows it. */
+  private repoSetupView(repo: string) {
+    const row = this.store.repoSetup(repo);
+    return {
+      repo,
+      scripts: this.store.scriptsFor(repo) ?? {},
+      prompts: row?.prompts ?? { planner: "", builder: "", reviewer: "" },
+      variables: SCRIPT_VARIABLES,
+      updatedBy: row?.updatedBy ?? null,
+      updatedAt: row?.updatedAt ?? null,
+    };
+  }
+
+  /** get_repo_setup and save_repo_setup, from a session on `machine` that isn't a factory task's. */
+  private async personalTool(machine: Machine, name: string, a: Record<string, unknown>): Promise<{ summary: string; data?: unknown }> {
+    const asked = str(a.repo, "repo");
+    const repo = this.store.repos().find((r) => r.name.toLowerCase() === asked.trim().toLowerCase())?.name
+      ?? fail(`${asked} isn't one of the org's repos.`);
+    if (name === "get_repo_setup") {
+      const view = this.repoSetupView(repo);
+      return { summary: view.updatedBy ? `${repo}'s setup, last changed by ${view.updatedBy}.` : `${repo} has no setup yet.`, data: view };
+    }
+    if (!(await this.isAdmin(machine.owner))) fail("Only admins' sessions can save a repo's setup.");
+    // Only what's passed changes; the rest stays as stored.
+    const scripts: WorktreeScripts = { ...(this.store.scriptsFor(repo) ?? {}) };
+    if (a.scripts != null) {
+      const given = obj(a.scripts);
+      for (const f of ["create", "preflight", "preflightWatch", "setup", "checks", "teardown", "archive"] as const) {
+        if (given[f] !== undefined) scripts[f] = given[f] == null ? null : typeof given[f] === "string" ? given[f] : fail(`scripts.${f} is a command (a string).`);
+      }
+      if (given.timeoutSecs !== undefined) scripts.timeoutSecs = given.timeoutSecs == null ? null : (given.timeoutSecs as number);
+    }
+    const prompts: PromptAdditions = { planner: "", builder: "", reviewer: "", ...(this.store.repoPrompts(repo) ?? {}) };
+    if (a.prompts != null) {
+      const given = obj(a.prompts);
+      for (const role of ["planner", "builder", "reviewer"] as const) {
+        if (given[role] != null) prompts[role] = typeof given[role] === "string" ? given[role] : fail(`prompts.${role} is Markdown (a string).`);
+      }
+    }
+    await this.saveRepoSetup(machine.owner, repo, scripts, prompts, `via MCP from ${machine.name}`);
+    return { summary: `Saved ${repo}'s setup.`, data: this.repoSetupView(repo) };
   }
 
   private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>): { summary: string; data?: unknown } {
@@ -1508,6 +1890,9 @@ export class Engine {
         });
         task.doneWhen = done.map((d) => ({ text: str(d.text, "doneWhen[].text"), proof: proofKind(d.proof), status: "pending", evidence: null }));
         task.planSummary = str(a.summary, "summary");
+        // A revised plan replaces (or drops) the earlier suggestion.
+        const title = typeof a.title === "string" ? a.title.trim().slice(0, 120).trim() : "";
+        task.suggestedTitle = title && title !== task.title ? title : null;
         task.planVersion += 1;
         this.stat(task, "plan.submitted", { version: task.planVersion, steps: task.plan.length }, null, s.role);
         const risk = obj(a.risk);
@@ -1622,7 +2007,8 @@ export class Engine {
         const priv = this.store.private(task.id);
         if (!priv.worktree || !priv.repoDir) fail("The factory doesn't know where this worktree came from; raise a hand.");
         this.store.savePrivate(task.id, { ...priv, finishing: true });
-        task.liveLog = "Committing and pushing…";
+        const checks = checkCommands(this.store.scriptsFor(taskRepo(task, goal ?? null)));
+        task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";
         task.comments.push({ id: crypto.randomUUID(), author: "builder", text: str(a.summary, "summary"), at: now(), anchor: "Summary", via: null });
         this.hooks.waitUntil(this.toRunner(task.machine!, {
           type: "task.finish",
@@ -1633,7 +2019,9 @@ export class Engine {
           base: priv.base ?? goal?.base ?? null,
           title: `${task.id}: ${task.title}`,
           fallback: true,
+          ...(checks.length ? { checks: checks.join("\n") } : {}),
         }));
+        if (checks.length) return { summary: `Finishing: the repo's checks run first (${checks.length}), then the factory commits and pushes and the review starts. End your turn now; if a check fails, it's typed into this session.` };
         return { summary: "Finishing: the factory is committing and pushing, then the review starts. End your turn now." };
       }
 
@@ -1777,13 +2165,98 @@ export class Engine {
       return;
     }
     if (task.mergeAt > now()) return this.hooks.wakeIn(task.mergeAt - now());
+    // Due: from here the factory has it, so clients lock Hold and Merge while the dry-run check runs.
+    if (task.liveLog !== MERGING) {
+      task.liveLog = MERGING;
+      this.save(task);
+      if (task.mergeAt == null) return; // a gate dropped on that save
+    }
+    // A dry-run merge first, once per head: a conflict goes back to its builder without a failed merge.
+    if (priv.mergeChecked !== head && task.machine && priv.worktree) {
+      const asked = priv.mergeCheck;
+      if (asked?.head !== head) {
+        if (await this.checkMerge(task, null)) return this.hooks.wakeIn(MERGE_CHECK_WAIT_MS);
+      } else if (now() - asked.at < MERGE_CHECK_WAIT_MS) return this.hooks.wakeIn(asked.at + MERGE_CHECK_WAIT_MS - now());
+      // Its machine is offline, or never answered: merge anyway; a conflict still shows up there.
+    }
     task.mergeAt = null;
-    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => this.save(task));
+    await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {
+      if (!this.store.private(task.id).merging && task.liveLog === MERGING) task.liveLog = null;
+      this.save(task);
+    });
+  }
+
+  /** Its auto-merge countdown ran out: the factory is merging it (or checking it merges first). */
+  private countdownDone(task: Task) {
+    return task.state === "reviewing" && task.mergeAt != null && task.mergeAt <= now();
   }
 
   /** Auto-merges whose countdown ran out (one still running wakes the hub again); the hub's alarm calls this. */
   async mergeDue() {
     for (const task of this.store.tasks()) if (task.state === "reviewing" && task.mergeAt != null) await this.autoMerge(task);
+    await this.stuckMerges();
+  }
+
+  private mergeStuckMs(task: Task) {
+    return githubApp(this.env) && this.store.private(task.id).gh && task.pr?.url ? MERGE_STUCK_MS.github : MERGE_STUCK_MS.runner;
+  }
+
+  /** Merges that were sent and never answered (GitHub's call cut off, a runner that went quiet): one quiet
+   *  too long is looked up on GitHub, and lands or goes to a person. One still in flight wakes the hub again.
+   *  A "Merging…" with no merge or countdown behind it is cleared. */
+  private async stuckMerges() {
+    for (const task of this.store.tasks()) {
+      if (task.state !== "reviewing") continue;
+      const priv = this.store.private(task.id);
+      if (!priv.merging) {
+        if (task.liveLog === MERGING && task.mergeAt == null) this.save(task, false); // save() clears it
+        continue;
+      }
+      const limit = this.mergeStuckMs(task);
+      // No start time: it was sent before one was kept, so it's long overdue.
+      const started = priv.mergeStartedAt ?? null;
+      if (started != null && now() - started < limit) {
+        this.hooks.wakeIn(started + limit - now());
+        continue;
+      }
+      await this.mergeUnanswered(task, started);
+    }
+  }
+
+  private async mergeUnanswered(task: Task, started: number | null) {
+    const app = githubApp(this.env);
+    const gh = this.store.private(task.id).gh;
+    const pr = task.pr;
+    let onGitHub: Awaited<ReturnType<typeof pullRequestState>> | null = null;
+    if (app && gh && pr?.url) onGitHub = await pullRequestState(app, gh.owner, gh.repo, pr.number).catch(() => null);
+    // Its answer may have come in while GitHub was asked.
+    const priv = this.store.private(task.id);
+    if (task.state !== "reviewing" || !priv.merging || priv.mergeStartedAt !== (started ?? priv.mergeStartedAt)) return;
+    if (onGitHub?.state === "merged") {
+      this.event(task, "factory", "didn't hear back from the merge; GitHub says it merged");
+      this.save(task, false); // merged() reads it again
+      this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: onGitHub.sha, message: null });
+      if (app && gh && pr) this.hooks.waitUntil(this.deleteMergedBranch(task.id, app, gh, pr));
+      return;
+    }
+    this.store.savePrivate(task.id, { ...priv, merging: false, mergeStartedAt: null });
+    task.liveLog = null;
+    if (onGitHub?.state === "closed" && pr) {
+      pr.state = "closed";
+      this.event(task, "factory", `pull request #${pr.number} was closed on GitHub`);
+      this.save(task);
+      return;
+    }
+    // Not a merge-fix try: nothing says it conflicts, so it stays here for a person rather than going back to its builder.
+    const after = started != null ? ` after ${Math.round((now() - started) / 60_000)} min` : "";
+    this.event(task, "factory", `didn't hear back from the merge${after}`);
+    const where = onGitHub ? "its pull request is still open on GitHub" : app && gh && pr?.url ? "GitHub couldn't be asked whether it merged" : "it may or may not have merged on its machine";
+    this.raise(task, "factory", "mergeFailed", `The merge didn't answer${after}; ${where}.`, [
+      { title: MERGE_RETRY, detail: "Merge it again as it is.", recommended: true },
+      { title: MERGE_FIX, detail: `A builder updates the branch from ${pr?.base ?? "its base"}, resolves any conflicts and pushes; review and approvals run again.`, recommended: false },
+      { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
+    ]);
+    this.save(task);
   }
 
   private async startMerge(task: Task, who: string, text = "merged it") {
@@ -1793,10 +2266,11 @@ export class Engine {
     if (app && priv.gh && !task.pr?.url) fail("Its pull request isn't open on GitHub; it can't be merged without one.");
     if (app && priv.gh && task.pr?.url) {
       // On GitHub: squash-merge the pull request, pinned to the head that was reviewed.
-      this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who });
+      this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who, mergeStartedAt: now() });
       this.event(task, who, text);
-      task.liveLog = "Merging…";
+      task.liveLog = MERGING;
       this.save(task);
+      this.hooks.wakeIn(MERGE_STUCK_MS.github);
       await audit(this.env, who, "task.merged", task.id);
       const pr = task.pr;
       this.hooks.waitUntil(
@@ -1821,32 +2295,80 @@ export class Engine {
       title: `Merge ${task.id}: ${task.title}`,
     });
     if (!sent) fail(`${(await this.hooks.machines()).find((m) => m.id === task.machine)?.name ?? task.machine} is offline; it merges when it's back.`);
-    this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who });
+    this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who, mergeStartedAt: now() });
     this.event(task, who, text);
-    task.liveLog = "Merging…";
+    task.liveLog = MERGING;
     this.save(task);
+    this.hooks.wakeIn(MERGE_STUCK_MS.runner);
     await audit(this.env, who, "task.merged", task.id);
   }
 
   /** After the factory merged a pull request: deletes its agent/ branch on GitHub, if it's still the head
-   *  that merged. Best-effort: the merge stands whatever happens here. */
-  private async deleteMergedBranch(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
+   *  that merged. Best-effort: the merge stands whatever happens here. One already under way is joined,
+   *  and one that's settled (deleted or kept) isn't tried again. */
+  private deleteMergedBranch(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>): Promise<void> {
+    const running = this.branchDeletes.get(taskId);
+    if (running) return running;
+    const settled = this.store.private(taskId).remoteBranch;
+    if (settled === "deleted" || settled === "kept") return Promise.resolve();
+    const deleting = this.deleteBranchOnGitHub(taskId, app, gh, pr).finally(() => this.branchDeletes.delete(taskId));
+    this.branchDeletes.set(taskId, deleting);
+    return deleting;
+  }
+
+  private async deleteBranchOnGitHub(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
     const branch = pr.branch;
     if (!branch.startsWith("agent/") || branch === pr.base) return;
     let text: string;
-    if (!pr.head) text = `kept branch ${branch} on GitHub (its merged head isn't known)`;
+    let outcome: "deleted" | "kept" | "failed";
+    if (!pr.head) [text, outcome] = [`kept branch ${branch} on GitHub (its merged head isn't known)`, "kept"];
     else {
       try {
         const r = await deleteBranch(app, gh.owner, gh.repo, branch, pr.head);
-        text = r === "moved" ? `kept branch ${branch} on GitHub (it moved after the merge)` : `deleted branch ${branch} on GitHub`;
+        [text, outcome] = r === "moved" ? [`kept branch ${branch} on GitHub (it moved after the merge)`, "kept"] : [`deleted branch ${branch} on GitHub`, "deleted"];
       } catch (e) {
-        text = `couldn't delete branch ${branch} on GitHub: ${(e as Error).message}`;
+        [text, outcome] = [`couldn't delete branch ${branch} on GitHub: ${(e as Error).message}`, "failed"];
       }
     }
     const task = this.store.task(taskId);
     if (!task) return;
+    this.store.savePrivate(taskId, { ...this.store.private(taskId), remoteBranch: outcome });
     this.event(task, "factory", text);
     this.save(task, false);
+  }
+
+  /** Fails unless something is working on the task that a change request can steer. */
+  private steerable(task: Task) {
+    if (task.state === "backlog" && !task.plan.length) fail("It isn't planned yet; edit its brief or send it to planning.");
+    if (!["planning", "awaitingApproval", "backlog", "building", "reviewing"].includes(task.state)) fail("There's nothing working on it to steer.");
+    if (task.state === "reviewing" && this.store.private(task.id).merging) fail("It's merging now.");
+  }
+
+  /** A change request from a person: the planner revises an unapproved plan, a reviewing task goes
+   *  back to its builder, and a live session has it typed in. */
+  private async steer(task: Task, who: string, text: string, anchor: string | null, said: string) {
+    this.steerable(task);
+    const change: ChangeRequest = { id: `C${task.changes.length + 1}`, author: who, text, at: now(), anchor, status: "queued", timing: null };
+    task.changes.push(change);
+    this.event(task, who, said);
+    this.stat(task, "steer", { state: task.state }, who);
+    if (task.state === "awaitingApproval" || task.state === "backlog") {
+      // The plan isn't approved yet: the planner revises it (picking it up from the backlog).
+      task.approvals = [];
+      this.save(task);
+      return this.startPlanning(task, who, true);
+    }
+    if (task.state === "reviewing") {
+      // A person's request for changes: the builder takes it, and review starts over on what it pushes.
+      await this.backToBuilding(task);
+      this.save(task);
+      await this.pump();
+      return;
+    }
+    if (task.worker && (await this.type(task, `Change request ${change.id} from ${who}: ${text}\nApply it, then report it with \`progress\` (applied: ["${change.id}"]).`))) {
+      change.status = "applying";
+    }
+    this.save(task);
   }
 
   /** A person's comment, with the members it @mentions. */
@@ -1905,6 +2427,94 @@ export class Engine {
     this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
     this.save(task);
     await this.pump();
+  }
+
+  /** Where a task merges, for its forecast's overlaps. */
+  private lane(task: Task): Lane | null {
+    const goal = this.store.goal(task.goal);
+    const repo = taskRepo(task, goal) ?? goal?.folder ?? null;
+    if (!repo) return null;
+    return { repo, base: task.pr?.base ?? this.store.private(task.id).base ?? goal?.base ?? "main" };
+  }
+
+  /** The other tasks building or in review where this one merges, for its planner's and builder's prompts:
+   *  the ones it overlaps first. */
+  private moving(task: Task): Moving[] {
+    const mine = this.lane(task);
+    if (!mine) return [];
+    const overlapping = new Set(task.mergeForecast?.overlaps.map((o) => o.task) ?? []);
+    return this.store
+      .tasks()
+      .filter((t) => t.id !== task.id && inFlight(t))
+      .filter((t) => { const l = this.lane(t); return l != null && l.repo.toLowerCase() === mine.repo.toLowerCase() && l.base === mine.base; })
+      .sort((a, b) => Number(overlapping.has(b.id)) - Number(overlapping.has(a.id)) || b.updatedAt - a.updatedAt)
+      .map((t) => ({ id: t.id, title: t.title, state: t.state, files: t.diff?.files ?? [] }));
+  }
+
+  /** Brings every task's overlaps up to date after `current` changed (passed as they are now, since
+   *  the store's copies may be older), saving the ones that changed. */
+  private refreshForecasts(...current: Task[]) {
+    const mine = new Map(current.map((t) => [t.id, t]));
+    const tasks = this.store.tasks().map((t) => mine.get(t.id) ?? t);
+    for (const t of refreshOverlaps(tasks, (t) => this.lane(t))) this.save(t, false);
+  }
+
+  /** Asks its machine for a dry-run merge into its base (`task.merge_check`); false when it can't be asked.
+   *  `since`: the task whose merge prompted it; none for the check before its own auto-merge. */
+  private async checkMerge(task: Task, since: string | null): Promise<boolean> {
+    const priv = this.store.private(task.id);
+    if (!task.machine || !priv.worktree) return false;
+    const base = task.pr?.base ?? priv.base ?? "main";
+    const head = task.pr?.head ?? task.pr?.branch ?? null;
+    this.store.savePrivate(task.id, { ...priv, mergeCheck: { head, since, at: now() } });
+    const sent = await this.toRunner(task.machine, { type: "task.merge_check", taskId: task.id, cwd: priv.worktree, base });
+    if (!sent) this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeCheck: null });
+    return sent;
+  }
+
+  /** A dry-run merge's answer: the forecast records it, and a conflict sends the task back to its
+   *  builder now. One prompted by another task's merge doesn't count as a merge-fix try; the check
+   *  before its own auto-merge does, as the failed merge it stands in for would. */
+  private async mergeChecked(task: Task, msg: Extract<RunnerMessage, { type: "task.merge_check" }>) {
+    const priv = this.store.private(task.id);
+    const asked = priv.mergeCheck ?? { head: null, since: null, at: now() };
+    const head = task.pr?.head ?? task.pr?.branch ?? null;
+    const base = task.pr?.base ?? priv.base ?? "main";
+    // Before its own merge, the answer lets it go ahead whatever it says (a conflict goes back first).
+    this.store.savePrivate(task.id, { ...priv, mergeCheck: null, mergeChecked: asked.since ? priv.mergeChecked : asked.head });
+    if (!msg.ok) {
+      this.event(task, "factory", `couldn't check whether it still merges into ${base}: ${msg.message ?? "no reason given"}`);
+      this.save(task, false);
+      if (!asked.since) await this.autoMerge(task);
+      return;
+    }
+    // Pushed again since it was asked: the answer is about a head that's gone.
+    if (asked.head !== head || task.state !== "reviewing") return;
+    task.mergeForecast = { ...(task.mergeForecast ?? emptyForecast()), conflicts: msg.conflicts, since: msg.clean ? null : asked.since, checkedAt: now(), base };
+    if (msg.clean) {
+      this.save(task, false);
+      if (!asked.since) await this.autoMerge(task);
+      return;
+    }
+    const files = msg.conflicts.length === 1 ? msg.conflicts[0] : `${msg.conflicts.length} files (${msg.conflicts.slice(0, 3).join(", ")}${msg.conflicts.length > 3 ? ", …" : ""})`;
+    const why = asked.since ? `${asked.since} merged into ${base} and now it conflicts in ${files}` : `a dry-run merge into ${base} conflicts in ${files}`;
+    const autoFix = this.store.policy().autoFixMerges !== false;
+    const tries = priv.mergeFixes ?? 0;
+    if (!autoFix || this.store.private(task.id).merging || task.hand || (!asked.since && tries >= MERGE_FIX_TRIES)) {
+      // A person decides (or its merge, already under way, says): the forecast shows the conflict meanwhile.
+      this.event(task, "factory", `${why}`);
+      this.save(task);
+      if (!asked.since) await this.autoMerge(task);
+      return;
+    }
+    let text = `${why}; sent it back to fix the merge`;
+    if (!asked.since) {
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeFixes: tries + 1 });
+      text = `won't merge: ${text} (try ${tries + 1} of ${MERGE_FIX_TRIES})`;
+    }
+    this.event(task, "factory", text);
+    this.hooks.broadcast({ type: "toast", text: `${task.id} ${asked.since ? `conflicts with ${asked.since}` : "won't merge"}; a builder is fixing it.`, taskId: task.id });
+    await this.sendBackToFixMerge(task, "factory", why);
   }
 
   /** A reviewing task goes back to its builder: review and approvals start over on what it pushes. */
@@ -2030,6 +2640,8 @@ export class Engine {
 
   /** Sessions already sent a kill by `reap`, so a slow one isn't killed on every report. */
   private reaped = new Set<string>();
+  /** Merged branches being deleted on GitHub, by task, so cleanup waits for (and doesn't repeat) one. */
+  private branchDeletes = new Map<string, Promise<void>>();
 
   /** Types into the task's live session, as if at its keyboard. False when nothing's running. */
   private async type(task: Task, text: string): Promise<boolean> {
@@ -2057,7 +2669,7 @@ export class Engine {
   }
 
   private reposUpdated() {
-    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts() });
+    this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts(), repoOwners: this.store.repoOwners() });
   }
 
   private event(task: Task, who: string, text: string) {
@@ -2084,36 +2696,38 @@ export class Engine {
     if (task.mergeAt != null) {
       const priv = this.store.private(task.id);
       const head = task.pr?.head ?? task.pr?.branch;
-      if (!this.mergeReady(task) || !this.assessment(task).autoMerge || priv.mergeHead !== head || priv.mergeHeld === head) task.mergeAt = null;
+      if (!this.mergeReady(task) || !this.assessment(task).autoMerge || priv.mergeHead !== head || priv.mergeHeld === head) {
+        task.mergeAt = null;
+        // Said "Merging…" when its countdown ran out, but it isn't merging after all.
+        if (task.liveLog === MERGING && !priv.merging) task.liveLog = null;
+      }
     }
+    // "Merging…" with no merge in flight and no countdown behind it would lock the card for good.
+    if (task.liveLog === MERGING && task.mergeAt == null && task.state === "reviewing" && !this.store.private(task.id).merging) task.liveLog = null;
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
 }
 
-const SCRIPT_FIELDS = ["create", "setup", "teardown", "archive", "timeoutSecs"] as const;
-/** The longest command kept for one worktree script. */
-const MAX_SCRIPT = 4096;
-
+const SCRIPT_FIELDS = ["create", "preflight", "preflightWatch", "setup", "checks", "teardown", "archive", "timeoutSecs"] as const;
 /** A repo's worktree scripts as stored: commands trimmed, blank ones dropped, none when nothing's left. */
 function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
-  const out: WorktreeScripts = {};
-  for (const f of ["create", "setup", "teardown", "archive"] as const) {
-    const command = typeof s[f] === "string" ? s[f]!.trim() : "";
-    if (!command) continue;
-    if (new TextEncoder().encode(command).length > MAX_SCRIPT) fail(`The ${f} script is over 4 KB; put it in a file in the repo and run that.`);
-    out[f] = command;
-  }
-  if (s.timeoutSecs != null) {
-    if (!Number.isSafeInteger(s.timeoutSecs) || s.timeoutSecs < 1 || s.timeoutSecs > 3600) fail("A worktree script's timeout is 1–3600 seconds.");
-    out.timeoutSecs = s.timeoutSecs;
-  }
-  return out.create || out.setup || out.teardown || out.archive ? out : null;
+  const problem = scriptsProblem(s);
+  if (problem) fail(problem);
+  return tidyScripts(s);
 }
 
 /** An effort's name as stored: trimmed and spaces collapsed; blank is none. */
 function effortName(name: string | null | undefined): string | null {
   return name?.trim().replace(/\s+/g, " ") || null;
+}
+
+/** Whether a model name is one the agent takes: Claude's aliases and claude-* ids, or OpenAI's gpt-*, o-series and codex ones. */
+function modelFits(agent: string, model: string): boolean {
+  const m = model.toLowerCase();
+  if (agent === "claude") return /^(opus|sonnet|haiku|default|opusplan)\b|^claude-/.test(m);
+  if (agent === "codex") return /^(gpt-|o\d|codex)/.test(m);
+  return true;
 }
 
 function sourceTitle(r: { source: string; channel?: string | null }) {
@@ -2149,4 +2763,14 @@ function pullBody(task: Task): string {
     .filter(Boolean)
     .join("\n\n")
     .slice(0, 60_000);
+}
+
+/** A runner's `task.merged` branch note (deleted, gone, moved or `failed: <why>`) as a timeline line,
+ *  worded like the GitHub App's, and what it settles. */
+export function branchNote(branch: string, note: string): { text: string; outcome: "deleted" | "kept" | "failed" } {
+  if (note === "deleted") return { text: `deleted branch ${branch} on origin`, outcome: "deleted" };
+  if (note === "gone") return { text: `branch ${branch} was already gone on origin`, outcome: "deleted" };
+  if (note === "moved") return { text: `kept branch ${branch} on origin (it moved after the merge)`, outcome: "kept" };
+  const why = note.replace(/^failed:\s*/, "") || "no reason given";
+  return { text: `couldn't delete branch ${branch} on origin: ${why}`.slice(0, 2000), outcome: "failed" };
 }

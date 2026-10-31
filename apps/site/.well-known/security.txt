@@ -1,0 +1,5 @@
+Contact: mailto:andrea.fomera@gmail.com
+Expires: 2027-10-29T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://maplefactory.dev/.well-known/security.txt
+Policy: https://maplefactory.dev/security

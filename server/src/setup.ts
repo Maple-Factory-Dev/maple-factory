@@ -19,7 +19,7 @@
 
 import type { Env } from "./env.ts";
 import { authConfigured, cookie, readCookie } from "./auth.ts";
-import { apiBase } from "./github.ts";
+import { apiBase, appSettingsUrl } from "./github.ts";
 import { escape, githubButton, page, updateNotice } from "./page.ts";
 import { serverUpdate } from "./version.ts";
 import { saveSettings } from "./settings.ts";
@@ -35,7 +35,11 @@ function manifest(origin: string, org: string, personal: boolean) {
     name: `Maple Factory ${org}`.slice(0, 34),
     url: origin,
     description: `Maple Factory for ${org}: sign-in, task branches and pull requests.`,
-    public: false,
+    // Public, because GitHub only lets a private app be installed on the account that owns it, and a
+    // factory's repos can live in other orgs too. Anyone can then install it, but their installations
+    // add nothing: the factory only reads repos from GITHUB_ORG's and from accounts an admin approved
+    // in Settings › Repositories (refreshRepos), and sign-in still checks GITHUB_ORG's members.
+    public: true,
     hook_attributes: { url: `${origin}/integrations/github`, active: true },
     redirect_url: `${origin}/setup/github`,
     callback_urls: [`${origin}/auth/callback`],
@@ -254,13 +258,12 @@ function done(env: Env, org: string | undefined): Response {
       card: true, eyebrow: "Set up", heading: "Not set up yet", lede: "This factory doesn't have its GitHub App yet.",
     });
   }
-  const settings = env.GITHUB_OWNER_TYPE === "User"
-    ? `https://github.com/settings/apps/${encodeURIComponent(slug)}`
-    : `https://github.com/organizations/${encodeURIComponent(org)}/settings/apps/${encodeURIComponent(slug)}`;
+  const settings = appSettingsUrl(env, slug);
   return page("Maple Factory is ready", `${rail(3)}<section class="card">
     <ol class="checklist">
       <li><span class="n">1</span><span class="grow"><b class="title">Install it on your repositories</b>
-        <span class="sub">On the repositories you work in, if you haven't already.</span>
+        <span class="sub">On the repositories you work in, if you haven't already. Repos in other GitHub orgs work too, once an
+        admin approves the org in the Mac app's Settings › Repositories.</span>
         <a class="button" href="https://github.com/apps/${escape(encodeURIComponent(slug))}/installations/new">Install</a></span></li>
       <li><span class="n">2</span><span class="grow"><b class="title">Enable Device Flow</b>
         <span class="sub">For the Mac app's sign-in: in the app's settings, tick <b>Enable Device Flow</b> and save. (GitHub can't do this one from a manifest.)</span>

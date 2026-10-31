@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import Security
 
 /// The app's connection to a real factory: who you are, the live machines, recent session ends, and
 /// the goals and tasks. Views that were designed against mock data read the adapted copies
@@ -32,12 +31,19 @@ import Security
     }
     private(set) var me: Wire.Member?
     private(set) var machines: [Wire.Machine] = []
+    /// Agent sign-ins on your machines (`codex login --device-auth`), by `machine:agent`, while they run
+    /// and until their card has shown how they ended.
+    private(set) var agentLogins: [String: Wire.AgentLoginStatus] = [:]
     private(set) var ends: [EndRecord] = []
     private(set) var members: [Wire.Member] = []
     private(set) var goals: [Wire.Goal] = []
     private(set) var tasks: [Wire.Task] = []
     /// The tasks and goals as the views' models, rebuilt when they change.
-    private(set) var factoryTasks: [FactoryTask] = []
+    private(set) var factoryTasks: [FactoryTask] = [] {
+        didSet { tasksRevision &+= 1 }
+    }
+    /// Counts changes to `factoryTasks`: what's worked out from the tasks is cached against it.
+    private(set) var tasksRevision = 0
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -49,17 +55,27 @@ import Security
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
+    /// Each goal's latest Scout run since this app connected, by goal id.
+    private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
+    /// Each repo's latest Set up with AI run, by lowercased repo name.
+    private(set) var setupRuns: [String: Wire.RepoSetupRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
     private var unsaved: [UUID: Task<Void, Never>] = [:]
     private(set) var policy: Wire.RiskPolicy?
     /// The org's additions to every session's prompt, by role; nil from an older server.
     private(set) var prompts: Wire.PromptAdditions?
+    /// The factory's MCP connectors, secret values blank (only which keys are set). None: an older server.
+    private(set) var connectors: [Wire.McpConnector]?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
     /// Every repo's secrets: names and who changed them when, never a value.
     private(set) var secrets: [Wire.RepoSecret] = []
     /// The repos with worktree scripts (Settings › Repositories); empty from an older server.
     private(set) var repoScripts: [Wire.RepoWorktreeScripts] = []
+    /// Other GitHub accounts an admin approved, whose installations of the app add repos; empty from an older server.
+    private(set) var repoOwners: [String] = []
+    /// The factory's GitHub App and its links; nil with no app, or from an older server.
+    private(set) var githubApp: Wire.GitHubAppInfo?
     /// The newest released runner, when the factory has a release to offer.
     private(set) var runnerLatest: String?
     /// Runner releases with their notes, newest first (What's new); empty from an older server.
@@ -70,9 +86,16 @@ import Security
     /// The factory's icon link (`/icon/<id>`), nil when it has none (or the server is older).
     private(set) var iconLink: String?
     /// The factory's icon, from this Mac's cache; nil shows the letter tile (and the Maple Dock icon).
-    private(set) var icon: NSImage?
+    /// The Dock follows it on every change: launch, sign-in, a switch, icon.updated and sign-out.
+    private(set) var icon: NSImage? {
+        didSet { if icon !== oldValue { DockIcon.apply(icon) } }
+    }
+    /// The name an admin gave the factory (Settings › Appearance), nil when unset (or the server is older).
+    private(set) var displayName: String?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
+    /// CI check logs asked for (`task.checkLog`), by CheckLogRequest.id. Logs are never broadcast or kept by the server.
+    private(set) var checkLogs: [String: CheckLogLoad] = [:]
     var isAdmin: Bool { me?.role == "admin" }
     /// Admins see Statistics; signed out, the mockup shows it.
     var canSeeStats: Bool { !isSignedIn || isAdmin }
@@ -131,9 +154,9 @@ import Security
     private(set) var hasSnapshot = false
     /// The last thing the server refused, shown as a toast-like line.
     var notice: String?
-    /// A goal sheet is waiting on goal.save: it shows refusals itself, so they don't toast behind it.
+    /// The goal editor is waiting on goal.save: it shows refusals itself, so they don't toast behind it.
     var savingGoal = false
-    /// Bumped on every goal.updated, so a saving goal sheet hears an update even when nothing changed.
+    /// Bumped on every goal.updated, so a saving goal editor hears an update even when nothing changed.
     private(set) var goalUpdates = 0
 
     private var token: String?
@@ -145,10 +168,15 @@ import Security
 
     var isSignedIn: Bool { server != nil && token != nil }
 
-    /// The org's name, or the mockup's workspace when not signed in.
+    /// The factory's name an admin set, else the org's, or the mockup's workspace when not signed in.
     var workspaceName: String {
         guard isSignedIn else { return "Studio Workspace" }
-        return org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
+        return displayName ?? orgName
+    }
+
+    /// The GitHub org's name (or the server's host), what the factory is called when it has no name of its own.
+    var orgName: String {
+        org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
     }
 
     init() {
@@ -156,7 +184,7 @@ import Security
         savedFactories = SavedFactories.migrate(SavedFactories.load(), currentURL: defaults.string(forKey: "factoryURL"),
                                                 currentOrg: defaults.string(forKey: "factoryOrg"))
         if let saved = defaults.string(forKey: "factoryURL"), let url = URL(string: saved),
-           let token = Keychain.read(account: saved) {
+           let token = Keychain.app.read(account: saved) {
             server = url
             self.token = token
             org = defaults.string(forKey: "factoryOrg") ?? ""
@@ -196,7 +224,7 @@ import Security
         org = result.org
         AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
         AppDefaults.set(result.org, forKey: "factoryOrg")
-        Keychain.write(result.token, account: result.server.absoluteString)
+        Keychain.app.write(result.token, account: result.server.absoluteString)
         remember()
         connect()
     }
@@ -206,7 +234,7 @@ import Security
     @discardableResult
     func switchTo(_ factory: SavedFactory) -> Bool {
         guard SavedFactory.key(factory.server) != serverKey || !isSignedIn else { return true }
-        guard let token = Keychain.read(account: factory.server.absoluteString) else { return false }
+        guard let token = Keychain.app.read(account: factory.server.absoluteString) else { return false }
         disconnect()
         resetFactoryState()
         server = factory.server
@@ -223,7 +251,7 @@ import Security
     /// Signs out of this factory only; the most recent other one opens in its place, when there is one.
     func signOut() {
         if let server {
-            Keychain.delete(account: server.absoluteString)
+            Keychain.app.delete(account: server.absoluteString)
             savedFactories = SavedFactories.remove(server, from: savedFactories)
             try? FileManager.default.removeItem(at: FactoryIcons.folder(for: server))
         }
@@ -260,18 +288,24 @@ import Security
         notes = []
         drafts = [:]
         follows = [:]
+        scoutRuns = [:]
+        setupRuns = [:]
         policy = nil
         prompts = nil
+        connectors = nil
         acceptances = []
         repos = []
         secrets = []
         repoScripts = []
+        repoOwners = []
+        githubApp = nil
         runnerLatest = nil
         runnerReleases = []
         serverVersion = nil
         serverUpdate = nil
         iconLink = nil
         icon = nil
+        displayName = nil
         toast = nil
         notice = nil
         viewing = nil
@@ -305,13 +339,16 @@ import Security
         socket = nil
     }
 
+    /// One for every message from the feed, not one each.
+    private let decoder = JSONDecoder()
+
     private func receive(_ socket: URLSessionWebSocketTask, gen: Int) async {
         while gen == generation {
             do {
                 let message = try await socket.receive()
                 lastHeard = Date()
                 guard case .string(let text) = message, let data = text.data(using: .utf8) else { continue }
-                apply(try JSONDecoder().decode(Wire.ServerToClient.self, from: data))
+                apply(try decoder.decode(Wire.ServerToClient.self, from: data))
             } catch {
                 guard gen == generation else { return }
                 if error is DecodingError {
@@ -379,6 +416,7 @@ import Security
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             prompts = snapshot.prompts
+            connectors = snapshot.connectors
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
@@ -386,10 +424,15 @@ import Security
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
+            setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
+            scoutRuns = Dictionary((snapshot.scoutRuns ?? []).map { ($0.goal, $0) }, uniquingKeysWith: { _, last in last })
+            repoOwners = snapshot.repoOwners ?? []
+            githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
+            displayName = snapshot.name
             rebuild()
             hasSnapshot = true
             remember()
@@ -401,6 +444,15 @@ import Security
             } else {
                 machines.append(update.machine)
             }
+            // Once health says it's signed in, a sign-in still showing a code or an error is over.
+            for agent in update.machine.health?.agents ?? [] where agent.loggedIn {
+                let key = Self.loginKey(update.machine.id, agent.name)
+                if let login = agentLogins[key], login.state != .done { agentLogins[key] = nil }
+            }
+        case .machineAgentLogin(let update):
+            let key = Self.loginKey(update.machine, update.status.agent)
+            // A cancel without a reason is one asked for here: its panel already closed.
+            agentLogins[key] = update.status.state == .cancelled && update.status.message == nil ? nil : update.status
         case .machineRemoved(let removed):
             machines.removeAll { $0.id == removed.id }
         case .sessionEnded(let ended):
@@ -444,6 +496,10 @@ import Security
             if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.insert(note, at: 0) }
         case .draftUpdated(let update):
             drafts[update.draft.id] = update.draft
+        case .scoutUpdated(let update):
+            scoutRuns[update.run.goal] = update.run
+        case .repoSetupUpdated(let update):
+            setupRuns[update.run.repo.lowercased()] = update.run
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
@@ -455,6 +511,7 @@ import Security
         case .reposUpdated(let update):
             repos = update.repos
             if let scripts = update.scripts { repoScripts = scripts }
+            if let owners = update.repoOwners { repoOwners = owners }
         case .secretsUpdated(let update):
             secrets = update.secrets
         case .runnerReleased(let update):
@@ -463,18 +520,41 @@ import Security
             runnerReleases = update.runnerReleases
         case .promptsUpdated(let update):
             prompts = update.prompts
+        case .membersUpdated(let update):
+            // An admin grant changed: every badge follows, and so do this Mac's admin-only controls when it's about me.
+            members = update.members
+            if let mine = members.first(where: { $0.login == me?.login }) { me = mine }
+            rebuild()
         case .iconUpdated(let update):
             showIcon(update.icon)
+        case .nameUpdated(let update):
+            // Every app shows the new name at once, and the factory switcher keeps it.
+            displayName = update.name
+            remember()
+        case .connectorsUpdated(let update):
+            connectors = update.connectors
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
             rebuild()
         case .stats(let reply):
             stats = reply.summary
+        case .checkLog(let reply):
+            let key = CheckLogRequest(taskID: reply.id, check: reply.check).id
+            // Only into a sheet still waiting for it: a log forgotten since (the check re-run) stays forgotten.
+            if checkLogs[key] == .loading {
+                checkLogs[key] = .loaded(CheckLog(text: reply.text, truncated: reply.truncated, failedStep: reply.failedStep, url: reply.url.flatMap(URL.init(string:))))
+            }
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
-            notice = error.message
+            // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
+            if let id = error.requestId, id.hasPrefix("checkLog:") {
+                let key = String(id.dropFirst("checkLog:".count))
+                if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
+            } else {
+                notice = error.message
+            }
         case .unknown:
             break
         }
@@ -517,10 +597,28 @@ import Security
         }.map { .mention(author: LiveAdapter.person($0.author, members: members).firstName, text: $0.text) }
     }
 
-    private func adapt(_ task: Wire.Task) -> FactoryTask {
+    private func adapt(_ task: Wire.Task, viewers: [String: [Person]]? = nil) -> FactoryTask {
         var adapted = LiveAdapter.task(task, goals: goals, members: members, me: me?.login)
-        adapted.viewers = online.filter { $0.viewing == task.id && $0.login != me?.login }.map { LiveAdapter.person($0.login, members: members) }
+        adapted.viewers = (viewers ?? Self.viewers(online, me: me?.login, members: members))[task.id] ?? []
         return adapted
+    }
+
+    /// Who's looking at each task, by its id, besides you.
+    static func viewers(_ online: [Wire.Presence], me: String?, members: [Wire.Member]) -> [String: [Person]] {
+        var viewers: [String: [Person]] = [:]
+        for presence in online where presence.login != me {
+            guard let id = presence.viewing else { continue }
+            viewers[id, default: []].append(LiveAdapter.person(presence.login, members: members))
+        }
+        return viewers
+    }
+
+    /// The tasks whose viewers aren't `viewers`', by index, with the viewers they now have.
+    static func viewerChanges(_ tasks: [FactoryTask], viewers: [String: [Person]]) -> [(index: Int, viewers: [Person])] {
+        tasks.indices.compactMap { index in
+            let now = viewers[tasks[index].id] ?? []
+            return now.map(\.id) == tasks[index].viewers.map(\.id) ? nil : (index, now)
+        }
     }
 
     /// Whether a goal is in your sidebar: what you chose, else whether you lead it, are on its team,
@@ -540,6 +638,12 @@ import Security
         send(.goalFollow(.init(id: goal.id, following: following)))
     }
 
+    /// Run Scout on a goal: its leftovers come back as drafted plans, and `scoutRuns` says how it went.
+    func scout(goal name: String) {
+        guard let goal = goal(named: name) else { return }
+        send(.goalScout(.init(goal: goal.id)))
+    }
+
     /// Every GitHub team someone in the org is on, for a goal's team.
     var teams: [String] { Array(Set(members.flatMap(\.teams) + (me?.teams ?? []))).sorted() }
 
@@ -553,7 +657,8 @@ import Security
     private func rebuild() {
         rebuildGoals()
         FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) }
-        factoryTasks = tasks.map(adapt)
+        let viewers = Self.viewers(online, me: me?.login, members: members)
+        factoryTasks = tasks.map { adapt($0, viewers: viewers) }
         applyPresence()
         intake = intakeRequests.map { LiveAdapter.request($0, goals: goals, members: members) }
         riskPolicy = policy.map(LiveAdapter.policy)
@@ -573,6 +678,21 @@ import Security
     /// Admins only; the server trims them and says so with prompts.updated.
     func save(prompts: Wire.PromptAdditions) {
         send(.promptsSave(.init(prompts: prompts)))
+    }
+
+    /// Admins only: makes someone who has signed in an admin here; members.updated says it took.
+    func grantAdmin(_ login: String) {
+        send(.adminsGrant(.init(login: login)))
+    }
+
+    /// Admins only: takes back a grant (not a GitHub owner's, nor my own).
+    func revokeAdmin(_ login: String) {
+        send(.adminsRevoke(.init(login: login)))
+    }
+
+    /// Admins only: signs someone out everywhere now (not a GitHub owner, nor me); members.updated says it took.
+    func revokeAccess(_ login: String) {
+        send(.membersRevoke(.init(login: login)))
     }
 
     // MARK: Icon
@@ -640,14 +760,58 @@ import Security
         let _: Empty = try await api("/api/icon", method: "DELETE")
     }
 
-    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared); repos.updated says how they were saved.
-    func save(scripts: Wire.WorktreeScripts, for repo: String) {
-        send(.reposScriptsSet(.init(repo: repo, scripts: scripts)))
+    /// The factory's limit for its name.
+    nonisolated static let maxName = 60
+
+    /// Admins only: names the factory (blank clears it); name.updated brings it back.
+    func setName(_ name: String) async throws {
+        guard let server, let token else { throw ClientError.message("Not signed in.") }
+        var request = URLRequest(url: server.appending(path: "/api/name"))
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["name": name])
+        let _: Empty = try await Self.load(request)
+    }
+
+    /// Admins only: back to the GitHub org's name.
+    func clearName() async throws {
+        let _: Empty = try await api("/api/name", method: "DELETE")
+    }
+
+    /// Admins only: replaces `repo`'s worktree scripts (blank ones are cleared) and its prompt additions; repos.updated says how they were saved.
+    func save(scripts: Wire.WorktreeScripts, prompts: Wire.PromptAdditions? = nil, for repo: String) {
+        send(.reposScriptsSet(.init(repo: repo, scripts: scripts, prompts: prompts)))
+    }
+
+    /// Admins only: Set up with AI on `repo`. An agent on one of your machines reads it and suggests
+    /// scripts and prompts; `setupRun(for:)` says how it's going, and nothing is saved until you do.
+    func startSetup(for repo: String) {
+        send(.repoSetupStart(.init(repo: repo)))
+    }
+
+    func cancelSetup(for repo: String) {
+        send(.repoSetupCancel(.init(repo: repo)))
+    }
+
+    /// `repo`'s latest Set up with AI run, if there's been one.
+    func setupRun(for repo: String) -> Wire.RepoSetupRun? {
+        setupRuns[repo.lowercased()]
+    }
+
+    /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.
+    func setRepoOwners(_ owners: [String]) {
+        send(.reposOwnersSet(.init(owners: owners)))
     }
 
     /// `repo`'s worktree scripts, if it has any.
     func scripts(for repo: String) -> Wire.RepoWorktreeScripts? {
         repoScripts.first { $0.repo.lowercased() == repo.lowercased() }
+    }
+
+    /// Admins only: the whole list. A secret left blank keeps the stored value; connectors.updated echoes it.
+    func save(connectors: [Wire.McpConnector]) {
+        send(.connectorsSave(.init(connectors: connectors)))
     }
 
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {
@@ -688,10 +852,12 @@ import Security
     private func applyPresence() {
         let people = online.map { (person: LiveAdapter.person($0.login, members: members), viewing: $0.viewing) }
         FactoryData.livePresence = server == nil ? nil : people
-        for index in factoryTasks.indices {
-            let id = factoryTasks[index].id
-            factoryTasks[index].viewers = people.filter { $0.viewing == id && $0.person.github != me?.login }.map(\.person)
-        }
+        // Only the tasks someone came to or left change, in one write: a ping that moves no one redraws nothing.
+        let changes = Self.viewerChanges(factoryTasks, viewers: Self.viewers(online, me: me?.login, members: members))
+        guard !changes.isEmpty else { return }
+        var tasks = factoryTasks
+        for change in changes { tasks[change.index].viewers = change.viewers }
+        factoryTasks = tasks
     }
 
     /// The goal a view knows by name.
@@ -710,6 +876,11 @@ import Security
 
     func killSession(machine: String, id: String) {
         send(.sessionKill(.init(machine: machine, id: id)))
+    }
+
+    /// Who else may open a session's terminal: the whole list, each to watch or to type.
+    func shareSession(machine: String, id: String, shares: [Wire.ShareGrant]) {
+        send(.sessionShare(.init(machine: machine, id: id, shares: shares)))
     }
 
     /// The commands to run on a new machine, with a fresh one-time code.
@@ -741,9 +912,35 @@ import Security
         return request
     }
 
+    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
+    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
+    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    nonisolated static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
+        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
+        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
+              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        request.url = components.url
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 403,
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
+        return text
+    }
+
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
         send(.statsGet(.init(days: UInt32(days), goal: goal)))
+    }
+
+    /// Reads a CI check's log from GitHub again; the answer (or a refusal) lands in `checkLogs`.
+    func loadCheckLog(_ request: CheckLogRequest) {
+        checkLogs[request.id] = .loading
+        send(.taskCheckLog(.init(id: request.taskID, check: request.check)))
+    }
+
+    /// Drops a check's log once it's run again: the one held is the old run's.
+    func forgetCheckLog(_ request: CheckLogRequest) {
+        checkLogs[request.id] = nil
     }
 
     /// Each task's diff as last fetched, and the change it was fetched for.
@@ -769,7 +966,20 @@ import Security
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        diffs[id] = (key, DiffFile.parse(String(decoding: data, as: UTF8.self)))
+        // A big patch takes a moment to parse; keep it off the main thread.
+        let files = await Task.detached { DiffFile.parse(String(decoding: data, as: UTF8.self)) }.value
+        diffs[id] = (key, files)
+    }
+
+    /// Each task's GitHub review threads as last fetched, and the change they were fetched for.
+    private(set) var threads: [String: (key: String, threads: [Wire.ReviewThread])] = [:]
+
+    /// Fetches the review threads on a task's pull request unless the ones held are for the same
+    /// change (`key`, as for the diff); `force` reads them again regardless.
+    func loadThreads(task id: String, key: String, force: Bool = false) async {
+        guard force || threads[id]?.key != key else { return }
+        guard let found: [Wire.ReviewThread] = try? await api("/api/tasks/\(id)/threads") else { return }
+        threads[id] = (key, found)
     }
 
     /// A file pasted or dropped into a brief or note, as the factory keeps it (`POST /api/attachments`).
@@ -798,8 +1008,14 @@ import Security
         return try await Self.load(request)
     }
 
-    /// Attachments fetched this run, by path; they never change once stored.
-    private static let attachmentCache = NSCache<NSString, NSData>()
+    /// Attachments fetched this run, by path; they never change once stored. Screenshots and recordings
+    /// add up, so it keeps at most 64 MB of them, each costing its size.
+    private static let attachmentCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = attachmentCacheLimit
+        return cache
+    }()
+    nonisolated static let attachmentCacheLimit = 64 * 1024 * 1024
 
     /// An attachment's bytes (`/attachments/…`), with this app's token: AsyncImage can't send one.
     func attachment(_ path: String) async throws -> Data {
@@ -813,7 +1029,7 @@ import Security
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw ClientError.message(status == 404 ? "It isn't there anymore." : "The server answered \(status).") }
-        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString)
+        Self.attachmentCache.setObject(data as NSData, forKey: path as NSString, cost: data.count)
         return data
     }
 
@@ -860,79 +1076,26 @@ import Security
 
     private func api<T: Decodable>(_ path: String, method: String = "GET") async throws -> T {
         guard let server, let token else { throw ClientError.message("Not signed in.") }
-        var request = URLRequest(url: server.appending(path: path))
-        request.httpMethod = method
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return try await Self.load(request)
+        return try await FactoryAPI(server: server, token: token).load(path, method: method)
     }
 
     // MARK: Before signing in
 
-    struct Health: Decodable {
-        let ok: Bool
-        let protocolVersion: Int
-        let org: String?
-        /// "github", "dev" (a local server signs you in as its DEV_LOGIN) or "unconfigured".
-        let signIn: String
-        let devLogin: String?
+    // The factory API lives in MapleKit (shared with iOS); these keep the app's call sites as they were.
+    typealias Health = FactoryAPI.Health
+    typealias SignInResult = FactoryAPI.SignInResult
+    typealias DeviceCode = FactoryAPI.DeviceCode
+    typealias Enrollment = FactoryAPI.Enrollment
+    typealias ClientError = FactoryAPI.ClientError
 
-        enum CodingKeys: String, CodingKey { case ok, org, signIn, devLogin, protocolVersion = "protocol" }
-    }
+    nonisolated static func serverURL(from typed: String) -> URL? { FactoryAPI.serverURL(from: typed) }
+    nonisolated static func websocketURL(_ server: URL, path: String) -> URL { FactoryAPI.websocketURL(server, path: path) }
+    nonisolated static func probe(_ server: URL) async throws -> (Health, Duration) { try await FactoryAPI.probe(server) }
+    nonisolated static func startDeviceFlow(_ server: URL) async throws -> DeviceCode { try await FactoryAPI.startDeviceFlow(server) }
 
-    struct SignInResult: Decodable {
-        var server: URL = URL(string: "about:blank")!
-        let token: String
-        let member: Wire.Member
-        let org: String
-
-        enum CodingKeys: String, CodingKey { case token, member, org }
-    }
-
-    struct DeviceCode: Decodable {
-        let deviceCode: String
-        let userCode: String
-        let verificationUri: URL
-        let interval: Int
-        let expiresIn: Int
-    }
-
-    struct Enrollment: Decodable {
-        let code: String
-        let expiresAt: Double
-        let commands: [String]
-    }
-
-    enum ClientError: LocalizedError {
-        case message(String)
-        var errorDescription: String? { if case .message(let text) = self { text } else { nil } }
-    }
-
-    /// "localhost:8787" → http://localhost:8787; anything else is https unless it says otherwise.
-    nonisolated static func serverURL(from typed: String) -> URL? {
-        var text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        while text.hasSuffix("/") { text.removeLast() }
-        guard !text.isEmpty else { return nil }
-        if !text.contains("://") {
-            let local = text.hasPrefix("localhost") || text.hasPrefix("127.0.0.1") || text.hasSuffix(".local") || text.contains(".local:")
-            text = (local ? "http://" : "https://") + text
-        }
-        guard let url = URL(string: text), url.host() != nil else { return nil }
-        return url
-    }
-
-    nonisolated static func websocketURL(_ server: URL, path: String) -> URL {
-        var components = URLComponents(url: server.appending(path: path), resolvingAgainstBaseURL: false)!
-        components.scheme = server.scheme == "https" ? "wss" : "ws"
-        return components.url!
-    }
-
-    nonisolated static func probe(_ server: URL) async throws -> (Health, Duration) {
-        let clock = ContinuousClock()
-        let start = clock.now
-        var request = URLRequest(url: server.appending(path: "/healthz"))
-        request.timeoutInterval = 8
-        let health: Health = try await load(request)
-        return (health, clock.now - start)
+    /// Nil while GitHub is still waiting on the person. The sign-in is labelled with this Mac's name.
+    nonisolated static func pollDeviceFlow(_ server: URL, code: String) async throws -> SignInResult? {
+        try await FactoryAPI.pollDeviceFlow(server, code: code, deviceLabel: Host.current().localizedName ?? "Mac")
     }
 
     /// `-devAs <login>` signs in as that member instead (made a plain member if they're new), for screenshots of what a non-admin sees.
@@ -946,73 +1109,11 @@ import Security
         return result
     }
 
-    nonisolated static func startDeviceFlow(_ server: URL) async throws -> DeviceCode {
-        var request = URLRequest(url: server.appending(path: "/auth/device/start"))
-        request.httpMethod = "POST"
-        return try await load(request)
-    }
+    nonisolated private static func load<T: Decodable>(_ request: URLRequest) async throws -> T { try await FactoryAPI.load(request) }
 
-    /// Nil while GitHub is still waiting on the person.
-    nonisolated static func pollDeviceFlow(_ server: URL, code: String) async throws -> SignInResult? {
-        var request = URLRequest(url: server.appending(path: "/auth/device/poll"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["deviceCode": code, "label": Host.current().localizedName ?? "Mac"])
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 202 { return nil }
-        guard status == 200 else { throw ClientError.message(String(data: data, encoding: .utf8) ?? "Sign-in failed (\(status)).") }
-        var result = try JSONDecoder().decode(SignInResult.self, from: data)
-        result.server = server
-        return result
-    }
+    nonisolated static let tooNewMessage = FactoryAPI.tooNewMessage
 
-    nonisolated private static func load<T: Decodable>(_ request: URLRequest) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 204 { return try JSONDecoder().decode(T.self, from: Data("{}".utf8)) }
-        guard (200..<300).contains(status) else {
-            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw ClientError.message(text.isEmpty || text.hasPrefix("<") ? "The server answered \(status)." : text)
-        }
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw ClientError.message("That doesn't look like a Maple factory.")
-        }
-    }
-
-    nonisolated static let tooNewMessage = "This factory is newer than this app — update Maple Factory."
-
-    nonisolated static func describe(_ error: Error, response: URLResponse? = nil) -> String {
-        if let http = response as? HTTPURLResponse, http.statusCode == 401 { return "Your sign-in expired." }
-        if error is DecodingError { return tooNewMessage }
-        let ns = error as NSError
-        switch ns.code {
-        case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost: return "Can't reach the factory."
-        case NSURLErrorNotConnectedToInternet: return "You're offline."
-        case NSURLErrorTimedOut: return "The factory took too long to answer."
-        case NSURLErrorNetworkConnectionLost: return "The connection dropped."
-        default: return (error as? LocalizedError)?.errorDescription ?? ns.localizedDescription
-        }
-    }
-}
-
-/// A factory signed into on this Mac. Its token is in the Keychain under `server`.
-struct SavedFactory: Codable, Equatable, Identifiable, Sendable {
-    var server: URL
-    var org: String
-    /// The org's name, or the host when it has none.
-    var name: String
-    var lastUsed: Date
-    /// The factory's icon as this Mac last cached it (a file path); nil shows the letter tile.
-    var icon: String? = nil
-
-    var id: String { Self.key(server) }
-    var host: String { id }
-
-    /// One entry per host and port: http and https to the same place are the same factory.
-    static func key(_ url: URL) -> String { "\(url.host() ?? "")\(url.port.map { ":\($0)" } ?? "")" }
+    nonisolated static func describe(_ error: Error, response: URLResponse? = nil) -> String { FactoryAPI.describe(error, response: response) }
 }
 
 /// Where factory icons are cached: Application Support/Maple Factory/Factory Icons/<host:port>/<id>,
@@ -1041,94 +1142,15 @@ enum FactoryIcons {
     }
 }
 
-/// The saved-factory list's rules, kept pure so they can be tested; stored in defaults under `factories`.
-enum SavedFactories {
-    static let defaultsKey = "factories"
-
-    static func load(_ defaults: UserDefaults = AppDefaults) -> [SavedFactory]? {
-        defaults.data(forKey: defaultsKey).flatMap { try? JSONDecoder().decode([SavedFactory].self, from: $0) }
-    }
-
-    static func store(_ list: [SavedFactory], _ defaults: UserDefaults = AppDefaults) {
-        defaults.set(try? JSONEncoder().encode(list), forKey: defaultsKey)
-    }
-
-    /// The list as saved, or, before there was one, the single factory this Mac was signed into.
-    static func migrate(_ saved: [SavedFactory]?, currentURL: String?, currentOrg: String?, now: Date = Date()) -> [SavedFactory] {
-        if let saved { return saved }
-        guard let currentURL, let url = URL(string: currentURL), url.host() != nil else { return [] }
-        let org = currentOrg ?? ""
-        let name = org.isEmpty || org == "local" ? url.host() ?? "Factory" : org
-        return [SavedFactory(server: url, org: org, name: name, lastUsed: now)]
-    }
-
-    /// Adds the factory, or replaces the entry for the same host and port where it stands.
-    static func upsert(_ factory: SavedFactory, into list: [SavedFactory]) -> [SavedFactory] {
-        var list = list
-        if let index = list.firstIndex(where: { $0.id == factory.id }) {
-            list[index] = factory
-        } else {
-            list.append(factory)
-        }
-        return list
-    }
-
-    static func remove(_ server: URL, from list: [SavedFactory]) -> [SavedFactory] {
-        list.filter { $0.id != SavedFactory.key(server) }
-    }
-
-    /// The factory to open after signing out of one: the most recently used of those left.
-    static func fallback(_ list: [SavedFactory]) -> SavedFactory? {
-        list.max { $0.lastUsed < $1.lastUsed }
-    }
+/// The saved-factory list in the app's defaults (a headless run's own suite, or the real ones).
+extension SavedFactories {
+    static func load() -> [SavedFactory]? { load(AppDefaults) }
+    static func store(_ list: [SavedFactory]) { store(list, AppDefaults) }
 }
 
-/// The factory token, in the login keychain under the factory's URL. A plain-http (local dev)
-/// factory's token goes in defaults instead: every rebuild of an unsigned dev app would otherwise
-/// ask for keychain access, and a localhost dev token guards nothing. A headless run keeps every
-/// token in its own wiped defaults, so it never replaces the real app's keychain item for a URL.
-enum Keychain {
-    private static let service = "dev.maplefactory.app"
-    private static let devKey = "devFactoryTokens"
-
-    static func isDev(_ account: String, headless: Bool = Headless.isOn) -> Bool { headless || account.hasPrefix("http://") }
-
-    static func read(account: String) -> String? {
-        if isDev(account) { return (AppDefaults.dictionary(forKey: devKey) as? [String: String])?[account] }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-            kSecAttrAccount as String: account, kSecReturnData as String: true,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func write(_ value: String, account: String) {
-        delete(account: account)
-        if isDev(account) {
-            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
-            tokens[account] = value
-            AppDefaults.set(tokens, forKey: devKey)
-            return
-        }
-        let item: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-            kSecAttrAccount as String: account, kSecValueData as String: Data(value.utf8),
-        ]
-        SecItemAdd(item as CFDictionary, nil)
-    }
-
-    static func delete(account: String) {
-        if isDev(account) {
-            var tokens = AppDefaults.dictionary(forKey: devKey) as? [String: String] ?? [:]
-            tokens[account] = nil
-            AppDefaults.set(tokens, forKey: devKey)
-            return
-        }
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-        SecItemDelete(query as CFDictionary)
-    }
+extension Keychain {
+    /// The app's factory tokens; a headless run keeps all of them in its own defaults.
+    static let app = Keychain(service: "dev.maplefactory.app", defaults: AppDefaults, allInDefaults: Headless.isOn)
 }
 
 extension FactoryClient {
@@ -1166,6 +1188,37 @@ extension FactoryClient {
     /// The release a machine runs, when the changelog has it.
     func release(_ version: String?) -> Wire.RunnerRelease? {
         version.flatMap { v in runnerReleases.first { $0.version == v } }
+    }
+
+    static func loginKey(_ machine: String, _ agent: String) -> String { "\(machine):\(agent)" }
+
+    func agentLogin(machine: String, agent: String) -> Wire.AgentLoginStatus? {
+        agentLogins[Self.loginKey(machine, agent)]
+    }
+
+    /// Signs one of your machine's agents in: its card shows the link and code the machine sends back.
+    func signIn(machine: String, agent: String) {
+        let key = Self.loginKey(machine, agent)
+        agentLogins[key] = .init(agent: agent, state: .starting)
+        send(.machineAgentLogin(.init(machine: machine, agent: agent)))
+        // A machine that never answers (offline, an older runner) mustn't leave it starting forever.
+        Task {
+            try? await Task.sleep(for: .seconds(20))
+            if agentLogins[key]?.state == .starting {
+                agentLogins[key] = .init(agent: agent, state: .failed, message: "The machine didn't answer. Is its runner up to date?")
+            }
+        }
+    }
+
+    func cancelSignIn(machine: String, agent: String) {
+        agentLogins[Self.loginKey(machine, agent)] = nil
+        send(.machineAgentLogin(.init(machine: machine, agent: agent, cancel: true)))
+    }
+
+    /// Closes a finished sign-in's panel.
+    func dismissSignIn(machine: String, agent: String) {
+        let key = Self.loginKey(machine, agent)
+        if let state = agentLogins[key]?.state, state != .starting, state != .waiting { agentLogins[key] = nil }
     }
 
     /// What the runner menu item does: install a newer release the app knows of, or only look for one.

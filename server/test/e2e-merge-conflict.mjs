@@ -3,7 +3,10 @@
 // Request changes with the hand open hands it to a builder, and "Send it back to fix" starts a
 // new builder in the same worktree that merges the base in, after which review runs again and it merges.
 // With it on: a conflicting merge goes straight back to a builder (no hand) and then merges, and one
-// that keeps failing raises the hand after 2 automatic tries.
+// that keeps failing raises the hand after 2 automatic tries (the dry-run merge before an auto-merge
+// catches the conflict first, and counts as a try).
+// Merge forecasts: two tasks in review that both add hello.txt overlap; when the first merges, the
+// second gets a dry-run merge right away and goes back to its builder before anyone tries to merge it.
 //   node server/test/e2e-merge-conflict.mjs http://localhost:8788 <repo folder>
 // Needs a real runner whose agents.toml has the `scripted` agent (test/scripted-agent.mjs), and a
 // local repo whose origin is a bare repo.
@@ -25,11 +28,15 @@ let goals = [];
 let policy = null;
 const errors = [];
 let poke = null;
+const firstConflict = new Map(); // task id → its first merge forecast with conflicts, as broadcast
 const sessions = (m) => { for (const s of m.sessions ?? []) cwds.set(s.session.id, s.session.cwd); };
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.type === "snapshot") { goals = m.goals; policy = m.policy; for (const t of m.tasks) tasks.set(t.id, t); m.machines.forEach(sessions); }
-  if (m.type === "task.updated") tasks.set(m.task.id, m.task);
+  if (m.type === "task.updated") {
+    tasks.set(m.task.id, m.task);
+    if (m.task.mergeForecast?.conflicts.length && !firstConflict.has(m.task.id)) firstConflict.set(m.task.id, { forecast: m.task.mergeForecast, state: m.task.state, changes: m.task.changes });
+  }
   if (m.type === "policy.updated") policy = m.policy;
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "machine.updated") sessions(m.machine);
@@ -164,7 +171,7 @@ const build = async (n, what) => {
   await wait(`${id} builder`, () => tasks.get(id)?.worker?.role === "builder");
   return id;
 };
-const autoFixed = (t) => t.events.filter((e) => /^couldn't merge: .*; sent it back to fix the merge \(try \d of 2\)$/.test(e.text));
+const autoFixed = (t) => t.events.filter((e) => /^(couldn't|won't) merge: .*; sent it back to fix the merge \(try \d of 2\)$/.test(e.text));
 const id2 = await build(2, "Say hello, fixed automatically");
 conflict(`hello from main again (${prefix}-2)\n`);
 step(`${id2} building; pushed a conflicting hello.txt to origin main`);
@@ -204,6 +211,41 @@ if (tasks.get(id3).state !== "reviewing" || autoFixed(tasks.get(id3)).length !==
 step("5s later: still reviewing with the hand up; no third try");
 console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
 send({ type: "task.cancel", id: id3 });
+
+// 8. Merge forecasts. Two tasks both add hello.txt and both wait in review (auto-merge off, so a
+// person merges). Merging the first sends the second back to its builder at once, from a dry-run
+// merge, with a merge change request; its forecast lists hello.txt; its own merge never fails.
+send({ type: "policy.save", policy: { ...policy, autoMerges: false } });
+await wait("autoMerges off", () => policy.autoMerges === false);
+step("auto-merge: off (a person merges)");
+const [a, b] = [await build(4, "Say hello first"), await build(5, "Say hello second")];
+const ready = (id) => { const t = tasks.get(id); return t?.state === "reviewing" && t.autoReview?.rounds.at(-1)?.verdict === "passed" && t.events.some((e) => e.text.startsWith("is ready; waiting for a person")) && t; };
+await wait(`${a} and ${b} ready`, () => ready(a) && ready(b), 300000);
+t = await wait(`${b} overlaps ${a}`, () => { const t = tasks.get(b); return t.mergeForecast?.overlaps.some((o) => o.task === a && o.files.includes("hello.txt")) && t; });
+const ta = tasks.get(a);
+if (!ta.mergeForecast?.overlaps.some((o) => o.task === b)) throw new Error(`${a}'s forecast is ${JSON.stringify(ta.mergeForecast)}`);
+step(`both ready to merge; their forecasts overlap both ways: ${b} ${JSON.stringify(t.mergeForecast.overlaps)}, ${a} ${JSON.stringify(ta.mergeForecast.overlaps)}`);
+send({ type: "task.merge", id: a });
+await wait(`${a} merged`, () => tasks.get(a)?.state === "merged");
+step(`${a} merged into main`);
+t = await wait(`${b} sent back`, () => { const t = tasks.get(b); return t.state === "building" && t.changes.at(-1)?.anchor === "Didn't merge into main" && t; }, 60000);
+const seen = firstConflict.get(b);
+if (!seen || !seen.forecast.conflicts.includes("hello.txt") || seen.forecast.since !== a) throw new Error(`${b}'s first conflicted forecast is ${JSON.stringify(seen)}`);
+const sentBack = t.events.find((e) => e.text.startsWith(`${a} merged into main and now it conflicts in`));
+if (!sentBack) throw new Error(`no merge-check event on ${b}: ${JSON.stringify(t.events.slice(-5))}`);
+if (failedMerges(t) || autoFixed(t).length || t.hand) throw new Error(`${b} had ${failedMerges(t)} failed merges, ${autoFixed(t).length} counted tries, hand ${t.hand?.reason}`);
+step(`${b}'s forecast after the check: conflicts ${JSON.stringify(seen.forecast.conflicts)} since ${seen.forecast.since} (checked against ${seen.forecast.base})`);
+step(`${b} went back to building with no merge attempted: "${sentBack.text}"`);
+step(`with ${t.changes.at(-1).id} [${t.changes.at(-1).anchor}]: ${t.changes.at(-1).text.slice(0, 120)}…`);
+if (t.mergeForecast.overlaps.length) throw new Error(`${b} still overlaps ${JSON.stringify(t.mergeForecast.overlaps)} after ${a} merged`);
+step(`${b} no longer lists ${a} as an overlap (it's merged)`);
+t = await wait(`${b} ready again`, () => ready(b) && tasks.get(b).changes.at(-1).status === "applied" && !tasks.get(b).mergeForecast?.conflicts.length && tasks.get(b), 300000);
+step(`${b}'s builder merged main in, review passed again; its forecast has no conflicts`);
+send({ type: "task.merge", id: b });
+t = await wait(`${b} merged`, () => tasks.get(b)?.state === "merged" && tasks.get(b), 60000);
+if (failedMerges(t)) throw new Error(`${b}'s own merge failed ${failedMerges(t)} times`);
+step(`${b} merged on its first try: ${failedMerges(t)} failed merges`);
+console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
 
 send({ type: "policy.save", policy: original });
 await wait("policy restored", () => (policy.autoFixMerges !== false) === (original.autoFixMerges !== false));

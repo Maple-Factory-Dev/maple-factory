@@ -8,8 +8,12 @@
 
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
+import { loadCollapsed, toggleCollapsed } from "./sections.js";
+import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
+import { bundleStale } from "./update.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [] };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
+/** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
 let socket = null;
 let retry = 1000;
 
@@ -38,6 +42,28 @@ const name = (login) => {
   if (login === state.me?.login) return "You";
   return state.members.find((m) => m.login === login)?.name || login;
 };
+const AGENT_TITLE = { claude: "Claude Code", codex: "Codex", shell: "Shell" };
+const agentTitle = (agent) => AGENT_TITLE[agent] ?? (agent ? agent[0].toUpperCase() + agent.slice(1) : "");
+/** The Claude and Codex marks, 24×24, drawn in currentColor. */
+const AGENT_MARKS = {
+  claude: { d: "m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z" },
+  codex: { d: "M8.086 .457 a6.105 6.105 0 0 1 3.046 -.415 c1.333 .153 2.521 .72 3.564 1.7 a.117 .117 0 0 0 .107 .029 c1.408 -.346 2.762 -.224 4.061 .366 l.063 .03 .154 .076 c1.357 .703 2.33 1.77 2.918 3.198 .278 .679 .418 1.388 .421 2.126 a5.655 5.655 0 0 1 -.18 1.631 .167 .167 0 0 0 .04 .155 5.982 5.982 0 0 1 1.578 2.891 c.385 1.901 -.01 3.615 -1.183 5.14 l-.182 .22 a6.063 6.063 0 0 1 -2.934 1.851 .162 .162 0 0 0 -.108 .102 c-.255 .736 -.511 1.364 -.987 1.992 -1.199 1.582 -2.962 2.462 -4.948 2.451 -1.583 -.008 -2.986 -.587 -4.21 -1.736 a.145 .145 0 0 0 -.14 -.032 c-.518 .167 -1.04 .191 -1.604 .185 a5.924 5.924 0 0 1 -2.595 -.622 6.058 6.058 0 0 1 -2.146 -1.781 c-.203 -.269 -.404 -.522 -.551 -.821 a7.74 7.74 0 0 1 -.495 -1.283 6.11 6.11 0 0 1 -.017 -3.064 .166 .166 0 0 0 .008 -.074 .115 .115 0 0 0 -.037 -.064 5.958 5.958 0 0 1 -1.38 -2.202 5.196 5.196 0 0 1 -.333 -1.589 6.915 6.915 0 0 1 .188 -2.132 c.45 -1.484 1.309 -2.648 2.577 -3.493 .282 -.188 .55 -.334 .802 -.438 .286 -.12 .573 -.22 .861 -.304 a.129 .129 0 0 0 .087 -.087 A6.016 6.016 0 0 1 5.635 2.31 C6.315 1.464 7.132 .846 8.086 .457 zm-.804 7.85 a.848 .848 0 0 0 -1.473 .842 l1.694 2.965 -1.688 2.848 a.849 .849 0 0 0 1.46 .864 l1.94 -3.272 a.849 .849 0 0 0 .007 -.854 l-1.94 -3.393 zm5.446 6.24 a.849 .849 0 0 0 0 1.695 h4.848 a.849 .849 0 0 0 0 -1.696 h-4.848 z", evenodd: true },
+};
+/** An agent's mark as inline SVG, or nothing for an agent without one. */
+function agentIcon(agent) {
+  const mark = AGENT_MARKS[agent];
+  if (!mark) return null;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", fill: "currentColor", class: "agent-icon", "aria-hidden": "true" })) svg.setAttribute(k, v);
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", mark.d);
+  if (mark.evenodd) path.setAttribute("fill-rule", "evenodd");
+  svg.append(path);
+  return svg;
+}
+/** "Builder · ✻ Claude Code": a worker's role and the agent running it. */
+const workerLabel = (w) => [`${name(w.role)} · `, agentIcon(w.agent), agentTitle(w.agent)];
 const goalOf = (t) => state.goals.find((g) => g.id === t.goal);
 function ago(ms) {
   const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -90,15 +116,20 @@ function receive(m) {
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
       state.notes = m.notes ?? [];
       state.machines = m.machines ?? [];
-      $("org").textContent = m.org || "Maple Factory";
+      $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
+      // The first version seen is the bundle this tab loaded; a reconnect after a deploy reports the new one.
+      state.loadedVersion ??= m.serverVersion || null;
+      if (bundleStale(state.loadedVersion, m.serverVersion)) $("update").hidden = false;
       break;
     case "icon.updated": showIcon(m.icon); return;
+    case "name.updated": $("org").textContent = m.name || state.org || "Maple Factory"; return;
     case "task.updated":
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
+      mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
     case "machine.updated":
@@ -114,10 +145,23 @@ function receive(m) {
     case "note.updated": state.notes = [...state.notes.filter((n) => n.id !== m.note.id), m.note]; break;
     case "note.removed": state.notes = state.notes.filter((n) => n.id !== m.id); break;
     case "toast": toast(m.text); break;
+    case "checkLog": {
+      const key = `${m.id}/${m.check}`;
+      // Only into a panel still waiting for it: one closed (or re-run) since doesn't open again.
+      if (state.checkLogs.get(key)?.loading) state.checkLogs.set(key, { text: m.text, truncated: m.truncated, failedStep: m.failedStep ?? null, url: m.url ?? null });
+      break;
+    }
     case "error":
+      // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its panel.
+      if (m.requestId?.startsWith("checkLog:")) {
+        const key = m.requestId.slice(9);
+        if (state.checkLogs.get(key)?.loading) state.checkLogs.set(key, { error: m.message });
+        break;
+      }
       // The task being created didn't take; let the composer try again. Errors carry no request id, so
       // take one that comes back soon after the create to be about it; any later one leaves it alone.
       if (creating && Date.now() - creating.at < 5_000) createFailed();
+      mergeSent.clear(); // a refused Merge or Hold gives its buttons back
       toast(m.message);
       break;
     default: return;
@@ -230,13 +274,35 @@ function render() {
 }
 const view = render;
 
+// Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
+const collapsed = loadCollapsed();
+
+/** A section with a heading that collapses it to "Title · count"; `body()` isn't built while it's collapsed. */
+function section(key, title, count, body) {
+  const open = !collapsed.has(key);
+  const id = `section-${key.replace(/[^\w-]/g, "-")}`;
+  return h("section", { class: `section${open ? "" : " closed"}` },
+    h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
+      onclick: () => { toggleCollapsed(collapsed, key); render(); } },
+      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+    open && h("div", { id }, body()));
+}
+
 function row(t, sub) {
   const goal = goalOf(t);
   return h("a", { class: "item", href: `#/t/${t.id}` },
     h("span", { class: `dot bg-${t.state}` }),
     h("div", {},
       h("div", { class: "title" }, t.title),
-      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", ` · ${sub}`)));
+      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", " · ", sub)));
+}
+
+/** Its state's title, or "Merging…" (the server's live log while it merges) or the auto-merge countdown. */
+function stateLabel(t) {
+  if (t.state !== "reviewing") return STATE_TITLE[t.state];
+  if (t.liveLog === "Merging…") return "Merging…";
+  if (t.mergeAt != null && !t.hand) return h("span", { "data-merge-at": t.mergeAt }, countdownLabel(t.mergeAt));
+  return STATE_TITLE[t.state];
 }
 
 function inboxView() {
@@ -251,16 +317,12 @@ function inboxView() {
   return h("div", {},
     h("h1", {}, "Inbox"),
     h("p", { class: "muted" }, total ? `${total} thing${total === 1 ? "" : "s"} waiting on you.` : "Nothing's waiting on you."),
-    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) => [
-      h("h2", {}, `${KINDS[k][0]} · ${groups.get(k).length}`),
-      h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))),
-    ]),
-    mentioned.length > 0 && [
-      h("h2", {}, `Mentions · ${mentioned.length}`),
+    Object.keys(KINDS).filter((k) => groups.has(k)).map((k) =>
+      section(`inbox:${k}`, KINDS[k][0], groups.get(k).length, () => h("div", { class: "list" }, groups.get(k).map(([t, n]) => row(t, n.text))))),
+    mentioned.length > 0 && section("inbox:mentions", "Mentions", mentioned.length, () =>
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
-        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss")))),
-    ],
+        h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
     !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
@@ -283,12 +345,12 @@ function tasksView() {
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
-    drafts.length > 0 && [h("h2", {}, `Drafts · ${drafts.length}`), h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))],
-    queued.length > 0 && [h("h2", {}, `Queued · ${queued.length}`), h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))],
-    backlog.length > 0 && [h("h2", {}, `Backlog · ${backlog.length}`), h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))],
-    h("h2", {}, `In flight · ${active.length}`),
-    active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || STATE_TITLE[t.state]))) : h("div", { class: "card empty" }, "Nothing in flight."),
-    done.length > 0 && [h("h2", {}, "Recently merged"), h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))]);
+    drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
+    queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
+    backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
+    section("tasks:active", "In flight", active.length, () =>
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
+    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
 }
 
 // ---- a new task ----
@@ -501,6 +563,9 @@ function mount(next, keepCompose) {
     active.focus({ preventScroll: true });
     if (range) try { active.setSelectionRange(...range); } catch {}
   }
+  // A section heading is rebuilt on every render; keep the keyboard on it.
+  const head = active?.dataset?.section;
+  if (head) main.querySelector(`[data-section="${CSS.escape(head)}"]`)?.focus({ preventScroll: true });
 }
 
 // ---- a task ----
@@ -518,7 +583,7 @@ function taskView(id) {
     h("div", { class: "row muted" }, h("a", { href: "#/" }, "← Inbox"), h("span", { class: "spacer" }), h("span", { class: "mono" }, t.id)),
     h("h1", {}, t.title),
     h("div", { class: "row" },
-      h("span", { class: `pill s-${t.state}` }, STATE_TITLE[t.state]),
+      h("span", { class: `pill s-${t.state}` }, stateLabel(t)),
       ownerControl(t),
       h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
@@ -526,7 +591,7 @@ function taskView(id) {
     effortLine(t),
     h("div", { class: "stepper" }, STATES.map((s, i) => h("span", { class: i <= reached ? `bg-${STATES[Math.min(i, reached)]}` : "" }))),
     t.waiting && h("p", { class: "muted" }, t.waiting),
-    t.liveLog && !t.waiting && t.worker && h("p", { class: "muted" }, `${name(t.worker.role)}: ${t.liveLog}`),
+    t.liveLog && !t.waiting && t.worker && h("p", { class: "muted" }, workerLabel(t.worker), `: ${t.liveLog}`),
     promptCard(t),
     t.hand && handCard(t),
     t.question && !t.hand && questionCard(t),
@@ -638,7 +703,7 @@ function promptCard(t) {
     render();
   };
   return h("div", { class: "callout question" },
-    h("b", {}, `${name(t.worker.role)} is waiting on you`),
+    h("b", {}, workerLabel(t.worker), " is waiting on you"),
     p ? [
       h("p", { style: "margin:6px 0 0" }, `Wants to run ${p.tool}: ${p.summary}`),
       p.detail && h("pre", { class: "prompt-detail" }, p.detail),
@@ -665,7 +730,7 @@ function decisions(t) {
   const me = state.me?.login;
   const buttons = [];
   if (t.state === "awaitingApproval") {
-    buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => send({ type: "task.approvePlan", id: t.id }) },
+    buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => approvePlan(t) },
       t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
@@ -674,7 +739,7 @@ function decisions(t) {
   }
   if (t.state === "backlog") {
     // Nothing runs on it until it's picked up: its plan approved, or planned (again).
-    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => send({ type: "task.approvePlan", id: t.id }) }, "Approve & build"));
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, "Approve & build"));
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
   }
@@ -688,18 +753,21 @@ function decisions(t) {
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
-    if (countdown) {
+    if (merging(t)) {
+      // The factory has it (or a click is on its way): nothing to click until it lands.
+      buttons.push(h("button", { class: "btn go", disabled: true }, "Merging…"));
+    } else if (countdown) {
       // The factory merges when the fill drains: its delay is the part of the window already gone,
       // so a re-render (or a reload) carries on from where it is.
       buttons.push(h("button", {
-        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt,
+        class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.holdMerge", id: t.id }) }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.merge", id: t.id }) }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
-      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => send({ type: "task.merge", id: t.id }) },
+      buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
@@ -720,10 +788,30 @@ function decisions(t) {
     backlog: ["Ask for a change to the plan; it's planned again…", "Request change"],
     reviewing: ["What should change before it merges? The builder picks it up.", "Request changes"],
   }[t.state] ?? ["Steer it: what should change?", "Request change"];
+  const renaming = t.suggestedTitle && (t.state === "backlog" || (t.state === "awaitingApproval" && !t.approvals.includes(me)));
   return h("div", {},
+    renaming && renameRow(t),
     buttons.length > 0 && h("div", { class: "actions" }, buttons),
     cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && cancelCard(t),
     steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
+}
+
+/** The planner's proposed title: taken once the plan is approved, unless the approver keeps the current one. */
+function renameRow(t) {
+  const keep = keepingTitle.has(t.id);
+  return h("div", { class: `rename${keep ? " keep" : ""}` },
+    h("span", { class: "muted" }, "Renames to"),
+    h("b", { class: "to" }, t.suggestedTitle),
+    h("s", { class: "from" }, t.title),
+    h("label", {},
+      h("input", { type: "checkbox", checked: keep, onchange: (e) => { e.target.checked ? keepingTitle.add(t.id) : keepingTitle.delete(t.id); render(); } }),
+      " Keep current title"));
+}
+
+function approvePlan(t) {
+  const keepTitle = !!t.suggestedTitle && keepingTitle.has(t.id);
+  keepingTitle.delete(t.id);
+  send({ type: "task.approvePlan", id: t.id, ...(keepTitle ? { keepTitle } : {}) });
 }
 
 /** The auto-merge counting down on a task: the whole window and what's left of it (ms), or null. The
@@ -736,17 +824,43 @@ function mergeCountdown(t) {
   return { total: Math.max(started ? t.mergeAt - started : 10_000, left, 1), left };
 }
 
+/** Merging, as far as its buttons go: the server says so, a Merge or Hold is on its way, or its
+ *  countdown ran out (the server says Merging… a moment later). */
+function merging(t) {
+  if (t.state !== "reviewing") return false;
+  if (t.liveLog === "Merging…" || mergeSent.has(t.id)) return true;
+  const countdown = !t.hand && mergeCountdown(t);
+  return !!countdown && countdown.left === 0;
+}
+
+/** Sends a Merge or Hold and locks its buttons until the task's next update (or 30s, if none comes). */
+function sendMerge(t, type) {
+  if (mergeSent.has(t.id) || !send({ type, id: t.id })) return;
+  const at = Date.now();
+  mergeSent.set(t.id, at);
+  setTimeout(() => { if (mergeSent.get(t.id) === at) { mergeSent.delete(t.id); render(); } }, 30_000);
+  render();
+}
+
 function countdownLabel(mergeAt) {
   const left = Math.ceil((mergeAt - Date.now()) / 1000);
   return left > 0 ? `Merging in ${left}s` : "Merging…";
 }
 
 // A countdown's label ticks on its own, between the renders that updates bring.
+// A countdown button that reaches 0 redraws once, so Hold and Merge now drop out at once.
 setInterval(() => {
-  for (const el of document.querySelectorAll("[data-merge-at]")) el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+  let due = false;
+  for (const el of document.querySelectorAll("[data-merge-at]")) {
+    el.textContent = countdownLabel(Number(el.dataset.mergeAt));
+    if (el.hasAttribute("data-locks") && Number(el.dataset.mergeAt) <= Date.now()) due = true;
+  }
+  if (due) render();
 }, 250);
 
+const keepingTitle = new Set(); // ids whose approver ticked "Keep current title"
 const cancelling = new Set(); // ids whose Cancel… is asking "are you sure?"
+const mergeSent = new Map(); // id → when its Merge or Hold was sent, until the task's next update
 
 /** Asks before cancelling, saying what it stops. */
 function cancelCard(t) {
@@ -772,7 +886,7 @@ function compose(t, key, placeholder, label, submit) {
   const go = () => {
     const text = editor.textarea.value.trim();
     if (!text) return;
-    submit(text);
+    if (submit(text) === false) return;
     editor.clear();
   };
   const editor = markdownEditor({ members: () => state.members, tasks: allTasks, placeholder, rows: 2, onsubmit: go }, h);
@@ -831,7 +945,7 @@ function overview(t) {
     t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
-    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map(mockup)],
+    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
     t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
       h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
         h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
@@ -867,21 +981,102 @@ function pull(t) {
       h("span", { class: "mono muted" }, `${pr.branch} → ${pr.base}`)),
     pr.checks.length === 0
       ? h("p", { class: "muted", style: "margin:8px 0 0" }, pr.url ? "No CI checks reported." : "No CI: a local repo's change is checked by its proofs and review.")
-      : pr.checks.map((c) => h("div", { class: "check" },
-        h("span", { class: `mark ${c.status === "passed" ? "ok" : c.status === "failed" ? "bad" : "wait"}` }, c.status === "passed" ? "✓" : c.status === "failed" ? "✕" : "•"),
-        h("div", { class: "row", style: "flex:1" }, c.name, h("span", { class: "spacer" }), h("span", { class: "muted" }, c.duration ?? c.status)))))];
+      : pr.checks.map((c) => ciCheck(t, c)))];
 }
 
-function mockup(m) {
+/** A CI check: its link on GitHub, Log (read from GitHub into a panel below it) and Re-run once it's finished. */
+function ciCheck(t, c) {
+  const pr = t.pr;
+  const key = `${t.id}/${c.name}`;
+  const log = state.checkLogs.get(key);
+  const finished = c.status === "passed" || c.status === "failed";
+  const href = c.url || (pr.url && `${pr.url}/checks`);
+  const toggleLog = () => {
+    if (log && !log.loading) state.checkLogs.delete(key);
+    else if (!log && send({ type: "task.checkLog", id: t.id, check: c.name })) state.checkLogs.set(key, { loading: true });
+    render();
+  };
+  // The log shown is the old run's; a new run has its own, so close it.
+  const rerun = () => {
+    if (!send({ type: "task.rerunCheck", id: t.id, check: c.name })) return;
+    state.checkLogs.delete(key);
+    toast(`Running ${c.name} again`);
+    render();
+  };
+  return h("div", { class: "check ci-check" },
+    h("span", { class: `mark ${c.status === "passed" ? "ok" : c.status === "failed" ? "bad" : "wait"}` }, c.status === "passed" ? "✓" : c.status === "failed" ? "✕" : "•"),
+    h("div", { style: "flex:1;min-width:0" },
+      h("div", { class: "row" },
+        href ? h("a", { href, target: "_blank", rel: "noopener", title: `${c.name} on GitHub` }, c.name) : c.name,
+        h("span", { class: "spacer" }),
+        h("span", { class: "muted" }, c.duration ?? c.status),
+        pr.url && c.status !== "queued" && h("button", { class: "btn small", onclick: toggleLog }, log && !log.loading ? "Hide log" : "Log"),
+        pr.url && finished && (pr.state === "open" || pr.state === "draft") && t.state !== "merged" && t.state !== "cancelled" &&
+          h("button", { class: "btn small", onclick: rerun }, "Re-run"),
+        href && h("a", { class: "btn small", href, target: "_blank", rel: "noopener" }, "GitHub ↗")),
+      log && checkLogPanel(log)));
+}
+
+function checkLogPanel(log) {
+  if (log.loading) return h("p", { class: "muted", style: "margin:8px 0 0" }, "Reading the log from GitHub…");
+  if (log.error) return h("p", { class: "muted", style: "margin:8px 0 0" }, log.error);
+  const lines = log.text.replace(/\n+$/, "").split("\n").filter((l) => !l.startsWith("##[endgroup]"));
+  const pre = h("pre", { class: "check-log", onscroll: () => (log.scrollTop = pre.scrollTop) }, lines.map((l) =>
+    l.startsWith("##[group]") ? h("div", { class: "step" }, "▸ ", l.slice(9))
+      : l.includes("##[error]") ? h("div", { class: "error" }, "Error: ", l.replace("##[error]", ""))
+        : h("div", {}, l || " ")));
+  // Opens at the first error, a few lines above it; a redraw keeps where it was scrolled to.
+  requestAnimationFrame(() => {
+    const err = pre.querySelector(".error");
+    if (log.scrollTop != null) pre.scrollTop = log.scrollTop;
+    else if (err) pre.scrollTop = Math.max(0, err.offsetTop - pre.offsetTop - 80);
+  });
+  return h("div", { style: "margin-top:8px" },
+    (log.failedStep || log.truncated) && h("div", { class: "row muted", style: "font-size:13px;margin-bottom:6px" },
+      log.failedStep && h("b", { class: "bad-text" }, `✕ ${log.failedStep}`), h("span", { class: "spacer" }), log.truncated && "Showing the end of the log"),
+    pre);
+}
+
+const mockupAsking = new Set(); // "<task>:<mockup>" whose Request a change box is open
+
+function mockup(t, m) {
   const body = m.kind === "terminal"
     ? h("div", { class: "terminal" }, m.lines.map((l) => h("div", { class: l.style }, l.text || " ", l.callout && h("span", { class: "callout-n" }, l.callout))))
     : h("div", { class: "browser" }, h("div", { class: "url" }, m.url ?? m.title),
-      h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }));
+      fitted(h("div", { class: "mockup-fit" }, h("iframe", { class: "mockup-frame", sandbox: "", srcdoc: m.html ?? "", title: m.title, loading: "lazy" }))));
   return h("div", { style: "margin-bottom:14px" },
     h("div", { class: "row", style: "margin-bottom:6px" }, h("b", {}, m.title), h("span", { class: "muted" }, m.status === "approved" ? "· approved" : m.status === "changesRequested" ? "· changes asked" : "")),
     body,
-    m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))));
+    m.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, m.notes.map((n) => h("li", {}, n))),
+    mockupChange(t, m));
 }
+
+/** Ask for a change to a mockup, as the Mac app does: only while the plan is open, the same rule as
+ *  the server. Awaiting approval, the planner revises the plan; planning, the planner takes it now. */
+function mockupChange(t, m) {
+  if (t.state !== "awaitingApproval" && t.state !== "planning") return null;
+  const key = `${t.id}:${m.id}`;
+  if (!mockupAsking.has(key)) {
+    return h("div", { style: "margin-top:8px" },
+      h("button", { class: "btn small", onclick: () => { mockupAsking.add(key); render(); document.querySelector(`[data-keep="${t.id}:mockup:${m.id}"] textarea`)?.focus(); } }, "Request a change"));
+  }
+  const box = compose(t, `mockup:${m.id}`, `What should change in "${m.title}"?`, "Request change", (text) => {
+    if (!send({ type: "task.mockupChange", id: t.id, mockup: m.id, text })) return false;
+    mockupAsking.delete(key);
+    render();
+  });
+  // Cancel goes next to compose's own button.
+  box.lastChild.classList.add("row");
+  box.lastChild.prepend(h("button", { class: "btn small", onclick: () => { mockupAsking.delete(key); render(); } }, "Cancel"));
+  return box;
+}
+
+/** On a phone a mockup renders 800px wide and scales down by --fit to its box (app.css). */
+// A re-render drops the old box, which reports a size of 0 on its way out: let go of it then.
+const fit = new ResizeObserver((entries) => {
+  for (const e of entries) e.target.isConnected ? e.target.style.setProperty("--fit", Math.min(1, e.contentRect.width / 800)) : fit.unobserve(e.target);
+});
+const fitted = (el) => (fit.observe(el), el);
 
 const attesting = new Map(); // task id → { item, note }: the Done when item being attested and the reason typed so far
 
@@ -941,8 +1136,8 @@ function timeline(t) {
   const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
-    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
     compose(t, "comment", "Comment…", "Comment", (text) => send({ type: "task.comment", id: t.id, text })),
@@ -951,23 +1146,154 @@ function timeline(t) {
 
 // ---- the diff ----
 
+// A review in progress on a task's diff, kept in memory like draftEdits: the lines picked, the comment
+// being typed on them, the comments waiting to be sent, and the summary.
+const reviewPicks = new Map(); // task id → { path, anchor, head }
+const reviewNotes = new Map(); // task id → [{ id, rows: { first, last }, note }]
+const reviewText = new Map(); // task id → the comment being typed on the picked lines
+const reviewSummary = new Map(); // task id → the review's summary
+let noteIds = 0;
+
+/** The same states as decisions()'s Request change: something's working on it to send the review to. */
+const reviewable = (t) => ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state);
+const touch = matchMedia("(pointer: coarse)");
+
 function diffView(t) {
   const key = `${t.pr?.head ?? ""}+${t.diff?.added}-${t.diff?.removed}`;
   const cached = state.diffs.get(t.id);
   if (!cached || cached.key !== key) {
-    state.diffs.set(t.id, { key, files: null });
-    fetch(`/api/tasks/${t.id}/diff`).then((r) => (r.ok ? r.text() : "")).then((text) => {
-      state.diffs.set(t.id, { key, files: parseDiff(text) });
+    // The diff that was showing stays up until the new one is in, and the review moves onto it.
+    state.diffs.set(t.id, { key, files: cached?.files ?? null });
+    fetch(`/api/tasks/${t.id}/diff`).then((r) => (r.ok ? r.text() : null)).then((text) => {
+      const files = text == null ? cached?.files ?? [] : parseDiff(text);
+      if (text != null && cached?.files) carryReview(t.id, cached.files, files);
+      state.diffs.set(t.id, { key, files });
       render();
     });
   }
   const files = state.diffs.get(t.id).files;
   if (!files) return h("div", { class: "card empty" }, "Loading the diff…");
   if (!files.length) return h("div", { class: "card empty" }, "No diff yet.");
-  return h("div", { style: "margin-top:12px" }, files.map((f) => h("div", { class: "diff" },
-    h("div", { class: "file" }, h("span", {}, f.path), h("span", { class: "spacer" }), h("span", { class: "ok" }, `+${f.added}`), h("span", { class: "bad" }, `−${f.removed}`)),
-    h("div", { class: "scroll" }, h("table", {}, f.lines.map((l) => h("tr", { class: l.kind },
-      h("td", { class: "n" }, l.old ?? ""), h("td", { class: "n" }, l.new ?? ""), h("td", { class: "c" }, l.text))))))));
+  const can = reviewable(t);
+  const notes = reviewNotes.get(t.id) ?? [];
+  return h("div", { style: "margin-top:12px" },
+    can && notes.length > 0 && reviewBar(t, notes),
+    can && !notes.length && h("p", { class: "muted", style: "font-size:13px;margin:0 0 10px" },
+      touch.matches ? "Tap a line number to comment on it; tap another to take in the lines between." : "Click a line number to comment on it; shift-click to take in more lines."),
+    files.map((f) => diffFile(t, f, can, notes.filter((n) => n.note.path === f.path))));
+}
+
+function diffFile(t, f, can, notes) {
+  const sel = reviewPicks.get(t.id);
+  const mine = sel?.path === f.path;
+  const click = (row, e) => {
+    const extending = mine && (e.shiftKey || (touch.matches && !(reviewText.get(t.id) ?? "").trim()));
+    reviewPicks.set(t.id, extending ? extend(sel, f.path, row) : pick(f.path, row));
+    render();
+    // On a phone the keyboard would cover the lines still being picked.
+    if (!touch.matches) document.querySelector(`[data-keep="${t.id}:review-comment"]`)?.focus({ preventScroll: true });
+  };
+  const rows = [];
+  f.lines.forEach((l, row) => {
+    const on = can && picked(sel, f.path, row) && pickable(l);
+    const num = (n) => can && pickable(l)
+      ? h("td", { class: "n pick", title: "Comment on this line", onclick: (e) => click(row, e) }, n ?? "")
+      : h("td", { class: "n" }, n ?? "");
+    rows.push(h("tr", { class: `${l.kind}${on ? " picked" : ""}${notes.some((n) => row >= n.rows.first && row <= n.rows.last) ? " noted" : ""}` },
+      num(l.old), num(l.new), h("td", { class: "c" }, l.text)));
+    for (const n of notes) if (n.rows.last === row) rows.push(h("tr", { class: "inline" }, h("td", { colspan: 3 }, pendingNote(t, n))));
+    if (can && mine && rowsOf(sel).last === row) rows.push(h("tr", { class: "inline" }, h("td", { colspan: 3 }, commentBox(t, f))));
+  });
+  return h("div", { class: "diff" },
+    h("div", { class: "file" }, h("span", {}, f.path), h("span", { class: "spacer" }),
+      notes.length > 0 && h("span", { class: "muted" }, `${notes.length} comment${notes.length === 1 ? "" : "s"}`),
+      h("span", { class: "ok" }, `+${f.added}`), h("span", { class: "bad" }, `−${f.removed}`)),
+    h("div", { class: "scroll" }, h("table", {}, rows)));
+}
+
+/** The box under the picked lines: what to say about them. */
+function commentBox(t, f) {
+  const sel = reviewPicks.get(t.id);
+  const lines = selected(sel, f.lines);
+  const draft = toNote(f.path, lines, "");
+  const close = () => { reviewPicks.delete(t.id); reviewText.delete(t.id); render(); };
+  const add = () => {
+    const text = (reviewText.get(t.id) ?? "").trim();
+    const note = toNote(f.path, lines, text);
+    if (!text || !note) return;
+    const r = rowsOf(sel);
+    reviewNotes.set(t.id, [...(reviewNotes.get(t.id) ?? []), { id: ++noteIds, rows: { first: r.first, last: r.last }, note }]);
+    close();
+  };
+  return h("div", { class: "review-box" },
+    h("b", {}, draft ? `Comment on ${linesLabel(draft)}` : "Pick a line to comment on"),
+    h("textarea", { "data-keep": `${t.id}:review-comment`, rows: 3, placeholder: "What should change here?",
+      oninput: (e) => reviewText.set(t.id, e.target.value),
+      onkeydown: (e) => {
+        if (e.key === "Escape") close();
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); }
+      } }, reviewText.get(t.id) ?? ""),
+    h("div", { class: "row", style: "gap:6px;justify-content:flex-end" },
+      h("button", { class: "btn small", onclick: close }, "Cancel"),
+      h("button", { class: "btn small primary", disabled: !draft, onclick: add }, "Add comment")));
+}
+
+/** A comment waiting to go with the review. */
+function pendingNote(t, n) {
+  const remove = () => { reviewNotes.set(t.id, (reviewNotes.get(t.id) ?? []).filter((x) => x.id !== n.id)); render(); };
+  return h("div", { class: "review-note" },
+    h("div", { class: "row", style: "gap:8px" },
+      h("span", { class: "pill" }, "Pending"), h("span", { class: "muted" }, linesLabel(n.note)), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: remove }, "Remove")),
+    h("div", { class: "review-note-text" }, n.note.text));
+}
+
+/** At the top of the Diff tab while comments wait: a summary and Submit review, sent as one change request. */
+function reviewBar(t, notes) {
+  const submit = () => {
+    const summary = (reviewSummary.get(t.id) ?? "").trim();
+    if (!send({ type: "task.review", id: t.id, notes: notes.map((n) => n.note), summary: summary || null })) return;
+    reviewNotes.delete(t.id);
+    reviewSummary.delete(t.id);
+    reviewPicks.delete(t.id);
+    reviewText.delete(t.id);
+    toast(`Review sent: ${notes.length} comment${notes.length === 1 ? "" : "s"}`);
+    render();
+  };
+  const discard = () => { reviewNotes.delete(t.id); reviewSummary.delete(t.id); render(); };
+  return h("div", { class: "review-bar" },
+    h("div", { class: "row", style: "gap:8px" },
+      h("b", {}, `Review · ${notes.length} comment${notes.length === 1 ? "" : "s"}`), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: discard }, "Discard"),
+      h("button", { class: "btn small primary", onclick: submit }, "Submit review")),
+    h("textarea", { "data-keep": `${t.id}:review-summary`, rows: 1, placeholder: "Summary (optional)",
+      oninput: (e) => reviewSummary.set(t.id, e.target.value),
+      onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } } }, reviewSummary.get(t.id) ?? ""));
+}
+
+/** A reloaded diff keeps the pending comments and the picked lines whose code is still there, renumbered;
+ *  comments on lines that are gone are dropped. */
+function carryReview(id, before, files) {
+  const moved = (path, rows, note) => {
+    const f = files.find((x) => x.path === path);
+    const at = f && relocate(rows, note, f.lines);
+    return at && { at, note: toNote(path, f.lines.slice(at.first, at.last + 1), note.text) };
+  };
+  const notes = reviewNotes.get(id);
+  if (notes?.length) {
+    const kept = notes.flatMap((n) => {
+      const m = moved(n.note.path, n.rows, n.note);
+      return m?.note ? [{ ...n, rows: m.at, note: m.note }] : [];
+    });
+    if (kept.length < notes.length) toast(`${notes.length - kept.length} pending comment${notes.length - kept.length === 1 ? " is" : "s are"} gone: those lines changed.`);
+    reviewNotes.set(id, kept);
+  }
+  const sel = reviewPicks.get(id);
+  const was = sel && before.find((x) => x.path === sel.path);
+  const note = was && toNote(sel.path, selected(sel, was.lines), "");
+  const m = note && moved(sel.path, rowsOf(sel), note);
+  if (!m) reviewPicks.delete(id);
+  else reviewPicks.set(id, { path: sel.path, anchor: sel.anchor <= sel.head ? m.at.first : m.at.last, head: sel.anchor <= sel.head ? m.at.last : m.at.first });
 }
 
 function parseDiff(text) {
@@ -1007,4 +1333,5 @@ window.addEventListener("hashchange", () => {
   window.scrollTo(0, 0);
   render();
 });
+$("update-refresh").addEventListener("click", () => location.reload());
 connect();

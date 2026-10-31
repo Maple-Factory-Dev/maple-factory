@@ -4,7 +4,7 @@ CREATE TABLE members (
   github_id INTEGER NOT NULL,
   name TEXT,
   avatar_url TEXT,
-  role TEXT NOT NULL DEFAULT 'member',      -- 'admin' (GitHub org owner) or 'member'
+  role TEXT NOT NULL DEFAULT 'member',      -- GitHub's role: 'admin' (org owner) or 'member'. See admin_granted_by (0004) for grants.
   teams TEXT NOT NULL DEFAULT '[]',         -- JSON array of team slugs
   created_at INTEGER NOT NULL,
   last_seen INTEGER

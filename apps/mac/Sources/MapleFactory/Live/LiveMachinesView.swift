@@ -26,6 +26,12 @@ struct LiveMachinesView: View {
             }
         }
         .onAppear(perform: openFromLaunchArgs)
+        .onChange(of: state.openingLiveSession, initial: true) { _, link in
+            // A maplefactory://session/<machine>/<id> link.
+            guard let link else { return }
+            state.openingLiveSession = nil
+            withAnimation(.snappy) { open = OpenSession(machine: link.machine, id: link.id) }
+        }
         .onChange(of: client.machines) { _, machines in
             guard let awaiting, let machine = machines.first(where: { $0.id == awaiting.machine }),
                   let new = machine.sessions.first(where: { !awaiting.known.contains($0.session.id) }) else { return }
@@ -378,7 +384,7 @@ struct LiveMachineCard: View {
         let choices = ["shell"] + installed
         return Menu {
             ForEach(choices, id: \.self) { agent in
-                Button(agentTitle(agent)) { onNew(agent) }
+                Button { onNew(agent) } label: { Label { Text(agentTitle(agent)) } icon: { AgentMark.image(agent) } }
             }
         } label: {
             HStack(spacing: 5) {
@@ -443,36 +449,158 @@ struct LiveMachineCard: View {
         } else {
             VStack(spacing: 6) {
                 ForEach(machine.sessions, id: \.session.id) { live in
-                    LiveSessionRow(live: live)
+                    // Teammates' sessions open only when they're shared with you; the terminal would refuse.
+                    let shared = isMine ? nil : live.shares?.first { $0.login == client.me?.login }
+                    let openable = isMine || client.me?.role == "admin" || shared != nil
+                    LiveSessionRow(live: live, sharedWithMe: shared, openable: openable)
                         .contentShape(Rectangle())
-                        .onTapGesture { onOpen(live.session.id) }
+                        .onTapGesture { if openable { onOpen(live.session.id) } }
+                        .help(openable ? "" : "Only \(machine.owner) or an admin can open it; ask \(machine.owner) to share it with you.")
                 }
             }
         }
     }
 
     private func agents(_ health: Wire.Health) -> some View {
-        HStack(spacing: 6) {
-            ForEach(health.agents, id: \.name) { agent in
-                HStack(spacing: 4) {
-                    Image(systemName: agent.loggedIn ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .foregroundStyle(agent.loggedIn ? Theme.State.merged : Theme.State.awaitingApproval)
-                    Text(agentTitle(agent.name))
-                    if let version = agent.version { Text(version).foregroundStyle(Theme.textFaint) }
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textMuted)
-                .padding(.horizontal, 8)
-                .frame(height: 22)
-                .background(Capsule().fill(Theme.fill))
-                .help(agent.loggedIn ? "\(agentTitle(agent.name)) is signed in" : "\(agentTitle(agent.name)) isn't signed in on this machine")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(health.agents, id: \.name) { agent in agentPill(agent) }
             }
+            ForEach(health.agents, id: \.name) { agent in
+                if isMine, let login = client.agentLogin(machine: machine.id, agent: agent.name) {
+                    AgentLoginPanel(machine: machine.id, status: login)
+                }
+            }
+        }
+    }
+
+    private func agentPill(_ agent: Wire.AgentInstall) -> some View {
+        // Its owner can sign Codex in from here; anyone else's device code would sign the machine into their account.
+        let canSignIn = isMine && agent.name == "codex" && !agent.loggedIn && client.agentLogin(machine: machine.id, agent: agent.name) == nil
+        return HStack(spacing: 4) {
+            AgentIcon(agent: agent.name, size: 12)
+                .foregroundStyle(Theme.text)
+            Text(agentTitle(agent.name))
+            if let version = agent.version { Text(version).foregroundStyle(Theme.textFaint) }
+            if !agent.loggedIn {
+                Circle().fill(Theme.State.awaitingApproval).frame(width: 6, height: 6)
+            }
+            if canSignIn {
+                Button("Sign in") { client.signIn(machine: machine.id, agent: agent.name) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.leading, 2)
+            }
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(Theme.textMuted)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(Theme.fill))
+        .help(agent.loggedIn ? "\(agentTitle(agent.name)) is signed in" : canSignIn ? "Sign \(agentTitle(agent.name)) in on this machine with a one-time code" : "\(agentTitle(agent.name)) isn't signed in on this machine")
+    }
+}
+
+/// An agent sign-in on your machine: the link and one-time code `codex login --device-auth` printed,
+/// while it waits for you to finish in the browser, then how it went.
+struct AgentLoginPanel: View {
+    @Environment(FactoryClient.self) private var client
+    let machine: String
+    let status: Wire.AgentLoginStatus
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("Sign in to \(agentTitle(status.agent))").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+                Spacer()
+                if status.state == .starting || status.state == .waiting {
+                    Button("Cancel") { client.cancelSignIn(machine: machine, agent: status.agent) }
+                        .controlSize(.small)
+                } else {
+                    Button { client.dismissSignIn(machine: machine, agent: status.agent) } label: {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close")
+                }
+            }
+            content
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill))
+        .task(id: status.state) {
+            // Success needs only a moment: the pill turning green says the rest.
+            guard status.state == .done else { return }
+            try? await Task.sleep(for: .seconds(4))
+            client.dismissSignIn(machine: machine, agent: status.agent)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch status.state {
+        case .waiting:
+            if let link = status.url, let url = URL(string: link) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("1. Open this link and sign in to your account").foregroundStyle(Theme.textMuted)
+                    Link(link, destination: url).foregroundStyle(Theme.accent)
+                }
+                .font(.system(size: 11.5))
+            }
+            if let code = status.code {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("2. Enter this one-time code").font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                    HStack(spacing: 10) {
+                        Text(code)
+                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                        Button(copied ? "Copied" : "Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(code, forType: .string)
+                            copied = true
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                Text("Waiting for you to finish in the browser…")
+                if let expires = status.expiresAt {
+                    Text("· expires \(Date(timeIntervalSince1970: Double(expires) / 1000).formatted(date: .omitted, time: .shortened))").foregroundStyle(Theme.textFaint)
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.textMuted)
+            Text("Only use this code if you started this sign-in. Anyone who enters it signs this machine into their account.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textFaint)
+        case .done:
+            Label("Signed in", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.State.merged)
+        case .failed, .cancelled:
+            Label(status.message ?? (status.state == .failed ? "Sign-in didn't finish." : "Sign-in was cancelled."), systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(status.state == .failed ? Theme.State.cancelled : Theme.textMuted)
+                .textSelection(.enabled)
+        default:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                Text("Asking the machine for a code…")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.textMuted)
         }
     }
 }
 
 struct LiveSessionRow: View {
     let live: Wire.LiveSession
+    var sharedWithMe: Wire.SessionShare? = nil
+    var openable = true
     @State private var hovering = false
 
     var body: some View {
@@ -490,6 +618,8 @@ struct LiveSessionRow: View {
                             .frame(height: 17)
                             .background(RoundedRectangle(cornerRadius: 4).fill(Theme.State.building.opacity(0.12)))
                     }
+                    AgentIcon(agent: live.session.agent, size: 13)
+                        .foregroundStyle(Theme.textMuted)
                     Text(agentTitle(live.session.agent))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Theme.text)
@@ -498,6 +628,16 @@ struct LiveSessionRow: View {
                         .foregroundStyle(Theme.textMuted)
                         .lineLimit(1)
                         .truncationMode(.head)
+                    if let sharedWithMe {
+                        Text(sharedWithMe.canType ? "Shared with you · can type" : "Shared with you")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 6)
+                            .frame(height: 17)
+                            .background(Capsule().fill(Theme.accent.opacity(0.12)))
+                            .fixedSize()
+                            .help("Shared by @\(sharedWithMe.by)")
+                    }
                 }
                 Text(live.activity?.message ?? live.activity?.step ?? (live.session.agent == "shell" ? "Interactive shell" : state.title))
                     .font(.system(size: 11.5))
@@ -508,13 +648,19 @@ struct LiveSessionRow: View {
             Text(relative(live.session.startedAt))
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textFaint)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
+            if openable {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
+            } else {
+                Image(systemName: "lock")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+            }
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(hovering ? Theme.fillSelected : Theme.fillSubtle))
+        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && openable ? Theme.fillSelected : Theme.fillSubtle))
         .onHover { hovering = $0 }
     }
 }
@@ -755,6 +901,58 @@ func agentTitle(_ name: String) -> String {
     case "codex": "Codex"
     case "shell": "Shell"
     default: name.capitalized
+    }
+}
+
+/// An agent's mark: the bundled Claude and Codex logos as template images, so they take the
+/// foreground style in light and dark mode. Anything else gets an SF Symbol.
+enum AgentMark {
+    /// The bundled mark for an agent, or nil when there isn't one.
+    @MainActor static func bundled(_ agent: String) -> NSImage? {
+        if let image = cache[agent] { return image }
+        guard ["claude", "codex"].contains(agent),
+              let url = Bundle.module.url(forResource: agent, withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = true
+        cache[agent] = image
+        return image
+    }
+
+    /// The SF Symbol an agent without a bundled mark falls back to.
+    static func symbol(_ agent: String) -> String {
+        agent == "shell" ? "terminal" : "cpu"
+    }
+
+    /// The mark as an `Image`, sized for menus and pickers that ignore `.frame`.
+    @MainActor static func image(_ agent: String, size: CGFloat = 14) -> Image {
+        guard let mark = bundled(agent), let sized = mark.copy() as? NSImage else { return Image(systemName: symbol(agent)) }
+        sized.size = NSSize(width: size, height: size)
+        sized.isTemplate = true
+        return Image(nsImage: sized)
+    }
+
+    @MainActor private static var cache: [String: NSImage] = [:]
+}
+
+/// An agent's mark at `size` points, tinted by the foreground style.
+struct AgentIcon: View {
+    let agent: String
+    var size: CGFloat = 14
+
+    var body: some View {
+        if let mark = AgentMark.bundled(agent) {
+            Image(nsImage: mark)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+                .accessibilityLabel(agentTitle(agent))
+        } else {
+            Image(systemName: AgentMark.symbol(agent))
+                .font(.system(size: size * 0.85))
+                .frame(width: size, height: size)
+                .accessibilityLabel(agentTitle(agent))
+        }
     }
 }
 

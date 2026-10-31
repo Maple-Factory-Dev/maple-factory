@@ -27,6 +27,7 @@ npm run gen                 # after editing protocol/schema.ts (gen:check fails 
 scripts/dev-stack.sh up     # server on :8788 (signed in as DEV_LOGIN) + a throwaway runner `dev-mac` in /tmp/mfh
 cd apps/mac && swift run    # then Connect to Another Factory… → localhost:8788 → Continue as @you
 apps/mac/scripts/bundle.sh  # → apps/mac/build/Maple Factory.app (registers maplefactory:// task links; SIGN_IDENTITY to sign)
+apps/mac/scripts/check-ios.sh  # builds MapleKit (protocol, API, sign-in; shared with iOS) for the iOS simulator
 scripts/dev-stack.sh down
 ```
 
@@ -260,8 +261,8 @@ Set `PUBLIC_URL=http://localhost:8788` in `.dev.vars` locally: `wrangler dev` hi
 ## GitHub App
 
 With an app, runners fetch and push tasks' branches with short-lived, single-repo installation tokens,
-and the factory opens each task's pull request, waits for its CI (failed checks can be run again from
-the app), squash-merges it, and closes it if the task is cancelled. Without one, tasks push with the
+and the factory opens each task's pull request, waits for its CI (each check's log can be read, and any
+finished check run again, from the apps), squash-merges it, and closes it if the task is cancelled. Without one, tasks push with the
 machine's own credentials and merge locally. Set on the server:
 
 ```sh
@@ -273,6 +274,21 @@ GITHUB_WEBHOOK_SECRET=…      # webhook URL: https://<factory>/integrations/git
 The app needs Contents, Pull requests, Checks and Actions (read & write) and Commit statuses (read), and
 webhook events Check run, Check suite, Status and Pull request. `server/test/e2e-github.mjs` runs the
 whole path against `server/test/fake-github.mjs`.
+
+### Repos in another GitHub org
+
+Repos come from the app's installations on the factory's own account (`GITHUB_ORG`) and on any other
+account an admin approves. To work in, say, `maple-dev-factory/maple-factory` from a factory on `afomera`:
+
+1. **Make the app public** (once, on GitHub): the app's settings › Advanced › Make public. GitHub only
+   installs a private app on the account that owns it. `/setup` makes new apps public; older ones were
+   private. Anyone can then install it, but their installations add nothing unless they're approved, and
+   sign-in still only lets in `GITHUB_ORG`'s members.
+2. **Approve the org** in the Mac app's Settings › Repositories › Other GitHub accounts (admins only).
+   That card links to the app's settings and its install page.
+3. **Install the app** on the org, picking its repos (you need to be an owner of that org).
+4. **Refresh** the repositories. The org's repos show up as GitHub App repos, ready for goals. Removing an
+   approved account takes its repos out on the next refresh.
 
 ## Repo secrets
 

@@ -8,7 +8,7 @@
 // needs. GITHUB_API_URL can point all of it at a fake GitHub for tests; it's only honored on localhost.
 
 import type { Env } from "./env.ts";
-import type { OrgRepo } from "./wire.ts";
+import type { GitHubAppInfo, OrgRepo, ReviewThread } from "./wire.ts";
 
 export const API = "https://api.github.com";
 const USER_AGENT = "maple-factory";
@@ -35,6 +35,25 @@ export function githubApp(env: Env): GitHubApp | null {
   const privateKey = env.GITHUB_APP_PRIVATE_KEY?.trim();
   if (!issuer || !privateKey) return null;
   return { issuer, privateKey, api: apiBase(env.GITHUB_API_URL) };
+}
+
+/** The app's settings page on GitHub (under the org, or the personal account that owns it). */
+export function appSettingsUrl(env: Env, slug: string): string {
+  return env.GITHUB_OWNER_TYPE === "User"
+    ? `https://github.com/settings/apps/${encodeURIComponent(slug)}`
+    : `https://github.com/organizations/${encodeURIComponent(env.GITHUB_ORG)}/settings/apps/${encodeURIComponent(slug)}`;
+}
+
+/** The app's links for the apps, when /setup recorded its slug: where it's made public, and installed. */
+export function githubAppInfo(env: Env): GitHubAppInfo | null {
+  const slug = env.GITHUB_APP_SLUG?.trim();
+  if (!slug || !env.GITHUB_ORG) return null;
+  return {
+    slug,
+    ownerType: env.GITHUB_OWNER_TYPE ?? null,
+    settingsUrl: `${appSettingsUrl(env, slug)}/advanced`,
+    installUrl: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`,
+  };
 }
 
 /** The API base: GITHUB_API_URL only when it's a local test server, else api.github.com. */
@@ -117,9 +136,10 @@ export async function appJwt(app: Pick<GitHubApp, "issuer" | "privateKey">, now 
 
 // ---- calls ----
 
-async function call(app: GitHubApp, method: string, path: string, auth: string, body?: unknown): Promise<Response> {
+async function call(app: GitHubApp, method: string, path: string, auth: string, body?: unknown, redirect?: "follow" | "manual"): Promise<Response> {
   return fetch(`${app.api}${path}`, {
     method,
+    redirect,
     headers: {
       authorization: auth,
       accept: "application/vnd.github+json",
@@ -144,21 +164,34 @@ async function failure(res: Response, what: string): Promise<GitHubError> {
 const seg = (s: string) => encodeURIComponent(s);
 
 /** The app's installation on owner/repo. A 404 means the app isn't installed there. */
-/** Every repo the app is installed on, across its installations. */
-export async function installedRepos(app: GitHubApp): Promise<OrgRepo[]> {
+/** The repos of the app's installations on the accounts `allowed` says yes to. A public app can be
+ *  installed by anyone, so the others are skipped without a token being made for them. */
+export async function installedRepos(app: GitHubApp, allowed: (login: string) => boolean): Promise<OrgRepo[]> {
   const jwt = `Bearer ${await appJwt(app)}`;
   const res = await call(app, "GET", "/app/installations?per_page=100", jwt);
   if (!res.ok) throw await failure(res, "listing the app's installations");
   const repos: OrgRepo[] = [];
-  for (const installation of (await res.json()) as { id: number }[]) {
+  for (const installation of (await res.json()) as { id: number; account?: { login?: string } | null }[]) {
+    if (!allowed(installation.account?.login ?? "")) continue;
     const tokenRes = await call(app, "POST", `/app/installations/${installation.id}/access_tokens`, jwt, { permissions: { metadata: "read" } });
     if (!tokenRes.ok) throw await failure(tokenRes, "reading an installation's repos");
     const { token } = (await tokenRes.json()) as { token: string };
     for (let page = 1; ; page++) {
       const list = await call(app, "GET", `/installation/repositories?per_page=100&page=${page}`, `token ${token}`);
       if (!list.ok) throw await failure(list, "listing an installation's repos");
-      const { repositories } = (await list.json()) as { repositories: { full_name: string; default_branch?: string; private?: boolean }[] };
-      for (const r of repositories) repos.push({ name: r.full_name, defaultBranch: r.default_branch ?? null, isPrivate: r.private ?? false, source: "github" });
+      const { repositories } = (await list.json()) as {
+        repositories: { full_name: string; default_branch?: string; private?: boolean; description?: string | null; owner?: { avatar_url?: string } | null }[];
+      };
+      for (const r of repositories) {
+        repos.push({
+          name: r.full_name,
+          defaultBranch: r.default_branch ?? null,
+          isPrivate: r.private ?? false,
+          source: "github",
+          description: r.description || null,
+          ownerAvatarUrl: r.owner?.avatar_url ?? null,
+        });
+      }
       if (repositories.length < 100) break;
     }
   }
@@ -173,6 +206,26 @@ export async function installationId(app: GitHubApp, owner: string, repo: string
   const { id } = (await res.json()) as { id?: number };
   if (!id) throw new GitHubError("api", "GitHub didn't say which installation covers this repository.");
   return id;
+}
+
+/** `login`'s role in `org` now ("admin" for its owners), or null if they aren't in it: asked as the app on the
+ *  org's installation (it reads members there). */
+export async function orgRole(app: GitHubApp, org: string, login: string): Promise<"admin" | "member" | null> {
+  const jwt = `Bearer ${await appJwt(app)}`;
+  const inst = await call(app, "GET", `/orgs/${seg(org)}/installation`, jwt);
+  if (inst.status === 404) throw new GitHubError("not_installed", `The GitHub App isn't installed on ${org}.`, 404);
+  if (!inst.ok) throw await failure(inst, `find the app's installation on ${org}`);
+  const { id } = (await inst.json()) as { id: number };
+  const tokenRes = await call(app, "POST", `/app/installations/${id}/access_tokens`, jwt, { permissions: { members: "read" } });
+  if (!tokenRes.ok) throw await failure(tokenRes, `give a token to read ${org}'s members`);
+  const { token } = (await tokenRes.json()) as { token: string };
+  const res = await call(app, "GET", `/orgs/${seg(org)}/memberships/${seg(login)}`, `token ${token}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw await failure(res, `say whether ${login} is in ${org}`);
+  const body = (await res.json()) as { state?: string; role?: string };
+  // A pending invitation isn't membership yet.
+  if (body.state !== "active") return null;
+  return body.role === "admin" ? "admin" : "member";
 }
 
 /** What each job may do with its token. */
@@ -238,6 +291,16 @@ export async function mergePullRequest(app: GitHubApp, owner: string, repo: stri
   return { sha: typeof j.sha === "string" ? j.sha : null };
 }
 
+/** Where a pull request stands on GitHub now, and its merge commit once merged. */
+export async function pullRequestState(app: GitHubApp, owner: string, repo: string, number: number): Promise<{ state: "open" | "closed" | "merged"; sha: string | null }> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth);
+  if (!res.ok) throw await failure(res, `read pull request #${number}`);
+  const j = (await res.json()) as { state?: string; merged?: boolean; merge_commit_sha?: string | null };
+  if (j.merged) return { state: "merged", sha: typeof j.merge_commit_sha === "string" ? j.merge_commit_sha : null };
+  return { state: j.state === "closed" ? "closed" : "open", sha: null };
+}
+
 /** Closes a pull request without merging, after saying why in a comment on it. */
 export async function closePullRequest(app: GitHubApp, owner: string, repo: string, number: number, comment: string): Promise<void> {
   const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
@@ -252,6 +315,62 @@ export async function reopenPullRequest(app: GitHubApp, owner: string, repo: str
   const res = await call(app, "PATCH", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth, { state: "open" });
   if (!res.ok) throw await failure(res, `reopen pull request #${number}`);
   await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/issues/${number}/comments`, auth, { body: comment });
+}
+
+/** Permission to read a pull request's review threads. */
+const READ_PULLS = { pull_requests: "read" } as const;
+
+const THREADS_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id path line startLine diffSide isResolved isOutdated
+          comments(first: 100) { nodes { author { login } body createdAt } }
+        }
+      }
+    }
+  }
+}`;
+
+interface ThreadNode {
+  id: string;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  diffSide: "LEFT" | "RIGHT";
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: { nodes: { author: { login: string } | null; body: string; createdAt: string }[] };
+}
+
+/** A pull request's review threads (GraphQL: REST has no notion of a thread). */
+export async function reviewThreads(app: GitHubApp, owner: string, repo: string, number: number): Promise<ReviewThread[]> {
+  const auth = `token ${(await repoToken(app, owner, repo, READ_PULLS)).token}`;
+  const threads: ReviewThread[] = [];
+  for (let after: string | null = null; ; ) {
+    const res = await call(app, "POST", "/graphql", auth, { query: THREADS_QUERY, variables: { owner, repo, number, after } });
+    if (!res.ok) throw await failure(res, `read pull request #${number}'s review threads`);
+    const j = (await res.json()) as { data?: { repository?: { pullRequest?: { reviewThreads: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: ThreadNode[] } } | null } | null }; errors?: { message: string }[] };
+    const page = j.data?.repository?.pullRequest?.reviewThreads;
+    if (!page) throw new GitHubError("api", `GitHub didn't return pull request #${number}'s review threads${j.errors?.length ? `: ${j.errors.map((e) => e.message).join("; ")}` : ""}.`);
+    for (const t of page.nodes) {
+      threads.push({
+        id: t.id,
+        path: t.path,
+        line: t.line ?? null,
+        startLine: t.startLine ?? null,
+        side: t.diffSide === "LEFT" ? "old" : "new",
+        resolved: t.isResolved,
+        outdated: t.isOutdated,
+        comments: t.comments.nodes.map((c) => ({ author: c.author?.login ?? "ghost", body: c.body, at: Date.parse(c.createdAt) || 0 })),
+      });
+    }
+    if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
+    after = page.pageInfo.endCursor;
+  }
+  return threads;
 }
 
 // ---- branches ----
@@ -286,6 +405,12 @@ export interface Check {
   /** How to ask for it again: a check suite, or (GitHub Actions) a workflow run. */
   suite: number | null;
   run: number | null;
+  /** The check run (none for a commit status). */
+  id?: number | null;
+  /** The GitHub Actions job: for Actions the check run's id is the job's. */
+  job?: number | null;
+  /** Its page on GitHub: the job's, or where a commit status points. */
+  url?: string | null;
 }
 
 const RUN_FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
@@ -308,12 +433,17 @@ export async function checks(app: GitHubApp, owner: string, repo: string, sha: s
     if (typeof r?.name !== "string" || out.has(r.name)) continue;
     const done = r.status === "completed";
     const run = /\/actions\/runs\/(\d+)/.exec(String(r.details_url ?? ""))?.[1];
+    const id = typeof r.id === "number" ? r.id : null;
+    const actions = r.app?.slug === "github-actions" || run !== undefined;
     out.set(r.name, {
       name: r.name,
       status: !done ? (r.status === "in_progress" ? "running" : "queued") : RUN_FAILED.has(r.conclusion) ? "failed" : "passed",
       duration: done ? duration(r.started_at, r.completed_at) : null,
       suite: typeof r.check_suite?.id === "number" ? r.check_suite.id : null,
       run: run ? Number(run) : null,
+      id,
+      job: actions ? id : null,
+      url: str(r.html_url) ?? str(r.details_url),
     });
   }
   const statuses = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(sha)}/status?per_page=100`, auth);
@@ -326,6 +456,9 @@ export async function checks(app: GitHubApp, owner: string, repo: string, sha: s
         duration: null,
         suite: null,
         run: null,
+        id: null,
+        job: null,
+        url: str(s.target_url),
       });
     }
   }
@@ -348,6 +481,75 @@ export async function rerunFailed(app: GitHubApp, owner: string, repo: string, f
     asked.add(path);
   }
   return asked.size;
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+
+/** How much of a job's log is kept: its end, where a failure usually is. */
+export const LOG_LIMIT = 200_000;
+
+/** A check's log: the job's (GitHub Actions), or the check run's output for another app. */
+export interface CheckLog {
+  text: string;
+  truncated: boolean;
+  /** The first line GitHub marked `##[error]`, without the marker. */
+  failedStep: string | null;
+}
+
+/** A job log's lines without the timestamp GitHub puts in front of each, and its byte-order mark. */
+export function cleanLog(raw: string): string {
+  return raw.replace(/^\uFEFF/, "").replace(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z ?/gm, "");
+}
+
+/** The log's last `limit` characters, cut at a line, and the first error in it. */
+export function trimLog(text: string, limit = LOG_LIMIT): CheckLog {
+  let out = text;
+  let truncated = false;
+  if (out.length > limit) {
+    out = out.slice(out.length - limit);
+    const nl = out.indexOf("\n");
+    if (nl >= 0 && nl < 2000) out = out.slice(nl + 1);
+    truncated = true;
+  }
+  const failed = /^.*##\[error\](.*)$/m.exec(out);
+  return { text: out, truncated, failedStep: failed ? failed[1].trim() || "Error" : null };
+}
+
+/** Reads a check's log. Throws a GitHubError when there's none (a commit status, or an expired log). */
+export async function checkLog(app: GitHubApp, owner: string, repo: string, c: Check): Promise<CheckLog> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.checks)).token}`;
+  if (c.job) {
+    // Answered with a redirect to a signed blob URL holding the plain text log. Follow it by hand, without
+    // the token: the blob store refuses a request that carries an Authorization header it didn't sign.
+    let res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/actions/jobs/${c.job}/logs`, auth, undefined, "manual");
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (location) res = await fetch(location, { headers: { "user-agent": USER_AGENT } });
+    if (res.status === 404 || res.status === 410) throw new GitHubError("api", `GitHub has no log for ${c.name} (it may have expired)${c.url ? `: see ${c.url}` : ""}.`, res.status);
+    if (!res.ok) throw await failure(res, `read ${c.name}'s log`);
+    return trimLog(cleanLog(await res.text()));
+  }
+  if (c.id) {
+    const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/check-runs/${c.id}`, auth);
+    if (!res.ok) throw await failure(res, `read ${c.name}`);
+    const out = ((await res.json()) as { output?: { title?: string | null; summary?: string | null; text?: string | null } }).output ?? {};
+    const text = [out.title, out.summary, out.text].filter((x): x is string => typeof x === "string" && x.trim() !== "").join("\n\n");
+    if (!text) throw new GitHubError("api", `${c.name} didn't report any output${c.url ? `: see ${c.url}` : ""}.`);
+    return trimLog(text);
+  }
+  throw new GitHubError("api", `${c.name} is a commit status, with no log on GitHub${c.url ? `: see ${c.url}` : ""}.`);
+}
+
+/** Asks for one check again: its GitHub Actions job, or its check run. */
+export async function rerunCheck(app: GitHubApp, owner: string, repo: string, c: Check): Promise<void> {
+  const path = c.job
+    ? `/repos/${seg(owner)}/${seg(repo)}/actions/jobs/${c.job}/rerun`
+    : c.id
+      ? `/repos/${seg(owner)}/${seg(repo)}/check-runs/${c.id}/rerequest`
+      : null;
+  if (!path) throw new GitHubError("api", `${c.name} is a commit status; GitHub can't run it again from here${c.url ? `: see ${c.url}` : ""}.`);
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.checks)).token}`;
+  const res = await call(app, "POST", path, auth);
+  if (!res.ok) throw await failure(res, `run ${c.name} again`);
 }
 
 // ---- webhooks ----

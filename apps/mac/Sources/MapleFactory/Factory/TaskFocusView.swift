@@ -9,8 +9,12 @@ struct TaskFocusView: View {
     @State private var mode: ComposerMode
     @State private var tab: Tab = .overview
     @FocusState private var composerFocused: Bool
+    @State private var choosingModel = false
+    @State private var otherModel = ""
 
     enum Tab { case overview, diff, session }
+
+    static let demoTab = Notification.Name("TaskFocusView.demoTab")
 
     private let mainWidth: CGFloat = 720
     private let railWidth: CGFloat = 300
@@ -37,7 +41,13 @@ struct TaskFocusView: View {
 
     var body: some View {
         Group {
-            if tab == .session, hasSession { sessionLayout } else { documentLayout }
+            if tab == .session, hasSession {
+                sessionLayout
+            } else if tab == .diff, !compact {
+                diffLayout
+            } else {
+                documentLayout
+            }
         }
         .task(id: task.diffKey) {
             if let key = task.diffKey { await client.loadDiff(task: task.id, key: key) }
@@ -46,23 +56,20 @@ struct TaskFocusView: View {
             if appState.pendingTab == "session", hasSession { tab = .session }
             appState.pendingTab = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoTab)) { note in
+            let target: Tab? = switch note.object as? String {
+            case "overview": .overview
+            case "diff": .diff
+            case "session": .session
+            default: nil
+            }
+            if let target { withAnimation(.snappy(duration: 0.2)) { tab = target } }
+        }
     }
 
     /// The live session gets the whole page: slim header, tabs, then the terminal down to the bottom.
     private var sessionLayout: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 10) {
-                Text(task.id)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .foregroundStyle(Theme.textMuted)
-                Text(task.title)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                StateBadge(state: task.state)
-                Spacer()
-            }
-            tabBar
+        pageLayout {
             Group {
                 if appState.isLive, let worker = task.worker {
                     TaskLiveTerminal(task: task, worker: worker)
@@ -79,13 +86,39 @@ struct TaskFocusView: View {
                     SessionTerminal(task: task)
                 }
             }
-            .frame(maxHeight: .infinity)
+        }
+        .frame(maxWidth: mainWidth + railWidth + 120)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Reviewing the diff takes the whole window, however wide: no rail, no cap on the width.
+    private var diffLayout: some View {
+        pageLayout {
+            DiffView(task: task, files: diffFiles)
+        }
+    }
+
+    /// A slim header and the tabs, then `content` down to the bottom of the window.
+    private func pageLayout<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                Text(task.id)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Theme.textMuted)
+                Text(task.title)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                StateBadge(state: task.state)
+                Spacer()
+            }
+            tabBar
+            content()
+                .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, compact ? 24 : 40)
         .padding(.top, 22)
         .padding(.bottom, 20)
-        .frame(maxWidth: mainWidth + railWidth + 120)
-        .frame(maxWidth: .infinity)
         .onDisappear { appState.markSeen(task.id) }
     }
 
@@ -105,17 +138,15 @@ struct TaskFocusView: View {
                                 decisionCards
                                 switch tab {
                                 case .overview, .session: mainColumn
-                                case .diff: DiffView(task: task, files: diffFiles)
+                                case .diff: DiffView(task: task, files: diffFiles).frame(height: 720)
                                 }
                                 infoCards
                             }
                             .frame(maxWidth: mainWidth, alignment: .leading)
                         } else {
+                            // A wide window's diff has a layout of its own (diffLayout).
                             HStack(alignment: .top, spacing: 40) {
-                                switch tab {
-                                case .overview, .session: mainColumn.frame(maxWidth: mainWidth, alignment: .leading)
-                                case .diff: DiffView(task: task, files: diffFiles).frame(maxWidth: .infinity, alignment: .leading)
-                                }
+                                mainColumn.frame(maxWidth: mainWidth, alignment: .leading)
                                 rail.frame(width: railWidth)
                             }
                         }
@@ -126,11 +157,12 @@ struct TaskFocusView: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: mainWidth + railWidth + 120, alignment: .leading)
                 .frame(maxWidth: .infinity)
-                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort` at its effort.
+                // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort`
+                // at its effort, `-scroll details` at the rail's details.
                 .task {
-                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort"].contains(target) else { return }
+                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
-                    proxy.scrollTo(target, anchor: target == "effort" ? .bottom : .top)
+                    proxy.scrollTo(target, anchor: target == "doneWhen" ? .top : .bottom)
                 }
               }
             }
@@ -198,6 +230,7 @@ struct TaskFocusView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
             }
+            TaskOrigin(task: task)
         }
     }
 
@@ -376,7 +409,7 @@ struct TaskFocusView: View {
             if !task.tickets.isEmpty || task.intakeID != nil { railCard { LinkedCard(task: task) } }
             if let risk { railCard { RiskBox(task: task, risk: risk) } }
 
-            railCard { details }
+            railCard { details }.id("details")
             if let effort = task.effort { railCard { EffortSection(task: task, effort: effort) }.id("effort") }
 
             if !touchedFiles.isEmpty {
@@ -452,14 +485,7 @@ struct TaskFocusView: View {
                     Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
                 }
             }
-            if let agent = task.agent {
-                detailRow("Agent") {
-                    HStack(spacing: 6) {
-                        AgentAvatar(agent: agent, size: 18)
-                        Text(agent.name)
-                    }
-                }
-            }
+            agentRows
             if appState.isLive {
                 if let worker = task.worker {
                     detailRow("Runs on") {
@@ -525,6 +551,81 @@ struct TaskFocusView: View {
 
     private func dateLabel(_ offset: Int) -> String {
         FactoryData.date(offset).formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// What builds it and the model it asks for: menus until it's merged or cancelled. A change applies
+    /// from its next session, so a running one keeps going.
+    @ViewBuilder private var agentRows: some View {
+        let done = task.state == .merged || task.state == .cancelled
+        let agents = appState.isLive ? appState.liveAgents : ["claude", "codex"]
+        let presets = AppState.models(for: task.builder)
+        detailRow("Agent") {
+            Menu {
+                Picker("", selection: Binding(get: { task.builder }, set: { agent in
+                    guard agent != task.builder else { return }
+                    // A model the old agent knew means nothing to the new one.
+                    let keep = task.model.flatMap { AppState.models(for: agent).contains($0) ? $0 : nil }
+                    appState.setAgent(task.id, agent: agent, model: keep)
+                })) {
+                    ForEach(agents.contains(task.builder) ? agents : [task.builder] + agents, id: \.self) { agent in
+                        Label { Text(agentTitle(agent)) } icon: { AgentMark.image(agent) }.tag(agent)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Label { Text(agentTitle(task.builder)) } icon: { AgentMark.image(task.builder) }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(done)
+            .help(done ? "It's \(task.state == .merged ? "merged" : "cancelled")" : "What builds it, from its next session")
+        }
+        detailRow("Model") {
+            VStack(alignment: .leading, spacing: 2) {
+                Menu {
+                    Button {
+                        appState.setAgent(task.id, agent: task.builder, model: nil)
+                    } label: {
+                        if task.model == nil { Label("Default", systemImage: "checkmark") } else { Text("Default") }
+                    }
+                    Divider()
+                    ForEach(presets, id: \.self) { model in
+                        Button {
+                            appState.setAgent(task.id, agent: task.builder, model: model)
+                        } label: {
+                            if task.model == model { Label(model, systemImage: "checkmark") } else { Text(model) }
+                        }
+                    }
+                    if let model = task.model, !presets.contains(model) {
+                        Label(model, systemImage: "checkmark")
+                    }
+                    Divider()
+                    Button("Other…") {
+                        otherModel = task.model.flatMap { presets.contains($0) ? nil : $0 } ?? ""
+                        choosingModel = true
+                    }
+                } label: {
+                    Text(task.model ?? "Default").font(.system(size: 12, design: task.model == nil ? .default : .monospaced))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(done)
+                .help(task.model == nil ? "\(agentTitle(task.builder))'s own default on the machine it runs on" : "Its sessions run \(agentTitle(task.builder)) with --model \(task.model!)")
+                if hasSession, !done {
+                    Text("Applies from the next session")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+        }
+        .alert("Model for \(task.id)", isPresented: $choosingModel) {
+            TextField(task.builder == "codex" ? "gpt-5" : "claude-opus-4-1", text: $otherModel)
+            Button("Use") { appState.setAgent(task.id, agent: task.builder, model: otherModel) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Any model \(agentTitle(task.builder)) takes with --model. Leave it blank for its default.")
+        }
     }
 
     private func detailRow<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {

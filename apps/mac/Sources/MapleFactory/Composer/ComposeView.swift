@@ -4,6 +4,7 @@ import SwiftUI
 /// take from it, then park it as a draft or hand it straight to a planner.
 struct ComposeView: View {
     @Environment(AppState.self) private var state
+    @FocusState private var titleFocused: Bool
 
     private let editorWidth: CGFloat = 760
     private let panelWidth: CGFloat = 320
@@ -35,6 +36,7 @@ struct ComposeView: View {
                             .textFieldStyle(.plain)
                             .font(.system(size: 26, weight: .semibold))
                             .foregroundStyle(Theme.text)
+                            .focused($titleFocused)
 
                         templates
 
@@ -60,6 +62,21 @@ struct ComposeView: View {
             }
 
             actionBar(reading)
+        }
+        .onAppear(perform: focusTitle)
+        .onChange(of: state.composeFocusRequest) { focusTitle() }
+    }
+
+    /// The caret in the title, after the slide-in, at the end of anything already filled in.
+    private func focusTitle() {
+        DispatchQueue.main.async {
+            titleFocused = true
+            DispatchQueue.main.async {
+                // Focusing a field selects its text; a prefilled title keeps it, with the caret after.
+                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
+                }
+            }
         }
     }
 
@@ -220,9 +237,9 @@ struct FactoryReadingPanel: View {
                     if state.isLive {
                         row("Agent") {
                             Picker("", selection: $state.draft.agent) {
-                                Text("Claude Code").tag(String?.none)
+                                Label { Text("Claude Code") } icon: { AgentMark.image("claude") }.tag(String?.none)
                                 ForEach(state.liveAgents.filter { $0 != "claude" }, id: \.self) { id in
-                                    Text(agentTitle(id)).tag(String?.some(id))
+                                    Label { Text(agentTitle(id)) } icon: { AgentMark.image(id) }.tag(String?.some(id))
                                 }
                             }
                             .labelsHidden()
@@ -431,7 +448,7 @@ struct AIDraftCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.planning.opacity(0.25)))
         )
         .onChange(of: "\(draft?.state.rawValue ?? "")|\(draft?.goal ?? "")", initial: true) { state.applyAIDraft() }
-        // A goal it suggested, once made in the goal sheet: carry on with it.
+        // A goal it suggested, once made in the goal editor: carry on with it.
         .onChange(of: client.goals.map(\.name)) {
             guard let idea = draft?.newGoal, draft?.state == .needsGoal,
                   let made = client.goals.first(where: { $0.name.caseInsensitiveCompare(idea.name) == .orderedSame }) else { return }

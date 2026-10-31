@@ -3,13 +3,14 @@
 import type { Env } from "./env.ts";
 import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
-import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, removeMachine } from "./machines.ts";
+import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
+import { remove as removeName, set as setName } from "./name.ts";
 import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
 import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
-import { PROTOCOL_VERSION } from "./wire.ts";
+import { PROTOCOL_VERSION, type Machine, type SessionShare } from "./wire.ts";
 import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
@@ -96,15 +97,32 @@ export default {
       return orgHub(env).fetch(new Request("https://org/connect", forward));
     }
     if (path === "/client/terminal") {
-      if (!isUpgrade(request)) return text("Expected a WebSocket.", 426);
       const machine = url.searchParams.get("machine") ?? "";
       const session = url.searchParams.get("session") ?? "";
       if (!MACHINE_ID.test(machine) || !/^[0-9a-f-]{36}$/.test(session)) return text("Expected machine and session.", 400);
+      // A terminal can type into a task's session, which has its repo's secrets: the machine's owner and admins,
+      // and teammates they shared that session with (to watch, or to type too).
+      const row = await machineRow(env, machine);
+      if (!row) return text("No such machine.", 404);
+      const hub = machineHub(env, machine);
+      let share: SessionShare | undefined;
+      if (row.owner !== me.login && me.role !== "admin") {
+        const state = (await (await hub.fetch("https://hub/state")).json()) as Machine;
+        share = state.sessions.find((s) => s.session.id === session)?.shares?.find((s) => s.login === me.login);
+        // Checked before the upgrade, so an app whose socket got a 403 can GET the same URL to say why.
+        if (!share) return text(`Only ${row.owner} or an admin can open terminals on ${row.name ?? row.id}; ask ${row.owner} to share this session with you.`, 403);
+      }
+      if (!isUpgrade(request)) return text("Expected a WebSocket.", 426);
       const target = new URL("https://hub/view");
       target.searchParams.set("session", session);
       target.searchParams.set("login", me.login);
+      target.searchParams.set("role", me.role);
+      if (share) {
+        target.searchParams.set("shared", "1");
+        target.searchParams.set("canType", share.canType ? "1" : "0");
+      }
       for (const key of ["cols", "rows"]) if (url.searchParams.has(key)) target.searchParams.set(key, url.searchParams.get(key)!);
-      return machineHub(env, machine).fetch(new Request(target, request));
+      return hub.fetch(new Request(target, request));
     }
 
     // Files pasted or dropped into briefs and notes (src/attachments.ts).
@@ -114,6 +132,9 @@ export default {
     // The factory's icon (src/icon.ts).
     if (path === "/api/icon" && request.method === "PUT") return uploadIcon(request, env, me);
     if (path === "/api/icon" && request.method === "DELETE") return removeIcon(env, me);
+    // The factory's display name (src/name.ts).
+    if (path === "/api/name" && request.method === "PUT") return setName(request, env, me);
+    if (path === "/api/name" && request.method === "DELETE") return removeName(env, me);
 
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;
@@ -121,12 +142,14 @@ export default {
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
     if (path === "/api/usage/goals" && request.method === "GET") return orgHub(env).fetch("https://org/usage/goals");
     if (path === "/api/stats" && request.method === "GET") {
-      // For prompt and loop tuning: ?days= (7, 30 or 90), &goal=, &raw=1 adds the event rows.
+      // For prompt and loop tuning: ?days= (1, 3, 7, 30 or 90), &goal=, &raw=1 adds the event rows.
       if (me.role !== "admin") return text("Only admins can see statistics.", 403);
       return orgHub(env).fetch(`https://org/stats${url.search}`);
     }
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
     if (diff && request.method === "GET") return orgHub(env).fetch(`https://org/diff?task=${diff[1]}`);
+    const threads = /^\/api\/tasks\/([\w-]+)\/threads$/.exec(path);
+    if (threads && request.method === "GET") return orgHub(env).fetch(`https://org/threads?task=${threads[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);
     const removing = /^\/api\/machines\/([a-z0-9-]+)$/.exec(path);
     if (removing && request.method === "DELETE") return removeMachine(env, me, removing[1]);

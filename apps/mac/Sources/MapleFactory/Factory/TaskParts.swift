@@ -72,6 +72,41 @@ struct TaskOwnership: View {
     }
 }
 
+/// Where a task came from, when it didn't start as someone's idea: split off an over-budget task, or
+/// a leftover a Scout run picked up. Each names the task, linked.
+struct TaskOrigin: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+
+    var body: some View {
+        if task.splitFrom != nil || task.scoutedFrom != nil {
+            HStack(spacing: 12) {
+                if let id = task.splitFrom { line("arrow.triangle.branch", "Split from", id, nil) }
+                if let from = task.scoutedFrom {
+                    let parts = from.split(separator: "#", maxSplits: 1).map(String.init)
+                    line("binoculars", "Scouted from", parts[0], parts.count > 1 ? "a review finding" : nil)
+                }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    private func line(_ icon: String, _ label: String, _ id: String, _ detail: String?) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10.5))
+            Text(label)
+            Text(id)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.accent)
+                .onTapGesture { appState.openReference(id) }
+                .pointerStyle(.link)
+                .help("Open \(id)")
+            if let detail { Text("· \(detail)") }
+        }
+    }
+}
+
 /// The ⋯ menu on a task: what to do next, editing it, and getting at it, with Cancel's confirmation
 /// and the Rename alert.
 struct TaskActionsMenu<Label: View>: View {
@@ -129,6 +164,10 @@ struct TaskActionButtons: View {
             }
             Divider()
         } else if task.state == .drafting {
+            // Its place among the goal's drafts; it stays a draft.
+            Button { appState.moveDraftToTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
+            Button { appState.moveDraftToBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
+            Divider()
             Button { appState.queue(task.id, before: nil) } label: { Label("Queue", systemImage: "list.number") }
             if let schedule {
                 Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
@@ -446,10 +485,51 @@ struct SecondaryButton: View {
     }
 }
 
+/// The planner's proposed rename: taken when the plan is approved, unless the approver keeps the current title.
+struct SuggestedTitleRow: View {
+    let task: FactoryTask
+    let suggested: String
+    @Binding var keep: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "character.cursor.ibeam")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Renames to")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textMuted)
+                    Text(suggested)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(keep ? Theme.textFaint : Theme.text)
+                        .strikethrough(keep, color: Theme.textFaint)
+                    Text(task.title)
+                        .font(.system(size: 12))
+                        .foregroundStyle(keep ? Theme.text : Theme.textFaint)
+                        .strikethrough(!keep, color: Theme.textFaint)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Toggle("Keep current title", isOn: $keep)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.leading, 19)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+        .animation(.snappy(duration: 0.2), value: keep)
+    }
+}
+
 struct ApprovalBlock: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var keepTitle = false
 
     var body: some View {
         let needed = state.risk(for: task)?.approvals ?? task.approvalsNeeded
@@ -472,9 +552,12 @@ struct ApprovalBlock: View {
             }
             if !iApproved {
                 let approving = state.isInFlight(task.id, .approvePlan)
+                if let suggested = task.suggestedTitle {
+                    SuggestedTitleRow(task: task, suggested: suggested, keep: $keepTitle)
+                }
                 DecisionButtons {
                     PrimaryButton(title: "Approve plan", icon: "checkmark", busy: approving, busyTitle: "Approving…") {
-                        state.approvePlan(task.id)
+                        state.approvePlan(task.id, keepTitle: keepTitle)
                     }
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
@@ -493,6 +576,7 @@ struct BacklogBlock: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
     var onRequestChanges: () -> Void
+    @State private var keepTitle = false
 
     var body: some View {
         let planned = !task.plan.isEmpty
@@ -515,9 +599,12 @@ struct BacklogBlock: View {
                 }
             }
             if planned {
+                if let suggested = task.suggestedTitle {
+                    SuggestedTitleRow(task: task, suggested: suggested, keep: $keepTitle)
+                }
                 DecisionButtons {
                     PrimaryButton(title: "Approve & build", icon: "hammer", busy: approving, busyTitle: "Approving…") {
-                        state.approvePlan(task.id)
+                        state.approvePlan(task.id, keepTitle: keepTitle)
                     }
                     RequestChangesButton(enabled: !approving, action: onRequestChanges)
                 }
@@ -539,7 +626,8 @@ struct ReviewActions: View {
     var body: some View {
         let gate = state.mergeGate(for: task)
         let iReviewed = task.reviews.contains { $0.id == FactoryData.me.id }
-        let autoMerging = state.autoMerging.contains(task.id)
+        // Mid-countdown it isn't merging yet: the countdown button itself locks when it runs out.
+        let factoryMerging = task.merging || state.autoMerging.contains(task.id)
 
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
@@ -554,6 +642,7 @@ struct ReviewActions: View {
                 }
                 gateRow("Reviews", ready: gate.reviewsReady, failed: false,
                         detail: gate.reviewsNeeded == 0 ? "Not required" : "\(task.reviews.count) of \(gate.reviewsNeeded)")
+                mergeRow
             }
 
             if gate.reviewsNeeded > 0 {
@@ -573,8 +662,9 @@ struct ReviewActions: View {
 
             if let mergeAt = countdown(gate) {
                 CountdownMergeButton(number: task.pr?.number ?? 0, mergeAt: mergeAt, from: task.mergeFrom,
+                                     holding: state.isInFlight(task.id, .holdMerge),
                                      hold: { state.holdMerge(task.id) }, mergeNow: { state.merge(task.id) })
-            } else if autoMerging {
+            } else if factoryMerging {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Factory is merging #\(task.pr?.number ?? 0)…")
@@ -602,7 +692,7 @@ struct ReviewActions: View {
                 }
             } else {
                 let approving = state.isInFlight(task.id, .approveChanges)
-                let merging = state.isInFlight(task.id, .merge)
+                let merging = state.isMerging(task)
                 DecisionButtons {
                     if !gate.autoReviewReady && !gate.reviewsReady && !iReviewed {
                         // The server refuses approvals until the reviewer passes the round, so say so instead of failing silently.
@@ -622,9 +712,9 @@ struct ReviewActions: View {
             }
 
             if let mergeAt = countdown(gate) {
-                TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                TimelineView(.everySecond(until: mergeAt)) { context in
                     let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
-                    statusRow("bolt.fill", "Auto-merging in \(left)s — Hold to merge it yourself.", Theme.State.merged)
+                    statusRow("bolt.fill", left > 0 ? "Auto-merging in \(left)s — Hold to merge it yourself." : "Auto-merging now.", Theme.State.merged)
                 }
             } else {
                 statusLine(gate)
@@ -635,8 +725,49 @@ struct ReviewActions: View {
     /// When the factory auto-merges it, while that's counting down and every gate still holds.
     private func countdown(_ gate: MergeGate) -> Date? {
         guard task.state == .reviewing, let mergeAt = task.mergeAt, gate.canMerge, gate.autoMerge,
-              task.hand == nil, !state.isInFlight(task.id, .merge) else { return nil }
+              task.hand == nil, !task.merging, !state.isInFlight(task.id, .merge) else { return nil }
         return mergeAt
+    }
+
+    /// The merge forecast: conflicts with the base (red), overlaps with other work in flight (amber, each
+    /// one a link to that task), or merges cleanly (green).
+    @ViewBuilder private var mergeRow: some View {
+        let forecast = task.mergeForecast ?? MergeForecast()
+        let base = forecast.base ?? task.pr?.base ?? "main"
+        if !forecast.conflicts.isEmpty {
+            let n = forecast.conflicts.count
+            let files = n == 1 ? "1 file" : "\(n) files"
+            let since = forecast.since.map { " since \($0) merged" } ?? ""
+            let fixing = task.state == .building ? " · builder updating" : ""
+            gateRow("Merge", ready: false, failed: true, detail: "Conflicts in \(files)\(since)\(fixing)")
+                .help(forecast.conflicts.joined(separator: "\n"))
+        } else if !forecast.overlaps.isEmpty {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.State.awaitingApproval)
+                Text("Merge").foregroundStyle(Theme.text)
+                Spacer()
+                Text("Overlaps").foregroundStyle(Theme.State.awaitingApproval)
+                ForEach(Array(forecast.overlaps.prefix(2).enumerated()), id: \.element) { i, o in
+                    Button {
+                        state.openTask(o.task)
+                    } label: {
+                        Text("\(o.task) (\(o.files.count == 1 ? "1 file" : "\(o.files.count) files"))\(i < min(forecast.overlaps.count, 2) - 1 ? "," : "")")
+                            .underline()
+                            .foregroundStyle(Theme.State.awaitingApproval)
+                    }
+                    .buttonStyle(.plain)
+                    .help(o.files.joined(separator: "\n"))
+                }
+                if forecast.overlaps.count > 2 {
+                    Text("+\(forecast.overlaps.count - 2)").foregroundStyle(Theme.State.awaitingApproval)
+                }
+            }
+            .font(.system(size: 12))
+        } else {
+            gateRow("Merge", ready: true, failed: false, detail: "Merges cleanly into \(base)")
+        }
     }
 
     private func gateRow(_ label: String, ready: Bool, failed: Bool, detail: String) -> some View {
@@ -697,21 +828,36 @@ struct ReviewActions: View {
 }
 
 /// The auto-merge counting down: a green button whose fill drains to empty by `mergeAt`, when the
-/// factory merges, with Hold (a person merges it instead) and Merge now beside it.
+/// factory merges, with Hold (a person merges it instead) and Merge now beside it. At 0s both give way
+/// to a locked "Merging #N…" at once, without waiting for the server to say it's merging.
 struct CountdownMergeButton: View {
     let number: Int
     let mergeAt: Date
     /// When the countdown started; unknown, it's taken as the factory's default 10s.
     var from: Date?
+    /// Hold was sent and the server hasn't cleared the countdown yet.
+    var holding = false
     var hold: () -> Void
     var mergeNow: () -> Void
 
     var body: some View {
+        // Once a second for the number, and at 0s for the lock; Core Animation drains the bar (CountdownDrain),
+        // not a redraw every frame.
+        TimelineView(.everySecond(until: mergeAt)) { context in
+            let left = max(0, mergeAt.timeIntervalSince(context.date))
+            if left > 0 {
+                counting(left)
+            } else {
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: true, busyTitle: "Merging #\(number)…") {}
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private func counting(_ left: TimeInterval) -> some View {
         VStack(spacing: 8) {
-            TimelineView(.animation) { context in
+            Group {
                 let total = max(mergeAt.timeIntervalSince(from ?? mergeAt.addingTimeInterval(-10)), 0.001)
-                let left = max(0, mergeAt.timeIntervalSince(context.date))
-                let fraction = min(1, left / total)
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold))
                     Text("Merging #\(number) in \(Int(left.rounded(.up)))s")
@@ -724,11 +870,9 @@ struct CountdownMergeButton: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(Theme.approve.opacity(0.4))
-                            Rectangle().fill(Theme.approve).frame(width: geo.size.width * fraction)
-                        }
+                    ZStack {
+                        Rectangle().fill(Theme.approve.opacity(0.4))
+                        CountdownDrain(mergeAt: mergeAt, total: total, color: Theme.approve)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
@@ -736,11 +880,10 @@ struct CountdownMergeButton: View {
                 .accessibilityLabel("Merging #\(number) in \(Int(left.rounded(.up))) seconds")
             }
             DecisionButtons {
-                SecondaryButton(title: "Hold", action: hold)
-                SecondaryButton(title: "Merge now", action: mergeNow)
+                SecondaryButton(title: "Hold", enabled: !holding, action: hold)
+                SecondaryButton(title: "Merge now", enabled: !holding, action: mergeNow)
             }
         }
-        .transition(.opacity)
     }
 }
 

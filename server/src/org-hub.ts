@@ -5,17 +5,19 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
+import { redacted } from "./factory/connectors.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
-import { summarize } from "./factory/stats.ts";
+import { statsWindow, summarize } from "./factory/stats.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
+import { githubAppInfo } from "./github.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
@@ -74,10 +76,31 @@ export class OrgHub extends DurableObject<Env> {
    *  and a scheduled task whose time came starts even if no machine reports in. */
   async alarm() {
     await applySettings(this.env);
+    await this.recheckConnected();
     await this.engine.pollCI();
     await this.engine.mergeDue();
     await this.engine.pump();
     await this.checkRunnerRelease();
+  }
+
+  /** Apps live on one socket and rarely make a request, so the request-time membership check would miss them:
+   *  while any are connected, asks again about the people behind them once their check is stale, and cuts off
+   *  anyone who has left. */
+  private async recheckConnected() {
+    const logins = new Set(this.ctx.getWebSockets("client").map((ws) => (ws.deserializeAttachment() as Client).member.login));
+    if (!logins.size) return;
+    for (const login of logins) {
+      const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ?").bind(login).first<MemberRow>();
+      const still = row && (await stillMember(this.env, row, false));
+      if (!still) await this.cutOff(login);
+      else if (still.role !== row.role) await this.memberChanged(login);
+    }
+    await this.armRecheck();
+  }
+
+  /** The next membership sweep, while apps are connected: at most a second apart (the e2e tests check every time). */
+  private async armRecheck() {
+    await this.wakeAt(Date.now() + Math.max(recheckEvery(this.env), 1000));
   }
 
   /** While apps are connected, reads the runner releases again hourly and tells the apps when they
@@ -122,6 +145,7 @@ export class OrgHub extends DurableObject<Env> {
         this.ctx.acceptWebSocket(pair[1], ["client"]);
         pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
         await this.armRunnerCheck();
+        await this.armRecheck();
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
       case "/machine": {
@@ -149,7 +173,7 @@ export class OrgHub extends DurableObject<Env> {
         return Response.json(await this.engine.fromRunner(machine, msg));
       }
       case "/notice": {
-        const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null; state?: string; version?: string | null } };
+        const { machine, msg } = (await request.json()) as { machine: string; msg: { type: string; message?: string | null; state?: string; version?: string | null; status?: AgentLoginStatus } };
         if (msg.type === "session.error" && msg.message) this.broadcast({ type: "error", message: `${machine}: ${msg.message}`, requestId: null });
         if (msg.type === "update.status") {
           // The machine's card shows where it is; a toast only for a failure, which is worth noticing elsewhere.
@@ -161,6 +185,11 @@ export class OrgHub extends DurableObject<Env> {
             this.broadcast({ type: "toast", text: `${name} couldn't update its runner${msg.message ? `: ${msg.message}` : "."}`, taskId: null });
           }
         }
+        if (msg.type === "agent.login_status" && msg.status) {
+          // The one-time code is a credential: only the machine's owner sees it, never a broadcast.
+          const owner = (await this.machines()).find((m) => m.id === machine)?.owner;
+          if (owner) this.sendTo(owner, { type: "machine.agent_login", machine, status: msg.status });
+        }
         return new Response(null, { status: 204 });
       }
       case "/removed": {
@@ -168,6 +197,16 @@ export class OrgHub extends DurableObject<Env> {
         await this.ctx.storage.delete([`m:${id}`, `u:${id}`]);
         this.updates.delete(id);
         this.broadcast({ type: "machine.removed", id });
+        return new Response(null, { status: 204 });
+      }
+      case "/revoked": {
+        // auth.ts revoked someone (they left the org): their apps and terminals close now.
+        await this.cutOff(await request.text());
+        return new Response(null, { status: 204 });
+      }
+      case "/member-changed": {
+        // auth.ts's re-check found GitHub changed someone's role.
+        await this.memberChanged(await request.text());
         return new Response(null, { status: 204 });
       }
       case "/machines": return Response.json(await this.machines());
@@ -178,6 +217,13 @@ export class OrgHub extends DurableObject<Env> {
         this.store.saveIcon(id);
         this.broadcast({ type: "icon.updated", icon: id ? `/icon/${id}` : null });
         return Response.json({ previous });
+      }
+      case "/name": {
+        // The Worker checked it's an admin and the name's length; this keeps it and tells the apps.
+        const { name } = (await request.json()) as { name: string | null };
+        this.store.saveName(name);
+        this.broadcast({ type: "name.updated", name });
+        return new Response(null, { status: 204 });
       }
       case "/dev/alarm": {
         // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
@@ -223,6 +269,13 @@ export class OrgHub extends DurableObject<Env> {
         const events = this.store.statEvents(summary.since).filter((e) => !summary.goal || e.goal === summary.goal);
         return Response.json({ ...summary, events });
       }
+      case "/threads": {
+        try {
+          return Response.json(await this.engine.threads(url.searchParams.get("task") ?? ""));
+        } catch (e) {
+          return new Response(e instanceof Error ? e.message : String(e), { status: 502 });
+        }
+      }
       case "/diff": {
         const patch = this.store.get(`patch:${url.searchParams.get("task")}`);
         return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });
@@ -237,9 +290,9 @@ export class OrgHub extends DurableObject<Env> {
     return id ? `/icon/${id}` : null;
   }
 
-  /** The statistics over the last `days` (7, 30 or 90; anything else reads as 30). */
+  /** The statistics over the last `days` (1, 3, 7, 30 or 90; anything else reads as 30). */
   private stats(days: number, goal?: string | null) {
-    const window = [7, 30, 90].includes(days) ? days : 30;
+    const window = statsWindow(days);
     const at = Date.now();
     const since = at - window * 86_400_000;
     // The window's rows, and the earlier review rounds of the tasks it merged (rounds per merge counts them all).
@@ -310,6 +363,82 @@ export class OrgHub extends DurableObject<Env> {
   private async members(): Promise<Member[]> {
     const { results } = await this.env.DB.prepare("SELECT * FROM members ORDER BY login").all<MemberRow>();
     return results.map(toMember);
+  }
+
+  /** Grants or takes back an admin grant; GitHub's owners stay admins whatever happens here. The reason it's refused, if it is. */
+  private async setAdmin(by: Member, login: string, grant: boolean): Promise<string | null> {
+    if (by.role !== "admin") return "Only admins can change who's an admin.";
+    const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ? COLLATE NOCASE").bind(login).first<MemberRow>();
+    if (!row) return `${login} hasn't signed in to this factory yet.`;
+    const target = toMember(row);
+    if (grant && target.role === "admin") return `${target.login} is already an admin.`;
+    if (grant) {
+      // A grant to someone who's left can't let them back in, but it shouldn't look as if it does.
+      let allowed: boolean;
+      try {
+        allowed = await maySignIn(this.env, target.login);
+      } catch (e) {
+        return `Couldn't check with GitHub that ${target.login} may still sign in: ${(e as Error).message}`;
+      }
+      if (!allowed) {
+        const gone = this.env.GITHUB_OWNER_TYPE === "User" ? "isn't on GITHUB_ALLOWED_LOGINS any more" : `isn't in ${this.env.GITHUB_ORG} any more`;
+        return `${target.login} ${gone}, so they can't sign in to this factory.`;
+      }
+    }
+    if (!grant) {
+      if (target.adminSource === "github") return `${target.login} owns the GitHub organization, so they're an admin there; change it on GitHub.`;
+      if (target.role !== "admin") return `${target.login} isn't an admin.`;
+      if (target.login === by.login) return "You can't take back your own admin; ask another admin.";
+    }
+    await this.env.DB.prepare("UPDATE members SET admin_granted_by = ?, admin_granted_at = ? WHERE login = ?")
+      .bind(grant ? by.login : null, grant ? Date.now() : null, row.login).run();
+    await audit(this.env, by.login, grant ? "admin.granted" : "admin.revoked", row.login);
+    await this.memberChanged(row.login);
+    return null;
+  }
+
+  /** Someone's role changed (an admin grant, or GitHub's role at a re-check): their open apps act with it straight
+   *  away, without reconnecting; if they're no longer an admin, the terminals they opened on others' machines as
+   *  one close (their own stay open); and everyone sees the members change. */
+  private async memberChanged(login: string) {
+    const members = await this.members();
+    const updated = members.find((m) => m.login === login);
+    if (!updated) return;
+    for (const ws of this.ctx.getWebSockets("client")) {
+      const c = ws.deserializeAttachment() as Client;
+      if (c.member.login === login) ws.serializeAttachment({ ...c, member: updated });
+    }
+    if (updated.role !== "admin") await this.dropViewers(login, "admin");
+    this.broadcast({ type: "members.updated", members });
+  }
+
+  /** An admin's "Revoke access": signs someone out everywhere now. The reason it's refused, if it is. */
+  private async revokeAccess(by: Member, login: string): Promise<string | null> {
+    if (by.role !== "admin") return "Only admins can revoke someone's access.";
+    const row = await this.env.DB.prepare("SELECT * FROM members WHERE login = ? COLLATE NOCASE").bind(login).first<MemberRow>();
+    if (!row) return `${login} hasn't signed in to this factory.`;
+    const target = toMember(row);
+    if (target.login === by.login) return "You can't revoke your own access.";
+    if (target.adminSource === "github") return `${target.login} owns the GitHub organization; remove them on GitHub.`;
+    await revokeMember(this.env, row.login, by.login, false);
+    await this.cutOff(row.login);
+    return null;
+  }
+
+  /** Closes a revoked person's feed sockets and terminals, and tells everyone the members changed. */
+  private async cutOff(login: string) {
+    for (const ws of this.ctx.getWebSockets("client")) {
+      if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
+    }
+    await this.dropViewers(login);
+    this.broadcast({ type: "members.updated", members: await this.members() });
+  }
+
+  /** Asks every machine to close `login`'s terminals (with `role`, only those they opened with that role). */
+  private async dropViewers(login: string, role?: string) {
+    const query = new URLSearchParams({ login, ...(role ? { role } : {}) });
+    await Promise.all((await machineRows(this.env)).map((m) =>
+      machineHub(this.env, m.id).fetch(`https://hub/drop-viewers?${query}`, { method: "POST" })));
   }
 
   private async recentEnds(): Promise<EndedSession[]> {
@@ -392,18 +521,24 @@ export class OrgHub extends DurableObject<Env> {
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
           prompts: this.store.prompts(),
+          connectors: redacted(this.store.connectors()),
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
           intake: this.intake.list(),
           secrets: this.secrets.list(),
           repos: this.store.repos(),
+          repoOwners: this.store.repoOwners(),
+          githubApp: githubAppInfo(this.env),
           scripts: this.store.repoScripts(),
+          setupRuns: this.engine.setupRuns(),
+          scoutRuns: this.engine.scoutRuns(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
           serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
           icon: this.iconPath(),
+          name: this.store.name(),
           protocolVersion: PROTOCOL_VERSION,
         });
         // The app's repos change on GitHub's side; read them again when they're an hour old.
@@ -414,13 +549,14 @@ export class OrgHub extends DurableObject<Env> {
       case "session.resize": {
         const machine = (await this.machines()).find((m) => m.id === msg.machine);
         if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
-        // Starting and ending sessions is for the machine's owner (and admins) until team slots land.
-        if (msg.type !== "session.resize" && machine.owner !== client.member.login && client.member.role !== "admin") {
-          return this.send(ws, { type: "error", message: `Only ${machine.owner} can start or end sessions on ${machine.name}.`, requestId: null });
+        // Starting, ending and resizing sessions is for the machine's owner (and admins), as its terminals are.
+        if (machine.owner !== client.member.login && client.member.role !== "admin") {
+          const what = msg.type === "session.resize" ? "resize sessions" : "start or end sessions";
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} or an admin can ${what} on ${machine.name}.`, requestId: null });
         }
         let command: ServerToRunner;
         if (msg.type === "session.open") {
-          command = { type: "session.open", id: crypto.randomUUID(), agent: msg.agent, cwd: msg.cwd, cols: msg.cols, rows: msg.rows, prompt: msg.prompt ?? null, resume: false, taskId: null };
+          command = { type: "session.open", id: crypto.randomUUID(), agent: msg.agent, cwd: msg.cwd, cols: msg.cols, rows: msg.rows, prompt: msg.prompt ?? null, resume: false, taskId: null, connectors: this.engine.connectors() };
           await audit(this.env, client.member.login, "session.opened", msg.machine, { agent: msg.agent, cwd: msg.cwd, id: command.id });
         } else if (msg.type === "session.kill") {
           command = { type: "session.kill", id: msg.id };
@@ -434,6 +570,37 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        return;
+      }
+      case "session.share": {
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (machine.owner !== client.member.login && client.member.role !== "admin") {
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} or an admin can share sessions on ${machine.name}.`, requestId: null });
+        }
+        const live = machine.sessions.find((s) => s.session.id === msg.id);
+        if (!live) return this.send(ws, { type: "error", message: "That session has ended.", requestId: null });
+        const { results } = await this.env.DB.prepare("SELECT * FROM members").all<MemberRow>();
+        const before = live.shares ?? [];
+        const shares: SessionShare[] = [];
+        for (const grant of msg.shares) {
+          const row = results.find((r) => r.login.toLowerCase() === grant.login.toLowerCase());
+          if (!row || revoked(row)) return this.send(ws, { type: "error", message: `${grant.login} isn't a member of this factory.`, requestId: null });
+          if (row.login === machine.owner) return this.send(ws, { type: "error", message: `${row.login} owns ${machine.name}; it's theirs already.`, requestId: null });
+          if (shares.some((s) => s.login === row.login)) continue;
+          const was = before.find((s) => s.login === row.login);
+          shares.push(was && was.canType === grant.canType ? was : { login: row.login, canType: grant.canType, by: client.member.login, at: Date.now() });
+        }
+        const res = await machineHub(this.env, machine.id).fetch("https://hub/share", { method: "POST", body: JSON.stringify({ session: msg.id, shares }) });
+        if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        for (const share of shares) {
+          if (!before.some((s) => s.login === share.login && s.canType === share.canType)) {
+            await audit(this.env, client.member.login, "session.shared", machine.id, { id: msg.id, with: share.login, canType: share.canType });
+          }
+        }
+        for (const was of before) {
+          if (!shares.some((s) => s.login === was.login)) await audit(this.env, client.member.login, "session.unshared", machine.id, { id: msg.id, with: was.login });
+        }
         return;
       }
       case "machine.rename": {
@@ -463,6 +630,23 @@ export class OrgHub extends DurableObject<Env> {
         if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
         await this.setUpdate(machine.id, { state: "checking", target: await this.runnerLatest(), from: machine.version ?? null, message: null, at: Date.now() }, true);
         await audit(this.env, client.member.login, "runner.update", msg.machine);
+        return;
+      }
+      case "machine.agent_login": {
+        // Its owner only, not even an admin: a device code signs the machine into whoever finishes it in the browser.
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (machine.owner !== client.member.login) {
+          return this.send(ws, { type: "error", message: `Only ${machine.owner} can sign ${machine.name} in to ${msg.agent}.`, requestId: null });
+        }
+        const cancel = msg.cancel ?? false;
+        const res = await machineHub(this.env, msg.machine).fetch("https://hub/command", {
+          method: "POST",
+          body: JSON.stringify({ type: "agent.login", agent: msg.agent, cancel }),
+          headers: { "x-by": client.member.login },
+        });
+        if (!res.ok) return this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        await audit(this.env, client.member.login, cancel ? "agent.login.cancelled" : "agent.login", msg.machine, { agent: msg.agent });
         return;
       }
       case "runner.check": {
@@ -502,6 +686,28 @@ export class OrgHub extends DurableObject<Env> {
       case "stats.get": {
         if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
         this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
+        return;
+      }
+      case "task.checkLog": {
+        // A log can be large and goes stale: read from GitHub for whoever asked, never broadcast or kept.
+        // A refusal carries `checkLog:<task>/<check>` as its requestId so the app ties it to that log.
+        try {
+          this.send(ws, await this.engine.checkLog(msg.id, msg.check));
+        } catch (e) {
+          if (!(e instanceof FactoryError)) console.error("factory:", e);
+          this.send(ws, { type: "error", message: e instanceof FactoryError ? e.message : "Something went wrong reading that log.", requestId: `checkLog:${msg.id}/${msg.check}` });
+        }
+        return;
+      }
+      case "members.revoke": {
+        const error = await this.revokeAccess(client.member, msg.login);
+        if (error) this.send(ws, { type: "error", message: error, requestId: null });
+        return;
+      }
+      case "admins.grant":
+      case "admins.revoke": {
+        const error = await this.setAdmin(client.member, msg.login, msg.type === "admins.grant");
+        if (error) this.send(ws, { type: "error", message: error, requestId: null });
         return;
       }
       case "session.attach":

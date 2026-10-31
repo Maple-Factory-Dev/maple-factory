@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import MapleFactory
+@testable import MapleKit
 
 /// A newer server may send enum values this build doesn't know (HandReason.mergeFailed broke 0.1.1).
 /// They decode as `.other("…")` instead of failing the whole message and dropping the feed.
@@ -35,18 +35,21 @@ struct WireTolerance {
         #expect(String(decoding: try JSONEncoder().encode(Wire.HandReason.other("somethingNew")), as: UTF8.self) == #""somethingNew""#)
     }
 
+    /// An OrgRepo from before description and ownerAvatarUrl (an older server, or a stored repo list) still decodes.
+    @Test func orgRepoWithoutDescriptionOrAvatarDecodes() throws {
+        let repo = try JSONDecoder().decode(Wire.OrgRepo.self, from: Data(#"{"name":"acme/api","defaultBranch":null,"isPrivate":false,"source":"manual"}"#.utf8))
+        #expect(repo == Wire.OrgRepo(name: "acme/api", isPrivate: false, source: .manual))
+        #expect(repo.description == nil && repo.ownerAvatarUrl == nil)
+    }
+
     @Test func allCasesLeavesOutOther() {
         #expect(Wire.HandReason.allCases.count == 6)
         #expect(!Wire.HandReason.allCases.contains { if case .other = $0 { true } else { false } })
         #expect(Wire.HandReason(rawValue: "mergeFailed") == .mergeFailed)
     }
 
-    @Test func anUnknownHandShowsAsNeedsAttention() {
-        #expect(HandRaise.Reason.other.title == "Needs attention")
-    }
-
     @Test func undecodableMessagesSayToUpdate() {
         let error = DecodingError.typeMismatch(UInt64.self, .init(codingPath: [], debugDescription: "x"))
-        #expect(FactoryClient.describe(error) == FactoryClient.tooNewMessage)
+        #expect(FactoryAPI.describe(error) == FactoryAPI.tooNewMessage)
     }
 }

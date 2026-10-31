@@ -82,6 +82,10 @@ struct GoalView: View {
                 Spacer()
                 FollowButton(following: state.isFollowing(goal)) { state.setFollowing(goal, !state.isFollowing(goal)) }
                     .padding(.trailing, 6)
+                if state.isLive, let live = client.goal(named: goal.name) {
+                    ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
+                        .padding(.trailing, 6)
+                }
                 RiskPolicyButton()
                     .padding(.trailing, 10)
                 if state.isLive, let live = client.goal(named: goal.name) {
@@ -115,6 +119,61 @@ struct GoalView: View {
             FlowBar(tasks: tasks)
                 .padding(.top, 8)
         }
+    }
+}
+
+/// Scout: an agent picks the goal's leftovers still worth doing (backlog tasks, review findings left
+/// open) and they come back as drafted plans. Shows the latest run's state beside it.
+struct ScoutButton: View {
+    let run: Wire.ScoutRun?
+    let action: () -> Void
+
+    var running: Bool { run?.state == .running }
+
+    private var result: String? {
+        switch run?.state {
+        case .done?:
+            let n = run?.tasks.count ?? 0
+            return n == 0 ? "Nothing left over" : n == 1 ? "1 plan drafted" : "\(n) plans drafted"
+        case .failed?:
+            // The whole error is in the tooltip.
+            let error = run?.error ?? "Scout failed"
+            return error.count > 40 ? error.prefix(39) + "…" : error
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if running {
+                    ProgressView().controlSize(.mini)
+                    Text("Scouting…")
+                } else {
+                    Image(systemName: "binoculars").font(.system(size: 11))
+                    Text("Scout")
+                    if let result {
+                        Text(result)
+                            .foregroundStyle(run?.state == .failed ? Theme.State.cancelled : Theme.textMuted)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(running)
+        .help(run?.state == .failed ? (run?.error ?? "") : "Find this goal's leftovers still worth doing, and draft plans for them")
     }
 }
 
@@ -181,7 +240,7 @@ struct BoardColumns: View {
     }
 
     /// Assign each card exactly once before deciding visibility. Queue membership takes precedence
-    /// over merge readiness; only Queued sorts cards by rank, and every column keeps its fixed place.
+    /// over merge readiness; Queued sorts cards by queue rank, Drafts by draft rank, and every column keeps its fixed place.
     static func columns(tasks: [FactoryTask], hideEmpty: Bool, pendingMerge: (FactoryTask) -> Bool) -> [Column] {
         var members: [Column.ID: [FactoryTask]] = [:]
         for task in tasks {
@@ -189,6 +248,7 @@ struct BoardColumns: View {
             members[id, default: []].append(task)
         }
         members[.queued]?.sort { $0.queueRank < $1.queueRank }
+        members[.task(.drafting)]?.sort { $0.draftRank < $1.draftRank }
         return Column.ID.ordered.compactMap { id in
             let tasks = members[id] ?? []
             return hideEmpty && tasks.isEmpty ? nil : Column(id: id, tasks: tasks)
@@ -199,6 +259,8 @@ struct BoardColumns: View {
     @State private var moreTrailing = false
     /// A card dragged over the Queued column's empty space, to go to the back.
     @State private var queueTargeted = false
+    /// A draft dragged over the Drafts column's empty space, to go to the bottom.
+    @State private var draftsTargeted = false
 
     var body: some View {
         let columns = Self.columns(tasks: tasks, hideEmpty: state.boardHidesEmptyColumns, pendingMerge: state.pendingMerge)
@@ -207,6 +269,7 @@ struct BoardColumns: View {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(columns) { entry in
                     switch entry.id {
+                    case .task(.drafting) where !entry.tasks.isEmpty: draftsColumn(entry.tasks).transition(.opacity)
                     case .task(let taskState): column(taskState, tasks: entry.tasks)
                     case .queued: queueColumn(entry.tasks).transition(.opacity)
                     case .pendingMerge: pendingColumn(entry.tasks)
@@ -288,15 +351,32 @@ struct BoardColumns: View {
         .transition(.opacity)
     }
 
+    /// The goal's drafts, first first. Drag a draft onto another to put it ahead of that one, or below
+    /// the cards to send it to the bottom; only drafts land here, so nothing turns back into a draft.
+    private func draftsColumn(_ drafts: [FactoryTask]) -> some View {
+        let isDraft = { (id: String) in drafts.contains { $0.id == id } }
+        return shell(icon: TaskState.drafting.icon, title: TaskState.drafting.title, color: TaskState.drafting.color, tasks: drafts) {
+            ForEach(drafts) { task in
+                BoardCard(task: task, draggable: true, drop: .draftAhead)
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Theme.State.drafting.opacity(draftsTargeted ? 0.6 : 0), lineWidth: 1.5)
+        }
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first, isDraft(id) else { return false }
+            state.rankDraft(id, before: nil)
+            return true
+        } isTargeted: { draftsTargeted = $0 }
+    }
+
     /// Every task waiting for a session, front of the queue first. Drag a card onto another to put
     /// it ahead of that one, or below the cards to send it to the back; a draft dragged in joins.
     private func queueColumn(_ queued: [FactoryTask]) -> some View {
         return shell(icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) {
             ForEach(Array(queued.enumerated()), id: \.element.id) { index, task in
-                BoardCard(task: task, position: index + 1, draggable: true) { dropped in
-                    guard dropped != task.id else { return }
-                    state.queue(dropped, before: task.id)
-                }
+                BoardCard(task: task, position: index + 1, draggable: true, drop: .queueAhead)
             }
             // An empty queue keeps a roomy box to drop a draft into.
             if queued.isEmpty {
@@ -360,8 +440,16 @@ private struct BoardCard: View {
     var draggable = false
     /// Pending merge's cards: Merge right on the card.
     var mergeButton = false
-    /// A card dropped on this one, to go ahead of it.
-    var onDrop: ((String) -> Void)? = nil
+    /// What a card dropped on this one does: goes ahead of it. A value, not a closure, so a card whose
+    /// task didn't change isn't drawn again on every update to another.
+    var drop: Drop? = nil
+
+    enum Drop {
+        /// Drafts' cards take another draft of the goal, ranked ahead.
+        case draftAhead
+        /// Queued's cards take any card, queued ahead.
+        case queueAhead
+    }
     @State private var confirmCancel = false
     @State private var rename = false
     @State private var scheduling = false
@@ -385,12 +473,19 @@ private struct BoardCard: View {
                 }
             }
         if draggable {
-            if let onDrop {
+            if let drop {
                 card
                     .draggable(task.id) { TaskCard(task: task, selected: false, position: position).frame(width: 224) }
                     .dropDestination(for: String.self) { ids, _ in
                         guard let id = ids.first else { return false }
-                        onDrop(id)
+                        switch drop {
+                        case .draftAhead:
+                            let dropped = state.task(id)
+                            guard dropped.id == id, dropped.state == .drafting, !dropped.queued, dropped.goal == task.goal else { return false }
+                            if id != task.id { state.rankDraft(id, before: task.id) }
+                        case .queueAhead:
+                            if id != task.id { state.queue(id, before: task.id) }
+                        }
                         return true
                     } isTargeted: { targeted = $0 }
             } else {
@@ -601,6 +696,16 @@ struct TaskCard: View {
 
             if let effort = task.effort { EffortChip(effort: effort) }
 
+            if let from = task.scoutedFrom {
+                HStack(spacing: 4) {
+                    Image(systemName: "binoculars").font(.system(size: 9.5))
+                    Text("Scouted from \(from.split(separator: "#").first.map(String.init) ?? from)")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+                .help(from.contains("#") ? "A review finding left open on \(from.replacingOccurrences(of: "#", with: " (")))" : "Scout picked it up from \(from)")
+            }
+
             if task.queued {
                 QueuedFooter(task: task)
             } else {
@@ -631,7 +736,8 @@ struct TaskCard: View {
             }
 
             if mergeButton {
-                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isInFlight(task.id, .merge),
+                // Busy from the click until the server reports it merged, not just until the request returns.
+                PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", busy: state.isMerging(task),
                               busyTitle: "Merging…") {
                     state.merge(task.id)
                 }
@@ -689,11 +795,19 @@ struct QueuedFooter: View {
 
 /// The state-specific line under a task: progress, checks and diff, a spinner, or plain detail text.
 struct TaskProgressFooter: View {
+    @Environment(AppState.self) private var state
     let task: FactoryTask
     var compact = false
 
     var body: some View {
-        if let progress = task.progress {
+        if state.isMerging(task) {
+            merging(FactoryTask.mergingLog)
+        } else if task.state == .reviewing, task.hand == nil, let mergeAt = task.mergeAt {
+            TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
+                merging(left > 0 ? "Merging in \(left)s" : FactoryTask.mergingLog)
+            }
+        } else if let progress = task.progress {
             if compact {
                 HStack(spacing: 8) {
                     bar(progress).frame(width: 60)
@@ -736,6 +850,16 @@ struct TaskProgressFooter: View {
             .font(.system(size: 11.5))
             .foregroundStyle(Theme.textMuted)
             .lineLimit(1)
+    }
+
+    /// Merging, or counting down to the auto-merge: a spinner and the line in the merged color.
+    private func merging(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(text).monospacedDigit().lineLimit(1)
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(Theme.State.merged)
     }
 
     private func bar(_ progress: Double) -> some View {

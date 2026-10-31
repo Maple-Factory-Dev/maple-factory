@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::wire::{McpConnector, McpTransport};
+
 /// How a first prompt reaches the agent.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PromptMode {
@@ -193,6 +195,91 @@ pub struct Unattended {
     /// The project's setup, test, lint and dev commands; "project" allows each one's program.
     #[serde(default)]
     pub commands: Vec<String>,
+    /// The factory's connectors marked "Allow its tools without asking": "project" allows their
+    /// `mcp__<name>` tools. Set by the runner from `session.open`'s connectors, not the hub's `unattended`.
+    #[serde(skip)]
+    pub allow_mcp: Vec<String>,
+}
+
+impl Unattended {
+    pub fn with_connectors(mut self, connectors: &[McpConnector]) -> Self {
+        self.allow_mcp = connectors.iter().filter(|c| c.auto_allow).map(|c| c.name.clone()).collect();
+        self
+    }
+}
+
+/// The factory's MCP connectors for a session, beside the runner's own `maple` server (`Hooks::agent_args`):
+/// - Claude Code: a second `--mcp-config=<file>`, the session's own file (`Hooks::write_session_mcp_config`).
+/// - Codex: `-c mcp_servers.<name>.…` overrides, TOML values (JSON's string quoting is valid TOML), that
+///   only name the secrets: their values reach the pane through its one-shot env file (`codex_connector_env`,
+///   `secrets::env_file`), never the command line, where any local user could read them with `ps`.
+///   Stdio: `/bin/sh -c 'exec env -u MAPLE_MCP_… "JIRA_API_TOKEN=$MAPLE_MCP_…" "$0" "$@"' <command> <args…>`
+///   hands each secret to the server under its own key, with `env_vars` letting those variables through
+///   Codex (whose MCP servers otherwise get only a minimal environment). Http: `url` and `env_http_headers`.
+pub fn connector_args(agent: &str, session_config: Option<&std::path::Path>, connectors: &[McpConnector]) -> Vec<String> {
+    match agent {
+        "claude" => session_config.map(|p| format!("--mcp-config={}", p.to_string_lossy())).into_iter().collect(),
+        "codex" => {
+            let toml = |v: &str| serde_json::Value::String(v.into()).to_string();
+            let list = |items: &mut dyn Iterator<Item = String>| format!("[{}]", items.map(|a| toml(&a)).collect::<Vec<_>>().join(","));
+            let mut args = vec![];
+            for c in connectors {
+                let key = |field: &str| format!("mcp_servers.{}.{field}", c.name);
+                let set = match c.transport {
+                    McpTransport::Stdio => {
+                        let Some(command) = &c.command else { continue };
+                        if c.env.is_empty() {
+                            vec![format!("{}={}", key("command"), toml(command)), format!("{}={}", key("args"), list(&mut c.args.iter().cloned()))]
+                        } else {
+                            // sh -c 'exec env -u V1 "K1=$V1" … "$0" "$@"' <command> <args…>: keys are [A-Za-z0-9_-], safe in quotes.
+                            let renames: Vec<String> = c.env.keys().map(|k| (k, connector_env_name(&c.name, k))).flat_map(|(k, v)| [format!("-u {v}"), format!("\"{k}=${v}\"")]).collect();
+                            let script = format!(r#"exec env {} "$0" "$@""#, renames.join(" "));
+                            let argv = ["-c".to_string(), script, command.clone()].into_iter().chain(c.args.iter().cloned());
+                            let vars = c.env.keys().map(|k| connector_env_name(&c.name, k));
+                            vec![
+                                format!("{}={}", key("command"), toml("/bin/sh")),
+                                format!("{}={}", key("args"), list(&mut argv.into_iter())),
+                                format!("{}={}", key("env_vars"), list(&mut vars.into_iter())),
+                            ]
+                        }
+                    }
+                    McpTransport::Http => {
+                        let Some(url) = &c.url else { continue };
+                        let headers = c.headers.keys().map(|h| format!("{}={}", toml(h), toml(&connector_env_name(&c.name, h)))).collect::<Vec<_>>().join(",");
+                        vec![format!("{}={}", key("url"), toml(url)), format!("{}={{{headers}}}", key("env_http_headers"))]
+                    }
+                    McpTransport::Other => continue,
+                };
+                for s in set {
+                    args.extend(["-c".to_string(), s]);
+                }
+            }
+            args
+        }
+        _ => vec![],
+    }
+}
+
+/// The variable a connector's secret waits in for Codex: `MAPLE_MCP_<NAME>__<KEY>`, uppercase, anything
+/// but letters and digits as `_`.
+pub fn connector_env_name(connector: &str, key: &str) -> String {
+    let clean = |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect::<String>();
+    format!("MAPLE_MCP_{}__{}", clean(connector), clean(key))
+}
+
+/// The connectors' secrets as the variables `connector_args` names for Codex, for the pane's env file.
+pub fn codex_connector_env(connectors: &[McpConnector]) -> Vec<(String, String)> {
+    connectors
+        .iter()
+        .flat_map(|c| {
+            let secrets = match c.transport {
+                McpTransport::Stdio => &c.env,
+                McpTransport::Http => &c.headers,
+                McpTransport::Other => return vec![],
+            };
+            secrets.iter().map(|(k, v)| (connector_env_name(&c.name, k), v.clone())).collect()
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -213,7 +300,7 @@ const WRAPPERS: &[&str] = &["sudo", "doas", "sh", "bash", "zsh", "fish", "dash",
 /// The flags that keep Claude Code or Codex from stopping at permission prompts, as far as
 /// `unattended` says; none for "ask" or another agent. Checked against `claude --help` (2.1) and
 /// `codex --help` (0.164) and https://learn.chatgpt.com/docs/sandboxing/auto-review:
-/// - Claude Code, "project": `--allowedTools=mcp__agents,Bash(git:*),Bash(npm:*),…` (one argument: the flag takes
+/// - Claude Code, "project": `--allowedTools=mcp__maple,Bash(git:*),Bash(npm:*),…` (one argument: the flag takes
 ///   several values and would swallow a prompt after it) and `--permission-mode auto`: Claude Code's
 ///   classifier approves routine commands (`sed`, `grep`, …) and denies risky ones instead of waiting
 ///   for someone, where `acceptEdits` stopped a builder at its first `sed -i`.
@@ -229,10 +316,13 @@ pub fn permission_args(agent: &str, unattended: &Unattended) -> Vec<String> {
     let args: &[&str] = match (agent, unattended.mode) {
         (_, UnattendedMode::Ask) => &[],
         ("claude", UnattendedMode::Project) => {
-            // The runner's own `agents` MCP server too: planners write their card with it and builders
+            // The runner's own `maple` MCP server too: planners write their card with it and builders
             // prove with it, and the hub already decides what each session may do there (Off/Read/Full,
             // a note or project grant), so asking here would only stop the session at night.
-            let rules = std::iter::once("mcp__agents".to_string())
+            // And the factory's connectors an admin marked "Allow its tools without asking"; the rest are
+            // left to the auto classifier.
+            let rules = std::iter::once("mcp__maple".to_string())
+                .chain(unattended.allow_mcp.iter().map(|name| format!("mcp__{name}")))
                 .chain(programs(&unattended.commands).iter().map(|p| format!("Bash({p}:*)")))
                 .collect::<Vec<_>>()
                 .join(",");
@@ -383,7 +473,7 @@ mod tests {
     }
 
     fn unattended(mode: UnattendedMode, commands: &[&str]) -> Unattended {
-        Unattended { mode, commands: commands.iter().map(|c| c.to_string()).collect() }
+        Unattended { mode, commands: commands.iter().map(|c| c.to_string()).collect(), allow_mcp: vec![] }
     }
 
     #[test]
@@ -467,7 +557,7 @@ mod tests {
                 "--mcp-config=/m.json",
                 "--model",
                 "claude-opus-5-5",
-                "--allowedTools=mcp__agents,Bash(git:*),Bash(npm:*),Bash(cd:*),Bash(cargo:*),Bash(npx:*)",
+                "--allowedTools=mcp__maple,Bash(git:*),Bash(npm:*),Bash(cd:*),Bash(cargo:*),Bash(npx:*)",
                 "--permission-mode",
                 "auto",
                 "fix it"
@@ -505,6 +595,84 @@ mod tests {
         assert_eq!(argv("/bin/zsh", &get("shell"), false, vec![], None, Some(&skip), &[], None), ["/bin/zsh", "-l"]);
         let aider = Agent { id: "aider".into(), label: "Aider".into(), command: "aider".into(), args: vec![], prompt: PromptMode::None, hooks: false };
         assert_eq!(argv("/bin/sh", &aider, false, vec![], None, Some(&skip), &[], None)[5..], ["aider"]);
+    }
+
+    fn connector(name: &str, transport: McpTransport, auto_allow: bool) -> McpConnector {
+        let stdio = transport == McpTransport::Stdio;
+        McpConnector {
+            name: name.into(),
+            transport,
+            command: stdio.then(|| "npx".into()),
+            args: if stdio { vec!["-y".into(), "mcp-atlassian".into()] } else { vec![] },
+            url: (!stdio).then(|| "https://mcp.example.com/mcp".into()),
+            env: if stdio { [("JIRA_API_TOKEN".to_string(), "t\"ok\"en".to_string())].into() } else { Default::default() },
+            headers: if stdio { Default::default() } else { [("Authorization".to_string(), "Bearer abc".to_string())].into() },
+            enabled: true,
+            auto_allow,
+        }
+    }
+
+    #[test]
+    fn connectors_reach_claude_as_a_second_mcp_config_and_codex_as_overrides() {
+        let connectors = [connector("jira", McpTransport::Stdio, true), connector("docs", McpTransport::Http, false)];
+        let file = std::path::Path::new("/cfg/mcp-session-1.json");
+        // Claude Code: the runner's maple config, then the session's own file, each its own `=` argument.
+        let mut hooks = vec!["--mcp-config=/cfg/mcp-x.json".to_string()];
+        hooks.extend(connector_args("claude", Some(file), &connectors));
+        let claude = argv("/bin/zsh", &get("claude"), false, hooks, None, None, &[], Some("go"));
+        assert_eq!(claude[5..], ["claude", "--mcp-config=/cfg/mcp-x.json", "--mcp-config=/cfg/mcp-session-1.json", "go"]);
+        assert_eq!(claude.iter().filter(|a| a.starts_with("--mcp-config=")).count(), 2);
+        // No connectors, no file: nothing more.
+        assert!(connector_args("claude", None, &[]).is_empty());
+        // Codex: -c overrides per connector, TOML-quoted, that name the secrets but never hold them.
+        let codex = connector_args("codex", None, &connectors);
+        assert_eq!(
+            codex,
+            [
+                "-c",
+                "mcp_servers.jira.command=\"/bin/sh\"",
+                "-c",
+                r#"mcp_servers.jira.args=["-c","exec env -u MAPLE_MCP_JIRA__JIRA_API_TOKEN \"JIRA_API_TOKEN=$MAPLE_MCP_JIRA__JIRA_API_TOKEN\" \"$0\" \"$@\"","npx","-y","mcp-atlassian"]"#,
+                "-c",
+                r#"mcp_servers.jira.env_vars=["MAPLE_MCP_JIRA__JIRA_API_TOKEN"]"#,
+                "-c",
+                "mcp_servers.docs.url=\"https://mcp.example.com/mcp\"",
+                "-c",
+                r#"mcp_servers.docs.env_http_headers={"Authorization"="MAPLE_MCP_DOCS__AUTHORIZATION"}"#,
+            ]
+        );
+        assert!(!codex.iter().any(|a| a.contains("ok\\\"en") || a.contains("Bearer abc")), "no secret on the command line: {codex:?}");
+        // Their values go to the pane's env file under those names.
+        assert_eq!(
+            codex_connector_env(&connectors),
+            [
+                ("MAPLE_MCP_JIRA__JIRA_API_TOKEN".to_string(), "t\"ok\"en".to_string()),
+                ("MAPLE_MCP_DOCS__AUTHORIZATION".to_string(), "Bearer abc".to_string()),
+            ]
+        );
+        // A stdio connector without secrets runs its command directly.
+        let mut plain = connector("plain", McpTransport::Stdio, false);
+        plain.env.clear();
+        assert_eq!(connector_args("codex", None, &[plain])[1], "mcp_servers.plain.command=\"npx\"");
+        assert_eq!(connector_env_name("my-docs", "X-Api-Key"), "MAPLE_MCP_MY_DOCS__X_API_KEY");
+        // Other agents get nothing.
+        assert!(connector_args("aider", Some(file), &connectors).is_empty());
+    }
+
+    #[test]
+    fn only_auto_allowed_connectors_are_in_allowed_tools() {
+        let connectors = [connector("jira", McpTransport::Stdio, true), connector("docs", McpTransport::Http, false)];
+        let project = unattended(UnattendedMode::Project, &["npm test"]).with_connectors(&connectors);
+        let args = permission_args("claude", &project);
+        assert_eq!(args[0], "--allowedTools=mcp__maple,mcp__jira,Bash(git:*),Bash(npm:*)");
+        assert!(!args[0].contains("mcp__docs"));
+        // None auto-allowed: none listed.
+        let none = unattended(UnattendedMode::Project, &[]).with_connectors(&[connector("docs", McpTransport::Http, false)]);
+        assert_eq!(permission_args("claude", &none)[0], "--allowedTools=mcp__maple,Bash(git:*)");
+        // "ask" and "skip" don't list tools at all.
+        let skip = unattended(UnattendedMode::Skip, &[]).with_connectors(&connectors);
+        assert_eq!(permission_args("claude", &skip), ["--permission-mode", "bypassPermissions"]);
+        assert!(permission_args("claude", &unattended(UnattendedMode::Ask, &[]).with_connectors(&connectors)).is_empty());
     }
 
     #[test]
@@ -546,7 +714,7 @@ mod tests {
                     "--image=/tmp/first image.png,/tmp/second.png",
                 ]);
                 if prompt_file {
-                    assert_eq!(actual[4], r#"p="$(cat -- "$MAPLE_PROMPT_FILE")"; rm -f -- "$MAPLE_PROMPT_FILE"; exec "$0" "$@" "$p""#);
+                    assert_eq!(actual[4], r#"p="$(cat -- "$MAPLE_PROMPT_FILE"; printf .)"; p="${p%.}"; rm -f -- "$MAPLE_PROMPT_FILE"; exec "$0" "$@" "$p""#);
                 } else {
                     expected.push(prompt);
                 }

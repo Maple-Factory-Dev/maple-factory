@@ -15,7 +15,7 @@ fail() { printf 'maple: %s\\n' "$*" >&2; exit 1; }
 
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64) target=aarch64-apple-darwin ;;
-  Darwin/x86_64) target=x86_64-apple-darwin ;;
+  Darwin/x86_64) fail "Intel Macs aren't supported: the runner is built for Apple silicon Macs and Linux" ;;
   Linux/x86_64 | Linux/amd64) target=x86_64-unknown-linux-gnu ;;
   Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-gnu ;;
   *) fail "there's no runner build for $(uname -s) $(uname -m)" ;;

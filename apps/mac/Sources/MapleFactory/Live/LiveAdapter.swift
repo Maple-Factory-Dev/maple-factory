@@ -75,11 +75,15 @@ import SwiftUI
         // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
         task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state, planned: !t.plan.isEmpty)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
+        task.builder = t.agent
+        task.model = t.model
         task.owner = who(t.owner)
         task.machine = t.machine
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom
+        task.scoutedFrom = t.scoutedFrom
+        task.suggestedTitle = t.suggestedTitle
         task.effort = t.effort
         let goal = goals.first { $0.id == t.goal }
         if let goal, goal.repos.count > 1 { task.repo = t.repo ?? goal.repo }
@@ -141,8 +145,13 @@ import SwiftUI
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)
         task.queueRank = t.queueRank ?? Double(t.createdAt)
+        task.draftRank = t.draftRank ?? Double(t.createdAt)
         task.startAt = t.startAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         task.mergeAt = t.mergeAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        task.mergeForecast = t.mergeForecast.map { f in
+            MergeForecast(overlaps: f.overlaps.map { .init(task: $0.task, files: $0.files) }, conflicts: f.conflicts, since: f.since,
+                          checkedAt: f.checkedAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }, base: f.base)
+        }
         // The countdown started with the factory's "will auto-merge" event; its time sizes the drain.
         if task.mergeAt != nil, let started = t.events.last(where: { $0.who == "factory" && $0.text.hasPrefix("will auto-merge") }) {
             task.mergeFrom = Date(timeIntervalSince1970: Double(started.at) / 1000)
@@ -184,6 +193,7 @@ import SwiftUI
             let done = t.plan.filter { $0.progress == .done }.count
             return t.worker == nil ? "Queued" : "Step \(min(done + 1, max(t.plan.count, 1))) of \(max(t.plan.count, 1))"
         case .reviewing:
+            if t.liveLog == FactoryTask.mergingLog { return FactoryTask.mergingLog }
             guard let round = t.autoReview?.rounds.last else { return "In review" }
             switch round.verdict {
             case .inProgress: return "Review round \(round.number)"
@@ -279,6 +289,7 @@ import SwiftUI
         }
         policy.autoFixMerges = p.autoFixMerges ?? true
         policy.autoMerges = p.autoMerges ?? true
+        policy.scoutItems = p.scoutItems.map(Int.init) ?? 3
         return policy
     }
 
@@ -290,7 +301,8 @@ import SwiftUI
             planApprovals: keyed(policy.planApprovals), finalReviews: keyed(policy.finalReviews),
             autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
             autoFixMerges: policy.autoFixMerges,
-            autoMerges: policy.autoMerges
+            autoMerges: policy.autoMerges,
+            scoutItems: UInt32(policy.scoutItems)
         )
     }
 
@@ -354,7 +366,7 @@ import SwiftUI
         case .passed: .passed
         case .failed: .failed
         }
-        return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required)
+        return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required, url: c.url.flatMap(URL.init(string:)))
     }
 
     private static func review(_ r: Wire.AutoReview) -> AutoReview {
