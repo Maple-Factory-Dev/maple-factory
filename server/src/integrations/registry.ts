@@ -19,8 +19,11 @@ export interface IntegrationDef {
 /** Where Slack sends @Maple's events, button clicks and the slash command. */
 export const SLACK_PATHS = { events: "/integrations/slack/events", actions: "/integrations/slack/actions", command: "/integrations/slack/command" };
 
-/** The bot's scopes: hear mentions, answer, read the thread it's mentioned in and its files, name who asked, and /maple. */
-export const SLACK_SCOPES = ["app_mentions:read", "chat:write", "channels:history", "files:read", "users:read", "commands"];
+/**
+ * The bot's scopes: hear mentions, answer, read the thread it's mentioned in (public or private channel) and its files,
+ * name who asked, and /maple. Slack requires channels:read, groups:read and mpim:read for member_joined_channel.
+ */
+export const SLACK_SCOPES = ["app_mentions:read", "chat:write", "channels:history", "groups:history", "channels:read", "groups:read", "mpim:read", "files:read", "users:read", "commands"];
 
 /** Slack's app manifest for this factory: the bot user Maple, its events, buttons and /maple, all pointed at `publicUrl`. */
 export function manifest(publicUrl: string) {
