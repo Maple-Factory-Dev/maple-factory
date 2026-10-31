@@ -699,7 +699,7 @@ export const structs: Record<string, Struct> = {
     },
   },
   ReviewNote: {
-    doc: "A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.",
+    doc: "A comment on lines of a task's diff, drafted in the Changes tab and sent with the rest of its review.",
     fields: { path: "string", start: "u32", end: "u32", side: "DiffSide", snippet: "string", text: "string" },
     fieldDocs: { start: "First line, numbered on `side`.", end: "Last line (the same as start for one line).", snippet: "The lines it's about, as the diff showed them (with +/-/space prefixes)." },
   },

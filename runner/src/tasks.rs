@@ -99,7 +99,7 @@ pub struct Cleanup {
     pub delete_remote: bool,
 }
 
-/// `task.diff` from the hub: what a task's branch changes against its base, for the apps' Diff tab.
+/// `task.diff` from the hub: what a task's branch changes against its base, for the apps' Changes tab.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffRequest {

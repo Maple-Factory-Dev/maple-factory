@@ -853,7 +853,7 @@ export interface DiffCommit {
   truncated: boolean;
 }
 
-/** A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review. */
+/** A comment on lines of a task's diff, drafted in the Changes tab and sent with the rest of its review. */
 export interface ReviewNote {
   path: string;
   /** First line, numbered on `side`. */

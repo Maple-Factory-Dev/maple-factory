@@ -1546,7 +1546,7 @@ pub struct DiffCommit {
     pub truncated: bool,
 }
 
-/// A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.
+/// A comment on lines of a task's diff, drafted in the Changes tab and sent with the rest of its review.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewNote {
