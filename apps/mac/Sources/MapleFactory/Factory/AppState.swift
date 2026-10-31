@@ -2187,6 +2187,7 @@ final class AppState {
             case "draftdrop": rankDraft(parts[1], before: parts.count > 2 ? parts[2] : nil)
             case "drafttop": moveDraftToTop(parts[1])
             case "draftbottom": moveDraftToBottom(parts[1])
+            case "layout": layout = GoalLayout(rawValue: parts[1].capitalized) ?? layout
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil

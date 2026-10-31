@@ -538,7 +538,7 @@ struct ComposeDraft {
 }
 
 enum GoalLayout: String, CaseIterable {
-    case board = "Board", list = "List", timeline = "Timeline"
+    case overview = "Overview", board = "Board", list = "List", timeline = "Timeline"
 }
 
 extension FactoryTask {

@@ -22,6 +22,7 @@ struct GoalView: View {
                 .padding(.bottom, 20)
 
             switch state.layout {
+            case .overview: GoalOverview(goal: goal, tasks: tasks)
             case .board:
                 boardControls
                 BoardColumns(tasks: tasks)
