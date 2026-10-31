@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The factory's statistics, for admins (Settings → Statistics): the Mac's headline numbers, finding
 /// outcomes, top areas and top findings over the last 24 hours, 3, 7, 30 or 90 days (`stats.get`).
-/// Read-only.
+/// Read-only. For screenshots, `-statsSection findings` scrolls to the findings and `-statsCycle YES`
+/// steps through every range (Debug builds only).
 struct StatisticsView: View {
     @Environment(FactoryStore.self) private var store
     @AppStorage("statsDays") private var days = 7
@@ -14,6 +15,28 @@ struct StatisticsView: View {
     private var summary: Wire.StatsSummary? { store.stats.flatMap { $0.days == UInt32(days) ? $0 : nil } }
 
     var body: some View {
+        ScrollViewReader { proxy in
+            form
+                .onChange(of: summary?.generatedAt) {
+                    guard UserDefaults.standard.string(forKey: "statsSection") == "findings" else { return }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        proxy.scrollTo("findings", anchor: .top)
+                    }
+                }
+        }
+        #if DEBUG
+        .task {
+            guard UserDefaults.standard.bool(forKey: "statsCycle") else { return }
+            for range in Self.ranges {
+                try? await Task.sleep(for: .seconds(4))
+                days = range.days
+            }
+        }
+        #endif
+    }
+
+    private var form: some View {
         Form {
             Section {
                 Picker("Range", selection: $days) {
@@ -60,6 +83,7 @@ struct StatisticsView: View {
                 LabeledContent("Open", value: "\(f.outcomes.open)")
                 LabeledContent("Rounds to fix", value: f.outcomes.roundsToFixMedian.map { String(format: "%.1f (median)", $0) } ?? "–")
             }
+            .id("findings")
             if f.recent.isEmpty && f.areas.isEmpty {
                 Section { Text("No findings in this range").foregroundStyle(.secondary) }
             } else {
