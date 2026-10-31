@@ -29,7 +29,9 @@ struct UpdateToastView: View {
             }
             .fixedSize()
             Spacer(minLength: 8)
-            if offersButton(phase) {
+            // Both are always laid out, so the slot is as wide as the button and the toast keeps
+            // one width from the offer through the download to Restarting….
+            ZStack(alignment: .leading) {
                 Text(UpdatePhase.updateToastButtonLabel)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Theme.onAccent)
@@ -38,10 +40,10 @@ struct UpdateToastView: View {
                     .background(Capsule().fill(Theme.accent))
                     .contentShape(Capsule())
                     .onTapGesture { updater.updateAndRestart() }
-                    .transition(.opacity)
-            } else {
+                    .opacity(offersButton(phase) ? 1 : 0)
+                    .allowsHitTesting(offersButton(phase))
                 progress(phase)
-                    .transition(.opacity)
+                    .opacity(offersButton(phase) ? 0 : 1)
             }
             Image(systemName: "xmark")
                 .font(.system(size: 9.5, weight: .semibold))
@@ -53,7 +55,7 @@ struct UpdateToastView: View {
         }
         .padding(.leading, 14)
         .padding(.trailing, 10)
-        // 440 at least, wider once the progress (which outgrows the button) takes its place.
+        // 440 at least. The progress fits in the button's slot, so the toast keeps one width.
         .frame(minWidth: 440)
         .frame(height: 50)
         .fixedSize(horizontal: true, vertical: false)
@@ -76,22 +78,46 @@ struct UpdateToastView: View {
     }
 
     private func progress(_ phase: UpdatePhase) -> some View {
-        HStack(spacing: 8) {
-            // Kept in place once it's done (Restarting…), so the toast holds its width to the end.
-            Group {
-                if let fraction = phase.progress { ProgressView(value: fraction) } else { ProgressView() }
-            }
-            .progressViewStyle(.linear)
-            .controlSize(.mini)
-            .tint(Theme.accent)
-            .frame(width: 70)
-            .opacity(phase.isBusy ? 1 : 0)
+        HStack(spacing: 6) {
+            // Kept in place once it's done (Restarting…), so the slot holds its layout to the end.
+            UpdateRing(fraction: phase.progress)
+                .opacity(phase.isBusy ? 1 : 0)
             Text(phase.updateToastProgressLabel ?? "")
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
-                .frame(minWidth: 96, alignment: .leading)
         }
         .fixedSize()
+    }
+}
+
+/// A small progress ring: fills clockwise from 12 o'clock by `fraction`, or spins a short arc
+/// while the amount isn't known. Drawn by hand so it takes the theme's colours.
+private struct UpdateRing: View {
+    let fraction: Double?
+    @State private var spinning = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Theme.stroke, lineWidth: 2)
+            if let fraction {
+                Circle()
+                    .trim(from: 0, to: min(max(fraction, 0), 1))
+                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.linear(duration: 0.2), value: fraction)
+            } else {
+                Circle()
+                    .trim(from: 0, to: 0.25)
+                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(spinning ? 270 : -90))
+                    .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spinning)
+                    .onAppear { spinning = true }
+                    .onDisappear { spinning = false }
+            }
+        }
+        .frame(width: 16, height: 16)
+        .padding(1)
     }
 }
