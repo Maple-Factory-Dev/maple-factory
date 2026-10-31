@@ -40,7 +40,8 @@ struct GoalView: View {
             } else {
                 switch state.layout {
                 case .overview: GoalOverview(goal: goal, tasks: shown)
-                case .board: BoardColumns(tasks: shown)
+                // A new goal or Everyone | You starts every column again at its first page.
+                case .board: BoardColumns(tasks: shown).id(BoardPaging(goal: name, filter: state.goalTaskFilter))
                 case .list: TaskListView(tasks: shown)
                 case .timeline: GoalTimeline(goal: goal, tasks: shown)
                 }
@@ -307,6 +308,19 @@ struct BoardColumns: View {
         }
     }
 
+    /// A column shows this many cards at first, and this many more each time its last card scrolls into view.
+    static let pageSize = 40
+
+    /// A column's first `limit` cards, and how many past them wait unshown. A prefix, so Queued keeps its order and positions.
+    static func page(_ tasks: [FactoryTask], limit: Int) -> (shown: [FactoryTask], remaining: Int) {
+        let shown = Array(tasks.prefix(max(0, limit)))
+        return (shown, tasks.count - shown.count)
+    }
+
+    /// How many cards each column shows, grown a page at a time; a column not here shows `pageSize`.
+    /// It survives live updates, and the goal view gives the board a new identity for a new goal or filter.
+    @State private var limits: [Column.ID: Int] = [:]
+
     /// Whether columns are cut off past the trailing edge, so the board fades there.
     @State private var moreTrailing = false
     /// A card dragged over the Queued column's empty space, to go to the back.
@@ -373,8 +387,8 @@ struct BoardColumns: View {
             if Self.isRail(count: columnTasks.count) {
                 EmptyColumnRail(icon: taskState.icon, title: taskState.title, color: taskState.color, hint: taskState.emptyHint)
             } else {
-                shell(icon: taskState.icon, title: taskState.title, color: taskState.color, tasks: columnTasks) {
-                    ForEach(columnTasks) { task in
+                shell(.task(taskState), icon: taskState.icon, title: taskState.title, color: taskState.color, tasks: columnTasks) { shown in
+                    ForEach(shown) { task in
                         BoardCard(task: task, draggable: task.state == .drafting)
                     }
                 }
@@ -394,8 +408,8 @@ struct BoardColumns: View {
                 EmptyColumnRail(icon: icon, title: title, color: color,
                                 hint: "Tasks land here once they're proven, reviewed and green, and a person merges them.")
             } else {
-                shell(icon: icon, title: title, color: color, tasks: pending) {
-                    ForEach(pending) { task in
+                shell(.pendingMerge, icon: icon, title: title, color: color, tasks: pending) { shown in
+                    ForEach(shown) { task in
                         BoardCard(task: task, mergeButton: true)
                     }
                 }
@@ -408,8 +422,8 @@ struct BoardColumns: View {
     /// the cards to send it to the bottom; only drafts land here, so nothing turns back into a draft.
     private func draftsColumn(_ drafts: [FactoryTask]) -> some View {
         let isDraft = { (id: String) in drafts.contains { $0.id == id } }
-        return shell(icon: TaskState.drafting.icon, title: TaskState.drafting.title, color: TaskState.drafting.color, tasks: drafts) {
-            ForEach(drafts) { task in
+        return shell(.task(.drafting), icon: TaskState.drafting.icon, title: TaskState.drafting.title, color: TaskState.drafting.color, tasks: drafts) { shown in
+            ForEach(shown) { task in
                 BoardCard(task: task, draggable: true, drop: .draftAhead)
             }
         }
@@ -427,8 +441,8 @@ struct BoardColumns: View {
     /// Every task waiting for a session, front of the queue first. Drag a card onto another to put
     /// it ahead of that one, or below the cards to send it to the back; a draft dragged in joins.
     private func queueColumn(_ queued: [FactoryTask]) -> some View {
-        return shell(icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) {
-            ForEach(Array(queued.enumerated()), id: \.element.id) { index, task in
+        return shell(.queued, icon: "list.number", title: "Queued", color: Theme.textMuted, tasks: queued) { shown in
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, task in
                 BoardCard(task: task, position: index + 1, draggable: true, drop: .queueAhead)
             }
             // An empty queue keeps a roomy box to drop a draft into.
@@ -455,8 +469,12 @@ struct BoardColumns: View {
         } isTargeted: { queueTargeted = $0 }
     }
 
-    private func shell<Cards: View>(icon: String, title: String, color: Color, tasks columnTasks: [FactoryTask], @ViewBuilder cards: () -> Cards) -> some View {
-        let content = cards()
+    /// A column: its header counts every card in it, and its cards come a page at a time.
+    /// Dropping on its empty space still sends a card past the unshown ones, to the true end.
+    private func shell<Cards: View>(_ id: Column.ID, icon: String, title: String, color: Color, tasks columnTasks: [FactoryTask],
+                                    @ViewBuilder cards: ([FactoryTask]) -> Cards) -> some View {
+        let page = Self.page(columnTasks, limit: limits[id] ?? Self.pageSize)
+        let content = cards(page.shown)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: icon)
@@ -473,11 +491,47 @@ struct BoardColumns: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
 
-            ColumnCards { content }
+            ColumnCards {
+                content
+                if page.remaining > 0 {
+                    ColumnPageFooter(shown: page.shown.count, total: columnTasks.count) {
+                        limits[id] = page.shown.count + Self.pageSize
+                    } all: {
+                        limits[id] = columnTasks.count
+                    }
+                    // A new footer for each page: it appears (and loads the next) only once scrolled to again.
+                    .id(page.shown.count)
+                }
+            }
         }
         .padding(8)
         .frame(width: 240, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.columnBG))
+    }
+}
+
+/// The last row of a column with cards still to show. The stack is lazy, so it appears only when scrolled
+/// to, and appearing loads the next page; Show all loads the rest at once.
+private struct ColumnPageFooter: View {
+    let shown: Int, total: Int
+    let more: () -> Void
+    let all: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text("Showing \(shown) of \(total)")
+                .font(.system(size: 11.5).monospacedDigit())
+                .foregroundStyle(Theme.textFaint)
+            Spacer()
+            Button("Show all", action: all)
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 28)
+        .onAppear(perform: more)
     }
 }
 
@@ -1017,4 +1071,10 @@ extension View {
     func taskClicks(_ id: String) -> some View {
         modifier(TaskClicks(id: id))
     }
+}
+
+/// The board's identity: what resets its columns' pages.
+private struct BoardPaging: Hashable {
+    let goal: String
+    let filter: GoalTaskFilter
 }
