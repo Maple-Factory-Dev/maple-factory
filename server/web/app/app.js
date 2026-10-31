@@ -12,6 +12,7 @@ import { loadCollapsed, toggleCollapsed } from "./sections.js";
 import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
+import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -152,12 +153,16 @@ function receive(m) {
     case "task.removed": state.tasks.delete(m.id); break;
     case "machine.updated":
     case "machine.removed": {
-      // Machines change with every step an agent takes; only a prompt starting or ending redraws.
+      // Machines change with every step an agent takes; only a prompt starting or ending redraws, or a
+      // machine going on- or offline (the nav's count). The Machines page shows them all: it redraws on
+      // every change, at most about once a second.
       const before = prompts();
+      const onlineBefore = online();
       state.machines = state.machines.filter((x) => x.id !== (m.machine?.id ?? m.id));
       if (m.machine) state.machines.push(m.machine);
-      if (prompts() === before) return;
-      break;
+      if (prompts() !== before || online() !== onlineBefore) break;
+      if (route().name === "machines") redrawSoon();
+      return;
     }
     case "goal.updated": state.goals = [...state.goals.filter((g) => g.id !== m.goal.id), m.goal]; break;
     case "note.updated": state.notes = [...state.notes.filter((n) => n.id !== m.note.id), m.note]; break;
@@ -185,6 +190,17 @@ function receive(m) {
     default: return;
   }
   render();
+}
+
+const online = () => state.machines.filter((m) => m.online).length;
+
+/** A redraw at most once a second: the first at once, the rest folded into one at the end of the second. */
+let lastDraw = 0;
+let drawTimer = null;
+function redrawSoon() {
+  if (drawTimer) return;
+  const wait = Math.max(0, lastDraw + 1000 - Date.now());
+  drawTimer = setTimeout(() => { drawTimer = null; lastDraw = Date.now(); render(); }, wait);
 }
 
 /** GitHub's incident under the header, linking to it on githubstatus.com; all clear (or an older server) hides it. */
@@ -289,6 +305,7 @@ function route() {
   if (settings) return { name: "settings", nav: "settings", section: settings[1] ?? null };
   if (hash === "/new") return { name: "new", nav: "new", note: new URLSearchParams(query).get("note") };
   if (hash === "/notes") return { name: "notes", nav: "notes" };
+  if (hash === "/machines") return { name: "machines", nav: "machines" };
   return hash === "/tasks" ? { name: "tasks", nav: "tasks" } : { name: "inbox", nav: "inbox" };
 }
 
@@ -299,8 +316,9 @@ function render() {
   $("nav-settings").hidden = state.me.role !== "admin";
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
+  $("machines-count").textContent = online() || "";
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
@@ -395,6 +413,65 @@ function tasksView() {
       active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
     done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
 }
+
+// ---- machines: read-only; what each one is doing, how loaded it is and how much plan it has left ----
+
+const ACTIVITY_TITLE = { working: "Working", waiting: "Waiting on someone", done: "Done its turn", idle: "Idle" };
+
+function machinesView() {
+  const now = Date.now();
+  const machines = sortMachines(state.machines, state.me?.login);
+  return h("div", {},
+    h("h1", {}, "Machines"),
+    h("p", { class: "muted" }, "Where agents run: what each machine is doing, its load, and how much plan its agents have left."),
+    machines.length
+      ? h("div", { class: "machines" }, machines.map((m) => machineCard(m, now)))
+      : h("div", { class: "card empty" }, "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
+}
+
+function machineCard(m, now) {
+  const st = machineStatus(m, now);
+  const usage = usageRows(m, now);
+  const gauges = meters(m);
+  return h("section", { class: `card machine ${st.kind}`, "data-machine": m.id },
+    h("div", { class: "machine-head" },
+      h("div", { class: "machine-title" },
+        h("div", { class: "title" }, m.name),
+        h("div", { class: "sub muted" }, [m.owner === state.me?.login ? "Yours" : name(m.owner), m.os, m.version && `runner ${m.version}`].filter(Boolean).join(" · "))),
+      h("span", { class: `pill status-pill ${st.kind}` }, h("span", { class: "pill-dot", "aria-hidden": "true" }), st.label)),
+    st.detail && h("div", { class: "machine-detail muted" }, st.detail),
+    m.sessions.length > 0 && h("div", { class: "machine-sessions" }, m.sessions.map((s) => sessionLine(s))),
+    gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
+    usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
+      h("div", { class: "usage-head" }, agentIcon(u.agent), h("span", {}, u.title), u.plan && h("span", { class: "faint usage-plan" }, `· ${u.plan}`),
+        h("span", { class: "faint usage-seen" }, `read ${ago(u.observedAt)}`)),
+      u.rows.map((r) => h("div", { class: `usage-row${r.over ? " over" : ""}` },
+        h("span", { class: "usage-label" }, r.label),
+        bar(r.used / 100, r.cap == null ? null : r.cap / 100, `${r.label}: ${r.usedText} used${r.cap == null ? "" : `, cap ${r.cap}%`}`),
+        h("span", { class: "usage-num" }, r.usedText),
+        h("span", { class: "usage-reset faint" }, r.resets)))))));
+}
+
+function sessionLine(s) {
+  const task = s.session.taskId ? state.tasks.get(s.session.taskId) : null;
+  const a = s.activity;
+  const doing = a ? [ACTIVITY_TITLE[a.state] ?? a.state, a.step || a.message].filter(Boolean).join(" · ") : "Starting";
+  const what = s.session.taskId
+    ? h("a", { href: `#/t/${s.session.taskId}` }, h("span", { class: "mono" }, s.session.taskId), task ? ` ${task.title}` : "")
+    : h("span", {}, "Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
+  return h("div", { class: "machine-session" },
+    h("span", { class: `dot act-${a?.state ?? "idle"}` }),
+    h("div", {}, h("div", { class: "session-what" }, agentIcon(s.session.agent), what), h("div", { class: "sub muted" }, doing)));
+}
+
+/** A horizontal bar 0–1 with an optional tick at `cap`. */
+const bar = (value, cap, label) => h("span", { class: `bar-track${cap != null && value >= cap ? " over" : ""}`, role: "meter", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(value * 100)), "aria-label": label },
+  h("span", { class: "bar-fill", style: `width:${Math.round(Math.min(1, Math.max(0, value)) * 100)}%` }),
+  cap != null && h("span", { class: "bar-cap", style: `left:${Math.round(cap * 100)}%`, title: `Cap ${Math.round(cap * 100)}%` }));
+
+const meter = (g) => h("div", { class: `meter ${g.key}` },
+  h("div", { class: "meter-head" }, h("span", {}, g.label), h("span", { class: "faint" }, g.text)),
+  bar(g.value, g.cap, `${g.label}: ${g.text}`));
 
 // ---- a new task ----
 
