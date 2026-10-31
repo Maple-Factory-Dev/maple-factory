@@ -89,7 +89,8 @@ struct NewTaskView: View {
             }
             .onAppear {
                 repo = goal?.repo ?? goal?.repos.first
-                titleFocused = true
+                // Opened by `-newTask YES` for a screenshot, the keyboard would hide the form.
+                titleFocused = !UserDefaults.standard.bool(forKey: "newTask")
             }
             .onChange(of: goalID) { repo = goal?.repo ?? goal?.repos.first }
         }

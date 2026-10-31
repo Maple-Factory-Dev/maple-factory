@@ -1,8 +1,8 @@
 import MapleKit
 import SwiftUI
 
-/// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings` and `-task <id>`
-/// open a screen directly, for screenshots.
+/// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
+/// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -269,7 +269,8 @@ struct GoalRow: View {
 
 struct GoalView: View {
     @Environment(FactoryStore.self) private var store
-    @State private var composing = false
+    /// `-newTask YES` opens the New task sheet, for screenshots.
+    @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
     let id: String
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .cancelled]
