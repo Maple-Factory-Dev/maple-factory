@@ -223,6 +223,19 @@ mod tests {
         assert!(parse_pmset("Now drawing from 'AC Power'\n").is_none());
     }
 
+    #[tokio::test]
+    async fn samples_real_vitals() {
+        let health = Sampler::new().sample().await;
+        println!(
+            "load1={} uptime={}s mem={}/{} disk={}/{} cores={} cpu={}",
+            health.load1, health.uptime, health.mem_used, health.mem_total, health.disk_used, health.disk_total, health.cores, health.cpu
+        );
+        assert!(health.load1 >= 0.0);
+        assert!(health.uptime > 0);
+        assert!(health.mem_total > 0 && health.mem_used > 0 && health.mem_used <= health.mem_total);
+        assert!(health.disk_total > 0 && health.disk_used <= health.disk_total);
+    }
+
     #[test]
     fn reports_cores() {
         let sampler = Sampler::new();

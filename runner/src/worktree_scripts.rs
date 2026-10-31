@@ -264,7 +264,7 @@ struct Stamp {
 }
 
 fn sha(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::update::hex(&Sha256::digest(bytes))
 }
 
 impl Stamp {
