@@ -866,7 +866,8 @@ export const structs: Record<string, Struct> = {
   },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
-    fields: { login: "string", viewing: "string?", since: "u64" },
+    fields: { login: "string", viewing: "string?", since: "u64", mobile: "bool?" },
+    fieldDocs: { mobile: "True when every app the person has open is the iPhone or Android app." },
   },
   NewGoalIdea: {
     doc: "A goal Draft with AI suggests making.",

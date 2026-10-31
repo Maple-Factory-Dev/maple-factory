@@ -1053,6 +1053,8 @@ export interface Presence {
   login: string;
   viewing?: string | null;
   since: number;
+  /** True when every app the person has open is the iPhone or Android app. */
+  mobile?: boolean | null;
 }
 
 /** A goal Draft with AI suggests making. */
