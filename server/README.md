@@ -37,6 +37,12 @@ kept in D1, since a Worker can't set its own secrets. After installing the app, 
 Flow** in its settings for the Mac app's sign-in; GitHub doesn't allow that from a manifest. Only an
 app owned by `GITHUB_ORG` is accepted, and once sign-in works, `/setup` changes nothing.
 
+The app asks for **Workflows: write** (alongside contents, pull requests, checks and actions), so tasks that change
+`.github/workflows/*` are pushed and merged as the app: GitHub refuses those pushes without it. An app made before
+it asked for this doesn't have it: add Workflows → Read and write under the app's **Permissions & events**, then
+accept the new permission on each installation. Until then everything else works as before (the factory asks for
+its tokens without it), and a task that changes a workflow fails its push with a message that says so and links there.
+
 Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `SESSION_SECRET`, `SECRETS_KEY`) take precedence over what `/setup` stored.
 

@@ -3,7 +3,7 @@
 //
 //   node server/test/fake-github.mjs --port 18803 --public-key app.pub.pem --installed acme/greeter \
 //     --remotes '/tmp/mfgh/remotes/{owner}/{repo}.git' --webhook-url http://localhost:8788/integrations/github \
-//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice] [--owner acme:alice]
+//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice] [--owner acme:alice] [--no-workflows]
 //
 // Point the server at it with GITHUB_API_URL=http://localhost:18803 (only honored on localhost) and
 // the runner's pushes at the bare repos with MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL. It checks
@@ -11,7 +11,9 @@
 // covers the repo and the permission a call needs. It answers:
 //
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
-//   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
+//   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }; with --no-workflows
+//                                                        (an install that hasn't approved Workflows: write) a request with
+//                                                        `workflows` is a 422. GET /_log's `tokens` lists every request's permissions
 //   GET  /app/installations, GET /installation/repositories   the app's installations (one per account, with its
 //                                                        login), and an installation's repos
 //   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
@@ -68,6 +70,7 @@ const { values } = parseArgs({
     user: { type: "string", multiple: true, default: [] },
     member: { type: "string", multiple: true, default: [] },
     owner: { type: "string", multiple: true, default: [] },
+    "no-workflows": { type: "boolean", default: false },
   },
 });
 
@@ -82,6 +85,7 @@ const accounts = [...new Set(values.installed.map((r) => r.split("/")[0].toLower
 const installed = new Map(values.installed.map((r) => [r.toLowerCase(), 1000 + accounts.indexOf(r.split("/")[0].toLowerCase())]));
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
+const tokenRequests = []; // { installation, repositories, permissions, status }, in order
 const pulls = [];
 const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite, log? }]
 const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
@@ -245,7 +249,7 @@ createServer((req, res) => {
     const deny = (g) => send(res, g[0], { message: g[1] });
     let m;
 
-    if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson) });
+    if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson), tokens: tokenRequests });
     if (req.method === "POST" && url.pathname === "/_deleteBranch") {
       git(bare(body.owner, body.repo), "branch", "-D", body.branch);
       return send(res, 200, {});
@@ -392,6 +396,12 @@ createServer((req, res) => {
     if (req.method === "POST" && (m = url.pathname.match(/^\/app\/installations\/(\d+)\/access_tokens$/))) {
       const why = verifyJwt(req.headers.authorization);
       if (why) return send(res, 401, { message: why });
+      const asked = { installation: Number(m[1]), repositories: body?.repositories, permissions: body?.permissions };
+      if (values["no-workflows"] && body?.permissions && "workflows" in body.permissions) {
+        tokenRequests.push({ ...asked, status: 422 });
+        return send(res, 422, { message: "The permissions requested are not granted to this installation.", documentation_url: "https://docs.github.com/rest/apps/apps#create-an-installation-access-token-for-an-app" });
+      }
+      tokenRequests.push({ ...asked, status: 201 });
       const token = `ghs_${randomBytes(18).toString("hex")}`;
       tokens.set(token, { repositories: body?.repositories, permissions: body?.permissions, installation: Number(m[1]) });
       return send(res, 201, { token, expires_at: new Date(Date.now() + 3600_000).toISOString() });
