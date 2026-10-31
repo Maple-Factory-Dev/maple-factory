@@ -21,8 +21,13 @@ final class FactoryStore {
     private(set) var saved: [SavedFactory] = []
     /// The toast or error to show, newest only.
     var notice: FeedState.Notice?
+    /// A `maplefactory://` link waiting to be opened. Signing out keeps it, so a link opened on the
+    /// sign-in screen opens once you're in; RootView takes it.
+    var pendingLink: FactoryLink?
     /// Each task's diff once loaded, keyed by the change it was loaded for.
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
+    /// The last `stats` reply, for admins' Statistics (FeedState doesn't keep it).
+    private(set) var stats: Wire.StatsSummary?
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var generation = 0
@@ -38,6 +43,7 @@ final class FactoryStore {
 
     var isSignedIn: Bool { status != .signedOut }
     var me: String { feed.me?.login ?? "" }
+    var isAdmin: Bool { feed.me?.role == "admin" }
     var factoryName: String { feed.name ?? (feed.org.isEmpty ? server?.host() ?? "Factory" : feed.org) }
 
     // MARK: Signing in
@@ -84,6 +90,7 @@ final class FactoryStore {
         token = nil
         feed = FeedState()
         diffs = [:]
+        stats = nil
         status = .signedOut
     }
 
@@ -192,6 +199,7 @@ final class FactoryStore {
             status = .live
             ErrorReports.tag(org: snapshot.org)
         }
+        if case .stats(let reply) = message { stats = reply.summary }
         if let notice = feed.apply(message) { self.notice = notice }
     }
 
@@ -211,9 +219,13 @@ final class FactoryStore {
     func resolveHand(_ id: String, option: String?, note: String) { send(.taskResolveHand(.init(id: id, option: option, note: note))) }
     func comment(_ id: String, text: String) { send(.taskComment(.init(id: id, text: text))) }
     func steer(_ id: String, text: String) { send(.taskSteer(.init(id: id, text: text))) }
+    /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
+    func answerPrompt(_ id: String, choice: Wire.PromptChoice) { send(.taskAnswerPrompt(.init(id: id, choice: choice))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
+    /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
+    func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
 
     /// Starts a task in `goal`: handed to a planner now (`plan`), or kept as a draft. An empty brief
     /// sends the title as the brief, like the Mac's composer; `repo` counts only when it's one of the goal's.
@@ -292,6 +304,13 @@ final class FactoryStore {
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
+        case .taskAnswerPrompt(let m):
+            // The runner passes the answer to the session, which carries on.
+            guard let worker = feed.task(m.id)?.worker, let mi = feed.machines.firstIndex(where: { $0.id == worker.machine }),
+                  let si = feed.machines[mi].sessions.firstIndex(where: { $0.session.id == worker.session }) else { break }
+            var machine = feed.machines[mi]
+            machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
+            feed.apply(.machineUpdated(.init(machine: machine)))
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
         case .taskCreate(let m):
@@ -302,6 +321,8 @@ final class FactoryStore {
                                  events: [.init(who: me, text: "created the task", at: DemoData.now)],
                                  shareable: m.shareable, agent: m.agent ?? "claude", repo: m.repo, priority: m.priority)
             feed.apply(.taskUpdated(.init(task: task)))
+        case .statsGet(let m):
+            stats = DemoData.stats(days: Int(m.days))
         default:
             break
         }

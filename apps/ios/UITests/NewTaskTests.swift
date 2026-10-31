@@ -2,6 +2,7 @@ import XCTest
 
 /// In the demo: opens the Mobile app goal, starts a task from its New task button, and checks it lands
 /// in the right section: Drafting for Save as draft, Planning for Plan now.
+@MainActor
 final class NewTaskTests: XCTestCase {
     func testSaveAsDraft() throws {
         try create(title: "Haptics when a plan is approved", plan: false, section: "Drafting · 2")

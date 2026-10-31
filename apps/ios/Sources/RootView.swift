@@ -2,7 +2,10 @@ import MapleKit
 import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
-/// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots.
+/// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
+/// `-stats YES` (with `-statsDays N`) opens Statistics.
+/// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
+/// machine on Machines.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -11,6 +14,7 @@ struct RootView: View {
     @State private var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "tab") ?? "") ?? .inbox
     @State private var inboxPath = NavigationPath()
     @State private var goalsPath = NavigationPath()
+    @State private var settingsPath = NavigationPath()
 
     var body: some View {
         TabView(selection: $tab) {
@@ -31,7 +35,7 @@ struct RootView: View {
                 .tabItem { Label("Machines", systemImage: "desktopcomputer") }
                 .tag(Tab.machines)
 
-            NavigationStack { SettingsView() }
+            NavigationStack(path: $settingsPath) { SettingsView().withTaskDestinations() }
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
@@ -49,11 +53,31 @@ struct RootView: View {
                 goalsPath.append(GoalRoute(id: goal))
             }
         }
+        .onChange(of: store.pendingLink, initial: true) { _, link in
+            guard let link else { return }
+            store.pendingLink = nil
+            switch link {
+            case .task(let id):
+                // Replaces whatever was pushed, so the task isn't stacked twice. It needn't be in the
+                // feed yet: the detail fills in when the snapshot lands.
+                tab = .inbox
+                inboxPath = NavigationPath([TaskRoute(id: id)])
+            case .session:
+                tab = .machines
+            }
+        }
+        // Live, who you are arrives with the snapshot, after the first appearance.
+        .onChange(of: store.isAdmin, initial: true) { _, isAdmin in
+            guard isAdmin, UserDefaults.standard.bool(forKey: "stats"), settingsPath.isEmpty else { return }
+            tab = .settings
+            settingsPath.append(StatsRoute())
+        }
     }
 }
 
 struct TaskRoute: Hashable { let id: String }
 struct GoalRoute: Hashable { let id: String }
+struct StatsRoute: Hashable {}
 
 extension View {
     func withTaskDestinations() -> some View {
@@ -322,13 +346,24 @@ struct TaskRow: View {
                 Text(task.id).font(.caption.monospaced()).foregroundStyle(.secondary)
                 if task.hand != nil { Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Theme.warning) }
                 if task.question != nil { Image(systemName: "questionmark.bubble.fill").font(.caption).foregroundStyle(Theme.state(.planning)) }
+                if permission != nil {
+                    Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
+                        .accessibilityLabel("Needs permission")
+                }
                 Spacer()
                 Avatar(login: task.owner, url: store.feed.member(task.owner)?.avatarUrl, size: 18)
             }
             Text(task.title).lineLimit(2)
-            if let waiting = task.waiting { Text(waiting).font(.caption).foregroundStyle(.secondary) }
+            if let permission {
+                Text("Needs permission: \(permission.tool)").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
+            } else if let waiting = task.waiting {
+                Text(waiting).font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
+
+    /// The permission prompt its worker is stopped at, if any.
+    private var permission: PermissionPrompt? { store.feed.workerActivity(for: task.worker)?.permission }
 }
 
 // MARK: - Machines
@@ -395,9 +430,19 @@ struct MachineRows: View {
                         Text(live.session.taskId ?? live.session.agent).font(.subheadline.monospaced())
                         Text(live.session.agent).font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        if let state = live.activity?.state { Text(state.rawValue).font(.caption).foregroundStyle(state == .waiting ? Theme.warning : .secondary) }
+                        if live.activity?.permission != nil {
+                            Label("needs permission", systemImage: "hand.raised.fill").font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.state(.awaitingApproval))
+                                .accessibilityIdentifier("session-needs-permission")
+                        } else if let state = live.activity?.state {
+                            Text(state.rawValue).font(.caption).foregroundStyle(state == .waiting ? Theme.warning : .secondary)
+                        }
                     }
-                    if let message = live.activity?.message { Text(message).font(.caption).foregroundStyle(.secondary) }
+                    if let prompt = live.activity?.permission {
+                        Text("\(prompt.tool): \(prompt.summary)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    } else if let message = live.activity?.message {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             .disabled(live.session.taskId == nil)
@@ -428,6 +473,9 @@ struct SettingsView: View {
                 if let server = store.server { LabeledContent("Address", value: server.host() ?? server.absoluteString) }
                 if let version = store.feed.serverVersion { LabeledContent("Server", value: version) }
                 LabeledContent("Members", value: "\(store.feed.members.count)")
+                if store.isAdmin {
+                    NavigationLink(value: StatsRoute()) { Label("Statistics", systemImage: "chart.bar") }
+                }
             }
             if let me = store.feed.me {
                 Section("Account") {
@@ -461,5 +509,6 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
     }
 }
