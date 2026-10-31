@@ -120,6 +120,8 @@ function receive(m) {
       state.machines = m.machines ?? [];
       // The factory's settings, for admins' Settings page.
       Object.assign(state, { policy: m.policy ?? null, prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
+      // null: a server too old to have integrations.
+      state.integrations = m.integrations ?? null;
       $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
@@ -138,6 +140,7 @@ function receive(m) {
       break;
     case "repos.updated": state.repos = m.repos; if (m.repoOwners) state.repoOwners = m.repoOwners; break;
     case "secrets.updated": state.secrets = m.secrets; break;
+    case "integrations.updated": state.integrations = m.integrations; break;
     case "task.updated":
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
