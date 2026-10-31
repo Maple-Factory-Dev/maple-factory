@@ -398,6 +398,7 @@ final class AppState {
         task.hand = FactoryData.seedHands[task.id]
         task.shareable = FactoryData.seedShareable.contains(task.id)
         task.effort = FactoryData.seedEfforts[task.id]
+        task.after = FactoryData.seedAfter[task.id] ?? []
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
         if task.id == "ATL-160" {
@@ -1372,6 +1373,30 @@ final class AppState {
             }
         }
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
+    }
+
+    /// Replace what `id` waits on: it builds only once all of them have merged. The server refuses a
+    /// loop, a cancelled task, or a task that's already building.
+    func setAfter(_ id: String, _ after: [String]) {
+        let was = task(id).after
+        guard after != was else { return }
+        let added = after.filter { !was.contains($0) }, removed = was.filter { !after.contains($0) }
+        if let client, isLive {
+            client.expect(id) { $0.after = after }
+            client.send(.taskEdit(.init(id: id, after: after)))
+        } else {
+            update(id) { task in
+                task.after = after
+                task.activity.insert(ActivityItem(who: FactoryData.me.name,
+                                                  text: after.isEmpty ? "No longer waits on other tasks" : "Now waits on \(after.joined(separator: ", "))", when: "now"), at: 0)
+            }
+        }
+        showToast(added.isEmpty ? "\(id) no longer waits on \(removed.joined(separator: ", "))" : "\(id) now builds after \(added.joined(separator: ", "))", icon: "arrow.triangle.branch")
+    }
+
+    /// The tasks waiting on `id` to merge before they build.
+    func blocked(by id: String) -> [FactoryTask] {
+        tasks.filter { $0.after.contains(id) }.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
     /// Model presets per agent for the task inspector's Model menu; anything else goes in as free text.

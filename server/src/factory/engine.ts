@@ -113,6 +113,10 @@ const branchName = (task: Task) => task.id.toLowerCase();
 const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
 /** Nothing more happens on it: merged, cancelled, or closed with nothing to merge. */
 const isFinished = (state: Task["state"]) => state === "merged" || state === "cancelled" || state === "closed";
+/** A builder has started on it: what it waits on is settled from then on. */
+const buildStarted = (task: Task) => task.worker?.role === "builder" || task.events.some((e) => e.who === "builder");
+/** The most tasks one can wait on. */
+const MAX_AFTER = 10;
 /** Where a review note sits: `path:L12` or `path:L12–18`. */
 const lineAnchor = (n: { path: string; start: number; end: number }) => `${n.path}:L${n.start}${n.end > n.start ? `–${n.end}` : ""}`;
 
@@ -418,8 +422,7 @@ export class Engine {
         if (goal.archived) fail(`${goal.name} is archived; unarchive it to add tasks.`);
         if (!msg.title.trim()) fail("A task needs a title.");
         const repo = msg.repo ? goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase()) ?? fail(`${goal.name} doesn't work in ${msg.repo}; add it to the goal's repos first.`) : null;
-        const after = msg.after ?? [];
-        for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
+        const after = this.checkAfter(null, msg.after ?? []);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
         const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort), priority: msg.priority ?? null });
         if (request) {
@@ -474,6 +477,14 @@ export class Engine {
           const was = task.effort;
           task.effort = effort;
           this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
+        }
+        if (msg.after != null) {
+          const after = this.checkAfter(task, msg.after);
+          if (after.join() !== task.after.join()) {
+            if (isFinished(task.state) || task.state === "reviewing" || (task.state === "building" && buildStarted(task))) fail(`It's ${task.state === "building" ? "already building" : task.state}; what it waits on can't change now.`);
+            task.after = after;
+            this.event(task, who, after.length ? `now waits on ${after.join(", ")}` : "no longer waits on other tasks");
+          }
         }
         const priority = msg.clearPriority ? null : msg.priority;
         if (priority !== undefined && priority !== (task.priority ?? null)) {
@@ -1065,9 +1076,33 @@ export class Engine {
     this.event(task, who, "moved it to the top of the queue: it's P0");
   }
 
+  /** The ids `task` (null: one being made) may wait on, deduplicated, or a refusal: a missing or
+   *  cancelled task, itself, more than 10, or a loop back to it through the others' `after` lists. */
+  private checkAfter(task: Task | null, ids: string[]): string[] {
+    const deps = ids.map((id) => id.trim()).filter(Boolean).map((id) => this.store.task(id) ?? this.store.task(id.toUpperCase()) ?? fail(`There's no task ${id} for it to wait on.`));
+    const after = [...new Set(deps.map((d) => d.id))];
+    if (after.length > MAX_AFTER) fail(`A task can wait on at most ${MAX_AFTER} others.`);
+    for (const dep of deps) {
+      if (task && dep.id === task.id) fail(`${task.id} can't wait on itself.`);
+      if (dep.state === "cancelled") fail(`${dep.id} was cancelled; it can't wait on it.`);
+    }
+    if (task) {
+      // Walk what each waits on: reaching the task again would mean neither can ever start.
+      const seen = new Set<string>();
+      const walk = (id: string, path: string[]): void => {
+        if (id === task.id) fail(`That makes a loop: ${[task.id, ...path].join(" → ")}.`);
+        if (seen.has(id)) return;
+        seen.add(id);
+        for (const next of this.store.task(id)?.after ?? []) walk(next, [...path, next]);
+      };
+      for (const id of after) walk(id, [id]);
+    }
+    return after;
+  }
+
   /** A draft made from `source` (proposed by its agent, or a follow-up of it): it takes the source's
    *  agent, model, effort and sharing. Saved. */
-  private draftFrom(goal: Goal, source: Task, owner: string, d: Pick<Task, "title" | "brief" | "repo"> & Partial<Pick<Task, "priority" | "followUpOf">>): Task {
+  private draftFrom(goal: Goal, source: Task, owner: string, d: Pick<Task, "title" | "brief" | "repo"> & Partial<Pick<Task, "priority" | "followUpOf" | "after" | "effort">>): Task {
     return this.newTask(goal, owner, {
       tickets: [],
       shareable: source.shareable,
@@ -2202,31 +2237,43 @@ export class Engine {
         if (asked.length > 20) fail("tasks: at most 20 per call.");
         const repos = goalRepos(goal!);
         // Checked before any is made, so a bad proposal makes none.
-        const picks = asked.map((p) => {
+        const picks = asked.map((p, i) => {
           const named = typeof p.repo === "string" ? p.repo.trim() : "";
           const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `tasks[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
           const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`tasks[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
-          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo, priority };
+          // `#n`: the n-th proposal in this call, made before it; anything else is an existing task.
+          const refs = arr(p.after).map((x) => String(x).trim()).filter(Boolean);
+          const earlier = refs.map((r) => (/^#\d+$/.test(r) ? Number(r.slice(1)) : null));
+          for (const [k, n] of earlier.entries()) if (n != null && (n < 1 || n > i)) fail(`tasks[${i}].after: ${refs[k]} isn't an earlier proposal in this call${n > i ? "; a task can only wait on ones listed before it" : ""}.`);
+          const existing = this.checkAfter(null, refs.filter((_, k) => earlier[k] == null));
+          const effort = p.effort == null ? undefined : effortName(String(p.effort));
+          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
         });
         // Drafts only: nothing plans or builds until a person sends one to planning.
-        const made = picks.map((p) => {
-          const draft = this.draftFrom(goal!, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`, repo: p.repo, priority: p.priority });
-          this.event(draft, s.role, `proposed by ${task.id}`);
+        const made: string[] = [];
+        const lines: string[] = [];
+        for (const p of picks) {
+          const after = [...p.existing, ...p.earlier.map((n) => made[n - 1]!)];
+          const draft = this.draftFrom(goal!, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`, repo: p.repo, priority: p.priority, after, ...(p.effort !== undefined ? { effort: p.effort } : {}) });
+          this.event(draft, s.role, `proposed by ${task.id}${after.length ? `; waits on ${after.join(", ")}` : ""}`);
           this.save(draft);
           this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));
-          return draft.id;
-        });
-        this.hooks.broadcast({ type: "toast", text: `${task.id}'s ${s.role} proposed ${made.length} task${made.length === 1 ? "" : "s"}; they're in ${goal!.name}'s drafts.`, taskId: task.id });
+          made.push(draft.id);
+          lines.push(`${draft.id} ${draft.title}${after.length ? ` (after ${after.join(", ")})` : ""}${draft.effort ? ` [${draft.effort}]` : ""}`);
+        }
+        // An ordered set reads as a chain: MF-201 → MF-202 → MF-203.
+        const ordered = made.length > 1 && picks.some((p) => p.earlier.length);
+        this.hooks.broadcast({ type: "toast", text: ordered ? `${task.id}'s ${s.role} proposed ${made.join(" → ")}; they're in ${goal!.name}'s drafts, in order.` : `${task.id}'s ${s.role} proposed ${made.length} task${made.length === 1 ? "" : "s"}; they're in ${goal!.name}'s drafts.`, taskId: task.id });
         if (s.role === "planner" && task.state === "planning") {
           // A scan-and-propose task: the proposals are its outcome, so it closes with nothing to merge.
           task.state = "closed";
           this.event(task, s.role, `closed it: proposed ${made.join(", ")}`);
           this.stat(task, "closed", { proposed: made.length }, null, s.role);
           this.closeWorker(task, "done");
-          return { summary: `Proposed ${made.join(", ")} as drafts in ${goal!.name}, and closed ${task.id}: there's nothing to merge. Your work here is done; end your turn.`, data: { tasks: made } };
+          return { summary: `Proposed as drafts in ${goal!.name}:\n${lines.join("\n")}\nand closed ${task.id}: there's nothing to merge. Your work here is done; end your turn.`, data: { tasks: made } };
         }
         this.event(task, s.role, `proposed ${made.join(", ")}`);
-        return { summary: `Proposed ${made.join(", ")} as drafts in ${goal!.name}. A person sends each to planning or deletes it; don't build them yourself.`, data: { tasks: made } };
+        return { summary: `Proposed as drafts in ${goal!.name}:\n${lines.join("\n")}\nA person sends each to planning or deletes it; don't build them yourself.`, data: { tasks: made } };
       }
 
       case "ask": {
