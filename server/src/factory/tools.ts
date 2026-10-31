@@ -126,7 +126,7 @@ const TOOLS: Tool[] = [
       },
       ["reason", "summary", "options"],
     ),
-    roles: ["planner", "builder"],
+    roles: ["planner", "builder", "reviewer"],
   },
   {
     name: "progress",
