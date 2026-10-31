@@ -825,6 +825,10 @@ function decisions(t) {
         failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
+    // One more automated-review round, with this person's focus.
+    if (reviewRequestable(t) && !reviewAsks.has(t.id)) {
+      buttons.push(h("button", { class: "btn", onclick: () => { reviewAsks.set(t.id, ""); render(); document.querySelector(`[data-keep="${t.id}:review-ask"] textarea`)?.focus(); } }, "Request a review…"));
+    }
     if (!passed) buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "The review agent is still on it."));
   }
   if (isQueued(t)) {
@@ -847,6 +851,7 @@ function decisions(t) {
     renaming && renameRow(t),
     buttons.length > 0 && h("div", { class: "actions" }, buttons),
     cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && cancelCard(t),
+    reviewAsks.has(t.id) && reviewRequestable(t) && reviewAskCard(t),
     steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
 }
 
@@ -934,6 +939,27 @@ function cancelCard(t) {
     h("div", { class: "actions" },
       h("button", { class: "btn danger solid", onclick: () => { send({ type: "task.cancel", id: t.id }); done(); } }, "Cancel task"),
       h("button", { class: "btn", onclick: done }, "Keep working")));
+}
+
+const reviewAsks = new Map(); // id → the focus being typed into its "Request a review…"
+const reviewRequestable = (t) => t.state === "reviewing" && !!t.autoReview?.rounds.length && t.autoReview.rounds.at(-1).verdict !== "inProgress" && !merging(t) && !t.hand && !t.question;
+
+/** Asks what one more automated-review round should look for. */
+function reviewAskCard(t) {
+  const done = () => { reviewAsks.delete(t.id); render(); };
+  const go = () => {
+    const focus = (reviewAsks.get(t.id) ?? "").trim();
+    if (!focus) return toast("Say what it should look for.");
+    if (send({ type: "task.requestReview", id: t.id, focus })) done();
+  };
+  return h("div", { class: "compose", "data-keep": `${t.id}:review-ask` },
+    h("b", {}, "Request a review"),
+    h("textarea", { rows: 2, placeholder: "What should it look for? e.g. check security, look at error handling", value: reviewAsks.get(t.id) ?? "",
+      oninput: (e) => reviewAsks.set(t.id, e.target.value),
+      onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) go(); else if (e.key === "Escape") done(); } }),
+    h("div", { class: "actions" },
+      h("button", { class: "btn small go", onclick: go }, "Send"),
+      h("button", { class: "btn small", onclick: done }, "Cancel")));
 }
 
 function compose(t, key, placeholder, label, submit) {
@@ -1036,6 +1062,7 @@ function review(t) {
   const follow = followUpCard(t);
   return [h("h2", {}, "Automated review"), h("div", { class: "card" },
     h("div", { class: "row" }, h("b", {}, `Round ${last.number} of ${r.maxRounds}`), h("span", { class: verdict[1] }, verdict[0])),
+    last.focus && h("p", { class: "muted", style: "margin:6px 0 0" }, `Requested by ${last.by ? name(last.by) : "a teammate"}: `, h("span", { style: "color:var(--text)" }, last.focus)),
     r.summary && h("p", { style: "margin:8px 0" }, r.summary),
     [...r.ask.map((c) => ["Asked", c]), ...r.proofs.map((c) => ["Proof", c])].map(([kind, c]) => h("div", { class: "check" },
       h("span", { class: `mark ${c.verdict === "met" ? "ok" : c.verdict === "notMet" ? "bad" : "wait"}` }, c.verdict === "met" ? "✓" : c.verdict === "notMet" ? "✕" : "•"),

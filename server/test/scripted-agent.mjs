@@ -12,7 +12,8 @@
 // proves both items and finishes ("## It didn't merge", or a finish typed back because the branch doesn't
 // merge: merges its base in and resolves the conflicts;
 // "[attest]": waits for a person to attest to both items first, then proves them anyway).
-// Reviewer: asks for changes in round 1, passes round 2.
+// Reviewer: asks for changes in round 1, passes round 2 (and later ones; a round a teammate asked for
+// says what it looked at in its summary).
 
 import net from "node:net";
 import { execFileSync } from "node:child_process";
@@ -212,9 +213,11 @@ async function reviewer() {
   // A branch that already took review's fix (say, one sent back because it didn't merge) passes.
   const first = !/Open findings from earlier rounds/.test(prompt) && !(existsSync("hello.txt") && readFileSync("hello.txt", "utf8").includes("as review asked"));
   const verdict = first ? "changesRequested" : "passed";
+  // A round a teammate asked for: say what it looked at, from the prompt.
+  const asked = prompt.match(/^## Asked for this round by (\S+)\n(.+)$/m);
   const review = await call("submit_review", {
     verdict,
-    summary: first ? "Does what it says, but the file should end with a note." : "The finding is fixed; good to go.",
+    summary: (first ? "Does what it says, but the file should end with a note." : "The finding is fixed; good to go.") + (asked ? ` Looked at what ${asked[1]} asked: ${asked[2]}` : ""),
     ask: [{ text: "Add a greeting file", verdict: "met" }],
     proofs: [
       { text: "hello.txt says hello", verdict: "met" },

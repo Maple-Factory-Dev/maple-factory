@@ -658,6 +658,33 @@ export class Engine {
         await this.autoMerge(task);
         return;
       }
+      case "task.requestReview": {
+        const focus = msg.focus.trim() || fail("Say what the review should look for.");
+        // Its comment first: past that await, another request may have opened a round, so the checks
+        // and the new round run on the task as it is now, with nothing awaited between them.
+        const comment = await this.comment(who, focus, { anchor: "Review request" });
+        const now_ = this.store.task(task.id) ?? fail("That task isn't there any more.");
+        const review = now_.autoReview;
+        if (now_.state !== "reviewing" || !review?.rounds.length) fail("It isn't in review.");
+        if (review!.rounds.at(-1)!.verdict === "inProgress") fail("A review round is already running; wait for it to come in.");
+        // Pump skips a task with a hand or question up, so a round opened now would never start.
+        if (now_.hand) fail("It has a hand up; pick a way forward first.");
+        if (now_.question) fail("It's waiting on an answer; answer it first.");
+        const priv = this.store.private(now_.id);
+        if (priv.merging) fail("It's merging now.");
+        if (priv.finishing) fail("It's pushing its work now; ask once that's done.");
+        // The merge waits for this round; approvals already given stay.
+        now_.mergeAt = null;
+        const rounds = review!.rounds;
+        // Room for this round and, if it asks for changes, a fix round after it (as a reviewLoop resolution gives).
+        if (rounds.length + 2 > review!.maxRounds) review!.maxRounds = rounds.length + 2;
+        rounds.push({ number: rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null, focus, by: who });
+        now_.comments.push(comment);
+        this.event(now_, who, `asked for a review: ${focus}`);
+        this.save(now_);
+        await this.pump();
+        return;
+      }
       case "task.merge": {
         // A late or repeated click: it's merging (or merged) already, or its countdown ran out and the
         // factory has it. Nothing to do, and nothing to complain about.

@@ -132,7 +132,7 @@ import SwiftUI
             if t.state == .cancelled, request.state == .open || request.state == .draft { request.state = .closed }
             return request
         }
-        task.autoReview = t.autoReview.map(review)
+        task.autoReview = t.autoReview.map { review($0, who: who) }
         // A round still open on a cancelled task never finished (older servers left it behind).
         if t.state == .cancelled, task.autoReview?.rounds.last?.verdict == .inProgress {
             task.autoReview?.rounds.removeLast()
@@ -382,7 +382,7 @@ import SwiftUI
         return CICheck(name: c.name, status: status, duration: c.duration ?? "", required: c.required, url: c.url.flatMap(URL.init(string:)))
     }
 
-    private static func review(_ r: Wire.AutoReview) -> AutoReview {
+    private static func review(_ r: Wire.AutoReview, who: (String) -> Person) -> AutoReview {
         let verdict = { (v: Wire.CheckVerdict) -> ReviewCheck.Verdict in
             switch v {
             case .met: .met
@@ -399,7 +399,8 @@ import SwiftUI
                 case .escalated: .escalated
                 case .inProgress, .other: .inProgress
                 }
-                return ReviewRound(number: round.number.int, verdict: v, found: round.found.int, when: ago(round.at), fix: round.fix)
+                return ReviewRound(number: round.number.int, verdict: v, found: round.found.int, when: ago(round.at), fix: round.fix,
+                                   focus: round.focus, requestedBy: round.by.map(who))
             },
             summary: r.summary,
             ask: r.ask.map { ReviewCheck(text: $0.text, verdict: verdict($0.verdict), note: $0.note) },

@@ -430,7 +430,13 @@ export const structs: Record<string, Struct> = {
     doc: "An agent stopping to ask a person for help.",
     fields: { reason: "HandReason", summary: "string", at: "u64", assignee: "string", options: "HandOption[]" },
   },
-  ReviewRound: { fields: { number: "u32", verdict: "ReviewVerdict", found: "u32", at: "u64", fix: "string?" } },
+  ReviewRound: {
+    fields: { number: "u32", verdict: "ReviewVerdict", found: "u32", at: "u64", fix: "string?", focus: "string?", by: "string?" },
+    fieldDocs: {
+      focus: "What a teammate asked this round to look for, when one requested it.",
+      by: "The member who requested this round. None: the factory started it.",
+    },
+  },
   ReviewCheck: { fields: { text: "string", verdict: "CheckVerdict", note: "string?" } },
   Finding: {
     fields: {
@@ -1351,6 +1357,11 @@ export const unions: Record<string, Union> = {
       },
       "task.resolveHand": { fields: { id: "string", option: "string?", note: "string" } },
       "task.approveChanges": { fields: { id: "string" } },
+      "task.requestReview": {
+        doc: "Start one more automated-review round on a task in review, with the requester's own focus. Approvals already given stay; the merge waits for the round. Refused while a round runs, or unless the task is in review.",
+        fields: { id: "string", focus: "string" },
+        fieldDocs: { focus: "What the reviewer should look for, e.g. \"check security\"." },
+      },
       "task.merge": { fields: { id: "string" } },
       "task.holdMerge": { doc: "Stop the auto-merge counting down on a task; a person merges it instead.", fields: { id: "string" } },
       "task.cancel": { fields: { id: "string" } },

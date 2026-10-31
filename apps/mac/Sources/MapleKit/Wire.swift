@@ -2363,13 +2363,19 @@ public enum Wire {
         public var found: UInt32
         public var at: UInt64
         public var fix: String?
+        /// What a teammate asked this round to look for, when one requested it.
+        public var focus: String?
+        /// The member who requested this round. None: the factory started it.
+        public var by: String?
 
-        public init(number: UInt32, verdict: ReviewVerdict, found: UInt32, at: UInt64, fix: String? = nil) {
+        public init(number: UInt32, verdict: ReviewVerdict, found: UInt32, at: UInt64, fix: String? = nil, focus: String? = nil, by: String? = nil) {
             self.number = number
             self.verdict = verdict
             self.found = found
             self.at = at
             self.fix = fix
+            self.focus = focus
+            self.by = by
         }
     }
 
@@ -5733,6 +5739,18 @@ public enum Wire {
         }
     }
 
+    /// Start one more automated-review round on a task in review, with the requester's own focus. Approvals already given stay; the merge waits for the round. Refused while a round runs, or unless the task is in review.
+    public struct ClientMessageTaskRequestReview: Codable, Hashable, Sendable {
+        public var id: String
+        /// What the reviewer should look for, e.g. "check security".
+        public var focus: String
+
+        public init(id: String, focus: String) {
+            self.id = id
+            self.focus = focus
+        }
+    }
+
     public struct ClientMessageTaskMerge: Codable, Hashable, Sendable {
         public var id: String
 
@@ -5944,6 +5962,7 @@ public enum Wire {
         case taskAnswerPrompt(ClientMessageTaskAnswerPrompt)
         case taskResolveHand(ClientMessageTaskResolveHand)
         case taskApproveChanges(ClientMessageTaskApproveChanges)
+        case taskRequestReview(ClientMessageTaskRequestReview)
         case taskMerge(ClientMessageTaskMerge)
         case taskHoldMerge(ClientMessageTaskHoldMerge)
         case taskCancel(ClientMessageTaskCancel)
@@ -6022,6 +6041,7 @@ public enum Wire {
             case "task.answerPrompt": self = .taskAnswerPrompt(try ClientMessageTaskAnswerPrompt(from: decoder))
             case "task.resolveHand": self = .taskResolveHand(try ClientMessageTaskResolveHand(from: decoder))
             case "task.approveChanges": self = .taskApproveChanges(try ClientMessageTaskApproveChanges(from: decoder))
+            case "task.requestReview": self = .taskRequestReview(try ClientMessageTaskRequestReview(from: decoder))
             case "task.merge": self = .taskMerge(try ClientMessageTaskMerge(from: decoder))
             case "task.holdMerge": self = .taskHoldMerge(try ClientMessageTaskHoldMerge(from: decoder))
             case "task.cancel": self = .taskCancel(try ClientMessageTaskCancel(from: decoder))
@@ -6208,6 +6228,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskApproveChanges(let body):
                 try c.encode("task.approveChanges", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRequestReview(let body):
+                try c.encode("task.requestReview", forKey: .type)
                 try body.encode(to: encoder)
             case .taskMerge(let body):
                 try c.encode("task.merge", forKey: .type)

@@ -65,6 +65,17 @@ struct AutoReviewSection: View {
                 Spacer()
                 VerdictPill(verdict: review.current?.verdict ?? .inProgress)
             }
+            if let current = review.current, let focus = current.focus {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "person.fill.questionmark")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textMuted)
+                    (Text("Requested by \(current.requestedBy?.name ?? "a teammate"): ").foregroundStyle(Theme.textMuted)
+                        + Text(focus).foregroundStyle(Theme.text))
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             RoundTrack(review: review)
         }
     }

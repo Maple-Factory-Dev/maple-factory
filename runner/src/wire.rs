@@ -1051,6 +1051,12 @@ pub struct ReviewRound {
     pub at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
+    /// What a teammate asked this round to look for, when one requested it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    /// The member who requested this round. None: the factory started it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2974,6 +2980,13 @@ pub enum ClientMessage {
     #[serde(rename = "task.approveChanges")]
     TaskApproveChanges {
         id: String,
+    },
+    /// Start one more automated-review round on a task in review, with the requester's own focus. Approvals already given stay; the merge waits for the round. Refused while a round runs, or unless the task is in review.
+    #[serde(rename = "task.requestReview")]
+    TaskRequestReview {
+        id: String,
+        /// What the reviewer should look for, e.g. "check security".
+        focus: String,
     },
     #[serde(rename = "task.merge")]
     TaskMerge {
