@@ -13,6 +13,7 @@ import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected,
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
+import { fillIcons, icon } from "./icons.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
@@ -211,7 +212,7 @@ function showGitHubStatus(s) {
   const incident = s.incidents?.[0];
   $("github-status-detail").textContent = `· ${incident?.name || s.components?.join(", ") || s.description}`;
   $("github-status-link").href = incident?.url || "https://www.githubstatus.com";
-  $("github-status-link").textContent = incident?.url ? "See the incident ↗" : "githubstatus.com ↗";
+  $("github-status-link").replaceChildren(incident?.url ? "See the incident" : "githubstatus.com", icon("external-link", { size: 14 }));
 }
 
 /** The factory's icon (`/icon/<id>`) in the header in place of the leaf, and as the tab's icon; none puts both back. */
@@ -225,7 +226,7 @@ function showIcon(link) {
 
 function status() {
   const s = $("status");
-  s.textContent = state.live ? "Live" : "Reconnecting…";
+  s.replaceChildren(...(state.live ? ["Live"] : [icon("refresh-cw", { size: 12, class: "spin" }), "Reconnecting…"]));
   s.className = `status${state.live ? " live" : ""}`;
 }
 
@@ -317,6 +318,8 @@ function render() {
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   $("machines-count").textContent = online() || "";
+  for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
+    document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
   const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
@@ -335,7 +338,7 @@ function section(key, title, count, body) {
   return h("section", { class: `section${open ? "" : " closed"}` },
     h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
       onclick: () => { toggleCollapsed(collapsed, key); render(); } },
-      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+      h("span", { class: "chevron", "aria-hidden": "true" }, icon("chevron-down")), count == null ? title : `${title} · ${count}`)),
     open && h("div", { id }, body()));
 }
 
@@ -384,7 +387,7 @@ function inboxView() {
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
         h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
-    !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
+    !total && h("div", { class: "card empty" }, icon("inbox", { size: 28 }), "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
 /** Waiting for a session with nobody on it, as the server's queue reads it (the Mac app's Queued column). */
@@ -410,7 +413,7 @@ function tasksView() {
     queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
     backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
     section("tasks:active", "In flight", active.length, () =>
-      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, icon("list-checks", { size: 28 }), "Nothing in flight.")),
     done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
 }
 
@@ -426,7 +429,7 @@ function machinesView() {
     h("p", { class: "muted" }, "Where agents run: what each machine is doing, its load, and how much plan its agents have left."),
     machines.length
       ? h("div", { class: "machines" }, machines.map((m) => machineCard(m, now)))
-      : h("div", { class: "card empty" }, "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
+      : h("div", { class: "card empty" }, icon("server", { size: 28 }), "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
 }
 
 function machineCard(m, now) {
@@ -587,7 +590,7 @@ function notesView() {
           h("div", { class: "title" }, n.title || "Untitled note"),
           h("div", { class: "sub" }, `${ago(n.updatedAt)} · `, preview(n.body) || "Empty")),
         n.taskId && h("span", { class: "pill tag" }, `became ${n.taskId}`))))
-      : h("div", { class: "card empty" }, "Nothing jotted down yet."));
+      : h("div", { class: "card empty" }, icon("notebook-pen", { size: 28 }), "Nothing jotted down yet."));
 }
 const preview = (body) => body.replace(/\s+/g, " ").trim().slice(0, 120);
 
@@ -721,8 +724,8 @@ function taskView(id) {
     (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
     t.effort && effortCard(t),
     h("div", { class: "tabs", style: "margin-top:22px" },
-      h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, "Overview"),
-      t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, `Diff +${t.diff.added} −${t.diff.removed}`)),
+      h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, icon("file-text"), "Overview"),
+      t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, icon("git-pull-request"), `Diff +${t.diff.added} −${t.diff.removed}`)),
     tab === "diff" ? diffView(t) : overview(t));
 }
 
@@ -800,7 +803,7 @@ function effortCard(t) {
 function handCard(t) {
   const mine = t.hand.assignee === state.me?.login;
   return h("div", { class: "callout hand" },
-    h("b", {}, "The agent needs a hand"),
+    h("b", { class: "callout-head" }, icon("hand"), "The agent needs a hand"),
     h("p", { style: "margin:6px 0 0" }, t.hand.summary),
     mine && h("div", { class: "options" }, t.hand.options.map((o) =>
       h("button", { class: `option${o.recommended ? " recommended" : ""}`, onclick: () => send({ type: "task.resolveHand", id: t.id, option: o.title, note: "" }) },
@@ -848,7 +851,7 @@ function promptCard(t) {
 function questionCard(t) {
   const mine = t.owner === state.me?.login;
   return h("div", { class: "callout question" },
-    h("b", {}, `${name(t.question.role)} asks`),
+    h("b", { class: "callout-head" }, icon("message-square"), `${name(t.question.role)} asks`),
     h("p", { style: "margin:6px 0 0" }, t.question.text),
     mine && t.question.options.length > 0 && h("div", { class: "options" }, t.question.options.map((o) =>
       h("button", { class: "option", onclick: () => send({ type: "task.answer", id: t.id, text: o }) }, h("b", {}, o)))),
@@ -862,7 +865,7 @@ function decisions(t) {
   const buttons = [];
   if (t.state === "awaitingApproval") {
     buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => approvePlan(t) },
-      t.approvals.includes(me) ? "You approved it" : "Approve plan"));
+      icon("check"), t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
   if (t.state === "awaitingApproval" || t.state === "drafting") {
@@ -870,7 +873,7 @@ function decisions(t) {
   }
   if (t.state === "backlog") {
     // Nothing runs on it until it's picked up: its plan approved, or planned (again).
-    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, "Approve & build"));
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, icon("check"), "Approve & build"));
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
   }
@@ -880,7 +883,7 @@ function decisions(t) {
     const pending = t.pr?.checks?.some((c) => c.status !== "passed" && c.status !== "failed");
     if (approvable(t)) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
-        t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
+        icon("check"), t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
@@ -894,14 +897,14 @@ function decisions(t) {
         class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, icon("pause"), "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, icon("git-merge"), "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
       buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
-        failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
+        icon(failing ? "circle-alert" : pending ? "clock" : "git-merge"), failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
-    if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
+    if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, icon("refresh-cw"), "Re-run failed"));
     // One more automated-review round, with this person's focus.
     if (reviewRequestable(t) && !reviewAsks.has(t.id)) {
       buttons.push(h("button", { class: "btn", onclick: () => { reviewAsks.set(t.id, ""); render(); document.querySelector(`[data-keep="${t.id}:review-ask"] textarea`)?.focus(); } }, "Request a review…"));
@@ -910,12 +913,12 @@ function decisions(t) {
   }
   if (isQueued(t)) {
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top" }) }, "Move to top"));
-    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, "Start now"));
+    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, icon("play"), "Start now"));
   }
   if (t.state !== "merged") {
     // Waiting on its plan's approval or in the backlog, nothing is running to retry; requesting a change plans again.
-    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
-    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
+    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, icon("refresh-cw"), "Retry"));
+    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, icon("x"), "Cancel…"));
   }
   const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state) || (t.state === "backlog" && t.plan.length > 0);
   const [placeholder, label] = {
@@ -1570,4 +1573,5 @@ window.addEventListener("hashchange", () => {
   render();
 });
 $("update-refresh").addEventListener("click", () => location.reload());
+fillIcons();
 connect();
