@@ -10,6 +10,8 @@ const bare = (url) => (typeof url === "string" ? url.split("?")[0] : url);
 /** An event without what a person sent or typed. */
 export function scrub(event) {
   delete event.user;
+  // Or Sentry fills in the user from the connection's IP address.
+  event.sdk = { ...event.sdk, settings: { ...event.sdk?.settings, infer_ip: "never" } };
   if (event.request) {
     delete event.request.cookies;
     delete event.request.data;

@@ -137,7 +137,11 @@ enum Cmd {
     Restart,
     /// Send a test error to Sentry (when this build reports errors) and wait for it to go.
     #[command(name = "sentry-test", hide = true)]
-    SentryTest,
+    SentryTest {
+        /// The factory whose org to tag it with (default: the enrolled one).
+        #[arg(long, env = "MAPLE_URL")]
+        url: Option<String>,
+    },
     /// Replace this binary with the latest signed release.
     ///
     /// Releases come from the control plane's /releases/ (or MAPLE_UPDATE_URL). The release
@@ -318,10 +322,7 @@ async fn command(cli: Cli) -> Result<()> {
         Some(Cmd::Uninstall { dry_run }) => service::Service::detect()?.uninstall(dry_run),
         Some(Cmd::Status { url }) => status(url.as_deref()),
         Some(Cmd::Restart) => restart(),
-        Some(Cmd::SentryTest) => {
-            error!("maple-runner: Sentry test error");
-            Ok(())
-        }
+        Some(Cmd::SentryTest { url }) => telemetry::test(url).await,
         Some(Cmd::Update { url, check, force }) => self_update(url.as_deref(), check, force).await,
     }
 }

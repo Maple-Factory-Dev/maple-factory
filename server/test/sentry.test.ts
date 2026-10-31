@@ -56,12 +56,13 @@ test("beforeSend strips cookies, credentials, bodies and query strings", () => {
   assert.equal("data" in out.request, false);
   assert.deepEqual(out.request.headers, { "content-type": "application/json" });
   assert.equal("user" in out, false);
+  assert.equal((out as { sdk?: { settings?: { infer_ip?: string } } }).sdk?.settings?.infer_ip, "never");
   assert.equal(out.breadcrumbs[0].data.url, "https://api.github.com/x");
 });
 
 test("an event without a request passes through", () => {
   const event = { message: "boom" };
-  assert.deepEqual(scrub(event), { message: "boom" });
+  assert.equal(scrub(event).message, "boom");
 });
 
 test("the web app's events lose the user, query strings, console messages and clicks", async () => {
@@ -77,6 +78,7 @@ test("the web app's events lose the user, query strings, console messages and cl
     ],
   });
   assert.equal("user" in out, false);
+  assert.equal(out.sdk.settings.infer_ip, "never");
   assert.deepEqual(out.request, { url: "https://factory.example/app/" });
   assert.deepEqual(out.breadcrumbs.map((b: { category: string }) => b.category), ["fetch", "navigation"]);
   assert.equal(out.breadcrumbs[0].data.url, "/api/tasks/MF-1/diff");

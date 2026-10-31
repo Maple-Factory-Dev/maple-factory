@@ -31,6 +31,9 @@ export function scrub(event: ErrorEvent): ErrorEvent {
     if (typeof crumb.data?.url === "string") crumb.data.url = crumb.data.url.split(/[?#]/)[0];
   }
   delete event.user;
+  // Or Sentry fills in the user from the connection's IP address.
+  if (event.sdk) event.sdk.settings = { ...event.sdk.settings, infer_ip: "never" };
+  else event.sdk = { name: "sentry.javascript.cloudflare", version: "", settings: { infer_ip: "never" } };
   return event;
 }
 

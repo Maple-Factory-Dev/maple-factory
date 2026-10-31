@@ -38,20 +38,35 @@ where
 }
 
 /// Tags events with the factory's org, which its /healthz says (the runner's config only has the URL).
-pub fn tag_org(ws_url: &str) {
-    if dsn().is_none() {
-        return;
+pub fn tag_org(url: &str) {
+    if dsn().is_some() {
+        tokio::spawn(org(url.to_owned()));
     }
-    let Some(healthz) = healthz_url(ws_url) else { return };
-    tokio::spawn(async move {
-        let org = async { reqwest::get(&healthz).await.ok()?.json::<serde_json::Value>().await.ok()?.get("org")?.as_str().map(str::to_owned) };
-        if let Some(org) = org.await {
-            sentry::configure_scope(|scope| scope.set_tag("org", org));
-        }
-    });
 }
 
-/// wss://factory.example/runner/connect → https://factory.example/healthz
+/// tag_org, waited for.
+pub async fn org(url: String) {
+    let Some(healthz) = healthz_url(&url) else { return };
+    let org = async { reqwest::get(&healthz).await.ok()?.json::<serde_json::Value>().await.ok()?.get("org")?.as_str().map(str::to_owned) };
+    if let Some(org) = org.await {
+        sentry::configure_scope(|scope| scope.set_tag("org", org));
+    }
+}
+
+/// `maple-runner sentry-test`: one test error, tagged with the factory's org when there is one.
+pub async fn test(url: Option<String>) -> anyhow::Result<()> {
+    if dsn().is_none() {
+        println!("This build doesn't report errors (no MAPLE_SENTRY_DSN at build time, or MAPLE_TELEMETRY=off).");
+    }
+    let url = url.or_else(|| crate::config::path().ok().and_then(|p| crate::config::Config::load(&p).ok().flatten()).map(|c| c.url));
+    if let Some(url) = url {
+        org(url).await;
+    }
+    tracing::error!("maple-runner: Sentry test error");
+    Ok(())
+}
+
+/// wss://factory.example/runner/connect (or https://factory.example) → https://factory.example/healthz
 fn healthz_url(ws_url: &str) -> Option<String> {
     let mut url = reqwest::Url::parse(ws_url).ok()?;
     let scheme = match url.scheme() {
@@ -88,6 +103,7 @@ mod tests {
     fn healthz_from_the_runner_endpoint() {
         assert_eq!(healthz_url("wss://factory.example/runner/connect").as_deref(), Some("https://factory.example/healthz"));
         assert_eq!(healthz_url("ws://localhost:8788/runner/connect?x=1").as_deref(), Some("http://localhost:8788/healthz"));
+        assert_eq!(healthz_url("https://factory.example").as_deref(), Some("https://factory.example/healthz"));
     }
 
     #[test]
