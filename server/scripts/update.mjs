@@ -4,7 +4,8 @@
 // Maple-Factory-Dev/maple-factory, so this does what a pull from it would: when maplefactory.dev's
 // feed has a newer release than package.json says, it copies that release's server/ (the
 // `server-v<version>` tag) over this repo, keeping this deployment's own values: wrangler.jsonc's
-// name, database, bucket, vars and routes, and package.json's name. The Maple Factory update workflow
+// name, database, bucket, vars and routes, and package.json's name; a package-lock.json it keeps is
+// regenerated to match. The Maple Factory update workflow
 // (.github/workflows/maple-update.yml) runs it and opens a pull request; merging that redeploys.
 //
 //   node scripts/update.mjs                         # in the repo: the feed's latest on RELEASE_CHANNEL, if newer
@@ -104,6 +105,11 @@ async function main() {
   }
   const upstreamPkg = JSON.parse(readFileSync(join(from, "package.json"), "utf8"));
   writeFileSync(join(into, "package.json"), JSON.stringify({ ...upstreamPkg, name: pkg.name }, null, 2) + "\n");
+  // Upstream's server/ has no lock file of its own, so a repo that keeps one gets it brought in line with the
+  // new package.json, or `npm ci` (Workers Builds, CI) refuses it once a release adds or bumps a dependency.
+  if (existsSync(join(into, "package-lock.json"))) {
+    execFileSync("npm", ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: into, stdio: ["ignore", "ignore", "inherit"] });
+  }
   const merged = mergeConfig(parseJsonc(readFileSync(join(from, "wrangler.jsonc"), "utf8")), config);
   writeFileSync(join(into, "wrangler.jsonc"),
     `// This factory's Worker. scripts/update.mjs keeps it up to date from ${UPSTREAM}'s server/wrangler.jsonc\n` +
