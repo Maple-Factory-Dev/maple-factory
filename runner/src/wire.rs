@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Why a session ended. The runner always says; `unknown` is a bug to chase, not a category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2201,6 +2201,17 @@ pub struct StatsFindings {
     pub recent: Vec<StatsFindingRow>,
 }
 
+/// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalTally {
+    pub goal: String,
+    pub merged: u32,
+    pub cancelled: u32,
+    pub closed: u32,
+    pub total: u32,
+}
+
 /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3148,6 +3159,27 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         goal: Option<String>,
     },
+    /// Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.
+    #[serde(rename = "tasks.older")]
+    TasksOlder {
+        /// One goal's tasks. None: every goal's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+        /// Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        /// The previous page's last task ID, to page past tasks updated in the same millisecond.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before_id: Option<String>,
+        /// Page size: 50 by default, 200 at most.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`.
+    #[serde(rename = "task.get")]
+    TaskGet {
+        id: String,
+    },
 }
 
 /// Server → app.
@@ -3167,8 +3199,15 @@ pub enum ServerToClient {
         ended: Vec<EndedSession>,
         #[serde(default)]
         goals: Vec<Goal>,
+        /// Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`.
         #[serde(default)]
         tasks: Vec<Task>,
+        /// Each goal's task counts over every task, also those left out. None: an older server, which sends every task.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tallies: Option<Vec<GoalTally>>,
+        /// How many finished tasks the snapshot left out. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        older_tasks: Option<u32>,
         policy: RiskPolicy,
         #[serde(default)]
         acceptances: Vec<RiskAcceptance>,
@@ -3253,6 +3292,17 @@ pub enum ServerToClient {
     #[serde(rename = "task.removed")]
     TaskRemoved {
         id: String,
+    },
+    /// A page of older finished tasks `tasks.older` asked for, newest first, to that connection only.
+    #[serde(rename = "tasks.page")]
+    TasksPage {
+        /// The goal asked for. None: every goal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+        #[serde(default)]
+        tasks: Vec<Task>,
+        /// There are older ones still: ask again from this page's last task.
+        more: bool,
     },
     #[serde(rename = "goal.updated")]
     GoalUpdated {
