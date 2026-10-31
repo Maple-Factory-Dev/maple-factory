@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>@Maple in Slack · Maple Factory</title>
+  <meta name="description" content="Set up @Maple in Slack: ask the factory questions in a public channel, and turn its proposed tasks into work with one click.">
+  <meta name="theme-color" content="#faf5ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b0e1f" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+  <script>
+    try { var t = localStorage.getItem('mf-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Maple Factory home">
+        <picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="30" height="30"></picture>
+        <span>Maple Factory</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#process">How it works</a>
+        <a href="/#install">Install</a>
+        <a href="/download">Download</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>
+          <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="deploy security" aria-labelledby="slack-title">
+      <div class="wrap deploy-inner">
+        <p class="kicker">Slack</p>
+        <h1 id="slack-title">Ask @Maple in Slack.</h1>
+        <p class="deploy-lede">Mention @Maple in a public channel and it answers from your code. When the thread is really asking for a change, its answer comes with a proposed task: click Create task, and it’s in the factory, planning.</p>
+
+        <nav class="sec-toc" aria-label="On this page">
+          <a href="#what">What it does</a>
+          <a href="#setup">Set it up</a>
+          <a href="#manifest">Without the button</a>
+          <a href="#scopes">Scopes</a>
+          <a href="#channels">Channels and goals</a>
+          <a href="#files">Files</a>
+          <a href="#limits">Limits</a>
+        </nav>
+
+        <section class="sec-part" id="what" aria-labelledby="what-title">
+          <h2 id="what-title">What it does</h2>
+          <ul>
+            <li>Mention <code>@Maple</code> in a thread with a question. It says <em>Looking into it…</em>, and an agent on one of your factory’s online machines reads the code of the channel’s best-suited goal and answers in the thread. That agent can only read: it can’t change files, push or open pull requests.</li>
+            <li>If the thread asks for a change or describes a bug, the answer also shows a proposed task: its goal, its title and what should be true when it’s done, with <b>Create task</b> and <b>Not now</b>.</li>
+            <li><b>Create task</b> makes the task in that goal and sends it to planning. A member still approves the plan before anything is built. One click makes one task; a second click says it’s already made. Proposals expire after 30 minutes; mention Maple again for a fresh one.</li>
+            <li>The thread becomes a request in the factory. It hears when a planner starts, when the plan is ready for approval, questions from the task’s agent, and when the change merges.</li>
+            <li><code>/maple &lt;what you need&gt;</code> still works too: it files a request for someone to pick up, without an agent answering.</li>
+          </ul>
+        </section>
+
+        <section class="sec-part" id="setup" aria-labelledby="setup-title">
+          <h2 id="setup-title">Set it up</h2>
+          <p>An admin does this once, from the web app’s <b>Settings › Integrations</b>. Your factory needs its public URL (<code>PUBLIC_URL</code>) set, since Slack has to reach it.</p>
+          <ol class="deploy-steps">
+            <li>
+              <h3>Create the Slack app</h3>
+              <p>On the Slack card, click <b>Create the Slack app</b>. Slack opens with an app manifest that already names your factory’s events, interactivity and slash command URLs. Pick your workspace and create it.</p>
+            </li>
+            <li>
+              <h3>Install it to your workspace</h3>
+              <p>In the new app, open <b>Install App</b> and click <b>Install to Workspace</b>. A workspace admin may need to approve it.</p>
+            </li>
+            <li>
+              <h3>Paste two values</h3>
+              <p>From the app, copy <b>Basic Information › Signing Secret</b> and <b>OAuth &amp; Permissions › Bot User OAuth Token</b> (it starts with <code>xoxb-</code>) into the Slack card, and save. Both are stored sealed in your factory and never shown again.</p>
+            </li>
+          </ol>
+          <p>Then invite it to a public channel: <code>/invite @Maple</code>. Without the bot token, only <code>/maple</code> works.</p>
+        </section>
+
+        <section class="sec-part" id="manifest" aria-labelledby="manifest-title">
+          <h2 id="manifest-title">Without the button</h2>
+          <p>At <a href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noopener">api.slack.com/apps</a>, choose <b>Create New App › From a manifest</b>, pick your workspace and paste this, with <code>YOUR-FACTORY</code> replaced by your factory’s host. The Slack card in Settings shows the exact URLs to copy.</p>
+          <pre class="doc-code"><code>{
+  "display_information": {
+    "name": "Maple",
+    "description": "Ask the factory in Slack, and turn its answers into tasks.",
+    "background_color": "#2b2118"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Maple",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/maple",
+        "url": "https://YOUR-FACTORY/integrations/slack/command",
+        "description": "Send the factory a request",
+        "usage_hint": "what you need",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "channels:history",
+        "files:read",
+        "users:read",
+        "commands"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://YOUR-FACTORY/integrations/slack/events",
+      "bot_events": [
+        "app_mention",
+        "member_joined_channel"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://YOUR-FACTORY/integrations/slack/actions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}</code></pre>
+        </section>
+
+        <section class="sec-part" id="scopes" aria-labelledby="scopes-title">
+          <h2 id="scopes-title">Scopes, and why</h2>
+          <ul>
+            <li><code>app_mentions:read</code>: to hear when someone mentions @Maple.</li>
+            <li><code>chat:write</code>: to answer in the thread, and to update its own answer when a button is clicked.</li>
+            <li><code>channels:history</code>: to read the thread it was mentioned in, so the agent has the whole conversation. It reads only that thread, when it’s mentioned.</li>
+            <li><code>files:read</code>: to fetch files posted in that thread, so they can go into the task.</li>
+            <li><code>users:read</code>: to name who asked, in the request and the task.</li>
+            <li><code>commands</code>: for <code>/maple</code>.</li>
+          </ul>
+          <p>Every request from Slack is checked against the app’s signing secret and refused if it’s more than five minutes old; Slack’s retries of an event are taken once.</p>
+        </section>
+
+        <section class="sec-part" id="channels" aria-labelledby="channels-title">
+          <h2 id="channels-title">Channels and goals</h2>
+          <ul>
+            <li>When Maple joins a channel, it asks <em>Which goals should I work on here?</em> Pick one or more goals, or <b>Any goal</b>. It answers from the best-suited of those goals’ code and proposes tasks only in them.</li>
+            <li>Mention <code>@Maple goals</code> to bring the picker back and choose again.</li>
+            <li>Archived goals drop out on their own. If every goal a channel picked is archived, Maple works across all active goals and says once that the channel should pick again.</li>
+          </ul>
+        </section>
+
+        <section class="sec-part" id="files" aria-labelledby="files-title">
+          <h2 id="files-title">Files</h2>
+          <ul>
+            <li>Files posted in the thread (screenshots, logs, PDFs; up to 10, 25 MB each) are fetched with the bot token and stored in your factory’s R2 bucket, like attachments pasted into a brief.</li>
+            <li>The agent answering is told their names. When a task is made, its brief links each one under <b>Attachments</b>, and the machine building it fetches them with its own token.</li>
+          </ul>
+        </section>
+
+        <section class="sec-part" id="limits" aria-labelledby="limits-title">
+          <h2 id="limits-title">Limits</h2>
+          <ul>
+            <li>It needs a machine online: answers come from an agent on one of your runners (Claude Code, or Codex). With none online, Maple says so in the thread.</li>
+            <li>Public channels only, for now. Private channels and direct messages aren’t supported yet.</li>
+            <li>A task made from Slack belongs to whoever owns the machine that answered, and is open to team slots.</li>
+          </ul>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <p class="foot-brand"><picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="22" height="22" loading="lazy"></picture> Maple Factory</p>
+      <p class="foot-note">Set in <a href="https://afomera.dev/fonts">Atlas</a>. Boiled down in small batches.</p>
+      <p class="foot-links"><a href="/security" aria-current="page">Security</a></p>
+      <p class="foot-copy">© <span id="year">2026</span> Maple Factory</p>
+    </div>
+  </footer>
+</body>
+</html>

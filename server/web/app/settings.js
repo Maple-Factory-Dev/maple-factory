@@ -142,7 +142,7 @@ export function slackUrls(i, origin) {
 }
 
 /** The setup guide on the site. */
-export const SLACK_GUIDE = "https://maplefactory.dev/docs/slack.html";
+export const SLACK_GUIDE = "https://maplefactory.dev/docs/slack";
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null));
