@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus } from "./wire.ts";
+import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type Task } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
@@ -303,6 +303,15 @@ export class OrgHub extends DurableObject<Env> {
         if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete(["runner:checkedAt", "ghstatus:checkedAt"]);
         await this.alarm();
         return Response.json({ alarm: await this.ctx.storage.getAlarm(), now: Date.now() });
+      }
+      case "/dev/age-tasks": {
+        // Local dev (the Worker checked), for e2e-snapshot-window: set tasks' state and updatedAt as if they finished long ago.
+        const { tasks } = (await request.json()) as { tasks: { id: string; state: Task["state"]; updatedAt: number }[] };
+        for (const t of tasks) {
+          const task = this.store.task(t.id);
+          if (task) this.store.saveTask({ ...task, state: t.state, updatedAt: t.updatedAt });
+        }
+        return new Response(null, { status: 204 });
       }
       case "/intake": {
         // A new request from an integration or the API (the Worker checked who's asking).
@@ -618,7 +627,8 @@ export class OrgHub extends DurableObject<Env> {
         ws.serializeAttachment({ ...client, viewing: msg.viewing ?? null, since: Date.now() });
         this.broadcast({ type: "presence", online: this.online() });
         return;
-      case "subscribe":
+      case "subscribe": {
+        const window = this.store.snapshotTasks();
         ws.serializeAttachment({ ...client, subscribed: true, since: Date.now() });
         this.broadcast({ type: "presence", online: this.online() });
         this.send(ws, {
@@ -629,7 +639,9 @@ export class OrgHub extends DurableObject<Env> {
           machines: await this.machines(),
           ended: await this.recentEnds(),
           goals: this.store.goals(),
-          tasks: this.store.tasks(),
+          tasks: window.tasks,
+          tallies: this.store.tallies(),
+          olderTasks: window.left,
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
           prompts: this.store.prompts(),
@@ -658,6 +670,19 @@ export class OrgHub extends DurableObject<Env> {
         // The app's repos change on GitHub's side; read them again when they're an hour old.
         if (Date.now() - this.store.reposAt() > 3_600_000) this.ctx.waitUntil(this.engine.refreshRepos().catch(() => {}));
         return;
+      }
+      case "tasks.older": {
+        // Finished tasks the snapshot left out, for whoever asked; nothing changed, so nothing to broadcast.
+        const page = this.store.olderTasks(msg.goal ?? null, msg.before ?? null, msg.beforeId ?? null, msg.limit ?? null);
+        this.send(ws, { type: "tasks.page", goal: msg.goal ?? null, tasks: page.tasks, more: page.more });
+        return;
+      }
+      case "task.get": {
+        const task = this.store.task(msg.id);
+        if (!task) return this.send(ws, { type: "error", message: `No task ${msg.id}.`, requestId: `task.get:${msg.id}` });
+        this.send(ws, { type: "task.updated", task });
+        return;
+      }
       case "session.open":
       case "session.kill":
       case "session.resize": {
