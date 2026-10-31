@@ -443,7 +443,7 @@ function machineCard(m, now) {
     m.sessions.length > 0 && h("div", { class: "machine-sessions" }, m.sessions.map((s) => sessionLine(s))),
     gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
     usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
-      h("div", { class: "usage-head" }, agentIcon(u.agent), h("span", {}, u.title), u.plan && h("span", { class: "faint" }, ` · ${u.plan}`),
+      h("div", { class: "usage-head" }, agentIcon(u.agent), h("span", {}, u.title), u.plan && h("span", { class: "faint usage-plan" }, `· ${u.plan}`),
         h("span", { class: "faint usage-seen" }, `read ${ago(u.observedAt)}`)),
       u.rows.map((r) => h("div", { class: `usage-row${r.over ? " over" : ""}` },
         h("span", { class: "usage-label" }, r.label),

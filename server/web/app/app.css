@@ -511,6 +511,7 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .bar-cap { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: 0.55; }
 .usage { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--stroke); padding-top: 10px; }
 .usage-head { display: flex; align-items: center; font-size: 13px; font-weight: 550; margin-bottom: 4px; }
+.usage-plan { margin-left: 0.3em; font-weight: 400; }
 .usage-seen { margin-left: auto; font-weight: 400; font-size: 12px; }
 .usage-row { display: grid; grid-template-columns: 76px 1fr 40px minmax(0, 104px); align-items: center; gap: 8px; font-size: 12.5px; }
 .usage-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
