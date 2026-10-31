@@ -1,0 +1,9 @@
+{
+  "org": "andrea-fomera",
+  "projects": {
+    "server": { "slug": "maple-server", "dsn": "" },
+    "web": { "slug": "maple-web", "dsn": "" },
+    "runner": { "slug": "maple-runner", "dsn": "" },
+    "mac": { "slug": "maple-mac", "dsn": "" }
+  }
+}

@@ -54,4 +54,6 @@ export interface Env {
   MEMBERSHIP_RECHECK_MS?: string;
   /** How long an auto-merge counts down (ms) before it merges, so a person can hold it; default 10000. */
   MERGE_GRACE_MS?: string;
+  /** Where error reports go: unset for Maple Factory's own Sentry project (web/sentry.json), "off", or a DSN. */
+  SENTRY_DSN?: string;
 }

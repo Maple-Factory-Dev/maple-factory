@@ -29,5 +29,8 @@
         "description": "The factory's files in R2. **R2 must be switched on in this account first** ([R2 in the dashboard](https://dash.cloudflare.com/?to=/:account/r2/overview)), or this deploy fails."
       }
     }
+  },
+  "dependencies": {
+    "@sentry/cloudflare": "11.10.0"
   }
 }
