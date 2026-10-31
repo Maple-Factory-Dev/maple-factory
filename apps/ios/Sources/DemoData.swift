@@ -126,7 +126,11 @@ enum DemoData {
                 t.brief = "Tokens carry scopes; write endpoints refuse read tokens."
                 t.pr = .init(number: 405, state: .open, branch: "agent/api-29", base: "main",
                              checks: [.init(name: "test", status: .failed, duration: "58s", required: true), .init(name: "lint", status: .passed, duration: "14s", required: true)])
-                t.autoReview = .init(maxRounds: 3, rounds: [.init(number: 1, verdict: .passed, found: 0, at: ago(70))], summary: "Looks right.")
+                t.autoReview = .init(maxRounds: 3, rounds: [.init(number: 1, verdict: .passed, found: 2, at: ago(70))], summary: "Looks right; two things to pick up later.",
+                                     findings: [
+                                        .init(id: "f1", kind: .code, severity: .minor, text: "Scopes are compared as strings; an enum would catch typos like \"wirte\".", file: "server/src/tokens.ts", raisedIn: 1, status: .open),
+                                        .init(id: "f2", kind: .scope, severity: .major, text: "An admin-scoped token can mint new tokens with wider scopes than its own.", file: "server/src/tokens.ts:64", raisedIn: 1, status: .disputed),
+                                     ])
                 t.diff = .init(added: 140, removed: 31, files: ["server/src/tokens.ts"])
             },
             task("APP-9", goal: "g-app", title: "Sign in with GitHub's device flow", state: .merged, updated: 60 * 26) { t in

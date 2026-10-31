@@ -228,6 +228,17 @@ final class FactoryStore {
     }
     /// Asks the planner to change one of its mockups.
     func requestMockupChange(_ id: String, mockup: String, text: String) { send(.taskMockupChange(.init(id: id, mockup: mockup, text: text))) }
+    /// One more automated-review round on a task in review, looking first at `focus`.
+    func requestReview(_ id: String, focus: String) {
+        let focus = focus.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !focus.isEmpty else { return }
+        send(.taskRequestReview(.init(id: id, focus: focus)))
+    }
+    /// Turns review findings (or a note) into draft follow-up tasks in the task's goal.
+    func followUp(_ id: String, items: [Wire.FollowUpItem]) {
+        guard !items.isEmpty else { return }
+        send(.taskFollowUp(.init(id: id, items: Array(items.prefix(Self.maxFollowUps)))))
+    }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
@@ -247,6 +258,44 @@ final class FactoryStore {
 
     /// Tells the factory which task you're looking at, so others see you there.
     func viewing(_ id: String?) { send(.presence(.init(viewing: id))) }
+
+    // MARK: Review rounds and follow-ups
+    // The same refusals as the server (engine.ts task.requestReview / task.followUp) and the Mac's
+    // ReviewActions, so the phone doesn't offer what the factory would turn down.
+
+    /// The server's `task.followUp` cap.
+    static let maxFollowUps = 20
+    /// The factory marks a task it's merging with this live log line (engine.ts startMerge).
+    static let mergingLog = "Merging…"
+
+    /// One more review round can be asked for: in review, its last round is in, nothing's up, not merging.
+    static func canRequestReview(_ task: Wire.Task, feed: FeedState) -> Bool {
+        guard task.state == .reviewing, let last = task.autoReview?.rounds.last else { return false }
+        return last.verdict != .inProgress && task.hand == nil && task.question == nil && task.liveLog != mergingLog
+    }
+
+    /// Why follow-ups can't be made from this task, or nil when they can.
+    static func followUpBlock(_ task: Wire.Task, feed: FeedState) -> String? {
+        if task.state != .reviewing && task.state != .merged { return "Follow-ups are made from a task in review or merged." }
+        guard let goal = feed.goal(task.goal) else { return "Its goal isn't there any more." }
+        if goal.archived == true { return "\(goal.name) is archived; unarchive it to add tasks." }
+        return nil
+    }
+
+    /// Which task already follows each `<task>#<finding>` (the server's `followedUp`, scout.ts).
+    static func followedUp(_ feed: FeedState) -> [String: String] {
+        var out: [String: String] = [:]
+        for t in feed.tasks {
+            for from in [t.scoutedFrom, t.followUpOf].compactMap({ $0 }) where out[from] == nil { out[from] = t.id }
+        }
+        return out
+    }
+
+    /// The findings a follow-up can still be made for: not fixed, and no task follows them yet.
+    static func followableFindings(_ task: Wire.Task, feed: FeedState) -> [Wire.Finding] {
+        let taken = followedUp(feed)
+        return (task.autoReview?.findings ?? []).filter { $0.status != .fixed && taken["\(task.id)#\($0.id)"] == nil }
+    }
 
     // MARK: HTTP
 
@@ -340,6 +389,56 @@ final class FactoryStore {
                 if $0.state == .awaitingApproval { $0.approvals = []; $0.state = .planning }
             }
             notice = .toast("Change requested: the planner will post a new version", taskId: m.id)
+        case .taskRequestReview(let m):
+            // As the server does: a running round with the focus, the merge waits for it, and there's
+            // room for it and a fix round after.
+            guard let task = feed.task(m.id), Self.canRequestReview(task, feed: feed) else {
+                notice = .error("A review round is already running; wait for it to come in."); break
+            }
+            update(m.id) {
+                guard var review = $0.autoReview else { return }
+                if review.rounds.count + 2 > review.maxRounds { review.maxRounds = UInt32(review.rounds.count + 2) }
+                review.rounds.append(.init(number: UInt32(review.rounds.count + 1), verdict: .inProgress, found: 0, at: DemoData.now, focus: m.focus, by: me))
+                $0.autoReview = review
+                $0.mergeAt = nil
+                $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.focus, at: DemoData.now, anchor: "Review request"))
+                $0.events.append(.init(who: me, text: "asked for a review: \(m.focus)", at: DemoData.now))
+            }
+        case .taskFollowUp(let m):
+            guard let task = feed.task(m.id) else { break }
+            if let block = Self.followUpBlock(task, feed: feed) { notice = .error(block); break }
+            guard let goal = feed.goal(task.goal), !m.items.isEmpty else { break }
+            // Checked before any is made, so a bad item makes none.
+            let taken = Self.followedUp(feed)
+            var picks: [(title: String, brief: String, from: String, priority: Wire.Priority?)] = []
+            for item in m.items {
+                let title = String(item.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+                let note = item.brief.trimmingCharacters(in: .whitespacesAndNewlines)
+                if title.isEmpty { notice = .error("Each follow-up needs a title."); return }
+                guard let id = item.finding else {
+                    if note.isEmpty { notice = .error("Say what \"\(title)\" should do."); return }
+                    picks.append((title, "\(note)\n\nFollow-up from \(task.id).", task.id, item.priority)); continue
+                }
+                guard let finding = task.autoReview?.findings.first(where: { $0.id == id }) else { notice = .error("\(task.id) has no finding \(id)."); return }
+                let from = "\(task.id)#\(id)"
+                if finding.status == .fixed { notice = .error("\(from) is already fixed."); return }
+                if taken[from] != nil || picks.contains(where: { $0.from == from }) { notice = .error("\(from) already has a follow-up."); return }
+                let quote = "> **\(finding.severity.rawValue) \(finding.kind.rawValue)**\(finding.file.map { " in `\($0)`" } ?? ""): \(finding.text.replacingOccurrences(of: "\n", with: "\n> "))"
+                picks.append((title, "\(quote)\(note.isEmpty ? "" : "\n\n\(note)")\n\nFollow-up from \(task.id).", from, item.priority))
+            }
+            var next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
+            var made: [String] = []
+            for p in picks {
+                let draft = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id, title: p.title, state: .drafting, owner: me,
+                                      brief: p.brief, createdAt: DemoData.now, updatedAt: DemoData.now, planVersion: 0, approvalsNeeded: 1, reviewsNeeded: 1,
+                                      events: [.init(who: me, text: "made it as a follow-up of \(p.from)", at: DemoData.now)],
+                                      shareable: false, agent: task.agent, repo: task.repo, priority: p.priority, followUpOf: p.from)
+                feed.apply(.taskUpdated(.init(task: draft)))
+                made.append(draft.id)
+                next += 1
+            }
+            update(m.id) { $0.events.append(.init(who: me, text: "made follow-up\(made.count == 1 ? "" : "s") \(made.joined(separator: ", "))", at: DemoData.now)) }
+            notice = .toast("Made \(made.count) follow-up\(made.count == 1 ? "" : "s") of \(task.id); \(made.count == 1 ? "it's" : "they're") in \(goal.name)'s drafts.", taskId: task.id)
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
         case .taskCreate(let m):
