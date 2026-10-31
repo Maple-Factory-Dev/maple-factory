@@ -38,15 +38,37 @@ struct TaskOwnership: View {
     let task: FactoryTask
     var avatarSize: CGFloat = 18
 
-    private var open: Bool { !task.state.isFinished }
-
     var body: some View {
         HStack(spacing: 8) {
             StateBadge(state: task.state)
-            AgentAvatar(agent: task.owner, size: avatarSize)
+            OwnerMenu(task: task, avatarSize: avatarSize, spacing: 8)
+            if let agent = task.agent {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+                AgentAvatar(agent: agent, size: avatarSize)
+                Text(agent.name)
+            }
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.textMuted)
+    }
+}
+
+/// A task's owner (avatar, then "You" or their first name). While the task is open the name opens a menu
+/// to take it over or give it to a teammate; once it's merged, closed or cancelled it's plain text.
+struct OwnerMenu: View {
+    let task: FactoryTask
+    var avatarSize: CGFloat = 18
+    var showAvatar = true
+    var spacing: CGFloat = 6
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            if showAvatar { AgentAvatar(agent: task.owner, size: avatarSize) }
             let name = Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
                 .foregroundStyle(Theme.text)
-            if open {
+            if !task.state.isFinished {
                 // Picks its owner: take it over, or (its owner, an admin) give it to a teammate.
                 Menu {
                     TaskAssignButtons(task: task)
@@ -59,16 +81,7 @@ struct TaskOwnership: View {
             } else {
                 name
             }
-            if let agent = task.agent {
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.textFaint)
-                AgentAvatar(agent: agent, size: avatarSize)
-                Text(agent.name)
-            }
         }
-        .font(.system(size: 12))
-        .foregroundStyle(Theme.textMuted)
     }
 }
 
@@ -252,18 +265,26 @@ struct TaskAssignButtons: View {
             Button { appState.assign(task.id, to: me) } label: { Label("Take it over", systemImage: "person.crop.circle.badge.checkmark") }
         }
         if appState.canReassign(task.id) {
-            let others = FactoryData.people.filter { $0.github != nil && $0.github != task.owner.github }
+            let choices = Self.choices(for: task)
             Menu {
-                ForEach(others) { person in
-                    Button(person.github == FactoryData.me.github ? "\(person.name) (you)" : person.name) {
-                        appState.assign(task.id, to: person.github!)
-                    }
+                ForEach(choices, id: \.person.id) { choice in
+                    let person = choice.person
+                    // The current owner is checked; picking them again changes nothing.
+                    Toggle(person.github == FactoryData.me.github ? "\(person.name) (you)" : person.name, isOn: Binding(
+                        get: { choice.current },
+                        set: { _ in appState.assign(task.id, to: person.github!) }
+                    ))
                 }
             } label: {
                 Label("Assign to", systemImage: "person.badge.plus")
             }
-            .disabled(others.isEmpty)
+            .disabled(!choices.contains { !$0.current })
         }
+    }
+
+    /// Everyone you can give `task` to: the teammates with a GitHub login, its current owner checked.
+    static func choices(for task: FactoryTask) -> [(person: Person, current: Bool)] {
+        FactoryData.people.filter { $0.github != nil }.map { ($0, $0.github == task.owner.github) }
     }
 }
 
