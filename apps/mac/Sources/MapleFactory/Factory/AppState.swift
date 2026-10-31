@@ -1215,12 +1215,13 @@ final class AppState {
         steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: text, status: interruptNow ? .applying : .queued, timing: timing))
     }
 
-    func comment(_ id: String, text: String) {
+    /// A comment on a task, or a reply in the thread whose first comment is `replyTo`.
+    func comment(_ id: String, text: String, replyTo: String? = nil) {
         if let client, isLive {
-            client.send(.taskComment(.init(id: id, text: text)))
+            client.send(.taskComment(.init(id: id, text: text, replyTo: replyTo)))
             return
         }
-        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now", id: UUID().uuidString, replyTo: replyTo))
     }
 
     /// The review being drafted on a task's diff; the same one each time, until it's sent.
@@ -2297,6 +2298,8 @@ final class AppState {
                     tasks.append(task)
                 }
             case "board" where parts[1] == "bottom": NotificationCenter.default.post(name: BoardColumns.demoScroll, object: nil)
+            // Opens the Reply box on the timeline's first thread with replies (`reply:open`), or on the comment whose id starts with `reply:<id>`.
+            case "reply": NotificationCenter.default.post(name: TaskTimeline.demoReply, object: parts[1])
             case "goto": destination = .goal(parts.dropFirst().joined(separator: ":"))
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
