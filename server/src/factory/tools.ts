@@ -135,7 +135,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "finish",
-    description: "Every step is done and every item proven: the factory commits, pushes and starts the review. End your turn after.",
+    description: "Every step is done and every item proven: the factory runs the repo's checks (if it has any), then commits, pushes and starts the review. A failing check stops it, with nothing pushed, and is typed into this session to fix. End your turn after.",
     inputSchema: obj({ summary: str("What changed, for the review and the pull request.") }, ["summary"]),
     roles: ["builder"],
   },

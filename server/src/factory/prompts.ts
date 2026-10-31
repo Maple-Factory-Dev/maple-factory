@@ -108,7 +108,7 @@ function unmerged(task: Task) {
 The branch already has the reviewed, approved work, but it doesn't merge into ${base}. Only bring it up to date with origin/${base} and resolve the conflicts (${c.id}); don't redo or extend the plan. Re-prove only the Done when items the conflict resolution touched, then call \`finish\`.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null): string {
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: string[] = []): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
@@ -125,13 +125,19 @@ ${done}${moving(others)}${comments(task)}${changes(task)}${
     review?.length
       ? `\n\n## Review round ${task.autoReview!.rounds.length} asked for changes\n` + review.map((f) => `- [${f.severity}] (${f.id}) ${f.text}${f.file ? ` (${f.file})` : ""}`).join("\n")
       : ""
-  }${unmerged(task)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
+  }${unmerged(task)}${checksSection(checks)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
 
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
 For each Done when item, produce real evidence and call \`prove\` (item numbers from 1): paste the command and its output for terminal/tests proofs.
 If you're stuck on a decision only a person can make, call \`ask\`, end your turn and wait. If you can't meet a proof or the fix grows past the plan, call \`raise_hand\`.
-When every step is done and every item is proven, call \`finish\` with a short summary of what changed. The factory commits anything left, pushes and opens the review.`;
+When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${checks.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
+}
+
+/** The repo's checks, which a finish runs before anything is committed. */
+function checksSection(checks: string[]): string {
+  if (!checks.length) return "";
+  return `\n\n## Checks\nThese must exit 0 in the worktree before \`finish\` is accepted; run them yourself first and fix what they find:\n${checks.map((c) => `- \`${c}\``).join("\n")}\nIf one fails when you finish, nothing is committed or pushed and its output is typed into this session: fix it, then call \`finish\` again.`;
 }
 
 export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null): string {
