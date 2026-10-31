@@ -71,8 +71,22 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: dev.maplefactory.ios
             CFBundleURLSchemes: [maplefactory]
+  # Drives the app against a live dev factory (UITests/LiveApprovalTests.swift).
+  MapleFactoryUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Maple Factory
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.maplefactory.ios.uitests
+        TEST_TARGET_NAME: Maple Factory
 schemes:
   Maple Factory:
     build:
       targets:
         Maple Factory: all
+    test:
+      targets: [MapleFactoryUITests]
