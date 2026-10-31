@@ -12,7 +12,7 @@ import type {
   McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
-import { isAttachmentKey } from "../attachments.ts";
+import { isAttachmentKey, pullAttachments } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
@@ -1630,7 +1630,10 @@ export class Engine {
     if (!app || !task?.pr) return;
     try {
       if (!task.pr.url) {
-        const pr = await createPullRequest(app, owner, repo, { title: `${task.id}: ${task.title}`, head: task.pr.branch, base: task.pr.base, body: pullBody(task) });
+        // A repo the factory doesn't know counts as public: the body then gives nothing of the factory away.
+        const isPrivate = this.store.repos().find((r) => r.name.toLowerCase() === `${owner}/${repo}`.toLowerCase())?.isPrivate ?? false;
+        const body = pullBody(task, { base: this.env.PUBLIC_URL?.replace(/\/+$/, ""), isPrivate });
+        const pr = await createPullRequest(app, owner, repo, { title: `${task.id}: ${task.title}`, head: task.pr.branch, base: task.pr.base, body });
         task = this.store.task(id);
         if (!task?.pr) return;
         task.pr.number = pr.number;
@@ -3023,14 +3026,15 @@ const num = (v: unknown): number => {
 const str = (v: unknown, name: string): string => (typeof v === "string" && v.trim() ? v.trim() : fail(`${name} is required.`));
 const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "terminal", "tests"].includes(v as string) ? (v as Evidence["kind"]) : "terminal");
 
-/** The pull request's description: the brief, the plan, and what proves it's done. */
-function pullBody(task: Task): string {
+/** The pull request's description: the brief, the plan, and what proves it's done, with attachment
+ *  links made to work on GitHub (`pullAttachments`). */
+export function pullBody(task: Task, opts: { base?: string | null; isPrivate: boolean }): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text}${s.file ? ` (\`${s.file}\`)` : ""}`).join("\n");
   const proofs = task.doneWhen.map((d) => `- [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence?.attested ? ` (attested by @${d.evidence.by}${d.evidence.reason ? `: ${d.evidence.reason}` : ""})` : d.evidence ? ` — ${d.evidence.summary}` : ""}`).join("\n");
-  return [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, task.brief.trim(), steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
+  const body = [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, task.brief.trim(), steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 60_000);
+    .join("\n\n");
+  return pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 60_000);
 }
 
 /** A runner's `task.merged` branch note (deleted, gone, moved or `failed: <why>`) as a timeline line,
