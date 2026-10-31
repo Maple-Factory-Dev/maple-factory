@@ -279,6 +279,7 @@ struct ContentView: View {
             .padding(.leading, state.sidebarSpace)
             .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
+        .sheet(isPresented: Bindable(Updater.shared).showsReleaseNotes) { ReleaseNotesSheet() }
         // ⌘K: above the sidebar, the slab and the toasts, below a proof shown large.
         .overlay {
             if state.showPalette {
