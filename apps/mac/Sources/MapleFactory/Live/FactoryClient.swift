@@ -162,6 +162,8 @@ import Foundation
     private(set) var riskAcceptances: [String: RiskAcceptance] = [:]
     /// A passing line from the factory ("ATL-3 merged"), for the app's toast.
     private(set) var toast: (text: String, taskID: String?, at: Date)?
+    /// Settings › Runner's Check for Update, per machine id: waiting on the factory, or its answer.
+    private(set) var runnerChecks: [String: RunnerCheck] = [:]
     private(set) var status: Status = .signedOut
     /// Whether this factory's first snapshot has landed. A reconnect keeps it, so the old content stays up.
     private(set) var hasSnapshot = false
@@ -326,6 +328,7 @@ import Foundation
         icon = nil
         displayName = nil
         toast = nil
+        runnerChecks = [:]
         notice = nil
         viewing = nil
         attempt = 0
@@ -591,6 +594,9 @@ import Foundation
             }
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
+            if let id = Self.matchRunnerCheck(text: toast.text, taskId: toast.taskId, pending: runnerChecks, machines: machines) {
+                runnerChecks[id] = .answered(toast.text, at: Date())
+            }
         case .error(let error):
             // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
             if let id = error.requestId, id.hasPrefix("task.get:") {
@@ -1324,9 +1330,42 @@ extension FactoryClient {
     /// Runs the runner menu item: a check never installs anything, so it doesn't need the machine online.
     func perform(_ action: RunnerAction, on machine: Wire.Machine) {
         switch action {
-        case .check: send(.runnerCheck(.init(machine: machine.id)))
+        case .check:
+            let since = Date()
+            runnerChecks[machine.id] = .pending(since: since)
+            send(.runnerCheck(.init(machine: machine.id)))
+            // The factory answers in a moment; one that never does shouldn't spin forever.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard let self, self.runnerChecks[machine.id] == .pending(since: since) else { return }
+                self.runnerChecks[machine.id] = .noAnswer
+            }
         case .update(let version): send(.machineUpdate(.init(machine: machine.id, version: version)))
         }
+    }
+
+    /// Forgets a machine's check result, so a stale answer doesn't linger.
+    func clearRunnerCheck(_ machineID: String) {
+        guard let check = runnerChecks[machineID], !check.isPending else { return }
+        runnerChecks[machineID] = nil
+    }
+
+    /// Which pending check a factory toast answers: the server's runner.check reply has no task and
+    /// names the machine ("Runner 0.9.0 is available for studio." / "studio is on the latest runner
+    /// (0.9.0)."), or says it couldn't read the releases, which answers the oldest pending check.
+    static func matchRunnerCheck(text: String, taskId: String?, pending: [String: RunnerCheck], machines: [Wire.Machine]) -> String? {
+        guard taskId == nil else { return nil }
+        let waiting = pending.compactMap { id, check -> (String, Date)? in
+            if case .pending(let since) = check { (id, since) } else { nil }
+        }
+        if text == "Couldn't read the runner releases." {
+            return waiting.min { $0.1 < $1.1 }?.0
+        }
+        return waiting.first { id, _ in
+            let name = machines.first { $0.id == id }?.name ?? id
+            return (text.hasPrefix("Runner ") && text.hasSuffix(" is available for \(name)."))
+                || (text.hasPrefix("\(name) is on the latest runner (") && text.hasSuffix(")."))
+        }?.0
     }
 
     /// Updates a machine's runner to the release the app shows: if a newer one is out by the time the
@@ -1365,6 +1404,20 @@ extension FactoryClient {
         case .failed: return .failed(update.message, target: update.target)
         case .other: return outdated()
         }
+    }
+}
+
+/// Settings › Runner's Check for Update for one machine.
+enum RunnerCheck: Equatable {
+    /// Sent; the factory hasn't answered yet.
+    case pending(since: Date)
+    /// The factory's line, as its toast said it.
+    case answered(String, at: Date)
+    /// Nothing came back in time.
+    case noAnswer
+
+    var isPending: Bool {
+        if case .pending = self { true } else { false }
     }
 }
 
