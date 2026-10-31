@@ -82,7 +82,8 @@ struct FactorySidebar: View {
                         if client.isSignedIn {
                             ForEach(client.sidebarMembers, id: \.login) { member in
                                 let presence = client.online.first { $0.login == member.login }
-                                personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil)
+                                personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil,
+                                          mobile: presence?.mobile == true)
                             }
                         } else {
                             ForEach(FactoryData.presence, id: \.person.id) { entry in
@@ -197,11 +198,11 @@ struct FactorySidebar: View {
         .contextMenu { GoalContextMenu(goal: goal) }
     }
 
-    private func personRow(_ person: Person, viewing: String?, online: Bool = true) -> some View {
+    private func personRow(_ person: Person, viewing: String?, online: Bool = true, mobile: Bool = false) -> some View {
         let isMe = person.id == FactoryData.me.id
 
         return row(selected: false) {
-            AgentAvatar(agent: person, size: 18, online: online).frame(width: 16)
+            AgentAvatar(agent: person, size: 18, online: online, mobile: mobile).frame(width: 16)
                 .opacity(online ? 1 : 0.55)
             Text(isMe ? "\(person.firstName) (you)" : person.firstName)
             Spacer()
@@ -217,7 +218,14 @@ struct FactorySidebar: View {
         .onTapGesture {
             if let viewing { state.openTask(viewing) }
         }
-        .help(viewing.map { "\(person.firstName) is viewing \($0)" } ?? (online ? "Online" : "Offline"))
+        .help(Self.presenceHelp(person, viewing: viewing, online: online, mobile: mobile))
+    }
+
+    /// A person row's tooltip: what they're looking at, and whether it's from a phone.
+    static func presenceHelp(_ person: Person, viewing: String?, online: Bool, mobile: Bool) -> String {
+        let suffix = online && mobile ? " on mobile" : ""
+        if let viewing { return "\(person.firstName) is viewing \(viewing)\(suffix)" }
+        return online ? "Online\(suffix)" : "Offline"
     }
 
     private func machineRow(_ machine: Machine) -> some View {
