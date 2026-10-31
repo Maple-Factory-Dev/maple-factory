@@ -428,6 +428,15 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .risk-head.risk-medium { color: var(--awaiting); }
 .risk-head.risk-high { color: var(--cancelled); }
 .risk-check { display: flex; }
+.risk-check-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--stroke); }
+.risk-check-row:first-child { border-top: 0; padding-top: 0; }
+.risk-check-row > .switch { margin-top: 6px; }
+.risk-check-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.risk-check-head { gap: 8px; flex-wrap: wrap; }
+.risk-check-head .risk-check-name { flex: 1; min-width: 140px; }
+.risk-check-body > input { width: 100%; }
+.risk-dot-low { background: var(--merged); } .risk-dot-medium { background: var(--awaiting); } .risk-dot-high { background: var(--cancelled); }
+.risk-factor .lvl { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 @media (max-width: 600px) {
   .bar nav .gear { display: inline-block; }
   .bar nav #nav-settings .nav-label { display: none; }
