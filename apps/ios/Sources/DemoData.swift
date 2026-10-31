@@ -119,6 +119,7 @@ enum DemoData {
             },
             task("BIL-5", goal: "g-web", title: "Plans page", state: .planning, owner: "sam", updated: 3),
             task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120),
+            task("APP-16", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90),
             task("API-33", goal: "g-api", title: "Webhooks for task events", state: .backlog, owner: "kit", updated: 300),
         ]
     }
