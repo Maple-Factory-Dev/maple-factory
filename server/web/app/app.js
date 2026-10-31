@@ -292,7 +292,7 @@ function render() {
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
 const view = render;
-const settings = createSettings({ state, h, send, toast, render });
+const settings = createSettings({ state, h, send, toast, render, ago });
 
 // Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
 const collapsed = loadCollapsed();
