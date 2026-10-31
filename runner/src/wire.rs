@@ -1468,7 +1468,7 @@ pub struct Task {
     /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
-    /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
+    /// Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged.
     #[serde(default)]
     pub after: Vec<String>,
     #[serde(default)]
@@ -2906,6 +2906,9 @@ pub enum ClientMessage {
         /// Take its priority off.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clear_priority: Option<bool>,
+        /// Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<Vec<String>>,
     },
     /// Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused.
     #[serde(rename = "task.followUp")]

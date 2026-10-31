@@ -2914,7 +2914,7 @@ public enum Wire {
         public var scoutedFrom: String?
         /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
         public var repo: String?
-        /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
+        /// Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged.
         public var after: [String]
         public var followUps: [FollowUp]
         /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
@@ -5585,8 +5585,10 @@ public enum Wire {
         public var priority: Priority?
         /// Take its priority off.
         public var clearPriority: Bool?
+        /// Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop.
+        public var after: [String]?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil, priority: Priority? = nil, clearPriority: Bool? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil, priority: Priority? = nil, clearPriority: Bool? = nil, after: [String]? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
@@ -5597,6 +5599,7 @@ public enum Wire {
             self.model = model
             self.priority = priority
             self.clearPriority = clearPriority
+            self.after = after
         }
     }
 

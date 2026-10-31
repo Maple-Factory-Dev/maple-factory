@@ -650,7 +650,7 @@ export const structs: Record<string, Struct> = {
       draftRank: "Its place among its goal's drafts: lower first. None (from an older server): its createdAt.",
       startAt: "Don't start its next session before this (ms); cleared once that session starts.",
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
-      after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
+      after: "Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged.",
       splitFrom: "The task it was split off from to stay inside the PR budget.",
       scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
       priority: "How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).",
@@ -1322,9 +1322,10 @@ export const unions: Record<string, Union> = {
         fieldDocs: { plan: "Send it to planning now; otherwise it stays a draft.", intake: "The request it was composed from, which then tracks it." },
       },
       "task.edit": {
-        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?", priority: "Priority?", clearPriority: "bool?" },
+        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?", priority: "Priority?", clearPriority: "bool?", after: "string[]?" },
         fieldDocs: {
           effort: "Put it in this effort; an empty string takes it out.",
+          after: "Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop.",
           priority: "Set its priority; refused once it's merged or cancelled. Setting a queued task to P0 moves it to the front of the queue.",
           clearPriority: "Take its priority off.",
           agent: "claude or codex; refused once it's merged or cancelled. Takes effect from its next session.",

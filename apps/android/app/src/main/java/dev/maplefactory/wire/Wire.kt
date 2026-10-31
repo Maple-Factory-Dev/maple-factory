@@ -1338,7 +1338,7 @@ data class Task(
     val scoutedFrom: String? = null,
     /** Which of its goal's repos it changes; none: the goal's `repo` (or its folder). */
     val repo: String? = null,
-    /** Tasks that must merge before it starts building, e.g. the API change a web change uses. */
+    /** Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged. */
     val after: List<String> = emptyList(),
     val followUps: List<FollowUp> = emptyList(),
     /** Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt. */
@@ -2633,6 +2633,8 @@ sealed class ClientMessage {
         val priority: dev.maplefactory.wire.Priority? = null,
         /** Take its priority off. */
         val clearPriority: Boolean? = null,
+        /** Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop. */
+        val after: List<String>? = null,
     ) : ClientMessage()
     /** Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused. */
     @Serializable
