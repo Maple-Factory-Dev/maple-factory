@@ -379,8 +379,11 @@ final class AppState {
     /// The cache, emptied if the tasks changed since it was filled. Reading the revision is what
     /// redraws a view that only read the cache.
     private func syncTaskCache() {
-        taskCache.sync(revision: isLive ? client?.tasksRevision ?? 0 : mockRevision, live: isLive)
+        taskCache.sync(revision: tasksRevision, live: isLive)
     }
+
+    /// Counts changes to `tasks`: the factory's (FactoryClient.tasksRevision) or the mockup's.
+    var tasksRevision: Int { isLive ? client?.tasksRevision ?? 0 : mockRevision }
 
     private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed

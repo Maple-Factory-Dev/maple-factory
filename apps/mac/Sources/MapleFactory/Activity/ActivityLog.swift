@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Every task's events as the Activity page's entries, newest first, built in one pass: tasks are found by id
 /// and people by login through dictionaries, and the list is sorted once. The page filters and pages it.
-@MainActor struct ActivityFeed {
+@MainActor struct ActivityLog {
     enum Filter: String, CaseIterable { case everyone = "Everyone", people = "People", agents = "Agents", mine = "My tasks" }
 
     struct Entry: Identifiable {
@@ -18,7 +18,7 @@ import SwiftUI
 
         var date: Date? { at.map { Date(timeIntervalSince1970: Double($0) / 1000) } }
         /// "now", "4m", "2h", "3d": worked out when asked, so only the rows that are drawn pay for it.
-        var when: String { label ?? at.map(LiveAdapter.ago) ?? "" }
+        @MainActor var when: String { label ?? at.map { LiveAdapter.ago($0) } ?? "" }
     }
 
     static let pageSize = 50
@@ -30,7 +30,7 @@ import SwiftUI
     init(entries: [Entry]) { self.entries = entries }
 
     /// The factory's: each task's events with their times.
-    static func live(_ wire: [Wire.Task], tasks: [FactoryTask], members: [Wire.Member]) -> ActivityFeed {
+    static func live(_ wire: [Wire.Task], tasks: [FactoryTask], members: [Wire.Member]) -> ActivityLog {
         let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var people: [String: Person] = [:]
         var all: [Entry] = []
@@ -48,11 +48,11 @@ import SwiftUI
             }
         }
         all.sort { $0.at ?? 0 > $1.at ?? 0 }
-        return ActivityFeed(entries: all)
+        return ActivityLog(entries: all)
     }
 
     /// The mockup's: relative labels only, ordered by how long ago they read.
-    static func mock(_ tasks: [FactoryTask], minutesAgo: (String) -> Int) -> ActivityFeed {
+    static func mock(_ tasks: [FactoryTask], minutesAgo: (String) -> Int) -> ActivityLog {
         var people: [String: Person] = [:]
         for person in FactoryData.people.reversed() {
             people[person.firstName] = person
@@ -67,7 +67,7 @@ import SwiftUI
         }
         let minutes = all.map { minutesAgo($0.label ?? "") }
         let order = all.indices.sorted { minutes[$0] != minutes[$1] ? minutes[$0] < minutes[$1] : $0 < $1 }
-        return ActivityFeed(entries: order.map { all[$0] })
+        return ActivityLog(entries: order.map { all[$0] })
     }
 
     /// What the filter picks, in the goals `inScope` shows.
@@ -90,7 +90,7 @@ import SwiftUI
     /// a filter or scope change re-filters the built feed instead of building it again.
     @MainActor final class Cache {
         private var key: Key?
-        private var feed: ActivityFeed?
+        private var feed: ActivityLog?
         /// How many times the feed was built (for tests).
         private(set) var builds = 0
 
@@ -99,7 +99,7 @@ import SwiftUI
             let live: Bool
         }
 
-        func feed(revision: Int, live: Bool, build: () -> ActivityFeed) -> ActivityFeed {
+        func feed(revision: Int, live: Bool, build: () -> ActivityLog) -> ActivityLog {
             let key = Key(revision: revision, live: live)
             if key == self.key, let feed { return feed }
             builds += 1
