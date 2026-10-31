@@ -61,10 +61,10 @@ pub fn classify(seen: &Seen) -> (EndCause, Option<String>) {
         }
         return (EndCause::Signaled, Some(name));
     }
-    if let Some(slept) = seen.slept {
-        if seen.vanished || seen.status.is_some_and(|s| s != 0) {
-            return (EndCause::MachineSlept, Some(format!("the machine slept for {} just before", minutes(slept))));
-        }
+    if let Some(slept) = seen.slept
+        && (seen.vanished || seen.status.is_some_and(|s| s != 0))
+    {
+        return (EndCause::MachineSlept, Some(format!("the machine slept for {} just before", minutes(slept))));
     }
     if seen.vanished {
         return (EndCause::Unknown, Some("its tmux session disappeared while the server kept running".into()));

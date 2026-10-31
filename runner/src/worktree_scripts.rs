@@ -138,7 +138,8 @@ pub struct Ran {
     pub phase: Phase,
     pub command: String,
     pub ms: u64,
-    /// The end of its output, scrubbed.
+    /// The end of its output, scrubbed. Only the tests read it today.
+    #[allow(dead_code)]
     pub tail: String,
     /// Why it ran, for preflight.
     pub why: Option<String>,

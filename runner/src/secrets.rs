@@ -728,9 +728,11 @@ mod tests {
         sessions.replay(id, "n1".into());
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let replay = loop {
-            match tokio::time::timeout_at(deadline, rx.recv()).await.unwrap().unwrap() {
-                crate::sessions::Event::Text(Outbound::SessionReplay { id: from, data, .. }) if from == id => break data,
-                _ => {}
+            if let crate::sessions::Event::Text(out) = tokio::time::timeout_at(deadline, rx.recv()).await.unwrap().unwrap()
+                && let Outbound::SessionReplay { id: from, data, .. } = *out
+                && from == id
+            {
+                break data;
             }
         };
         use base64::Engine;

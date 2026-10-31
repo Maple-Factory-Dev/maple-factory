@@ -309,6 +309,7 @@ pub async fn create(cwd: &str, req: &Request) -> Result<String> {
 /// (`origin/agent/<name>`, pushed by the machine the task ran on before Retry moved it here) is
 /// branched from that. A local branch that origin's has moved past (the task went away and came
 /// back) is moved up to it first. Returns its path, `~`-abbreviated.
+#[cfg(test)]
 pub async fn create_from(root: &Path, name: &str, start: &str) -> Result<String> {
     create_with(root, name, start, None).await
 }
