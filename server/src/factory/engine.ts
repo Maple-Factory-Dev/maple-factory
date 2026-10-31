@@ -128,8 +128,8 @@ const dollars = (n: number) => `$${n.toFixed(2)}`;
 /** What a task has used against what it may: "62 min of its 60 min budget" (or the cost). */
 export function budgetText(use: BudgetUse): string {
   return use.over === "cost"
-    ? `${dollars(use.costUsd)} of its ${dollars(use.allowCostUsd ?? 0)} budget`
-    : `${minutesText(use.minutes)} of its ${minutesText(use.allowMinutes ?? 0)} budget`;
+    ? `${dollars(use.costUsd)} of the ${dollars(use.allowCostUsd ?? 0)} budget`
+    : `${minutesText(use.minutes)} of the ${minutesText(use.allowMinutes ?? 0)} budget`;
 }
 
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
