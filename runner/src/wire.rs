@@ -76,6 +76,25 @@ pub enum Role {
     Other,
 }
 
+/// githubstatus.com's overall indicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitHubIndicator {
+    /// All systems operational.
+    None,
+    /// Minor problems or a degraded component.
+    Minor,
+    /// A major outage.
+    Major,
+    /// A critical outage.
+    Critical,
+    /// Scheduled maintenance in progress.
+    Maintenance,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StepProgress {
@@ -823,6 +842,35 @@ pub struct RunnerRelease {
     /// What changed, from runner/CHANGELOG.md.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+/// An unresolved incident on githubstatus.com.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIncident {
+    pub name: String,
+    /// investigating, identified or monitoring.
+    pub status: String,
+    /// Its page on githubstatus.com.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// What githubstatus.com reports while GitHub has an incident or a degraded component. The org hub checks it, not the apps.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubStatus {
+    pub indicator: GitHubIndicator,
+    /// Its one-line summary, e.g. "Partial System Outage".
+    pub description: String,
+    /// Unresolved incidents, newest first.
+    #[serde(default)]
+    pub incidents: Vec<GitHubIncident>,
+    /// The names of components that aren't operational.
+    #[serde(default)]
+    pub components: Vec<String>,
+    /// When the server read it (ms).
+    pub checked_at: u64,
 }
 
 /// A session end with the machine it was on, for lists.
@@ -3091,6 +3139,9 @@ pub enum ServerToClient {
         /// A newer maple-server, when there is one (told to admins only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server_update: Option<ServerUpdate>,
+        /// GitHub's incident or degraded components, from githubstatus.com. None: all clear, not checked yet, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        github_status: Option<GitHubStatus>,
         /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
@@ -3220,6 +3271,13 @@ pub enum ServerToClient {
         /// Runner releases, newest first, with their notes.
         #[serde(default)]
         runner_releases: Vec<RunnerRelease>,
+    },
+    /// githubstatus.com changed since the snapshot: an incident started, changed or ended.
+    #[serde(rename = "github.status")]
+    GithubStatus {
+        /// None: all clear again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<GitHubStatus>,
     },
     /// Secret values blank.
     #[serde(rename = "connectors.updated")]

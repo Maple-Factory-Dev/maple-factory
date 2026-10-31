@@ -215,6 +215,59 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// githubstatus.com's overall indicator.
+    public enum GitHubIndicator: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// All systems operational.
+        case none
+        /// Minor problems or a degraded component.
+        case minor
+        /// A major outage.
+        case major
+        /// A critical outage.
+        case critical
+        /// Scheduled maintenance in progress.
+        case maintenance
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [GitHubIndicator] = [.none, .minor, .major, .critical, .maintenance]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "none": self = .none
+            case "minor": self = .minor
+            case "major": self = .major
+            case "critical": self = .critical
+            case "maintenance": self = .maintenance
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .none: "none"
+            case .minor: "minor"
+            case .major: "major"
+            case .critical: "critical"
+            case .maintenance: "maintenance"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: GitHubIndicator, b: GitHubIndicator) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum StepProgress: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Finished.
         case done
@@ -1986,6 +2039,51 @@ public enum Wire {
             self.version = version
             self.publishedAt = publishedAt
             self.notes = notes
+        }
+    }
+
+    /// An unresolved incident on githubstatus.com.
+    public struct GitHubIncident: Codable, Hashable, Sendable {
+        public var name: String
+        /// investigating, identified or monitoring.
+        public var status: String
+        /// Its page on githubstatus.com.
+        public var url: String?
+
+        public init(name: String, status: String, url: String? = nil) {
+            self.name = name
+            self.status = status
+            self.url = url
+        }
+    }
+
+    /// What githubstatus.com reports while GitHub has an incident or a degraded component. The org hub checks it, not the apps.
+    public struct GitHubStatus: Codable, Hashable, Sendable {
+        public var indicator: GitHubIndicator
+        /// Its one-line summary, e.g. "Partial System Outage".
+        public var description: String
+        /// Unresolved incidents, newest first.
+        public var incidents: [GitHubIncident]
+        /// The names of components that aren't operational.
+        public var components: [String]
+        /// When the server read it (ms).
+        public var checkedAt: UInt64
+
+        public init(indicator: GitHubIndicator, description: String, incidents: [GitHubIncident] = [], components: [String] = [], checkedAt: UInt64) {
+            self.indicator = indicator
+            self.description = description
+            self.incidents = incidents
+            self.components = components
+            self.checkedAt = checkedAt
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            indicator = try c.decode(GitHubIndicator.self, forKey: .indicator)
+            description = try c.decode(String.self, forKey: .description)
+            incidents = try c.decodeIfPresent([GitHubIncident].self, forKey: .incidents) ?? []
+            components = try c.decodeIfPresent([String].self, forKey: .components) ?? []
+            checkedAt = try c.decode(UInt64.self, forKey: .checkedAt)
         }
     }
 
@@ -6201,13 +6299,15 @@ public enum Wire {
         public var serverVersion: String?
         /// A newer maple-server, when there is one (told to admins only).
         public var serverUpdate: ServerUpdate?
+        /// GitHub's incident or degraded components, from githubstatus.com. None: all clear, not checked yet, or an older server.
+        public var githubStatus: GitHubStatus?
         /// The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server.
         public var icon: String?
         /// The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server.
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -6235,6 +6335,7 @@ public enum Wire {
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
             self.serverUpdate = serverUpdate
+            self.githubStatus = githubStatus
             self.icon = icon
             self.name = name
             self.protocolVersion = protocolVersion
@@ -6269,6 +6370,7 @@ public enum Wire {
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
             serverUpdate = try c.decodeIfPresent(ServerUpdate.self, forKey: .serverUpdate)
+            githubStatus = try c.decodeIfPresent(GitHubStatus.self, forKey: .githubStatus)
             icon = try c.decodeIfPresent(String.self, forKey: .icon)
             name = try c.decodeIfPresent(String.self, forKey: .name)
             protocolVersion = try c.decode(UInt32.self, forKey: .protocolVersion)
@@ -6517,6 +6619,16 @@ public enum Wire {
         }
     }
 
+    /// githubstatus.com changed since the snapshot: an incident started, changed or ended.
+    public struct ServerToClientGithubStatus: Codable, Hashable, Sendable {
+        /// None: all clear again.
+        public var status: GitHubStatus?
+
+        public init(status: GitHubStatus? = nil) {
+            self.status = status
+        }
+    }
+
     /// Secret values blank.
     public struct ServerToClientConnectorsUpdated: Codable, Hashable, Sendable {
         public var connectors: [McpConnector]
@@ -6634,6 +6746,7 @@ public enum Wire {
         case reposUpdated(ServerToClientReposUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
+        case githubStatus(ServerToClientGithubStatus)
         case connectorsUpdated(ServerToClientConnectorsUpdated)
         case integrationsUpdated(ServerToClientIntegrationsUpdated)
         case toast(ServerToClientToast)
@@ -6672,6 +6785,7 @@ public enum Wire {
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
+            case "github.status": self = .githubStatus(try ServerToClientGithubStatus(from: decoder))
             case "connectors.updated": self = .connectorsUpdated(try ServerToClientConnectorsUpdated(from: decoder))
             case "integrations.updated": self = .integrationsUpdated(try ServerToClientIntegrationsUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
@@ -6754,6 +6868,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .runnerReleased(let body):
                 try c.encode("runner.released", forKey: .type)
+                try body.encode(to: encoder)
+            case .githubStatus(let body):
+                try c.encode("github.status", forKey: .type)
                 try body.encode(to: encoder)
             case .connectorsUpdated(let body):
                 try c.encode("connectors.updated", forKey: .type)

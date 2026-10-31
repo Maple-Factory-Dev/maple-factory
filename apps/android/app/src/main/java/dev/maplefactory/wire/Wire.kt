@@ -134,6 +134,26 @@ enum class Role(val raw: String) {
     object Serializer : WireEnumSerializer<Role>("Role", entries, { it.raw }, Unknown)
 }
 
+/** githubstatus.com's overall indicator. */
+@Serializable(with = GitHubIndicator.Serializer::class)
+enum class GitHubIndicator(val raw: String) {
+    /** All systems operational. */
+    None("none"),
+    /** Minor problems or a degraded component. */
+    Minor("minor"),
+    /** A major outage. */
+    Major("major"),
+    /** A critical outage. */
+    Critical("critical"),
+    /** Scheduled maintenance in progress. */
+    Maintenance("maintenance"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<GitHubIndicator>("GitHubIndicator", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = StepProgress.Serializer::class)
 enum class StepProgress(val raw: String) {
     /** Finished. */
@@ -837,6 +857,30 @@ data class RunnerRelease(
     val publishedAt: String? = null,
     /** What changed, from runner/CHANGELOG.md. */
     val notes: String? = null,
+)
+
+/** An unresolved incident on githubstatus.com. */
+@Serializable
+data class GitHubIncident(
+    val name: String,
+    /** investigating, identified or monitoring. */
+    val status: String,
+    /** Its page on githubstatus.com. */
+    val url: String? = null,
+)
+
+/** What githubstatus.com reports while GitHub has an incident or a degraded component. The org hub checks it, not the apps. */
+@Serializable
+data class GitHubStatus(
+    val indicator: GitHubIndicator,
+    /** Its one-line summary, e.g. "Partial System Outage". */
+    val description: String,
+    /** Unresolved incidents, newest first. */
+    val incidents: List<GitHubIncident> = emptyList(),
+    /** The names of components that aren't operational. */
+    val components: List<String> = emptyList(),
+    /** When the server read it (ms). */
+    val checkedAt: Long,
 )
 
 /** A session end with the machine it was on, for lists. */
@@ -2938,6 +2982,8 @@ sealed class ServerToClient {
         val serverVersion: String? = null,
         /** A newer maple-server, when there is one (told to admins only). */
         val serverUpdate: dev.maplefactory.wire.ServerUpdate? = null,
+        /** GitHub's incident or degraded components, from githubstatus.com. None: all clear, not checked yet, or an older server. */
+        val githubStatus: dev.maplefactory.wire.GitHubStatus? = null,
         /** The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server. */
         val icon: String? = null,
         /** The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server. */
@@ -3054,6 +3100,12 @@ sealed class ServerToClient {
         /** Runner releases, newest first, with their notes. */
         val runnerReleases: List<dev.maplefactory.wire.RunnerRelease> = emptyList(),
     ) : ServerToClient()
+    /** githubstatus.com changed since the snapshot: an incident started, changed or ended. */
+    @Serializable
+    data class GithubStatus(
+        /** None: all clear again. */
+        val status: dev.maplefactory.wire.GitHubStatus? = null,
+    ) : ServerToClient()
     /** Secret values blank. */
     @Serializable
     data class ConnectorsUpdated(
@@ -3128,6 +3180,7 @@ sealed class ServerToClient {
             "repos.updated" -> json.decodeFromJsonElement(ReposUpdated.serializer(), body)
             "secrets.updated" -> json.decodeFromJsonElement(SecretsUpdated.serializer(), body)
             "runner.released" -> json.decodeFromJsonElement(RunnerReleased.serializer(), body)
+            "github.status" -> json.decodeFromJsonElement(GithubStatus.serializer(), body)
             "connectors.updated" -> json.decodeFromJsonElement(ConnectorsUpdated.serializer(), body)
             "integrations.updated" -> json.decodeFromJsonElement(IntegrationsUpdated.serializer(), body)
             "toast" -> json.decodeFromJsonElement(Toast.serializer(), body)
@@ -3162,6 +3215,7 @@ sealed class ServerToClient {
             is ReposUpdated -> "repos.updated" to json.encodeToJsonElement(ReposUpdated.serializer(), value)
             is SecretsUpdated -> "secrets.updated" to json.encodeToJsonElement(SecretsUpdated.serializer(), value)
             is RunnerReleased -> "runner.released" to json.encodeToJsonElement(RunnerReleased.serializer(), value)
+            is GithubStatus -> "github.status" to json.encodeToJsonElement(GithubStatus.serializer(), value)
             is ConnectorsUpdated -> "connectors.updated" to json.encodeToJsonElement(ConnectorsUpdated.serializer(), value)
             is IntegrationsUpdated -> "integrations.updated" to json.encodeToJsonElement(IntegrationsUpdated.serializer(), value)
             is Toast -> "toast" to json.encodeToJsonElement(Toast.serializer(), value)

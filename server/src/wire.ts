@@ -14,6 +14,10 @@ export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awa
 export type Role = "planner" | "builder" | "reviewer";
 export const RoleValues: readonly Role[] = ["planner","builder","reviewer"];
 
+/** githubstatus.com's overall indicator. */
+export type GitHubIndicator = "none" | "minor" | "major" | "critical" | "maintenance";
+export const GitHubIndicatorValues: readonly GitHubIndicator[] = ["none","minor","major","critical","maintenance"];
+
 export type StepProgress = "done" | "active" | "pending";
 export const StepProgressValues: readonly StepProgress[] = ["done","active","pending"];
 
@@ -322,6 +326,28 @@ export interface RunnerRelease {
   publishedAt?: string | null;
   /** What changed, from runner/CHANGELOG.md. */
   notes?: string | null;
+}
+
+/** An unresolved incident on githubstatus.com. */
+export interface GitHubIncident {
+  name: string;
+  /** investigating, identified or monitoring. */
+  status: string;
+  /** Its page on githubstatus.com. */
+  url?: string | null;
+}
+
+/** What githubstatus.com reports while GitHub has an incident or a degraded component. The org hub checks it, not the apps. */
+export interface GitHubStatus {
+  indicator: GitHubIndicator;
+  /** Its one-line summary, e.g. "Partial System Outage". */
+  description: string;
+  /** Unresolved incidents, newest first. */
+  incidents: GitHubIncident[];
+  /** The names of components that aren't operational. */
+  components: string[];
+  /** When the server read it (ms). */
+  checkedAt: number;
 }
 
 /** A session end with the machine it was on, for lists. */
@@ -2199,6 +2225,8 @@ export interface ServerToClient_Snapshot {
   serverVersion?: string | null;
   /** A newer maple-server, when there is one (told to admins only). */
   serverUpdate?: ServerUpdate | null;
+  /** GitHub's incident or degraded components, from githubstatus.com. None: all clear, not checked yet, or an older server. */
+  githubStatus?: GitHubStatus | null;
   /** The factory's icon, a path on this server (`/icon/<id>`) that changes with each new image. None: no icon, or an older server. */
   icon?: string | null;
   /** The factory's display name, set by an admin (shown in place of the GitHub org). None: unset, or an older server. */
@@ -2338,6 +2366,13 @@ export interface ServerToClient_RunnerReleased {
   runnerReleases: RunnerRelease[];
 }
 
+/** githubstatus.com changed since the snapshot: an incident started, changed or ended. */
+export interface ServerToClient_GithubStatus {
+  type: "github.status";
+  /** None: all clear again. */
+  status?: GitHubStatus | null;
+}
+
 /** Secret values blank. */
 export interface ServerToClient_ConnectorsUpdated {
   type: "connectors.updated";
@@ -2392,5 +2427,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","connectors.updated","integrations.updated","toast","session.ended","stats","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","stats","checkLog","error"] as const;
