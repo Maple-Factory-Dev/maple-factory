@@ -8,11 +8,13 @@ web and phone access, Tailscale) and fixing what didn't (sessions dying for no c
 
 ```
 apps/mac/     SwiftUI app: the factory (goals, tasks, review, machines, requests, usage), live against a server; the design mockup when signed out
+apps/ios/     the iPhone app (SwiftUI, shares MapleKit with the Mac app)
+apps/android/ the Android app (Kotlin, Jetpack Compose): the iPhone app's factory, with a rail to switch between factories
 runner/       maple-runner (Rust): sessions in tmux, dials out to the server. From ao-runner 0.23.0
 server/       Cloudflare Worker: OrgHub + MachineHub Durable Objects, D1, R2; the factory each org deploys
 installer/    `maple` (npm: maple-factory): install and update a factory in an org's Cloudflare account
 apps/site/    maplefactory.dev: the site, the signed release feed (/releases/) and /deploy
-protocol/     schema.ts → generated Rust, TypeScript and Swift types (npm run gen)
+protocol/     schema.ts → generated Rust, TypeScript, Swift and Kotlin types (npm run gen)
 assets/       app icon source
 ```
 
@@ -29,6 +31,7 @@ cd apps/mac && swift run    # then Connect to Another Factory… → localhost:8
 apps/mac/scripts/bundle.sh  # → apps/mac/build/Maple Factory.app (registers maplefactory:// task links; SIGN_IDENTITY to sign)
 apps/mac/scripts/check-ios.sh  # builds MapleKit (protocol, API, sign-in; shared with iOS) and the iPhone app for the simulator
 apps/ios/scripts/run-ios.sh -demo YES  # builds the iPhone app (brew install xcodegen) and boots it in the iPhone 18 Pro simulator
+apps/android/scripts/run-android.sh -demo YES  # builds the Android app and runs it on an emulator (cd apps/android && ./gradlew test for its tests)
 scripts/dev-stack.sh down
 ```
 
@@ -59,6 +62,33 @@ apps/ios/scripts/run-ios.sh -onboardingURL localhost:8788 -onboardingContinue YE
 Launch flags: `-demo YES`, `-tab goals|machines|settings`, `-goal <id>`, `-task <id>`, and the Mac app's
 `-onboardingURL`, `-onboardingContinue` and `-devAs`. `SIM` picks another simulator, `CONFIG=Release` a
 release build (which reports to Sentry; `-sentryTest YES` sends a test error).
+
+### The Android app
+
+`apps/android` is a Kotlin and Jetpack Compose app built with Gradle (`./gradlew assembleDebug`; JDK 17–21,
+the Android SDK in `~/Library/Android/sdk` or `ANDROID_HOME`). It does what the iPhone app does against the
+same server: GitHub device-flow sign-in (or a dev server's `/dev/token`), the `/client/connect` feed, Inbox,
+Goals, Machines and Settings, and the task page with Approve plan, Request changes, Approve changes, Merge or
+Hold, Answer, Steer and Comment. Its wire types are generated into `wire/Wire.kt` by `npm run gen`, so it
+can't drift from the schema. `kit/` ports MapleKit's FactoryAPI, FeedState, saved factories and Diff
+(`./gradlew test` runs their tests, and decodes a snapshot recorded from the dev stack).
+
+It keeps every factory you sign into, each with its own token in EncryptedSharedPreferences (Keystore-backed).
+The factory avatar in the top bar opens a rail of them, like Slack's: tap one to switch without signing in again,
+see how much waits in each, or add another. Settings signs out of any of them; signing out of the open one opens
+the most recently used one left. Each factory reopens on the tab and goal you left it on.
+
+```sh
+apps/android/scripts/run-android.sh -demo YES                             # two sample factories, no server
+apps/android/scripts/run-android.sh shot /tmp/shots -demo YES -task APP-14   # and a screenshot
+apps/android/scripts/run-android.sh -onboardingURL 10.0.2.2:8788 -onboardingContinue YES   # the dev stack, signed in
+```
+
+Launch flags are the iPhone app's, passed as intent extras: `-demo YES`, `-tab goals|machines|settings`,
+`-goal <id>`, `-task <id>`, `-onboardingURL`, `-onboardingContinue` and `-devAs`. On the emulator the Mac is
+`10.0.2.2`. The script boots an emulator headless (`WINDOW=1` shows it; `AVD` picks one, on the host GPU unless
+`GPU` says) and needs one whose user unlocks without a PIN. `maplefactory://task/<ID>` and a factory's
+`https://…/t/<ID>` links open the task. Terminals and machine settings stay on the Mac, as on the iPhone.
 
 ### Testing without taking over the screen
 
