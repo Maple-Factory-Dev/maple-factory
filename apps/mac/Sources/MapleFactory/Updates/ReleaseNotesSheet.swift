@@ -84,6 +84,7 @@ struct ReleaseNotesSheet: View {
                             Button("Try Again") { load = .loading; attempt += 1 }
                             Button("Open in Browser") { NSWorkspace.shared.open(url) }
                         }
+                        .fixedSize()
                     }
                 case .loaded:
                     EmptyView()
