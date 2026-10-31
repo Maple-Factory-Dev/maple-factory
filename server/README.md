@@ -130,3 +130,18 @@ npm run typecheck
 requests to /api/intake; `SLACK_SIGNING_SECRET` verifies Slack's /maple. `scripts/dev-stack.sh up` writes a
 starter `.dev.vars`. There's deliberately no `.dev.vars.example`: the Deploy to Cloudflare button would ask for
 everything in it. End-to-end tests are in test/; each says what it needs at the top.
+
+### Integrations
+
+Slack, Linear and Jira don't need Cloudflare access to set up: an admin opens the Mac app's **Settings ›
+Integrations**, turns one on, fills in its fields and copies its webhook URL into Slack, Linear or Jira.
+Secret values are stored sealed in OrgHub's SQLite (AES-GCM under a key `SECRETS_KEY` derives for them) and never
+sent back to an app: a set one shows as ••••, and saving with it blank keeps it. Each row shows its status: the
+last event that reached the factory, or the last thing that went wrong (a bad signature, a refused comment).
+
+The env vars above still work: a field with nothing saved in Settings falls back to its env var
+(`SLACK_SIGNING_SECRET`, `LINEAR_WEBHOOK_SECRET`, `LINEAR_API_KEY`, `LINEAR_LABEL`, `JIRA_WEBHOOK_SECRET`,
+`JIRA_SITE`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_LABEL`), and the pane marks it "environment". A value saved in
+Settings wins over its env var, and an integration turned off in Settings is off whatever the env vars say. To add
+one (Discord, say): an entry in `src/integrations/registry.ts`, its kind in `IntegrationKind` (protocol/schema.ts),
+and its webhook handler reading `integrationConfig(env, kind)`.

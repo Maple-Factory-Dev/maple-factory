@@ -66,6 +66,8 @@ import Foundation
     private(set) var prompts: Wire.PromptAdditions?
     /// The factory's MCP connectors, secret values blank (only which keys are set). None: an older server.
     private(set) var connectors: [Wire.McpConnector]?
+    /// Slack, Linear and Jira: their settings (secret values blank) and status. None: an older server.
+    private(set) var integrations: [Wire.Integration]?
     /// The org's repos: the GitHub App's, and any added by hand.
     private(set) var repos: [Wire.OrgRepo] = []
     /// Every repo's secrets: names and who changed them when, never a value.
@@ -293,6 +295,7 @@ import Foundation
         policy = nil
         prompts = nil
         connectors = nil
+        integrations = nil
         acceptances = []
         repos = []
         secrets = []
@@ -417,6 +420,7 @@ import Foundation
             acceptances = snapshot.acceptances
             prompts = snapshot.prompts
             connectors = snapshot.connectors
+            integrations = snapshot.integrations
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
@@ -533,6 +537,8 @@ import Foundation
             remember()
         case .connectorsUpdated(let update):
             connectors = update.connectors
+        case .integrationsUpdated(let update):
+            integrations = update.integrations
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
@@ -812,6 +818,11 @@ import Foundation
     /// Admins only: the whole list. A secret left blank keeps the stored value; connectors.updated echoes it.
     func save(connectors: [Wire.McpConnector]) {
         send(.connectorsSave(.init(connectors: connectors)))
+    }
+
+    /// Admins only: one integration. A secret left blank keeps the stored value; integrations.updated echoes it.
+    func save(integration kind: Wire.IntegrationKind, enabled: Bool, values: [String: String]) {
+        send(.integrationsSave(.init(kind: kind, enabled: enabled, values: values)))
     }
 
     func acceptRisk(goal name: String, upTo: RiskLevel?, note: String?) {

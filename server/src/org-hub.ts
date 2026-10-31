@@ -5,12 +5,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, type ClientMessage, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
+import { Integrations } from "./integrations/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
@@ -37,6 +38,7 @@ export class OrgHub extends DurableObject<Env> {
   private engine: Engine;
   private intake: Intake;
   private secrets: Secrets;
+  private integrations: Integrations;
   /** Each machine's runner update (storage `u:<id>`), loaded before anything else runs. */
   private updates = new Map<string, MachineUpdate>();
 
@@ -47,10 +49,14 @@ export class OrgHub extends DurableObject<Env> {
     });
     this.store = new Store(ctx.storage.sql);
     this.secrets = new Secrets(ctx.storage.sql, env);
+    this.integrations = new Integrations(ctx.storage.sql, env);
     this.intake = new Intake(this.store, {
       broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
       waitUntil: (p) => ctx.waitUntil(p),
-      deliver: (replyUrl, text) => deliver(env, replyUrl, text),
+      deliver: (replyUrl, text) => deliver(env, replyUrl, text, {
+        config: (kind) => this.integrations.config(kind),
+        event: (kind, error) => this.integrationEvent(kind, error),
+      }),
     });
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
@@ -138,6 +144,16 @@ export class OrgHub extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     await applySettings(this.env);
     const url = new URL(request.url);
+    // The Worker's webhook handlers: an integration's settings (decrypted; never sent past the Worker),
+    // and how its last event went.
+    const integration = /^\/integrations\/([a-z]+)\/(config|event)$/.exec(url.pathname);
+    if (integration && IntegrationKindValues.includes(integration[1] as IntegrationKind)) {
+      const kind = integration[1] as IntegrationKind;
+      if (integration[2] === "config") return Response.json(await this.integrations.config(kind));
+      const { error } = (await request.json()) as { error?: string | null };
+      await this.integrationEvent(kind, error ?? undefined);
+      return new Response(null, { status: 204 });
+    }
     switch (url.pathname) {
       case "/connect": {
         const member = JSON.parse(request.headers.get("x-member") ?? "null") as Member;
@@ -282,6 +298,13 @@ export class OrgHub extends DurableObject<Env> {
       }
     }
     return new Response("Not found.", { status: 404 });
+  }
+
+  /** How an integration's last event went, told to the apps. */
+  private async integrationEvent(kind: IntegrationKind, error?: string) {
+    if (error) this.integrations.noteError(kind, error);
+    else this.integrations.noteEvent(kind);
+    this.broadcast({ type: "integrations.updated", integrations: await this.integrations.list() });
   }
 
   /** The factory icon's link, if it has one. */
@@ -522,6 +545,7 @@ export class OrgHub extends DurableObject<Env> {
           acceptances: this.store.acceptances(),
           prompts: this.store.prompts(),
           connectors: redacted(this.store.connectors()),
+          integrations: await this.integrations.list(),
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
@@ -697,6 +721,22 @@ export class OrgHub extends DurableObject<Env> {
           if (!(e instanceof FactoryError)) console.error("factory:", e);
           this.send(ws, { type: "error", message: e instanceof FactoryError ? e.message : "Something went wrong reading that log.", requestId: `checkLog:${msg.id}/${msg.check}` });
         }
+        return;
+      }
+      case "integrations.save": {
+        if (client.member.role !== "admin") {
+          this.send(ws, { type: "error", message: "Only admins can change the factory's integrations.", requestId: null });
+          return;
+        }
+        try {
+          await this.integrations.save(msg.kind, msg.enabled, msg.values ?? {}, client.member.login);
+        } catch (e) {
+          this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: null });
+          return;
+        }
+        const integrations = await this.integrations.list();
+        await audit(this.env, client.member.login, "integrations.saved", msg.kind, integrations.find((i) => i.kind === msg.kind));
+        this.broadcast({ type: "integrations.updated", integrations });
         return;
       }
       case "members.revoke": {
