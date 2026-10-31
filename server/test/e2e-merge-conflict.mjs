@@ -1,4 +1,6 @@
-// A merge that fails. With "Fix merges automatically" off: the task raises a "didn't merge" hand
+// A finish whose branch doesn't merge into its base: the runner pushes nothing and the conflict is typed
+// back into the still-running builder, which merges main in and finishes again before any review round.
+// A merge that fails (main moves on after the builder's last push). With "Fix merges automatically" off: the task raises a "didn't merge" hand
 // instead of getting stuck, the factory doesn't retry on its own, "Try the merge again" retries once,
 // Request changes with the hand open hands it to a builder, and "Send it back to fix" starts a
 // new builder in the same worktree that merges the base in, after which review runs again and it merges.
@@ -75,16 +77,6 @@ send({ type: "goal.save", goal: { id: "", name: `Merge ${prefix}`, prefix, color
 const goal = await wait("goal", () => goals.find((g) => g.prefix === prefix));
 step(`goal ${goal.name}`);
 
-// Low risk: the factory merges it on its own, so a failed auto-merge is what's tested first.
-send({ type: "task.create", goal: goal.id, title: "Say hello", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
-const id = `${prefix}-1`;
-let t = await wait("plan", () => tasks.get(id)?.state === "awaitingApproval" && tasks.get(id), 60000);
-send({ type: "task.approvePlan", id });
-t = await wait("builder", () => tasks.get(id)?.worker?.role === "builder" && tasks.get(id));
-const worktree = await wait("builder's folder", () => cwds.get(t.worker.session));
-step(`${id} building in ${worktree}`);
-
-// Someone else lands a hello.txt on main meanwhile: the task's branch no longer merges cleanly.
 const origin = git("-C", folder, "remote", "get-url", "origin");
 const conflict = (text) => {
   const other = mkdtempSync(join(tmpdir(), "mf-conflict-"));
@@ -95,8 +87,51 @@ const conflict = (text) => {
   git("-C", other, "push", "--quiet", "origin", "HEAD:main");
   rmSync(other, { recursive: true, force: true });
 };
+const unmerged = (t) => t.events.filter((e) => e.text.startsWith("doesn't merge into main: ")).length;
+// Waits for the task's nth push (review round n), after which main moving on is the merge's problem.
+const pushed = (id, n) => wait(`${id} push ${n}`, () => { const t = tasks.get(id); return t?.state === "reviewing" && (t.autoReview?.rounds.length ?? 0) >= n && t; }, 180000);
+
+// 0. A finish that doesn't merge into main. The builder ("[slow-build]") is cut from main, then another
+// task's hello.txt lands there before it finishes its own: the finish comes back to the same builder.
+send({ type: "task.create", goal: goal.id, title: "Say hello late", brief: "Add hello.txt with a greeting. [slow-build]", shareable: false, plan: true, tickets: [], agent: "scripted" });
+const late = `${prefix}-1`;
+await wait(`${late} plan`, () => tasks.get(late)?.state === "awaitingApproval", 60000);
+send({ type: "task.approvePlan", id: late });
+{
+  const t = await wait(`${late} builder`, () => tasks.get(late)?.worker?.role === "builder" && tasks.get(late));
+  conflict(`hello from main, merged first (${prefix})\n`);
+  step(`${late} building (session ${t.worker.session.slice(0, 8)}); another task's hello.txt is on origin main`);
+}
+let t = await wait(`${late} sent back`, () => { const t = tasks.get(late); return t && unmerged(t) === 1 && t; }, 180000);
+const session0 = t.worker?.session;
+if (t.state !== "building" || !session0 || t.hand || t.autoReview?.rounds.length || t.pr) throw new Error(`after the conflict it's ${t.state}, worker ${session0}, hand ${t.hand?.reason}, ${t.autoReview?.rounds.length ?? 0} review rounds, PR ${JSON.stringify(t.pr)}`);
+if (git("-C", origin, "branch", "--list", t.branch)) throw new Error(`${t.branch} reached origin`);
+step(`its finish didn't push; still building in the same session, no review round, no hand: "${t.events.find((e) => e.text.startsWith("doesn't merge")).text}"`);
+t = await pushed(late, 1);
+if (unmerged(t) !== 1 || t.autoReview.rounds.length !== 1) throw new Error(`${unmerged(t)} conflicted finishes, ${t.autoReview.rounds.length} rounds`);
+const typedBack = git("-C", origin, "log", "-1", "--format=%s", `${t.branch}^{/^Merge origin}`);
+if (!typedBack.includes("The branch doesn't merge into main (conflicts in hello.txt), so nothing was pushed.")) throw new Error(`its merge commit is ${JSON.stringify(typedBack)}`);
+step(`the builder was told and merged main in: ${JSON.stringify(typedBack)}`);
+step(`then it pushed and went to review (round ${t.autoReview.rounds.length})`);
+t = await wait(`${late} merged`, () => tasks.get(late)?.state === "merged" && tasks.get(late), 180000);
+const hello0 = git("-C", origin, "show", "main:hello.txt");
+if (!hello0.includes(late) || !hello0.includes("merged first")) throw new Error(`origin's main has ${JSON.stringify(hello0)}`);
+step(`${late} merged; hello.txt keeps both sides: ${JSON.stringify(hello0.split("\n"))}`);
+console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
+
+// Low risk: the factory merges it on its own, so a failed auto-merge is what's tested first.
+send({ type: "task.create", goal: goal.id, title: "Say hello", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+const id = `${prefix}-2`;
+t = await wait("plan", () => tasks.get(id)?.state === "awaitingApproval" && tasks.get(id), 60000);
+send({ type: "task.approvePlan", id });
+t = await wait("builder", () => tasks.get(id)?.worker?.role === "builder" && tasks.get(id));
+const worktree = await wait("builder's folder", () => cwds.get(t.worker.session));
+step(`${id} building in ${worktree}`);
+
+// Someone else lands a hello.txt on main after its last push (review's fix): the branch no longer merges cleanly.
+await pushed(id, 2);
 conflict(`hello from main (${prefix})\n`);
-step("pushed a conflicting hello.txt to origin main");
+step("after its second push, pushed a conflicting hello.txt to origin main");
 
 t = await wait("review passed", () => tasks.get(id)?.autoReview?.rounds.at(-1)?.verdict === "passed" && tasks.get(id), 120000);
 const rounds = t.autoReview.rounds.length;
@@ -124,7 +159,8 @@ if (failedMerges(tasks.get(id)) !== 2) throw new Error(`it tried ${failedMerges(
 step("5s later: still 2 failed merges; nothing loops");
 
 // 3. Request changes with the hand open: the hand clears and a builder takes it, rather than the
-// task sitting in building behind a stale hand. What it pushes still doesn't merge: a new hand.
+// task sitting in building behind a stale hand. Its finish doesn't merge, so it's typed back to merge
+// main in first; main moves on again after it pushes, so the merge fails again: a new hand.
 const secondHand = t.hand.at;
 send({ type: "task.steer", id, text: "Add a sign-off line.", anchor: null });
 t = await wait("steered to building", () => tasks.get(id)?.state === "building" && tasks.get(id));
@@ -132,6 +168,12 @@ if (t.hand) throw new Error(`it's building with a ${t.hand.reason} hand still up
 step(`Request changes with the hand open: building, hand cleared ("${t.events.at(-1).text}")`);
 t = await wait("steered builder", () => tasks.get(id)?.worker?.role === "builder" && tasks.get(id));
 step(`a builder started on it (${t.worker.session.slice(0, 8)})`);
+t = await wait("steered finish sent back", () => { const t = tasks.get(id); return t && unmerged(t) === 1 && t; }, 120000);
+if (t.state !== "building" || t.autoReview.rounds.length !== rounds) throw new Error(`it's ${t.state} with ${t.autoReview.rounds.length} rounds`);
+step(`its finish doesn't merge into main: typed back to the builder, nothing pushed, still round ${rounds}`);
+t = await pushed(id, rounds + 1);
+conflict(`hello from main, steered (${prefix})\n`);
+step("it merged main in and pushed; pushed another conflicting hello.txt to origin main");
 t = await wait("third hand", () => tasks.get(id)?.hand?.reason === "mergeFailed" && tasks.get(id).hand.at !== secondHand && tasks.get(id), 120000);
 const steerRounds = t.autoReview.rounds.length;
 step(`it pushed, review passed again (round ${steerRounds}), the merge failed again and a new hand is up (${failedMerges(t)} failed merges)`);
@@ -172,9 +214,10 @@ const build = async (n, what) => {
   return id;
 };
 const autoFixed = (t) => t.events.filter((e) => /^(couldn't|won't) merge: .*; sent it back to fix the merge \(try \d of 2\)$/.test(e.text));
-const id2 = await build(2, "Say hello, fixed automatically");
-conflict(`hello from main again (${prefix}-2)\n`);
-step(`${id2} building; pushed a conflicting hello.txt to origin main`);
+const id2 = await build(3, "Say hello, fixed automatically");
+await pushed(id2, 2);
+conflict(`hello from main again (${prefix}-3)\n`);
+step(`${id2} pushed review's fix; pushed a conflicting hello.txt to origin main`);
 t = await wait(`${id2} sent back`, () => { const t = tasks.get(id2); return t && autoFixed(t).length === 1 && t.state === "building" && t; }, 180000);
 if (t.hand) throw new Error(`it's building with a ${t.hand.reason} hand up`);
 const fix = t.changes.at(-1);
@@ -187,19 +230,21 @@ step(`${id2} merged after 1 automatic fix, with no hand raised`);
 console.log(`\n${t.events.map((e) => `  ${e.who}: ${e.text.split("\n")[0]}`).join("\n")}\n`);
 
 // 7. A merge that keeps failing (main moves again each time the builder fixes it): 2 automatic tries, then the hand.
-const id3 = await build(3, "Say hello, never merging");
+const id3 = await build(4, "Say hello, never merging");
 let pushes = 1;
-conflict(`hello from main, take ${pushes} (${prefix}-3)\n`);
-step(`${id3} building; pushed a conflicting hello.txt to origin main`);
+await pushed(id3, 2);
+conflict(`hello from main, take ${pushes} (${prefix}-4)\n`);
+step(`${id3} pushed review's fix; pushed a conflicting hello.txt to origin main`);
 for (let n = 1; n <= 2; n++) {
   t = await wait(`${id3} try ${n}`, () => { const t = tasks.get(id3); return t && autoFixed(t).length === n && t.state === "building" && t.changes.length === n && t; }, 180000);
   if (t.hand) throw new Error(`try ${n} came with a ${t.hand.reason} hand`);
   const c = t.changes.at(-1);
   step(`try ${n}: sent back to fix the merge with ${c.id}, no hand`);
   await wait(`${c.id} applied`, () => tasks.get(id3)?.changes.find((x) => x.id === c.id)?.status === "applied", 120000);
-  // The builder has merged main in; main moves again before the factory merges.
-  conflict(`hello from main, take ${++pushes} (${prefix}-3)\n`);
-  step(`${c.id} applied; pushed another conflicting hello.txt to origin main`);
+  // The builder has merged main in and pushed; main moves again before the factory merges.
+  await pushed(id3, t.autoReview.rounds.length + 1);
+  conflict(`hello from main, take ${++pushes} (${prefix}-4)\n`);
+  step(`${c.id} applied and pushed; pushed another conflicting hello.txt to origin main`);
 }
 t = await wait(`${id3} hand`, () => tasks.get(id3)?.hand?.reason === "mergeFailed" && tasks.get(id3), 180000);
 if (autoFixed(t).length !== 2) throw new Error(`it tried ${autoFixed(t).length} automatic fixes`);
@@ -218,7 +263,7 @@ send({ type: "task.cancel", id: id3 });
 send({ type: "policy.save", policy: { ...policy, autoMerges: false } });
 await wait("autoMerges off", () => policy.autoMerges === false);
 step("auto-merge: off (a person merges)");
-const [a, b] = [await build(4, "Say hello first"), await build(5, "Say hello second")];
+const [a, b] = [await build(5, "Say hello first"), await build(6, "Say hello second")];
 const ready = (id) => { const t = tasks.get(id); return t?.state === "reviewing" && t.autoReview?.rounds.at(-1)?.verdict === "passed" && t.events.some((e) => e.text.startsWith("is ready; waiting for a person")) && t; };
 await wait(`${a} and ${b} ready`, () => ready(a) && ready(b), 300000);
 t = await wait(`${b} overlaps ${a}`, () => { const t = tasks.get(b); return t.mergeForecast?.overlaps.some((o) => o.task === a && o.files.includes("hello.txt")) && t; });
