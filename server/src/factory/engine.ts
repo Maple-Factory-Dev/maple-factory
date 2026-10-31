@@ -6,9 +6,9 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
-import { PriorityValues } from "../wire.ts";
+import { ArtifactKindValues, PriorityValues } from "../wire.ts";
 import type {
-  ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -39,6 +39,19 @@ const MAX_RESTARTS = 2;
 /// How long a session that reported its last word gets to wrap up before it's closed.
 const CLOSE_AFTER_MS = 8_000;
 const MAX_EVENTS = 200;
+/** Artifacts a task keeps; sharing more drops the oldest. */
+const MAX_ARTIFACTS = 20;
+
+/** An uploaded artifact's kind from the type the server sniffed (attachments.ts `sniffArtifact`). */
+function artifactKind(mime: string): ArtifactKind {
+  if (mime === "text/html") return "html";
+  if (mime === "image/svg+xml") return "svg";
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "text/markdown") return "markdown";
+  if (mime === "text/csv" || mime === "application/json") return "data";
+  return "text";
+}
 const COLS = 160;
 const ROWS = 48;
 
@@ -939,6 +952,7 @@ export class Engine {
             changes: [],
             events: [{ who, text: `split it off ${task.id}`, at: t }],
             mockups: [],
+            artifacts: [],
             question: null,
             hand: null,
             worker: null,
@@ -1138,6 +1152,7 @@ export class Engine {
       changes: [],
       events: [{ who, text: "created it", at: t }],
       mockups: [],
+      artifacts: [],
       followUps: [],
       queueRank: t,
       draftRank: t,
@@ -2345,6 +2360,27 @@ export class Engine {
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
         const left = task.doneWhen.filter((d) => d.status !== "proven").length;
         return { summary: left ? `Attached. ${left} item${left === 1 ? "" : "s"} left to prove.` : "Attached. Every item is proven." };
+      }
+
+      case "share_artifact": {
+        const title = str(a.title, "title").trim().slice(0, 120);
+        if (!title) fail("title: give it a short name.");
+        // The runner uploaded the file (PUT /runner/artifact/<task>) and put `{key, name, type, bytes}` in its place.
+        const up = a.file && typeof a.file === "object" ? (a.file as { key?: unknown; type?: unknown; bytes?: unknown }) : null;
+        if (!up || !isAttachmentKey(up.key)) fail("file: the runner didn't upload it. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.");
+        const mime = typeof up!.type === "string" ? up!.type : "application/octet-stream";
+        const kind: ArtifactKind = a.kind != null && ArtifactKindValues.includes(a.kind as ArtifactKind) && a.kind !== "other" ? (a.kind as ArtifactKind) : artifactKind(mime);
+        const summary = typeof a.summary === "string" && a.summary.trim() ? a.summary.trim().slice(0, 300) : null;
+        task.artifacts ??= [];
+        const same = task.artifacts.findIndex((x) => x.title.toLowerCase() === title.toLowerCase());
+        const version = same >= 0 ? task.artifacts[same]!.version + 1 : 1;
+        const artifact: Artifact = { id: crypto.randomUUID(), title, kind, summary, file: up!.key as string, mime, bytes: num(up!.bytes ?? 0), by: s.role, at: now(), version };
+        if (same >= 0) task.artifacts.splice(same, 1);
+        task.artifacts.push(artifact);
+        // Newest kept: an agent that shares a lot loses its oldest first.
+        if (task.artifacts.length > MAX_ARTIFACTS) task.artifacts.splice(0, task.artifacts.length - MAX_ARTIFACTS);
+        this.event(task, s.role, `shared an artifact: ${title}${version > 1 ? ` (v${version})` : ""}`);
+        return { summary: `Shared "${title}"${version > 1 ? ` as v${version}` : ""}. People see it in the task's Artifacts.`, data: { id: artifact.id, version } };
       }
 
       case "finish": {

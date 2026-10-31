@@ -128,7 +128,7 @@ export function sniffArtifact(b: Uint8Array, name: string): string | null {
   if (b.includes(0)) return null;
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(b);
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b);
   } catch {
     return null;
   }
