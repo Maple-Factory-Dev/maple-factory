@@ -97,6 +97,11 @@ final class AppState {
     var boardHidesEmptyColumns: Bool {
         didSet { boardDefaults.set(boardHidesEmptyColumns, forKey: "boardHidesEmptyColumns") }
     }
+    /// Whether a goal's layouts show everyone's tasks or only yours; one choice for every goal,
+    /// kept in the same defaults as the board preference.
+    var goalTaskFilter: GoalTaskFilter {
+        didSet { boardDefaults.set(goalTaskFilter.rawValue, forKey: "goalTaskFilter") }
+    }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
     /// A live session a maplefactory://session/<machine>/<id> link asked for; Machines opens it.
@@ -235,7 +240,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "onboardingStep"]
+                                        "timelineMerged", "mockview", "onboardingStep", "goaltasks"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -2161,7 +2166,12 @@ final class AppState {
     init(boardDefaults: UserDefaults = AppDefaults) {
         self.boardDefaults = boardDefaults
         boardHidesEmptyColumns = boardDefaults.bool(forKey: "boardHidesEmptyColumns")
+        goalTaskFilter = boardDefaults.string(forKey: "goalTaskFilter").flatMap(GoalTaskFilter.init(rawValue:)) ?? .everyone
         let defaults = AppDefaults
+        // `-goaltasks mine|everyone` starts a screenshot on that filter without saving it.
+        if let filter = defaults.string(forKey: "goaltasks").flatMap(GoalTaskFilter.init(argument:)) {
+            goalTaskFilter = filter
+        }
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
@@ -2446,6 +2456,8 @@ final class AppState {
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // The goal view's Everyone | You switch, through the same persisted preference: `goaltasks:mine|everyone`.
+            case "goaltasks": if let filter = GoalTaskFilter(argument: parts[1]) { goalTaskFilter = filter }
             case "go": destination = Destination(argument: parts[1])
             // The ⌘K palette: `palette:open`, `palette:type:state:reviewing`, `palette:down` (or `up`), `palette:run`, `palette:close`.
             case "palette":
@@ -2530,6 +2542,20 @@ final class AppState {
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
             default: break
             }
+        }
+    }
+}
+
+/// A goal view's Everyone | You switch: every task in the goal, or only the ones you own.
+enum GoalTaskFilter: String, CaseIterable {
+    case everyone = "Everyone", mine = "You"
+
+    /// A launch argument or demo step: `mine`/`you` or `everyone`/`all`.
+    init?(argument: String) {
+        switch argument.lowercased() {
+        case "mine", "you", "me": self = .mine
+        case "everyone", "all": self = .everyone
+        default: return nil
         }
     }
 }
