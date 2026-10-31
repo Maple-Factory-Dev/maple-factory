@@ -53,7 +53,10 @@ export class OrgHub extends DurableObject<Env> {
     this.intake = new Intake(this.store, {
       broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
       waitUntil: (p) => ctx.waitUntil(p),
-      deliver: (replyUrl, text) => deliver(env, replyUrl, text),
+      deliver: (replyUrl, text) => deliver(env, replyUrl, text, {
+        config: (kind) => this.integrations.config(kind),
+        event: (kind, error) => this.integrationEvent(kind, error),
+      }),
     });
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
@@ -148,9 +151,7 @@ export class OrgHub extends DurableObject<Env> {
       const kind = integration[1] as IntegrationKind;
       if (integration[2] === "config") return Response.json(await this.integrations.config(kind));
       const { error } = (await request.json()) as { error?: string | null };
-      if (error) this.integrations.noteError(kind, error);
-      else this.integrations.noteEvent(kind);
-      this.broadcast({ type: "integrations.updated", integrations: await this.integrations.list() });
+      await this.integrationEvent(kind, error ?? undefined);
       return new Response(null, { status: 204 });
     }
     switch (url.pathname) {
@@ -297,6 +298,13 @@ export class OrgHub extends DurableObject<Env> {
       }
     }
     return new Response("Not found.", { status: 404 });
+  }
+
+  /** How an integration's last event went, told to the apps. */
+  private async integrationEvent(kind: IntegrationKind, error?: string) {
+    if (error) this.integrations.noteError(kind, error);
+    else this.integrations.noteEvent(kind);
+    this.broadcast({ type: "integrations.updated", integrations: await this.integrations.list() });
   }
 
   /** The factory icon's link, if it has one. */

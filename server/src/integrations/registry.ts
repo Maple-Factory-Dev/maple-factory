@@ -4,6 +4,7 @@
 
 import type { Env } from "../env.ts";
 import type { IntegrationField, IntegrationKind } from "../wire.ts";
+import { orgHub } from "../util.ts";
 
 export interface IntegrationDef {
   kind: IntegrationKind;
@@ -86,3 +87,23 @@ export function merged(def: IntegrationDef, enabled: boolean, saved: Record<stri
   }
   return out;
 }
+
+/** How the Worker's handlers reach integrations' settings and status (OrgHub keeps them). */
+export interface IntegrationAccess {
+  /** Stored values over env vars; null when it's off or not set up. */
+  config(kind: IntegrationKind): Promise<Record<string, string> | null>;
+  /** It was heard from and verified, or (with `error`) something went wrong. */
+  event(kind: IntegrationKind, error?: string): Promise<void>;
+}
+
+export function integrationAccess(env: Env): IntegrationAccess {
+  return {
+    config: async (kind) => (await orgHub(env).fetch(`https://org/integrations/${kind}/config`)).json(),
+    event: async (kind, error) => {
+      await orgHub(env).fetch(`https://org/integrations/${kind}/event`, { method: "POST", body: JSON.stringify({ error: error ?? null }) });
+    },
+  };
+}
+
+export const integrationConfig = (env: Env, kind: IntegrationKind) => integrationAccess(env).config(kind);
+export const integrationEvent = (env: Env, kind: IntegrationKind, error?: string) => integrationAccess(env).event(kind, error);
