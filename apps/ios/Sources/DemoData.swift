@@ -13,7 +13,8 @@ enum DemoData {
         var feed = FeedState()
         feed.org = "acme"
         feed.name = "Acme"
-        feed.me = Wire.Member(login: me, name: "Andrea", role: "admin", teams: ["mobile"])
+        // `-demoRole member` shows the app as a member sees it, not an admin.
+        feed.me = Wire.Member(login: me, name: "Andrea", role: UserDefaults.standard.string(forKey: "demoRole") ?? "admin", teams: ["mobile"])
         feed.members = [
             feed.me!,
             Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
@@ -23,6 +24,7 @@ enum DemoData {
             Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),
             Wire.Goal(id: "g-web", name: "Billing", prefix: "BIL", color: "#14A866", summary: "Usage-based plans and invoices.", lead: "sam", repo: "acme/web", repos: ["acme/web"]),
+            Wire.Goal(id: "g-onb", name: "Onboarding", prefix: "ONB", color: "#8E5BD8", summary: "A first run that gets a new teammate to their first merged task.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/web"], team: "mobile"),
         ]
         feed.tasks = tasks()
         feed.machines = machines()
