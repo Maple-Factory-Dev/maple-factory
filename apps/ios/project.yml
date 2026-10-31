@@ -22,6 +22,10 @@ packages:
   Sentry:
     url: https://github.com/getsentry/sentry-cocoa
     exactVersion: 9.32.0
+  # A live session's terminal (SessionTerminalView.swift), the same pin as apps/mac/Package.swift.
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.20.0
 targets:
   Maple Factory:
     type: application
@@ -34,6 +38,8 @@ targets:
         product: MapleKit
       - package: Sentry
         product: Sentry
+      - package: SwiftTerm
+        product: SwiftTerm
       - sdk: AVKit.framework
       - sdk: WebKit.framework
     settings:

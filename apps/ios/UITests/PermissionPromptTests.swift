@@ -1,7 +1,7 @@
 import XCTest
 
 /// The demo's APP-16 builder is stopped at a Bash permission prompt: the Machines row says so, the
-/// task shows the card, and Yes answers it, so the card goes and the session is working again.
+/// task (through the session's terminal) shows the card, and Yes answers it, so the card goes and the session is working again.
 ///   xcodebuild test -scheme "Maple Factory" -only-testing:MapleFactoryUITests/PermissionPromptTests …
 final class PermissionPromptTests: XCTestCase {
     func testAnswerYesInTheDemo() {
@@ -14,7 +14,11 @@ final class PermissionPromptTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Bash: npm install @sentry/react-native"].exists)
         snap(app, "machines-needs-permission")
 
+        // The row opens the session's terminal; its task is a tap away.
         app.buttons.containing(NSPredicate(format: "label CONTAINS 'APP-16'")).firstMatch.tap()
+        let openTask = app.buttons["openTask"]
+        XCTAssertTrue(openTask.waitForExistence(timeout: 10), "the row should open the session's terminal")
+        openTask.tap()
         let card = app.descendants(matching: .any)["permission-card"]
         XCTAssertTrue(card.waitForExistence(timeout: 10), "the task should show the permission card")
         XCTAssertTrue(app.staticTexts["cd app && npm install @sentry/react-native --save"].exists)
@@ -26,6 +30,8 @@ final class PermissionPromptTests: XCTestCase {
         XCTAssertTrue(card.waitForNonExistence(timeout: 10), "answering should clear the card")
         snap(app, "task-answered")
 
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(openTask.waitForExistence(timeout: 10))
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.staticTexts["Allowed"].waitForExistence(timeout: 10), "the session should be working again")
         XCTAssertFalse(badge.exists, "the row shouldn't say needs permission any more")

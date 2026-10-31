@@ -108,6 +108,8 @@ struct Comment {
     var id: String? = nil
     /// The logins it @mentions, as the server worked them out; nil from a server older than mentions.
     var mentions: [String]? = nil
+    /// The id of its thread's first comment, when it's a reply.
+    var replyTo: String? = nil
 
     /// Whether it @mentions this login, by the server's list or, from an older server, its text.
     func mentions(_ login: String) -> Bool {

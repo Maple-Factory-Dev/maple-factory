@@ -508,12 +508,7 @@ struct TaskFocusView: View {
                     }
                 }
             }
-            detailRow("Owner") {
-                HStack(spacing: 6) {
-                    AgentAvatar(agent: task.owner, size: 18)
-                    Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
-                }
-            }
+            detailRow("Owner") { OwnerMenu(task: task, avatarSize: 18) }
             agentRows
             if appState.isLive {
                 if let worker = task.worker {

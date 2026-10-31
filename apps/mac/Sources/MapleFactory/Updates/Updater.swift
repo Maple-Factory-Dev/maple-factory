@@ -34,6 +34,8 @@ final class Updater: NSObject {
     private(set) var toastDismissedVersion: String?
     /// Update & Restart was clicked, so ready to relaunch relaunches without a second click.
     private(set) var relaunchWhenReady = false
+    /// Whether the What's new sheet is up on the main window.
+    var showsReleaseNotes = false
 
     /// Whether the update toast is up at the top of the window.
     var showsToast: Bool {
@@ -113,7 +115,7 @@ final class Updater: NSObject {
 
     func checkForUpdates() { updater?.checkForUpdates() }
 
-    /// The release notes for the update on offer, in the browser: every release since the installed one.
+    /// The release notes for the update on offer, for the What's new sheet: every release since the installed one.
     /// The demo's spans a few published releases, up to this build's (the latest published release under
     /// `swift run`, which has no bundle version). MAPLE_UPDATES_URL points it at another copy of the site,
     /// like a local build/updates-site before it's published.
@@ -125,6 +127,12 @@ final class Updater: NSObject {
             notes: URL(string: "\(site)/releases/\(version)/notes.html"), installed: Self.demoInstalledVersion, offered: version
         )
     }
+
+    /// The version the release notes start from, for the sheet's header: this build's, or the demo's.
+    var notesInstalledVersion: String { demo != nil ? Self.demoInstalledVersion : version }
+
+    /// What's new, in the sheet on the main window rather than the browser.
+    func openReleaseNotes() { showsReleaseNotes = true }
 
     /// Published releases on the update site, for the demo's link: the one it's offering, and an older one to skip from.
     private static let demoNotesVersion = "0.1.26"

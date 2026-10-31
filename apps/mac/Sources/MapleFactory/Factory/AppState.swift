@@ -1250,12 +1250,13 @@ final class AppState {
         steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: text, status: interruptNow ? .applying : .queued, timing: timing))
     }
 
-    func comment(_ id: String, text: String) {
+    /// A comment on a task, or a reply in the thread whose first comment is `replyTo`.
+    func comment(_ id: String, text: String, replyTo: String? = nil) {
         if let client, isLive {
-            client.send(.taskComment(.init(id: id, text: text)))
+            client.send(.taskComment(.init(id: id, text: text, replyTo: replyTo)))
             return
         }
-        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now", id: UUID().uuidString, replyTo: replyTo))
     }
 
     /// The review being drafted on a task's diff; the same one each time, until it's sent.
@@ -2332,6 +2333,8 @@ final class AppState {
                     tasks.append(task)
                 }
             case "board" where parts[1] == "bottom": NotificationCenter.default.post(name: BoardColumns.demoScroll, object: nil)
+            // Opens the Reply box on the timeline's first thread with replies (`reply:open`), or on the comment whose id starts with `reply:<id>`.
+            case "reply": NotificationCenter.default.post(name: TaskTimeline.demoReply, object: parts[1])
             case "goto": destination = .goal(parts.dropFirst().joined(separator: ":"))
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
@@ -2389,6 +2392,7 @@ final class AppState {
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
+            case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             // The Changes tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.

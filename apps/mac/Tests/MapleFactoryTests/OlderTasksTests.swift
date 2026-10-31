@@ -16,13 +16,15 @@ import Testing
         """
     }
 
+    /// Signed in as afomera, like the other suites: the snapshot sets FactoryData.me, which suites running alongside read.
     /// Two open, one recently merged; the tally says 4 more merged and 2 cancelled were left out.
     private func client(tallies: Bool = true) throws -> FactoryClient {
         let tally = tallies ? #","tallies":[{"goal":"g","merged":5,"cancelled":2,"closed":0,"total":9}],"olderTasks":6"# : ""
         let client = FactoryClient()
         client.apply(try decode(#"""
         {"type":"snapshot","org":"acme","protocolVersion":2,
-         "me":{"login":"alice","role":"member","teams":[]},"members":[{"login":"alice","role":"admin","teams":[]}],
+         "me":{"login":"afomera","role":"member","teams":[]},
+         "members":[{"login":"alice","role":"admin","teams":[]},{"login":"afomera","name":"Andrea Fomera","role":"member","teams":[]}],
          "machines":[],"ended":[],
          "goals":[{"id":"g","name":"Goal","prefix":"MF","color":"#14B8A6","summary":"","lead":"alice","repos":[]}],
          "tasks":[\#(task("MF-1", "building")),\#(task("MF-2", "drafting")),\#(task("MF-3", "merged"))]\#(tally),

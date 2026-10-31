@@ -2316,8 +2316,10 @@ public enum Wire {
         public var via: String?
         /// Logins of the org members this comment @mentions, worked out by the server. Never the author.
         public var mentions: [String]?
+        /// The id of the comment that starts its thread. Replies to a reply sit under that same root.
+        public var replyTo: String?
 
-        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil) {
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil, replyTo: String? = nil) {
             self.id = id
             self.author = author
             self.text = text
@@ -2325,6 +2327,7 @@ public enum Wire {
             self.anchor = anchor
             self.via = via
             self.mentions = mentions
+            self.replyTo = replyTo
         }
     }
 
@@ -5788,15 +5791,19 @@ public enum Wire {
         }
     }
 
+    /// Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.
     public struct ClientMessageTaskComment: Codable, Hashable, Sendable {
         public var id: String
         public var text: String
         public var anchor: String?
+        /// The id of a comment on this task to reply to; a reply to a reply goes under its root.
+        public var replyTo: String?
 
-        public init(id: String, text: String, anchor: String? = nil) {
+        public init(id: String, text: String, anchor: String? = nil, replyTo: String? = nil) {
             self.id = id
             self.text = text
             self.anchor = anchor
+            self.replyTo = replyTo
         }
     }
 

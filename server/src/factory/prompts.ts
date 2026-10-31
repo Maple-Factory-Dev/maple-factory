@@ -71,7 +71,7 @@ function moving(others: Moving[]) {
 function comments(task: Task) {
   const recent = task.comments.slice(-10);
   if (!recent.length) return "";
-  return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}: ${c.text}`).join("\n");
+  return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}${c.replyTo ? ` (in thread ${c.replyTo})` : ""}: ${c.text}`).join("\n");
 }
 
 /** The org's enabled risk checks, for the planner to judge and cite. */
@@ -108,6 +108,7 @@ Read the repository (this worktree) to understand where the change goes. Then ca
 
 If something essential is ambiguous, call \`ask\` with the question and a few options, then end your turn and wait: the answer will be typed here.
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal instead of writing a plan. Each becomes a draft in this goal for a person to accept, and this task closes (there's nothing to merge): end your turn after it. Don't build them yourself. When the work has to land in order (an epic), give each proposal \`after\` (#n for an earlier proposal in the call, or an existing task id) and the whole set one \`effort\` name: once approved, each starts building on its own after everything it waits on has merged.
+${THREADS}
 If the task can't be planned as asked, call \`raise_hand\`. After \`submit_plan\` succeeds, end your turn; your session will be closed.`;
 }
 
@@ -143,10 +144,15 @@ Work through the steps in order. Call \`progress\` when you start and finish eac
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
 For each Done when item, produce real evidence and call \`prove\` (item numbers from 1): paste the command and its output for terminal/tests proofs.
 ${ARTIFACTS(task)}
+${THREADS}
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal. Each becomes a draft in this goal for a person to accept; don't build them yourself. (Proposing from planning closes a task; once it's building, it carries on.)
 If you're stuck on a decision only a person can make, call \`ask\`, end your turn and wait. If you can't meet a proof or the fix grows past the plan, call \`raise_hand\`.
 When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${checks.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
 }
+
+/** Comment threads: people talking to the session mid-flight, answered with \`reply\`. */
+const THREADS =
+  "People can talk to you in the task's comment threads while you work: it arrives as \"<who> in comment thread <id>: …\" (and \`get_task\` lists any threads still waiting on an answer). Answer briefly with \`reply\` in that thread, then carry on with the work. It's conversation, not a change request.";
 
 /** What \`share_artifact\` is for: something people look at, not evidence (proofs stay that). */
 const ARTIFACTS = (task: Task) =>
@@ -185,5 +191,6 @@ Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/
 
 Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
 List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
-${ARTIFACTS(task)}`;
+${ARTIFACTS(task)}
+${THREADS}`;
 }

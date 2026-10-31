@@ -5,6 +5,14 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.80.0 — 2026-10-31
+
+The runner keeps up with the factory's protocol for threaded comments: replies carry the comment they answer.
+
+## 0.79.0 — 2026-10-31
+
+Agents can share charts, images, PDFs and HTML pages on a task with the share_artifact tool; the runner uploads the file to the factory.
+
 ## 0.78.0 — 2026-10-31
 
 Update installs only the runner version you were shown; if a newer one came out meanwhile, nothing is installed until you press Update again.

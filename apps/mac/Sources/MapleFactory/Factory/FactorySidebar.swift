@@ -497,19 +497,19 @@ struct UpdateFooter: View {
                                     .foregroundStyle(Theme.textMuted)
                                     .lineLimit(1)
                                     .help(detail)
-                                if phase.showsReleaseNotesLink, let url = updater.releaseNotesURL {
+                                if phase.showsReleaseNotesLink, updater.releaseNotesURL != nil {
                                     Text(" · ")
                                         .font(.system(size: 11))
                                         .foregroundStyle(Theme.textMuted)
-                                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                                    Text(UpdatePhase.releaseNotesLinkLabel)
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(Theme.accent)
                                         .lineLimit(1)
                                         .fixedSize()
                                         .contentShape(Rectangle())
-                                        .onTapGesture { NSWorkspace.shared.open(url) }
+                                        .onTapGesture { updater.openReleaseNotes() }
                                         .pointerStyle(.link)
-                                        .help("See the release notes")
+                                        .help("Read the release notes")
                                 }
                             }
                         }
