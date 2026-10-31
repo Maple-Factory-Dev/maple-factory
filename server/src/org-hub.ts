@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession } from "./wire.ts";
+import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
@@ -21,9 +21,12 @@ import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
 import { githubAppInfo } from "./github.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
+import { fetchGitHubStatus, notice } from "./github-status.ts";
 
 /** How often the hub reads the runner releases again while apps are connected. */
 const RUNNER_CHECK_EVERY = 3_600_000;
+/** How often the hub reads githubstatus.com while apps are connected. */
+const GITHUB_STATUS_EVERY = 300_000;
 
 interface Client {
   member: Member;
@@ -92,6 +95,7 @@ export class OrgHub extends DurableObject<Env> {
     await this.engine.pump();
     await this.engine.slack.sweep();
     await this.checkRunnerRelease();
+    await this.checkGitHubStatus();
   }
 
   /** Apps live on one socket and rarely make a request, so the request-time membership check would miss them:
@@ -146,6 +150,40 @@ export class OrgHub extends DurableObject<Env> {
     await this.wakeAt(Math.min(Math.max(checked + RUNNER_CHECK_EVERY, now + 1000), now + RUNNER_CHECK_EVERY));
   }
 
+  /** While apps are connected, reads githubstatus.com every five minutes and tells the apps when GitHub's
+   *  incidents change. A read that fails keeps the last known status. An idle org isn't woken for it. */
+  private async checkGitHubStatus() {
+    if (!this.ctx.getWebSockets("client").length) return;
+    let checked = (await this.ctx.storage.get<number>("ghstatus:checkedAt")) ?? 0;
+    if (Date.now() - checked >= GITHUB_STATUS_EVERY) {
+      checked = Date.now();
+      await this.ctx.storage.put("ghstatus:checkedAt", checked);
+      const read = await fetchGitHubStatus(this.env.GITHUB_STATUS_URL || undefined);
+      if (read) {
+        const status = notice(read);
+        const before = await this.githubStatus();
+        const same = (s: GitHubStatus | null) => JSON.stringify(s && { ...s, checkedAt: 0 });
+        if (same(status) !== same(before)) {
+          await this.ctx.storage.put("ghstatus:seen", status);
+          this.broadcast({ type: "github.status", status });
+        }
+      }
+    }
+    await this.armGitHubStatusCheck(checked);
+  }
+
+  /** The last githubstatus.com notice the apps were told: null while all is clear. */
+  private async githubStatus(): Promise<GitHubStatus | null> {
+    return (await this.ctx.storage.get<GitHubStatus | null>("ghstatus:seen")) ?? null;
+  }
+
+  /** The next githubstatus.com read: five minutes after the last one, never later than five minutes from now. */
+  private async armGitHubStatusCheck(checked?: number) {
+    checked ??= (await this.ctx.storage.get<number>("ghstatus:checkedAt")) ?? 0;
+    const now = Date.now();
+    await this.wakeAt(Math.min(Math.max(checked + GITHUB_STATUS_EVERY, now + 1000), now + GITHUB_STATUS_EVERY));
+  }
+
   async fetch(request: Request): Promise<Response> {
     await applySettings(this.env);
     const url = new URL(request.url);
@@ -166,6 +204,7 @@ export class OrgHub extends DurableObject<Env> {
         this.ctx.acceptWebSocket(pair[1], ["client"]);
         pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
         await this.armRunnerCheck();
+        await this.armGitHubStatusCheck();
         await this.armRecheck();
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
@@ -249,8 +288,8 @@ export class OrgHub extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       case "/dev/alarm": {
-        // Local dev (the Worker checked): run the alarm now, as if `stale` the runner check were an hour old.
-        if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete("runner:checkedAt");
+        // Local dev (the Worker checked): run the alarm now, as if `stale` the runner and GitHub status checks were due.
+        if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete(["runner:checkedAt", "ghstatus:checkedAt"]);
         await this.alarm();
         return Response.json({ alarm: await this.ctx.storage.getAlarm(), now: Date.now() });
       }
@@ -600,6 +639,7 @@ export class OrgHub extends DurableObject<Env> {
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
           serverUpdate: client.member.role === "admin" ? await serverUpdate(this.env) : null,
+          githubStatus: await this.githubStatus(),
           icon: this.iconPath(),
           name: this.store.name(),
           protocolVersion: PROTOCOL_VERSION,

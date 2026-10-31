@@ -117,6 +117,16 @@ runner/src/update.rs) and upload them to the factory's bucket (`RELEASES`) with
 `node scripts/release-runner.mjs --to factory`. What's in the bucket wins over the feed.
 `RELEASE_FEED=off` serves only the bucket.
 
+### GitHub status
+
+While apps are connected, the org hub reads githubstatus.com's `api/v2/summary.json` from its alarm, at most
+every 5 minutes (`ghstatus:checkedAt`), and keeps its unresolved incidents and non-operational components
+(`src/github-status.ts`). The snapshot carries the last notice as `githubStatus`, and a change (an incident
+starting, changing or resolving) is broadcast as `github.status`; the Mac sidebar and the web app's header show
+"GitHub is having issues" while there's one. A read that fails keeps the last known status, and an idle org
+isn't woken for it. `GITHUB_STATUS_URL` points it at a fake for tests (test/e2e-github-status.mjs), and
+`POST /dev/alarm?stale` makes the check due.
+
 ## Develop
 
 ```sh

@@ -111,4 +111,21 @@ struct FeedStateTests {
         #expect(!FeedState.version("0.10.1", isOlderThan: "0.10.1"))
         #expect(!FeedState.version("1.0.0-beta", isOlderThan: "1.0"))
     }
+
+    @Test func githubStatusFollowsTheFeed() throws {
+        var state = FeedState()
+        state.apply(try decode(snapshot))
+        #expect(state.githubStatus == nil)
+
+        let incident = #"{"indicator":"minor","description":"Partial System Outage","incidents":[{"name":"Incident with Actions","status":"investigating","url":"https://www.githubstatus.com/incidents/x"}],"components":["Actions"],"checkedAt":1}"#
+        state.apply(try decode(#"{"type":"github.status","status":\#(incident)}"#))
+        #expect(state.githubStatus?.incidents.first?.name == "Incident with Actions")
+
+        // All clear, whether the server says nothing or an operational status.
+        state.apply(try decode(#"{"type":"github.status","status":{"indicator":"none","description":"All Systems Operational","incidents":[],"components":[],"checkedAt":2}}"#))
+        #expect(state.githubStatus == nil)
+        state.apply(try decode(#"{"type":"github.status","status":\#(incident)}"#))
+        state.apply(try decode(#"{"type":"github.status"}"#))
+        #expect(state.githubStatus == nil)
+    }
 }
