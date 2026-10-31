@@ -193,8 +193,16 @@ struct GoalEditorView: View {
             stopSaving()
             client.notice = nil
         }
+        // A save the server never answers gives up after 15s; the form stays filled in for another try.
+        .task(id: saving) {
+            guard saving else { return }
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, saving else { return }
+            stopSaving()
+            failure = "The server didn't answer. Check your connection and try again."
+        }
         .onDisappear { if saving { stopSaving() } }
-        .onExitCommand { if !saving { close(savedAs: nil) } }
+        .onExitCommand { cancel() }
         .onReceive(NotificationCenter.default.publisher(for: Self.demoFill)) { note in
             let value = note.userInfo?["value"] as? String ?? ""
             switch note.userInfo?["field"] as? String {
@@ -229,9 +237,8 @@ struct GoalEditorView: View {
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
             Spacer()
-            Button("Cancel") { close(savedAs: nil) }
+            Button("Cancel", action: cancel)
                 .keyboardShortcut(.cancelAction)
-                .disabled(saving)
             Text(saving ? (editing == nil ? "Creating…" : "Saving…") : editing == nil ? "Create goal" : "Save")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.onAccent)
@@ -662,6 +669,12 @@ struct GoalEditorView: View {
     private func stopSaving() {
         saving = false
         client.savingGoal = false
+    }
+
+    /// Cancel works mid-save too: if the server answers later, the goal just shows up in the sidebar.
+    private func cancel() {
+        if saving { stopSaving() }
+        close(savedAs: nil)
     }
 
     /// Back to the page you were on; a goal just made opens instead, unless a draft is waiting on it.

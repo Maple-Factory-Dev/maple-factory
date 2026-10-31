@@ -76,6 +76,9 @@ final class AppState {
         didSet {
             focusedTask = nil
             isComposing = false
+            // Any move to a page (sidebar, palette, a link) closes the goal editor; it would cover the page.
+            goalSheet = nil
+            goalPrefill = nil
             rememberPage()
         }
     }
@@ -1073,6 +1076,7 @@ final class AppState {
         let goal = Destination.goal(task(id).goal)
         if destination != goal { destination = goal }
         isComposing = false
+        goalSheet = nil
         selectedTask = id
         focusedTask = id
     }
@@ -1086,6 +1090,7 @@ final class AppState {
     }
 
     func openFocus(_ id: String) {
+        goalSheet = nil
         withAnimation(.snappy(duration: 0.3)) {
             selectedTask = id
             focusedTask = id
