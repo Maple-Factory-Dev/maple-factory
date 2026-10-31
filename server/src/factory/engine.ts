@@ -6,7 +6,7 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
-import { ArtifactKindValues, PriorityValues } from "../wire.ts";
+import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
@@ -28,7 +28,7 @@ import { assess, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
-import { mentionsIn } from "./mentions.ts";
+import { agentsIn, mentionsIn } from "./mentions.ts";
 import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
@@ -584,7 +584,15 @@ export class Engine {
       }
       case "task.comment": {
         const text = msg.text.trim() || fail("Say something.");
-        task.comments.push(await this.comment(who, text, { anchor: msg.anchor ?? null }));
+        // A reply goes under its thread's root: replies to a reply flatten onto it.
+        let replyTo: string | null = null;
+        if (msg.replyTo != null) {
+          const parent = task.comments.find((c) => c.id === msg.replyTo) ?? fail("That comment isn't on this task.");
+          replyTo = parent.replyTo ?? parent.id;
+        }
+        const comment = await this.comment(who, text, { anchor: msg.anchor ?? null, replyTo });
+        task.comments.push(comment);
+        await this.toThread(task, who, comment);
         this.save(task);
         return;
       }
@@ -2199,8 +2207,20 @@ export class Engine {
   private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>): { summary: string; data?: unknown } {
     const goal = this.store.goal(task.goal);
     switch (name) {
-      case "get_task":
-        return { summary: `${task.id} · ${task.title} (${task.state})`, data: { task, goal } };
+      case "get_task": {
+        const threads = openThreads(task.comments);
+        const open = threads.length ? ` · ${threads.length} comment thread${threads.length === 1 ? "" : "s"} waiting on an answer (answer each with \`reply\`)` : "";
+        return { summary: `${task.id} · ${task.title} (${task.state})${open}`, data: { task, goal, threads } };
+      }
+
+      case "reply": {
+        const thread = str(a.thread, "thread").trim();
+        const text = str(a.text, "text").trim() || fail("text: say something.");
+        const parent = task.comments.find((c) => c.id === thread) ?? fail(`thread: no comment ${thread} on this task.`);
+        const root = parent.replyTo ?? parent.id;
+        task.comments.push({ id: crypto.randomUUID(), author: s.role, text: text.slice(0, 8000), at: now(), anchor: null, via: null, mentions: null, replyTo: root });
+        return { summary: `Replied in thread ${root}.` };
+      }
 
       case "submit_plan": {
         if (task.state !== "planning") fail("The plan isn't open for changes right now.");
@@ -2833,9 +2853,20 @@ export class Engine {
   }
 
   /** A person's comment, with the members it @mentions. */
-  private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null } = {}): Promise<Comment> {
+  private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null; replyTo?: string | null } = {}): Promise<Comment> {
     const mentions = mentionsIn(text, await this.hooks.members(), author);
-    return { id: crypto.randomUUID(), author, text, at: opts.at ?? now(), anchor: opts.anchor ?? null, via: opts.via ?? null, mentions: mentions.length ? mentions : null };
+    return { id: crypto.randomUUID(), author, text, at: opts.at ?? now(), anchor: opts.anchor ?? null, via: opts.via ?? null, mentions: mentions.length ? mentions : null, replyTo: opts.replyTo ?? null };
+  }
+
+  /** A person's comment in a thread an agent is part of (or one that @mentions an agent) is
+   *  conversation for the task's live session: typed in for it to answer with `reply`. With
+   *  nothing running, it waits in the thread and the next agent's `get_task` hands it over. */
+  private async toThread(task: Task, who: string, comment: Comment) {
+    const root = comment.replyTo ?? comment.id;
+    if (!threadTalksToAgent(task.comments, root)) return;
+    const said = `${who} in comment thread ${root}: ${comment.text}\nAnswer with \`reply\` (thread ${root}). This is conversation, not a change request; use the steer flow only if they ask for a change, and carry on with your work after.`;
+    if (task.worker && (await this.type(task, said))) return;
+    this.event(task, who, "left a comment in a thread; the next agent on it will see it");
   }
 
   /** A person's pick on a "didn't merge" hand. Its task is reviewing with no session, so the
@@ -3267,4 +3298,26 @@ export function branchNote(branch: string, note: string): { text: string; outcom
   if (note === "moved") return { text: `kept branch ${branch} on origin (it moved after the merge)`, outcome: "kept" };
   const why = note.replace(/^failed:\s*/, "") || "no reason given";
   return { text: `couldn't delete branch ${branch} on origin: ${why}`.slice(0, 2000), outcome: "failed" };
+}
+
+/** Is this an agent's (planner, builder, reviewer) comment rather than a person's? */
+const isAgent = (author: string) => (RoleValues as readonly string[]).includes(author);
+
+/** The thread under `root`: its first comment and replies, oldest first. */
+function threadOf(comments: Comment[], root: string): Comment[] {
+  return comments.filter((c) => c.id === root || c.replyTo === root).sort((a, b) => a.at - b.at);
+}
+
+/** A thread an agent wrote in, or one that @mentions @planner, @builder or @reviewer. */
+function threadTalksToAgent(comments: Comment[], root: string): boolean {
+  return threadOf(comments, root).some((c) => isAgent(c.author) || agentsIn(c.text).length > 0);
+}
+
+/** Threads talking to an agent whose last word is a person's: what the next agent should answer. */
+export function openThreads(comments: Comment[]): { root: string; comments: Comment[] }[] {
+  const roots = [...new Set(comments.map((c) => c.replyTo ?? c.id))];
+  return roots
+    .filter((r) => threadTalksToAgent(comments, r))
+    .map((r) => ({ root: r, comments: threadOf(comments, r) }))
+    .filter((t) => t.comments.length && !isAgent(t.comments[t.comments.length - 1]!.author));
 }
