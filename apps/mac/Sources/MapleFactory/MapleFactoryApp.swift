@@ -20,6 +20,7 @@ struct MapleFactoryApp: App {
     @State private var client: FactoryClient
 
     init() {
+        ErrorReports.start()
         // Together from the first frame, so a signed-in app never flashes the mockup's data.
         let client = FactoryClient()
         let state = AppState()
