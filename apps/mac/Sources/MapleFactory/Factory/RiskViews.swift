@@ -452,11 +452,12 @@ struct RiskPolicyEditor: View {
         .font(.system(size: 12.5))
     }
 
-    /// Off, then 15 to 480 minutes in 15-minute steps; a value set elsewhere off the grid snaps to it.
+    /// The server's whole range: Off, 5 and 10 minutes, then 15-minute steps to 4 h and hourly ones to 24 h.
+    static let minuteSteps: [Int] = [0, 5, 10] + Array(stride(from: 15, through: 240, by: 15)) + Array(stride(from: 300, through: 1440, by: 60))
+
+    /// The next step up or down from `m`; a value set elsewhere off the grid moves to its neighbour, never further.
     static func stepMinutes(_ m: Int, up: Bool) -> Int {
-        if up { return m <= 0 ? 15 : min(480, (m / 15 + 1) * 15) }
-        if m <= 15 { return 0 }
-        return min(480, ((m - 1) / 15) * 15)
+        up ? minuteSteps.first { $0 > m } ?? max(m, 1440) : minuteSteps.last { $0 < m } ?? 0
     }
 
     static func minutes(_ m: Int) -> String {
