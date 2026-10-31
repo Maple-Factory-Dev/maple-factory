@@ -24,6 +24,10 @@
   <span>Maple Factory was updated. Refresh to get the latest version.</span>
   <button type="button" class="btn primary small" id="update-refresh">Refresh</button>
 </div>
+<div id="github-status" class="update-bar github-status" role="status" hidden>
+  <span><span class="gh-dot" aria-hidden="true"></span><strong>GitHub is having issues</strong> <span id="github-status-detail"></span></span>
+  <a id="github-status-link" href="https://www.githubstatus.com" target="_blank" rel="noopener">githubstatus.com ↗</a>
+</div>
 <main id="main"></main>
 <div id="toast" class="toast" hidden></div>
 <script type="module" src="/app/sentry.js"></script>

@@ -128,7 +128,9 @@ function receive(m) {
       // The first version seen is the bundle this tab loaded; a reconnect after a deploy reports the new one.
       state.loadedVersion ??= m.serverVersion || null;
       if (bundleStale(state.loadedVersion, m.serverVersion)) $("update").hidden = false;
+      showGitHubStatus(m.githubStatus);
       break;
+    case "github.status": showGitHubStatus(m.status); return;
     case "icon.updated": showIcon(m.icon); return;
     case "name.updated": state.name = m.name ?? null; $("org").textContent = m.name || state.org || "Maple Factory"; break;
     case "policy.updated": state.policy = m.policy; break;
@@ -183,6 +185,17 @@ function receive(m) {
     default: return;
   }
   render();
+}
+
+/** GitHub's incident under the header, linking to it on githubstatus.com; all clear (or an older server) hides it. */
+function showGitHubStatus(s) {
+  const clear = !s || (s.indicator === "none" && !s.incidents?.length && !s.components?.length);
+  $("github-status").hidden = clear;
+  if (clear) return;
+  const incident = s.incidents?.[0];
+  $("github-status-detail").textContent = `· ${incident?.name || s.components?.join(", ") || s.description}`;
+  $("github-status-link").href = incident?.url || "https://www.githubstatus.com";
+  $("github-status-link").textContent = incident?.url ? "See the incident ↗" : "githubstatus.com ↗";
 }
 
 /** The factory's icon (`/icon/<id>`) in the header in place of the leaf, and as the tab's icon; none puts both back. */
