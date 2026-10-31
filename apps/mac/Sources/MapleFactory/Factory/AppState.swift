@@ -2436,6 +2436,10 @@ final class AppState {
                     if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { client?.scout(goal: goal.name); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // Settings › Runner's Check for Update pressed for this Mac: `runnercheck:mac`. Signing in, it waits for the machine.
+            case "runnercheck":
+                for _ in 0..<300 where client?.thisMac == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let client, let mac = client.thisMac { client.perform(.check, on: mac) }
             // Settings → Scout's Items per Scout run stepper set to a number: `scoutitems:5`.
             case "scoutitems":
                 for _ in 0..<300 where client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }

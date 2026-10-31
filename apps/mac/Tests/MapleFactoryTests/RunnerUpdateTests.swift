@@ -102,4 +102,42 @@ import Testing
         #expect(FactoryClient.runnerAction(machine(nil), latest: "0.11.0") == .check)
         #expect(FactoryClient.runnerAction(machine("0.9.0"), latest: "0.11.0") == .update("0.11.0"))
     }
+
+    // MARK: Settings › Runner's Check for Update
+
+    private let studio = Wire.Machine(id: "studio", name: "Studio", owner: "andrea", online: true, version: "0.9.0")
+    private let mini = Wire.Machine(id: "mini", name: "Mini", owner: "andrea", online: true, version: "0.9.0")
+
+    private func match(_ text: String, taskId: String? = nil, pending: [String: RunnerCheck]) -> String? {
+        FactoryClient.matchRunnerCheck(text: text, taskId: taskId, pending: pending, machines: [studio, mini])
+    }
+
+    @Test func upToDateAnswersTheCheck() {
+        #expect(match("Studio is on the latest runner (0.11.0).", pending: ["studio": .pending(since: .now)]) == "studio")
+    }
+
+    @Test func availableAnswersTheCheck() {
+        #expect(match("Runner 0.11.0 is available for Studio.", pending: ["studio": .pending(since: .now)]) == "studio")
+    }
+
+    @Test func couldNotReadAnswersTheOldestCheck() {
+        let pending: [String: RunnerCheck] = ["studio": .pending(since: .now), "mini": .pending(since: .now.addingTimeInterval(-5))]
+        #expect(match("Couldn't read the runner releases.", pending: ["studio": .pending(since: .now)]) == "studio")
+        #expect(match("Couldn't read the runner releases.", pending: pending) == "mini")
+    }
+
+    @Test func unrelatedToastsLeaveTheCheckPending() {
+        let pending: [String: RunnerCheck] = ["studio": .pending(since: .now)]
+        #expect(match("ATL-3 merged", pending: pending) == nil)
+        #expect(match("Studio is on the latest runner (0.11.0).", taskId: "ATL-3", pending: pending) == nil)
+        #expect(match("Runner 0.11.0 is available for Mini.", pending: pending) == nil)
+        // Already answered: nothing waiting for it.
+        #expect(match("Studio is on the latest runner (0.11.0).", pending: ["studio": .answered("x", at: .now)]) == nil)
+    }
+
+    @Test func onlyTheNamedMachineResolves() {
+        let pending: [String: RunnerCheck] = ["studio": .pending(since: .now), "mini": .pending(since: .now)]
+        #expect(match("Runner 0.11.0 is available for Mini.", pending: pending) == "mini")
+        #expect(match("Studio is on the latest runner (0.11.0).", pending: pending) == "studio")
+    }
 }
