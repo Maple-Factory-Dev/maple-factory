@@ -385,7 +385,7 @@ export class Engine {
         const after = msg.after ?? [];
         for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
-        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort) });
+        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort), priority: msg.priority ?? null });
         if (request) {
           for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
           for (const m of request.thread.filter((m) => !m.bot)) task.comments.push(await this.comment(m.author, m.text, { at: m.at, via: sourceTitle(request) }));
@@ -431,12 +431,20 @@ export class Engine {
           task.model = model;
         }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
+        // Effort and priority get events of their own.
         const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
         if (effort !== undefined && effort !== (task.effort ?? null)) {
           // Any state: an effort only groups tasks, it doesn't change the work.
           const was = task.effort;
           task.effort = effort;
           this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
+        }
+        const priority = msg.clearPriority ? null : msg.priority;
+        if (priority !== undefined && priority !== (task.priority ?? null)) {
+          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; its priority can't change now.`);
+          task.priority = priority;
+          this.event(task, who, priority ? `set priority ${priority.toUpperCase()}` : "took its priority off");
+          if (priority === "p0") this.toFront(task, who);
         }
         if (!onlyEffort) this.event(task, who, "edited it");
         this.save(task);
@@ -642,7 +650,8 @@ export class Engine {
           task.startAt = null;
           this.event(task, who, "cleared its schedule");
         }
-        if (task.state === "drafting") return this.startPlanning(task, who);
+        // Put where they asked: a P0 doesn't jump past a place someone picked.
+        if (task.state === "drafting") return this.startPlanning(task, who, false, moved);
         task.waiting = null;
         this.save(task);
         await this.pump();
@@ -857,10 +866,11 @@ export class Engine {
     }
   }
 
-  private async startPlanning(task: Task, who: string, revise = false) {
+  private async startPlanning(task: Task, who: string, revise = false, ranked = false) {
     task.state = "planning";
     task.waiting = null;
     this.event(task, who, revise ? "sent it back to the planner" : "sent it to planning");
+    if (task.priority === "p0" && !ranked) this.toFront(task, "factory");
     this.save(task);
     await this.pump();
   }
@@ -910,8 +920,20 @@ export class Engine {
     return this.store.tasks().some((t) => t.waiting && !t.worker);
   }
 
+  /** A P0 entering the queue (or a queued task set to P0) goes ahead of the current top; other
+   *  priorities leave the order alone, so reordering by hand keeps working. */
+  private toFront(task: Task, who: string) {
+    const queue = this.store.queued();
+    // Planning is checked as well: startPlanning calls this before it's saved into the queue.
+    if (task.state !== "planning" && !queue.some((t) => t.id === task.id)) return;
+    const top = queue.find((t) => t.id !== task.id);
+    if (!top || top.queueRank! > task.queueRank!) return;
+    task.queueRank = this.store.rankBefore(task.id, top, queue);
+    this.event(task, who, "moved it to the top of the queue: it's P0");
+  }
+
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort"> & Partial<Pick<Task, "priority" | "followUpOf">>): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
