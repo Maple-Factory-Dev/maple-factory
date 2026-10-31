@@ -2402,6 +2402,8 @@ public enum Wire {
         public var preflightWatch: String?
         /// Runs once the worktree exists, before the agent starts.
         public var setup: String?
+        /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.
+        public var checks: String?
         /// Runs before the worktree is removed when a finished task is cleaned up.
         public var teardown: String?
         /// Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.
@@ -2409,11 +2411,12 @@ public enum Wire {
         /// How long each one may run (default 600).
         public var timeoutSecs: UInt32?
 
-        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
+        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, checks: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
             self.create = create
             self.preflight = preflight
             self.preflightWatch = preflightWatch
             self.setup = setup
+            self.checks = checks
             self.teardown = teardown
             self.archive = archive
             self.timeoutSecs = timeoutSecs
@@ -2884,6 +2887,25 @@ public enum Wire {
             self.by = by
             self.at = at
             self.note = note
+        }
+    }
+
+    /// One of a repo's checks, run in a task's worktree before its finish is committed.
+    public struct CheckRun: Codable, Hashable, Sendable {
+        public var command: String
+        /// Its exit code; none: it was killed by a signal or couldn't start.
+        public var code: Int32?
+        public var timedOut: Bool
+        public var ms: UInt64
+        /// The end of what it printed (stdout and stderr).
+        public var output: String
+
+        public init(command: String, code: Int32? = nil, timedOut: Bool, ms: UInt64, output: String) {
+            self.command = command
+            self.code = code
+            self.timedOut = timedOut
+            self.ms = ms
+            self.output = output
         }
     }
 
@@ -3882,8 +3904,10 @@ public enum Wire {
         public var commit: String?
         public var reason: String?
         public var message: String?
+        /// The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).
+        public var checks: [CheckRun]?
 
-        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil) {
+        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil, checks: [CheckRun]? = nil) {
             self.taskId = taskId
             self.ok = ok
             self.pushed = pushed
@@ -3894,6 +3918,7 @@ public enum Wire {
             self.commit = commit
             self.reason = reason
             self.message = message
+            self.checks = checks
         }
     }
 
@@ -4312,8 +4337,10 @@ public enum Wire {
         public var title: String
         /// Push with the machine's own credentials (no GitHub App).
         public var fallback: Bool
+        /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
+        public var checks: String?
 
-        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool) {
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool, checks: String? = nil) {
             self.taskId = taskId
             self.cwd = cwd
             self.repoDir = repoDir
@@ -4321,6 +4348,7 @@ public enum Wire {
             self.base = base
             self.title = title
             self.fallback = fallback
+            self.checks = checks
         }
     }
 

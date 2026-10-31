@@ -1142,6 +1142,9 @@ pub struct WorktreeScripts {
     /// Runs once the worktree exists, before the agent starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
+    /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<String>,
     /// Runs before the worktree is removed when a finished task is cleaned up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teardown: Option<String>,
@@ -1440,6 +1443,20 @@ pub struct RiskAcceptance {
     pub at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+/// One of a repo's checks, run in a task's worktree before its finish is committed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckRun {
+    pub command: String,
+    /// Its exit code; none: it was killed by a signal or couldn't start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    pub ms: u64,
+    /// The end of what it printed (stdout and stderr).
+    pub output: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2076,6 +2093,9 @@ pub enum RunnerMessage {
         reason: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks: Option<Vec<CheckRun>>,
     },
     /// What a task's branch changes against its base: line counts per file and the unified patch.
     #[serde(rename = "task.diff")]
@@ -2254,6 +2274,9 @@ pub enum ServerToRunner {
         title: String,
         /// Push with the machine's own credentials (no GitHub App).
         fallback: bool,
+        /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks: Option<String>,
     },
     /// Report a task's diff against its base (answered with `task.diff`).
     #[serde(rename = "task.diff")]

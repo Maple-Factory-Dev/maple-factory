@@ -25,6 +25,9 @@ export const SCRIPT_COMMANDS = ["create", "preflight", "setup", "teardown", "arc
 /** The most files preflightWatch may name. */
 export const MAX_WATCH = 20;
 
+/** The most checks a repo may have. */
+export const MAX_CHECKS = 20;
+
 /** The MAPLE_* variables every worktree script gets, and what each holds. */
 export const SCRIPT_VARIABLES: Record<string, string> = {
   MAPLE_REPO: "owner/name",
@@ -44,12 +47,20 @@ function watchPaths(s: WorktreeScripts): string[] {
   return typeof s.preflightWatch === "string" ? s.preflightWatch.split("\n").map((l) => l.trim()).filter(Boolean) : [];
 }
 
-/** What's wrong with a repo's worktree scripts, or none: each command at most 4 KB, at most 20 repo-relative watch paths, the timeout 1–3600 seconds. */
+/** A repo's checks: one command per line, trimmed, blank lines dropped. */
+export function checkCommands(s: WorktreeScripts | null | undefined): string[] {
+  return typeof s?.checks === "string" ? s.checks.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+}
+
+/** What's wrong with a repo's worktree scripts, or none: each command at most 4 KB, at most 20 repo-relative watch paths, at most 20 checks, the timeout 1–3600 seconds. */
 export function scriptsProblem(s: WorktreeScripts): string | null {
   for (const f of SCRIPT_COMMANDS) {
     const command = typeof s[f] === "string" ? s[f]!.trim() : "";
     if (new TextEncoder().encode(command).length > MAX_SCRIPT) return `The ${f} script is over 4 KB; put it in a file in the repo and run that.`;
   }
+  const checks = checkCommands(s);
+  if (checks.length > MAX_CHECKS) return `A repo has at most ${MAX_CHECKS} checks.`;
+  if (checks.some((c) => new TextEncoder().encode(c).length > MAX_SCRIPT)) return "A check is over 4 KB; put it in a file in the repo and run that.";
   const watch = watchPaths(s);
   if (watch.length > MAX_WATCH) return `Preflight watches at most ${MAX_WATCH} files.`;
   const outside = watch.find((p) => p.startsWith("/") || p.startsWith("~") || p.split(/[\\/]/).includes(".."));
@@ -58,7 +69,7 @@ export function scriptsProblem(s: WorktreeScripts): string | null {
   return null;
 }
 
-/** Scripts as stored (call scriptsProblem first): commands trimmed, blank ones dropped, none when nothing's left. */
+/** Scripts as stored (call scriptsProblem first): commands and checks trimmed, blank ones dropped, none when nothing's left. */
 export function tidyScripts(s: WorktreeScripts): WorktreeScripts | null {
   const out: WorktreeScripts = {};
   for (const f of SCRIPT_COMMANDS) {
@@ -67,8 +78,10 @@ export function tidyScripts(s: WorktreeScripts): WorktreeScripts | null {
   }
   const watch = watchPaths(s);
   if (watch.length) out.preflightWatch = watch.join("\n");
+  const checks = checkCommands(s);
+  if (checks.length) out.checks = checks.join("\n");
   if (s.timeoutSecs != null) out.timeoutSecs = s.timeoutSecs;
-  return SCRIPT_COMMANDS.some((f) => out[f]) ? out : null;
+  return SCRIPT_COMMANDS.some((f) => out[f]) || out.checks ? out : null;
 }
 
 /** The agent's suggestion from its reply, or why it can't be used. */
@@ -81,6 +94,9 @@ export function parseSetup(output: string): { suggestion: RepoSetupSuggestion } 
   const watch = rawScripts.preflightWatch;
   if (typeof watch === "string") scripts.preflightWatch = watch;
   else if (Array.isArray(watch)) scripts.preflightWatch = watch.filter((w) => typeof w === "string").join("\n");
+  const checks = rawScripts.checks;
+  if (typeof checks === "string") scripts.checks = checks;
+  else if (Array.isArray(checks)) scripts.checks = checks.filter((c) => typeof c === "string").join("\n");
   const timeout = rawScripts.timeoutSecs ?? rawScripts.timeout;
   if (timeout != null) scripts.timeoutSecs = typeof timeout === "number" ? timeout : Number.NaN;
   const problem = scriptsProblem(scripts);
@@ -208,6 +224,7 @@ ${vars}
    - preflight: machine-level setup that every worktree shares: install the language runtimes the repo pins (mise install, rbenv install, nvm install), \`brew bundle\`, start services it needs (databases, Redis). It runs in the new worktree before setup, the first time a machine uses the repo, and again when the command or a watched file changes; it should be safe to run again.
    - preflightWatch: files, one per line, relative to the repo's root, that re-run preflight when they change. Leave it out to watch .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.
    - setup: makes each fresh worktree ready to work in (per-worktree work, not machine-level): install dependencies, copy .env files from $MAPLE_REPO_ROOT, generate code, prepare a database. Run things in "$MAPLE_WORKTREE".
+   - checks: commands, one per line, that must exit 0 in the worktree before a builder's work is committed and pushed: the repo's linters, formatters and git hooks, run over the whole tree. Look for lefthook.yml (\`lefthook run pre-commit --all-files\`), .husky/, lint, format or typecheck scripts in package.json (\`npm run lint\`), .rubocop.yml (\`bundle exec rubocop\`), .golangci.yml, rustfmt/clippy, ruff or black config, .pre-commit-config.yaml (\`pre-commit run --all-files\`) and what CI runs. Use check modes that don't rewrite files (\`prettier --check\`, \`cargo fmt --check\`). Leave it out when the repo has none; at most 20.
    - teardown: cleans up what setup made outside the worktree (databases, containers), if anything.
    - archive: only if the repo has its own way of removing worktrees. Usually leave it out.
    - timeoutSecs: how long each may run (1–3600), only if setup needs more than 600.
@@ -216,5 +233,5 @@ ${vars}
 3. Notes for the admin: 1–5 short lines on what you found and anything they should check.${now}
 
 Answer with only a JSON object:
-{"scripts": {"preflight": "<command>", "setup": "<command>", "teardown": "<command>"}, "prompts": {"planner": "<markdown>", "builder": "<markdown>", "reviewer": "<markdown>"}, "notes": ["<one line>"]}`;
+{"scripts": {"preflight": "<command>", "setup": "<command>", "checks": "<command>\\n<command>", "teardown": "<command>"}, "prompts": {"planner": "<markdown>", "builder": "<markdown>", "reviewer": "<markdown>"}, "notes": ["<one line>"]}`;
 }

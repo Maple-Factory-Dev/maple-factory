@@ -194,6 +194,9 @@ pub enum Outbound {
         /// What went wrong, when `ok` is false.
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// The repo's checks that ran, in order; the last failed when the finish stopped on one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checks: Option<Vec<crate::wire::CheckRun>>,
     },
     /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
     #[serde(rename = "task.handed_off")]
@@ -1029,6 +1032,7 @@ mod tests {
             commit: None,
             reason: None,
             message: Some("nope".into()),
+            checks: None,
         })
         .unwrap();
         assert_eq!(out, serde_json::json!({"type":"task.finished","taskId":"t1","ok":false,"branch":"agent/x","base":null,"message":"nope"}));
