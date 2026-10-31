@@ -1,0 +1,38 @@
+{
+  "doc": "Quiet-hours examples the server (quiet-hours.ts), web (app.js) and Mac (QuietHours+Schedule.swift) logic must all agree on. `until` is when quiet ends; null: not quiet.",
+  "schedules": {
+    "work": { "timeZone": "America/Toronto", "windows": [
+      { "days": [0, 1, 2, 3, 4], "start": 1320, "end": 420 },
+      { "days": [1, 2, 3, 4, 5], "start": 540, "end": 1020 }
+    ] },
+    "nightly": { "timeZone": "America/Toronto", "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": 1320, "end": 420 }] },
+    "chained": { "timeZone": "UTC", "windows": [
+      { "days": [0, 1, 2, 3, 4, 5, 6], "start": 1320, "end": 0 },
+      { "days": [0, 1, 2, 3, 4, 5, 6], "start": 0, "end": 420 }
+    ] },
+    "weekdayNights": { "timeZone": "Europe/London", "windows": [{ "days": [1, 2, 3, 4, 5], "start": 1320, "end": 420 }] },
+    "weekdays": { "timeZone": "Europe/London", "windows": [{ "days": [1, 2, 3, 4, 5], "start": 540, "end": 1020 }] }
+  },
+  "cases": [
+    { "name": "same-day window, inside", "schedule": "work", "at": "2026-10-28T16:00:00Z", "until": "2026-10-28T21:00:00Z" },
+    { "name": "same-day window, at its end", "schedule": "work", "at": "2026-10-28T21:00:00Z", "until": null },
+    { "name": "between windows", "schedule": "work", "at": "2026-10-28T22:00:00Z", "until": null },
+    { "name": "overnight, before midnight", "schedule": "work", "at": "2026-10-29T03:00:00Z", "until": "2026-10-29T11:00:00Z" },
+    { "name": "overnight, after midnight", "schedule": "work", "at": "2026-10-29T07:30:00Z", "until": "2026-10-29T11:00:00Z" },
+    { "name": "seconds in, still ends on the minute", "schedule": "work", "at": "2026-10-28T16:00:42Z", "until": "2026-10-28T21:00:00Z" },
+    { "name": "Friday night isn't a weeknight", "schedule": "work", "at": "2026-10-31T03:00:00Z", "until": null },
+    { "name": "Saturday small hours", "schedule": "work", "at": "2026-10-31T07:00:00Z", "until": null },
+    { "name": "Saturday midday", "schedule": "work", "at": "2026-10-31T16:00:00Z", "until": null },
+    { "name": "Sunday night, after DST ends", "schedule": "work", "at": "2026-11-02T04:00:00Z", "until": "2026-11-02T12:00:00Z" },
+    { "name": "DST ends overnight: 9 real hours", "schedule": "nightly", "at": "2026-11-01T03:00:00Z", "until": "2026-11-01T12:00:00Z" },
+    { "name": "DST starts overnight: 7 real hours", "schedule": "nightly", "at": "2027-03-14T04:00:00Z", "until": "2027-03-14T11:00:00Z" },
+    { "name": "windows that run into one another", "schedule": "chained", "at": "2026-10-28T23:00:00Z", "until": "2026-10-29T07:00:00Z" },
+    { "name": "chained, after midnight", "schedule": "chained", "at": "2026-10-29T01:00:00Z", "until": "2026-10-29T07:00:00Z" },
+    { "name": "weekday nights: Friday night is quiet", "schedule": "weekdayNights", "at": "2026-10-30T23:00:00Z", "until": "2026-10-31T07:00:00Z" },
+    { "name": "weekday nights: early Sunday isn't", "schedule": "weekdayNights", "at": "2026-11-01T03:00:00Z", "until": null },
+    { "name": "weekday nights: early Monday isn't", "schedule": "weekdayNights", "at": "2026-11-02T03:00:00Z", "until": null },
+    { "name": "weekday nights: Monday night is", "schedule": "weekdayNights", "at": "2026-11-02T23:00:00Z", "until": "2026-11-03T07:00:00Z" },
+    { "name": "weekdays: Saturday morning isn't", "schedule": "weekdays", "at": "2026-10-31T10:00:00Z", "until": null },
+    { "name": "weekdays: Monday morning is", "schedule": "weekdays", "at": "2026-11-02T10:00:00Z", "until": "2026-11-02T17:00:00Z" }
+  ]
+}
