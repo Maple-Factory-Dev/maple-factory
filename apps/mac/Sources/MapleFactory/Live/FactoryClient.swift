@@ -971,16 +971,39 @@ import Foundation
         (try? await api("/api/usage/goals")) ?? []
     }
 
-    /// Fetches a task's diff unless the one held is for the same change (`key`).
-    func loadDiff(task id: String, key: String) async {
-        guard diffs[id]?.key != key, let server, let token else { return }
-        var request = URLRequest(url: server.appending(path: "/api/tasks/\(id)/diff"))
+    /// Each task's commits as last fetched (oldest first), and the change they were fetched for.
+    private(set) var commits: [String: (key: String, commits: [DiffCommit])] = [:]
+    /// One commit's files, by `<task>@<sha>`: a commit's patch never changes, so it's fetched once.
+    private(set) var commitDiffs: [String: [DiffFile]] = [:]
+
+    /// Fetches a task's diff (or one of its commits') unless the one held is for the same change (`key`).
+    func loadDiff(task id: String, key: String, commit: String? = nil) async {
+        if let commit {
+            guard commitDiffs["\(id)@\(commit)"] == nil, let files = await fetchDiff(id, commit: commit) else { return }
+            commitDiffs["\(id)@\(commit)"] = files
+        } else {
+            guard diffs[id]?.key != key, let files = await fetchDiff(id) else { return }
+            diffs[id] = (key, files)
+        }
+    }
+
+    /// Fetches the commits on a task's branch unless the ones held are for the same change (`key`);
+    /// none from a runner that predates them.
+    func loadCommits(task id: String, key: String) async {
+        guard commits[id]?.key != key, let found: [Wire.DiffCommit] = try? await api("/api/tasks/\(id)/commits") else { return }
+        commits[id] = (key, found.map(DiffCommit.init))
+    }
+
+    private func fetchDiff(_ id: String, commit: String? = nil) async -> [DiffFile]? {
+        guard let server, let token else { return nil }
+        var url = server.appending(path: "/api/tasks/\(id)/diff")
+        if let commit { url.append(queryItems: [URLQueryItem(name: "commit", value: commit)]) }
+        var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         // A big patch takes a moment to parse; keep it off the main thread.
-        let files = await Task.detached { DiffFile.parse(String(decoding: data, as: UTF8.self)) }.value
-        diffs[id] = (key, files)
+        return await Task.detached { DiffFile.parse(String(decoding: data, as: UTF8.self)) }.value
     }
 
     /// Each task's GitHub review threads as last fetched, and the change they were fetched for.

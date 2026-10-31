@@ -121,3 +121,39 @@ extension DiffFile {
         return files
     }
 }
+
+/// One commit on a task's branch, as the Changes tab's picker lists it (`GET /api/tasks/<id>/commits`);
+/// its patch comes separately (`/diff?commit=<sha>`).
+public struct DiffCommit: Identifiable, Hashable, Sendable {
+    public let sha: String
+    public let subject: String
+    public let body: String?
+    public let author: String
+    public let at: Date
+    public let added: Int
+    public let removed: Int
+    public let fileCount: Int
+    /// Its patch was cut, or left out for being past what one message holds.
+    public let truncated: Bool
+    public var id: String { sha }
+    public var shortSHA: String { String(sha.prefix(7)) }
+
+    public init(sha: String, subject: String, body: String? = nil, author: String, at: Date, added: Int, removed: Int, fileCount: Int, truncated: Bool = false) {
+        self.sha = sha
+        self.subject = subject
+        self.body = body
+        self.author = author
+        self.at = at
+        self.added = added
+        self.removed = removed
+        self.fileCount = fileCount
+        self.truncated = truncated
+    }
+
+    public init(_ wire: Wire.DiffCommit) {
+        self.init(
+            sha: wire.sha, subject: wire.subject, body: wire.body, author: wire.author, at: Date(timeIntervalSince1970: Double(wire.at) / 1000),
+            added: Int(wire.added), removed: Int(wire.removed), fileCount: wire.files.count, truncated: wire.truncated
+        )
+    }
+}
