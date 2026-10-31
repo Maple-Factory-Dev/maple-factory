@@ -138,7 +138,9 @@ export class Engine {
       toRunner: (machine, command) => this.toRunner(machine, command),
       token: async () => (await hooks.slack?.token()) ?? null,
       problem: (text) => hooks.slack?.problem(text),
-      make: (ask, proposal, by, channel) => this.fromSlack(ask, proposal, by, channel),
+      make: (ask, proposal, by, channel, onMade) => this.fromSlack(ask, proposal, by, channel, onMade),
+      forget: (paths) => hooks.waitUntil(this.env.RELEASES.delete(paths.filter((p) => p.startsWith("/attachments/")).map((p) => p.slice(1)))),
+      wakeIn: (ms) => hooks.wakeIn(ms),
     });
     this.setup = new RepoSetup(store, {
       broadcast: (message) => hooks.broadcast(message),
@@ -1063,7 +1065,7 @@ export class Engine {
 
   /** Create task on @Maple's proposal in Slack: a request for the thread (so it hears about the plan and the merge),
    *  and the task in the proposed goal, its thread's files linked in its brief, sent to planning. */
-  private async fromSlack(ask: Ask, proposal: Proposal, by: string, channel: string | null): Promise<Task> {
+  private async fromSlack(ask: Ask, proposal: Proposal, by: string, channel: string | null, onMade: (task: Task) => void): Promise<Task> {
     const goal = this.store.goal(proposal.goal);
     if (!goal) fail("its goal isn't there any more.");
     if (goal!.archived) fail(`${goal!.name} is archived.`);
@@ -1075,6 +1077,7 @@ export class Engine {
     const task = this.newTask(goal!, ask.owner, { title: proposal.title, brief, tickets: [], shareable: true, agent: ask.agent, model: null, intake: request.id, repo: null, after: [], effort: null });
     task.comments.push(await this.comment(ask.requester, transcript || ask.question, { via: sourceTitle(request) }));
     this.event(task, "factory", `created from Slack${channel ? ` (#${channel})` : ""} by ${by}`);
+    onMade(task);
     await audit(this.env, `slack:${by}`, "task.created", task.id, { title: task.title, slack: ask.id });
     await this.startPlanning(task, by);
     this.intake.accepted(request, this.store.task(task.id) ?? task, "created", by);
