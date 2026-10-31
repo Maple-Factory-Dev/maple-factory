@@ -6,62 +6,27 @@ struct ActivityView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @State private var filter: Filter = .everyone
+    /// How many entries are drawn; "Show 50 more" adds a page, and a new filter or scope starts again at one.
+    @State private var shown = ActivityLog.pageSize
+    @State private var cache = ActivityLog.Cache()
 
-    enum Filter: String, CaseIterable { case everyone = "Everyone", people = "People", agents = "Agents", mine = "My tasks" }
+    static let demo = Notification.Name("ActivityView.demo")
 
-    struct Entry: Identifiable {
-        let id: String
-        let task: FactoryTask
-        let who: Person
-        let isAgent: Bool
-        let text: String
-        let at: Date?
-        let when: String
-    }
+    typealias Filter = ActivityLog.Filter
+    typealias Entry = ActivityLog.Entry
 
-    private static let agents: Set<String> = ["planner", "builder", "reviewer", "factory"]
-
-    /// What the filter picks, in the goals the scope shows.
-    private var entries: [Entry] { filtered.filter { state.inScope($0.task) } }
-
-    /// Live: every task's events with their times. The mockup's tasks only have relative labels.
-    private var filtered: [Entry] {
-        let all: [Entry]
-        if state.isLive {
-            all = client.tasks.flatMap { wire -> [Entry] in
-                guard let task = state.tasks.first(where: { $0.id == wire.id }) else { return [] }
-                return wire.events.enumerated().map { index, event in
-                    Entry(id: "\(wire.id)-\(index)", task: task, who: LiveAdapter.person(event.who, members: client.members),
-                          isAgent: Self.agents.contains(event.who), text: event.text,
-                          at: Date(timeIntervalSince1970: Double(event.at) / 1000), when: LiveAdapter.ago(event.at))
-                }
-            }
-            .sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
-        } else {
-            all = state.tasks.flatMap { task in
-                task.activity.enumerated().map { index, item in
-                    let person = FactoryData.people.first { $0.name == item.who || $0.firstName == item.who }
-                    return Entry(id: "\(task.id)-\(index)", task: task, who: person ?? Agent(name: item.who, color: Theme.State.building),
-                                 isAgent: person == nil, text: item.text, at: nil, when: item.when)
-                }
-            }
-            .sorted { state.minutesAgo($0.when) < state.minutesAgo($1.when) }
-        }
-        return all.filter { entry in
-            switch filter {
-            case .everyone: true
-            case .people: !entry.isAgent
-            case .agents: entry.isAgent
-            case .mine: entry.task.owner.id == FactoryData.me.id
-            }
+    /// Built once per change to the tasks. Live: every task's events with their times; the mockup's only have relative labels.
+    private var feed: ActivityLog {
+        cache.feed(revision: state.tasksRevision, live: state.isLive) {
+            state.isLive ? .live(client.tasks, tasks: state.tasks, members: client.members) : .mock(state.tasks, minutesAgo: state.minutesAgo)
         }
     }
 
-    /// Entries by day ("Today", "Yesterday", "Oct 21"); the mockup's undated ones are all "Recent".
-    private var days: [(title: String, entries: [Entry])] {
+    /// Entries by day ("Today", "Yesterday", "Oct 21").
+    private func days(_ entries: ArraySlice<Entry>) -> [(title: String, entries: [Entry])] {
         var groups: [(title: String, entries: [Entry])] = []
-        for entry in entries.prefix(300) {
-            let title = entry.at.map { date in
+        for entry in entries {
+            let title = entry.date.map { date in
                 Calendar.current.isDateInToday(date) ? "Today"
                     : Calendar.current.isDateInYesterday(date) ? "Yesterday"
                     : date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
@@ -72,46 +37,90 @@ struct ActivityView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Activity")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                        Text(state.goalScope == .all ? "What people and agents did across every goal, newest first." : "What people and agents did in the goals you follow and on your tasks, newest first.")
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(Theme.textMuted)
-                    }
-                    Spacer()
-                    GoalScopeMenu(hidden: filtered.count - entries.count)
-                        .padding(.trailing, 8)
-                    Picker("", selection: $filter) {
-                        ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-
-                if entries.isEmpty {
-                    PlaceholderView(title: "Nothing yet", icon: "waveform.path.ecg").frame(height: 240)
-                }
-                ForEach(days, id: \.title) { day in
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel(title: day.title)
-                        VStack(spacing: 0) {
-                            ForEach(day.entries) { entry in row(entry) }
+        let filtered = feed.entries(filter: filter)
+        let entries = filtered.filter { state.inScope($0.task) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 22) {
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Activity")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundStyle(Theme.text)
+                            Text(state.goalScope == .all ? "What people and agents did across every goal, newest first." : "What people and agents did in the goals you follow and on your tasks, newest first.")
+                                .font(.system(size: 13.5))
+                                .foregroundStyle(Theme.textMuted)
                         }
-                        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke)))
+                        Spacer()
+                        GoalScopeMenu(hidden: filtered.count - entries.count)
+                            .padding(.trailing, 8)
+                        Picker("", selection: $filter) {
+                            ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
+                    .id("top")
+
+                    if entries.isEmpty {
+                        PlaceholderView(title: "Nothing yet", icon: "waveform.path.ecg").frame(height: 240)
+                    }
+                    ForEach(days(entries.prefix(shown)), id: \.title) { day in
+                        VStack(alignment: .leading, spacing: 8) {
+                            SectionLabel(title: day.title)
+                            LazyVStack(spacing: 0) {
+                                ForEach(day.entries) { entry in row(entry) }
+                            }
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.cardBG).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke)))
+                        }
+                    }
+                    if entries.count > shown { footer(total: entries.count).id("footer") }
+                }
+                .padding(.horizontal, 40)
+                .padding(.vertical, 28)
+                .frame(maxWidth: 980, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
+            // A new filter or scope starts again at the top, one page in.
+            .onChange(of: filter) { shown = ActivityLog.pageSize; proxy.scrollTo("top", anchor: .top) }
+            .onChange(of: state.goalScope) { shown = ActivityLog.pageSize; proxy.scrollTo("top", anchor: .top) }
+            .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+                guard let parts = note.object as? [String] else { return }
+                switch parts.first {
+                case "seed": seed(Int(parts.count > 1 ? parts[1] : "") ?? 2400)
+                case "more": shown += ActivityLog.pageSize
+                case "bottom": proxy.scrollTo("footer", anchor: .bottom)
+                case "top": proxy.scrollTo("top", anchor: .top)
+                case "filter": filter = Filter(rawValue: parts.count > 1 ? parts[1] : "") ?? filter
+                default: break
                 }
             }
-            .padding(.horizontal, 40)
-            .padding(.vertical, 28)
-            .frame(maxWidth: 980, alignment: .leading)
-            .frame(maxWidth: .infinity)
         }
+    }
+
+    /// The mockup's tasks with `count` events between them, a few minutes apart, for a big factory's Activity page.
+    private func seed(_ count: Int) {
+        var tasks = state.tasks
+        guard !tasks.isEmpty else { return }
+        let names = [FactoryData.me.firstName, "Planner", "Builder", FactoryData.chris.firstName, "Reviewer"]
+        for n in 0..<count {
+            tasks[n % tasks.count].activity.append(ActivityItem(who: names[n % names.count], text: "worked on step \(n % 7 + 1)", when: "\(n * 7 + 1)m"))
+        }
+        state.tasks = tasks
+    }
+
+    /// "Showing 50 of 2,140", and the next page.
+    private func footer(total: Int) -> some View {
+        HStack(spacing: 12) {
+            Text("Showing \(shown.formatted()) of \(total.formatted())")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(Theme.textMuted)
+            Spacer()
+            SecondaryButton(title: "Show \(min(ActivityLog.pageSize, total - shown)) more") { shown += ActivityLog.pageSize }
+                .fixedSize()
+        }
+        .padding(.horizontal, 4)
     }
 
     private func row(_ entry: Entry) -> some View {

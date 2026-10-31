@@ -285,6 +285,23 @@ pub enum Severity {
     Other,
 }
 
+/// How soon a task should be done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Priority {
+    /// Do it right away.
+    P0,
+    /// Next.
+    P1,
+    /// Soon.
+    P2,
+    /// When there's room.
+    P3,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FindingStatus {
@@ -1209,6 +1226,20 @@ pub struct ServerUpdate {
     pub how: String,
 }
 
+/// One draft for task.followUp to make.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowUpItem {
+    /// The review finding it follows up (f3); none: a free-form note about the task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding: Option<String>,
+    pub title: String,
+    /// What to do; the finding's text is quoted ahead of it.
+    pub brief: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+}
+
 /// Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1401,6 +1432,12 @@ pub struct Task {
     /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+    /// What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_up_of: Option<String>,
     /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_at: Option<u64>,
@@ -2781,6 +2818,8 @@ pub enum ClientMessage {
         after: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        priority: Option<Priority>,
     },
     #[serde(rename = "task.edit")]
     TaskEdit {
@@ -2802,6 +2841,19 @@ pub enum ClientMessage {
         /// The model its next sessions use; an empty string goes back to the agent's default.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// Set its priority; refused once it's merged or cancelled. Setting a queued task to P0 moves it to the front of the queue.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        priority: Option<Priority>,
+        /// Take its priority off.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clear_priority: Option<bool>,
+    },
+    /// Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused.
+    #[serde(rename = "task.followUp")]
+    TaskFollowUp {
+        id: String,
+        #[serde(default)]
+        items: Vec<FollowUpItem>,
     },
     /// Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).
     #[serde(rename = "task.assign")]

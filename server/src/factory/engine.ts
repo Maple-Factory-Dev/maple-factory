@@ -6,9 +6,10 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
+import { PriorityValues } from "../wire.ts";
 import type {
   ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  McpConnector, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey } from "../attachments.ts";
@@ -18,7 +19,7 @@ import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
-import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
+import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
@@ -400,7 +401,7 @@ export class Engine {
         const after = msg.after ?? [];
         for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
-        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort) });
+        const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort), priority: msg.priority ?? null });
         if (request) {
           for (const t of request.tickets) if (!task.tickets.some((x) => x.key === t.key)) task.tickets.push(t);
           for (const m of request.thread.filter((m) => !m.bot)) task.comments.push(await this.comment(m.author, m.text, { at: m.at, via: sourceTitle(request) }));
@@ -446,12 +447,20 @@ export class Engine {
           task.model = model;
         }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
+        // Effort and priority get events of their own.
         const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
         if (effort !== undefined && effort !== (task.effort ?? null)) {
           // Any state: an effort only groups tasks, it doesn't change the work.
           const was = task.effort;
           task.effort = effort;
           this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
+        }
+        const priority = msg.clearPriority ? null : msg.priority;
+        if (priority !== undefined && priority !== (task.priority ?? null)) {
+          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; its priority can't change now.`);
+          task.priority = priority;
+          this.event(task, who, priority ? `set priority ${priority.toUpperCase()}` : "took its priority off");
+          if (priority === "p0") this.toFront(task, who);
         }
         if (!onlyEffort) this.event(task, who, "edited it");
         this.save(task);
@@ -582,6 +591,46 @@ export class Engine {
         if (!(await this.type(task, `${who} answered your raised hand: ${decision || "carry on."}`))) await this.pump();
         return;
       }
+      case "task.followUp": {
+        if (task.state !== "reviewing" && task.state !== "merged") fail("Follow-ups are made from a task in review or merged.");
+        const goal = this.store.goal(task.goal) ?? fail("Its goal isn't there any more.");
+        if (goal.archived) fail(`${goal.name} is archived; unarchive it to add tasks.`);
+        if (!msg.items.length) fail("Pick at least one finding to follow up.");
+        if (msg.items.length > 20) fail("At most 20 follow-ups at a time.");
+        const taken = followedUp(this.store.tasks());
+        const seen = new Set<string>();
+        // Checked before any is made, so a bad item makes none.
+        const picks = msg.items.map((item) => {
+          const priority = item.priority ?? null;
+          if (priority && !PriorityValues.includes(priority)) fail(`${priority} isn't a priority: p0 to p3.`);
+          const title = item.title.trim().slice(0, 120);
+          if (!title) fail("Each follow-up needs a title.");
+          if (!item.finding) {
+            if (!item.brief.trim()) fail(`Say what "${title}" should do.`);
+            return { title, brief: `${item.brief.trim()}\n\nFollow-up from ${task.id}.`, priority, followUpOf: task.id };
+          }
+          const finding = task.autoReview?.findings.find((f) => f.id === item.finding) ?? fail(`${task.id} has no finding ${item.finding}.`);
+          const from = `${task.id}#${finding.id}`;
+          if (finding.status === "fixed") fail(`${from} is already fixed.`);
+          const already = taken.get(from);
+          if (already || seen.has(from)) fail(`${from} already has a follow-up${already ? `: ${already}` : ""}.`);
+          seen.add(from);
+          const quote = `> **${finding.severity} ${finding.kind}**${finding.file ? ` in \`${finding.file}\`` : ""}: ${finding.text.replace(/\n/g, "\n> ")}`;
+          const note = item.brief.trim();
+          return { title, brief: `${quote}${note ? `\n\n${note}` : ""}\n\nFollow-up from ${task.id}.`, priority, followUpOf: from };
+        });
+        const made = picks.map((p) => {
+          const draft = this.draftFrom(goal, task, who, { title: p.title, brief: p.brief, repo: task.repo ?? null, priority: p.priority, followUpOf: p.followUpOf });
+          this.event(draft, who, `made it as a follow-up of ${p.followUpOf}`);
+          this.save(draft);
+          this.hooks.waitUntil(audit(this.env, who, "task.created", draft.id, { title: draft.title, followUpOf: p.followUpOf }));
+          return draft.id;
+        });
+        this.event(task, who, `made follow-up${made.length === 1 ? "" : "s"} ${made.join(", ")}`);
+        this.save(task);
+        this.hooks.broadcast({ type: "toast", text: `Made ${made.length} follow-up${made.length === 1 ? "" : "s"} of ${task.id}; ${made.length === 1 ? "it's" : "they're"} in ${goal.name}'s drafts.`, taskId: task.id });
+        return;
+      }
       case "task.approveChanges": {
         if (task.state !== "reviewing" || task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It isn't ready for review yet.");
         if (task.reviews.includes(who)) fail("You've already approved it.");
@@ -657,7 +706,8 @@ export class Engine {
           task.startAt = null;
           this.event(task, who, "cleared its schedule");
         }
-        if (task.state === "drafting") return this.startPlanning(task, who);
+        // Put where they asked: a P0 doesn't jump past a place someone picked.
+        if (task.state === "drafting") return this.startPlanning(task, who, false, moved);
         task.waiting = null;
         this.save(task);
         await this.pump();
@@ -872,10 +922,11 @@ export class Engine {
     }
   }
 
-  private async startPlanning(task: Task, who: string, revise = false) {
+  private async startPlanning(task: Task, who: string, revise = false, ranked = false) {
     task.state = "planning";
     task.waiting = null;
     this.event(task, who, revise ? "sent it back to the planner" : "sent it to planning");
+    if (task.priority === "p0" && !ranked) this.toFront(task, "factory", true);
     this.save(task);
     await this.pump();
   }
@@ -925,8 +976,37 @@ export class Engine {
     return this.store.tasks().some((t) => t.waiting && !t.worker);
   }
 
+  /** A P0 entering the queue (or a queued task set to P0) goes ahead of the current top; other
+   *  priorities leave the order alone, so reordering by hand keeps working. */
+  private toFront(task: Task, who: string, entering = false) {
+    const queue = this.store.queued();
+    // Entering: startPlanning calls this before it's saved into the queue.
+    if (!entering && !queue.some((t) => t.id === task.id)) return;
+    const top = queue.find((t) => t.id !== task.id);
+    if (!top || top.queueRank! > task.queueRank!) return;
+    task.queueRank = this.store.rankBefore(task.id, top, queue);
+    this.event(task, who, "moved it to the top of the queue: it's P0");
+  }
+
+  /** A draft made from `source` (proposed by its agent, or a follow-up of it): it takes the source's
+   *  agent, model, effort and sharing. Saved. */
+  private draftFrom(goal: Goal, source: Task, owner: string, d: Pick<Task, "title" | "brief" | "repo"> & Partial<Pick<Task, "priority" | "followUpOf">>): Task {
+    return this.newTask(goal, owner, {
+      tickets: [],
+      shareable: source.shareable,
+      agent: source.agent,
+      model: source.model ?? null,
+      intake: null,
+      after: [],
+      effort: source.effort ?? null,
+      priority: null,
+      followUpOf: null,
+      ...d,
+    });
+  }
+
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort">): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort"> & Partial<Pick<Task, "priority" | "followUpOf">>): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -969,7 +1049,7 @@ export class Engine {
         continue;
       }
       // Made since by someone else (or a run that overlapped): don't make it twice.
-      if (this.store.tasks().some((t) => t.scoutedFrom === pick.from)) continue;
+      if (followedUp(this.store.tasks()).has(pick.from)) continue;
       const checks = pick.doneWhen.map((d) => `- ${d}`).join("\n");
       const brief = checks ? `${pick.brief}\n\n## Done when\n${checks}` : pick.brief;
       const task = this.newTask(goal, by, { title: pick.title, brief, tickets: [], shareable: source.shareable, agent: source.agent, model: source.model ?? null, intake: null, repo: source.repo ?? null, after: [], effort: source.effort ?? null });
@@ -2006,22 +2086,12 @@ export class Engine {
         const picks = asked.map((p) => {
           const named = typeof p.repo === "string" ? p.repo.trim() : "";
           const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `tasks[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
-          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo };
+          const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`tasks[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
+          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo, priority };
         });
         // Drafts only: nothing plans or builds until a person sends one to planning.
         const made = picks.map((p) => {
-          const draft = this.newTask(goal!, task.owner, {
-            title: p.title,
-            brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`,
-            tickets: [],
-            shareable: task.shareable,
-            agent: task.agent,
-            model: task.model ?? null,
-            intake: null,
-            repo: p.repo,
-            after: [],
-            effort: task.effort ?? null,
-          });
+          const draft = this.draftFrom(goal!, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`, repo: p.repo, priority: p.priority });
           this.event(draft, s.role, `proposed by ${task.id}`);
           this.save(draft);
           this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));

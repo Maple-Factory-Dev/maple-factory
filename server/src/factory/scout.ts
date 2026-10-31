@@ -41,10 +41,18 @@ export function scoutItems(policy: RiskPolicy): number {
   return policy.scoutItems ?? SCOUT_ITEMS;
 }
 
+/** What already has a task made for it, by Scout (scoutedFrom) or as a follow-up (followUpOf): a
+ *  finding (MF-98#f3) or a task (MF-98), to the task made for it. */
+export function followedUp(tasks: Task[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const t of tasks) for (const from of [t.scoutedFrom, t.followUpOf]) if (from && !out.has(from)) out.set(from, t.id);
+  return out;
+}
+
 /** What a goal has left over: its backlog tasks, and the open or disputed findings on its merged
- *  tasks, less anything an earlier run already turned into a task. */
+ *  tasks, less anything an earlier run or a follow-up already turned into a task. */
 export function candidates(goal: string, tasks: Task[]): Candidate[] {
-  const scouted = new Set(tasks.map((t) => t.scoutedFrom).filter((s): s is string => !!s));
+  const scouted = followedUp(tasks);
   const mine = tasks.filter((t) => t.goal === goal).sort((a, b) => b.updatedAt - a.updatedAt);
   const out: Candidate[] = [];
   for (const t of mine) {
