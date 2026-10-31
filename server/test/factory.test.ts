@@ -196,6 +196,9 @@ test("a GitHub merge that never answers lands on the next alarm once GitHub says
     assert.equal(typeof f.store.private("MF-1").mergeStartedAt, "number");
     assert.ok(f.wakes.includes(3 * 60_000), "the hub wakes to check on it");
     f.pending.length = 0; // the merge call that never answers
+    // Wait for that call to reach GitHub (after its token and the merge-queue rules): one still on its way
+    // when this test ends would land in the next test's stubbed GitHub.
+    for (const until = Date.now() + 5_000; !gh.calls.includes("PUT /repos/acme/app/pulls/7/merge") && Date.now() < until; ) await new Promise((r) => setTimeout(r, 5));
 
     // Not quiet long enough: nothing changes, and the hub wakes again for it.
     await f.engine.mergeDue();
