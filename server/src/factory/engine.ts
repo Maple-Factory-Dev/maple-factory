@@ -113,6 +113,10 @@ const branchName = (task: Task) => task.id.toLowerCase();
 const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
 /** Nothing more happens on it: merged, cancelled, or closed with nothing to merge. */
 const isFinished = (state: Task["state"]) => state === "merged" || state === "cancelled" || state === "closed";
+/** A builder has started on it: what it waits on is settled from then on. */
+const buildStarted = (task: Task) => task.worker?.role === "builder" || task.events.some((e) => e.who === "builder");
+/** The most tasks one can wait on. */
+const MAX_AFTER = 10;
 /** Where a review note sits: `path:L12` or `path:L12–18`. */
 const lineAnchor = (n: { path: string; start: number; end: number }) => `${n.path}:L${n.start}${n.end > n.start ? `–${n.end}` : ""}`;
 
@@ -418,8 +422,7 @@ export class Engine {
         if (goal.archived) fail(`${goal.name} is archived; unarchive it to add tasks.`);
         if (!msg.title.trim()) fail("A task needs a title.");
         const repo = msg.repo ? goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase()) ?? fail(`${goal.name} doesn't work in ${msg.repo}; add it to the goal's repos first.`) : null;
-        const after = msg.after ?? [];
-        for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
+        const after = this.checkAfter(null, msg.after ?? []);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
         const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort), priority: msg.priority ?? null });
         if (request) {
@@ -468,12 +471,20 @@ export class Engine {
         }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
         // Effort and priority get events of their own.
-        const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
+        const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null && msg.after == null;
         if (effort !== undefined && effort !== (task.effort ?? null)) {
           // Any state: an effort only groups tasks, it doesn't change the work.
           const was = task.effort;
           task.effort = effort;
           this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
+        }
+        if (msg.after != null) {
+          const after = this.checkAfter(task, msg.after);
+          if (after.join() !== task.after.join()) {
+            if (isFinished(task.state) || task.state === "reviewing" || (task.state === "building" && buildStarted(task))) fail(`It's ${task.state === "building" ? "already building" : task.state}; what it waits on can't change now.`);
+            task.after = after;
+            this.event(task, who, after.length ? `now waits on ${after.join(", ")}` : "no longer waits on other tasks");
+          }
         }
         const priority = msg.clearPriority ? null : msg.priority;
         if (priority !== undefined && priority !== (task.priority ?? null)) {
@@ -1063,6 +1074,30 @@ export class Engine {
     if (!top || top.queueRank! > task.queueRank!) return;
     task.queueRank = this.store.rankBefore(task.id, top, queue);
     this.event(task, who, "moved it to the top of the queue: it's P0");
+  }
+
+  /** The ids `task` (null: one being made) may wait on, deduplicated, or a refusal: a missing or
+   *  cancelled task, itself, more than 10, or a loop back to it through the others' `after` lists. */
+  private checkAfter(task: Task | null, ids: string[]): string[] {
+    const deps = ids.map((id) => id.trim()).filter(Boolean).map((id) => this.store.task(id) ?? this.store.task(id.toUpperCase()) ?? fail(`There's no task ${id} for it to wait on.`));
+    const after = [...new Set(deps.map((d) => d.id))];
+    if (after.length > MAX_AFTER) fail(`A task can wait on at most ${MAX_AFTER} others.`);
+    for (const dep of deps) {
+      if (task && dep.id === task.id) fail(`${task.id} can't wait on itself.`);
+      if (dep.state === "cancelled") fail(`${dep.id} was cancelled; it can't wait on it.`);
+    }
+    if (task) {
+      // Walk what each waits on: reaching the task again would mean neither can ever start.
+      const seen = new Set<string>();
+      const walk = (id: string, path: string[]): void => {
+        if (id === task.id) fail(`That makes a loop: ${[task.id, ...path].join(" → ")}.`);
+        if (seen.has(id)) return;
+        seen.add(id);
+        for (const next of this.store.task(id)?.after ?? []) walk(next, [...path, next]);
+      };
+      for (const id of after) walk(id, [id]);
+    }
+    return after;
   }
 
   /** A draft made from `source` (proposed by its agent, or a follow-up of it): it takes the source's
