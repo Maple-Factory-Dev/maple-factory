@@ -221,9 +221,9 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       toggle("Send error reports to Maple Factory",
         "Errors in this factory's server and web app go to Maple Factory's Sentry project, with the server's version and the org. Never what anyone typed or sent: no cookies, credentials, request bodies or query strings.",
         on, flip, locked || loading || failed || errorReportsBusy),
-      locked && h("p", { class: "set-detail muted" }, "Set by the Worker's SENTRY_DSN. Change or remove it there to use this toggle."),
-      failed && h("p", { class: "set-detail muted" }, "Couldn't read whether error reports are on."),
-      h("p", { class: "set-detail muted" }, h("a", { href: "https://maplefactory.dev/security#errors", target: "_blank", rel: "noopener" }, "What's sent, and what never is")));
+      locked && h("p", { class: "set-detail muted", style: "margin:0" }, "Set by the Worker's SENTRY_DSN. Change or remove it there to use this toggle."),
+      failed && h("p", { class: "set-detail muted", style: "margin:0" }, "Couldn't read whether error reports are on."),
+      h("p", { class: "set-detail muted", style: "margin:0" }, h("a", { href: "https://maplefactory.dev/security#errors", target: "_blank", rel: "noopener" }, "What's sent, and what never is")));
   }
 
   function repos() {
