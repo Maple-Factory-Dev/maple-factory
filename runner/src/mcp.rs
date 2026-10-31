@@ -214,7 +214,6 @@ const TOOL_NAMES: &[&str] = &[
     "send_input",
     "stop_session",
     "wait_for",
-    "create_task",
     "list_tasks",
     "list_notes",
     "read_note",
@@ -235,7 +234,6 @@ const TOOL_NAMES: &[&str] = &[
     "reject_card",
     "review_again",
     "recheck_ci",
-    "propose_cards",
     "scout_now",
 ];
 /// Where a factory card can be (`CARD_STATUSES` in control/src/protocol.ts).
@@ -346,26 +344,6 @@ fn tools() -> Value {
                 "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": MAX_WAIT_SECS },
             }, "required": ["machine", "id"] },
             "annotations": read,
-        },
-        {
-            "name": "create_task",
-            "title": "Queue a task",
-            "description": "Queues a task: an agent works on `prompt` in a fresh git worktree (branch agent/<slug>) of the repository \
-                at `cwd` on a machine, or of a `project` (owner/name, from list_projects: the machine uses its own checkout or clones it), \
-                and when it's done the branch is committed, pushed and opened as a pull request. \
-                It starts when the machine is online and has a free slot. The task's session can be watched and typed into \
-                like any other. Needs \"Read and start sessions\" in Settings → Agents. A task's own session can't queue tasks.",
-            "inputSchema": { "type": "object", "properties": {
-                "machine": machine,
-                "cwd": { "type": "string", "description": "The repository folder, e.g. ~/code/app. Give this or project." },
-                "project": { "type": "string", "description": "A project's repo as owner/name, instead of cwd." },
-                "title": { "type": "string", "description": "Short title; also the commit message and the pull request's title." },
-                "prompt": { "type": "string", "description": "What the agent should do." },
-                "agent": { "type": "string", "description": "claude (default), codex, or an agent from the machine's agents.toml that takes a prompt." },
-                "base": { "type": "string", "description": "Branch to start from and open the pull request against. Default: the repo's default branch on GitHub." },
-                "model": { "type": "string", "description": "Claude Code or Codex only: the model to run, e.g. claude-opus-4-1. Empty is the agent's own default; left out, the builder model from Settings → Factory." },
-            }, "required": ["machine", "title", "prompt"] },
-            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true },
         },
         {
             "name": "list_tasks",
@@ -665,23 +643,6 @@ fn card_tools() -> Vec<Value> {
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true },
         },
         {
-            "name": "propose_cards",
-            "title": "Propose cards",
-            "description": "Only for a scout session (the factory starts one per project when Ready runs dry before the user's \
-                next sitting): proposes up to 3 one-liners for the scout's own project, each with where it came from (a merged \
-                card's Out of scope or Assumptions, a failed task, an undone planner call, a file in the repo). Each becomes a \
-                factory card whose planner writes it; auto-approve takes the clean ones to Ready. Once per run: a second call, \
-                a 4th one-liner or another project is refused. Works whatever Settings → Agents says.",
-            "inputSchema": { "type": "object", "properties": {
-                "oneLiners": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "object", "properties": {
-                    "text": { "type": "string", "maxLength": MAX_ONE_LINER, "description": "What the card is for, in one line." },
-                    "source": { "type": "string", "maxLength": 300, "description": "Where the idea came from." },
-                }, "required": ["text", "source"] } },
-                "project": { "type": "string", "description": "The scout's project as owner/name. Default: its own." },
-            }, "required": ["oneLiners"] },
-            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true },
-        },
-        {
             "name": "scout_now",
             "title": "Scout now",
             "description": "Starts a scout for one project now, as the Scout button in Mission Control does, whatever the Scout \
@@ -784,32 +745,6 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
                 return Err("until must be \"done\", \"waiting\" or \"any\".".into());
             }
             json!({ "machine": machine()?, "id": id()?, "until": until, "timeoutSeconds": n("timeoutSeconds", 1, MAX_WAIT_SECS, 300)? })
-        }
-        "create_task" => {
-            let mut out = json!({
-                "machine": machine()?,
-                "title": s("title", 200, true)?.map(|t| t.trim().to_string()),
-                "prompt": s("prompt", MAX_TEXT, true)?,
-            });
-            let cwd = s("cwd", 1024, false)?.filter(|c| !c.trim().is_empty());
-            let project = s("project", 201, false)?.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
-            match (cwd, project) {
-                (Some(_), Some(_)) => return Err("Give cwd or project, not both.".into()),
-                (Some(c), None) => out["cwd"] = json!(c),
-                (None, Some(p)) => out["project"] = json!(p),
-                (None, None) => return Err("cwd or project is required (the repository folder, or a project's owner/name).".into()),
-            }
-            if let Some(a) = s("agent", 32, false)?.filter(|a| !a.trim().is_empty()) {
-                out["agent"] = json!(a.trim());
-            }
-            if let Some(b) = s("base", 200, false)?.filter(|b| !b.trim().is_empty()) {
-                out["base"] = json!(b.trim());
-            }
-            // Kept when empty: "" is the agent's own default, and left out the builder setting decides.
-            if let Some(m) = s("model", 100, false)? {
-                out["model"] = json!(m.trim());
-            }
-            out
         }
         "list_tasks" => {
             let mut out = json!({ "limit": n("limit", 1, 100, 20)? });
@@ -1051,19 +986,6 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
             },
             Some(_) => return Err("taskId must be a string: the task's id, from list_tasks or get_card.".into()),
         },
-        // The control plane checks each one-liner and the limits (scout.ts), so its refusals say why.
-        "propose_cards" => {
-            let list = match obj.get("oneLiners") {
-                Some(Value::Array(a)) if a.iter().all(Value::is_object) => a.clone(),
-                None | Some(Value::Null) => return Err("oneLiners is required: a list of {text, source}.".into()),
-                Some(_) => return Err("oneLiners must be a list of {text, source}.".into()),
-            };
-            let mut out = json!({ "oneLiners": list });
-            if let Some(p) = s("project", 201, false)?.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
-                out["project"] = json!(p);
-            }
-            out
-        }
         "scout_now" => {
             let mut out = json!({});
             if let Some(p) = s("project", 201, false)?.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
@@ -1356,14 +1278,6 @@ mod tests {
         assert_eq!((w["until"].as_str(), w["timeoutSeconds"].as_u64()), (Some("done"), Some(300)));
         assert!(err("wait_for", json!({"machine": "m", "id": id, "until": "forever"})).contains("until"));
         assert!(err("wait_for", json!({"machine": "m", "id": id, "timeoutSeconds": 601})).contains("1 to 600"));
-        let task = ok("create_task", json!({"machine": "m", "cwd": "~/app", "title": " Fix it ", "prompt": "fix the test", "agent": "", "base": " main "}));
-        assert_eq!(task, json!({"machine": "m", "cwd": "~/app", "title": "Fix it", "prompt": "fix the test", "base": "main"}));
-        assert!(err("create_task", json!({"machine": "m", "cwd": "~/app", "title": "x"})).contains("prompt is required"));
-        assert!(err("create_task", json!({"machine": "m", "cwd": "~/app", "title": "x".repeat(201), "prompt": "p"})).contains("too long"));
-        // A model is passed on as given, empty included; left out, it stays out.
-        assert_eq!(ok("create_task", json!({"machine": "m", "cwd": "~/app", "title": "x", "prompt": "p", "model": ""}))["model"], "");
-        assert_eq!(ok("create_task", json!({"machine": "m", "cwd": "~/app", "title": "x", "prompt": "p", "model": " opus "}))["model"], "opus");
-        assert!(err("create_task", json!({"machine": "m", "cwd": "~/app", "title": "x", "prompt": "p", "model": 4})).contains("string"));
         assert_eq!(ok("list_tasks", Value::Null), json!({"limit": 20}));
         assert_eq!(ok("list_tasks", json!({"status": "pr_open", "machine": "m"})), json!({"limit": 20, "status": "pr_open", "machine": "m"}));
         assert!(err("list_tasks", json!({"status": "landed"})).contains("status must be"));
@@ -1400,11 +1314,6 @@ mod tests {
     fn validates_project_arguments() {
         let ok = |tool: &str, args: Value| validate(tool, &args).unwrap();
         let err = |tool: &str, args: Value| validate(tool, &args).unwrap_err();
-        // create_task takes a project instead of a folder, never both.
-        let task = ok("create_task", json!({"machine": "m", "project": " acme/widgets ", "title": "Fix it", "prompt": "p"}));
-        assert_eq!(task, json!({"machine": "m", "project": "acme/widgets", "title": "Fix it", "prompt": "p"}));
-        assert!(err("create_task", json!({"machine": "m", "title": "x", "prompt": "p"})).contains("cwd or project is required"));
-        assert!(err("create_task", json!({"machine": "m", "cwd": "~/app", "project": "acme/widgets", "title": "x", "prompt": "p"})).contains("not both"));
         assert_eq!(ok("list_projects", Value::Null), json!({}));
         assert_eq!(ok("get_project", json!({"repo": " acme/widgets "})), json!({"repo": "acme/widgets"}));
         assert!(err("get_project", json!({})).contains("repo is required"));
@@ -1518,24 +1427,6 @@ mod tests {
         assert_eq!(ok("reject_card", json!({"id": id, "reason": " duplicate "})), json!({"id": lower, "reason": "duplicate"}));
         assert!(err("reject_card", json!({"id": id, "reason": "x".repeat(501)})).contains("at most 500"));
         assert!(err("reject_card", json!({"reason": "x"})).contains("id is required"));
-    }
-
-    #[test]
-    fn validates_propose_cards() {
-        let ok = |args: Value| validate("propose_cards", &args).unwrap();
-        let err = |args: Value| validate("propose_cards", &args).unwrap_err();
-        let one = json!([{"text": "Hold from the card page", "source": "Out of scope of “Auto-approve”"}]);
-        assert_eq!(ok(json!({"oneLiners": one, "project": " ", "junk": 1})), json!({"oneLiners": one}));
-        assert_eq!(ok(json!({"oneLiners": one, "project": " acme/widgets "}))["project"], "acme/widgets");
-        // A 4th goes through: the control plane refuses it, saying why.
-        assert_eq!(ok(json!({"oneLiners": [{}, {}, {}, {}]}))["oneLiners"].as_array().unwrap().len(), 4);
-        assert!(err(json!({})).contains("oneLiners is required"));
-        assert!(err(json!({"oneLiners": ["x"]})).contains("list of {text, source}"));
-        let tools = tools();
-        let tool = tools.as_array().unwrap().iter().find(|t| t["name"] == "propose_cards").unwrap();
-        assert_eq!(tool["inputSchema"]["required"], json!(["oneLiners"]));
-        assert_eq!(tool["inputSchema"]["properties"]["oneLiners"]["maxItems"], 3);
-        assert!(tool["description"].as_str().unwrap().contains("Only for a scout session"));
     }
 
     #[test]
