@@ -995,6 +995,8 @@ data class Comment(
     val via: String? = null,
     /** Logins of the org members this comment @mentions, worked out by the server. Never the author. */
     val mentions: List<String>? = null,
+    /** The id of the comment that starts its thread. Replies to a reply sit under that same root. */
+    val replyTo: String? = null,
 )
 
 /** Steering: someone redirecting the planner or builder mid-flight. */
@@ -2717,11 +2719,14 @@ sealed class ClientMessage {
     data class TaskBacklog(
         val id: String,
     ) : ClientMessage()
+    /** Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation. */
     @Serializable
     data class TaskComment(
         val id: String,
         val text: String,
         val anchor: String? = null,
+        /** The id of a comment on this task to reply to; a reply to a reply goes under its root. */
+        val replyTo: String? = null,
     ) : ClientMessage()
     /** A change request for the planner or builder. */
     @Serializable

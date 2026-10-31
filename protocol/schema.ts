@@ -422,9 +422,10 @@ export const structs: Record<string, Struct> = {
     fields: { text: "string", proof: "ProofKind", status: "ProofStatus", evidence: "Evidence?" },
   },
   Comment: {
-    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?" },
+    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?", replyTo: "string?" },
     fieldDocs: {
       author: "A login, or an agent like \"planner\".",
+      replyTo: "The id of the comment that starts its thread. Replies to a reply sit under that same root.",
       via: "Where it came in from, e.g. \"Slack #requests\".",
       mentions: "Logins of the org members this comment @mentions, worked out by the server. Never the author.",
     },
@@ -1392,7 +1393,11 @@ export const unions: Record<string, Union> = {
       },
       "task.plan": { doc: "Send a draft to planning, or pick up a backlog task (one with a plan is planned again).", fields: { id: "string" } },
       "task.backlog": { doc: "Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.", fields: { id: "string" } },
-      "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
+      "task.comment": {
+        doc: "Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.",
+        fields: { id: "string", text: "string", anchor: "string?", replyTo: "string?" },
+        fieldDocs: { replyTo: "The id of a comment on this task to reply to; a reply to a reply goes under its root." },
+      },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
       "task.review": {
         doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",
