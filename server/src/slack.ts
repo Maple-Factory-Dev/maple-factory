@@ -220,9 +220,9 @@ export async function slackApi(token: string, method: string, args: Record<strin
 
 export type Blocks = Record<string, unknown>[];
 
-/** Posts in a thread; the message's ts. */
-export async function postMessage(token: string, channel: string, threadTs: string, said: string, blocks?: Blocks): Promise<string> {
-  return (await slackApi(token, "chat.postMessage", { channel, thread_ts: threadTs, text: said, ...(blocks ? { blocks } : {}), unfurl_links: false })).ts as string;
+/** Posts in a thread (or in the channel, with no `threadTs`); the message's ts. */
+export async function postMessage(token: string, channel: string, threadTs: string | null, said: string, blocks?: Blocks): Promise<string> {
+  return (await slackApi(token, "chat.postMessage", { channel, ...(threadTs ? { thread_ts: threadTs } : {}), text: said, ...(blocks ? { blocks } : {}), unfurl_links: false })).ts as string;
 }
 
 /** Replaces one of the bot's messages. */
