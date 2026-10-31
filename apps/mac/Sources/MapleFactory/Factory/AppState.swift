@@ -379,8 +379,11 @@ final class AppState {
     /// The cache, emptied if the tasks changed since it was filled. Reading the revision is what
     /// redraws a view that only read the cache.
     private func syncTaskCache() {
-        taskCache.sync(revision: isLive ? client?.tasksRevision ?? 0 : mockRevision, live: isLive)
+        taskCache.sync(revision: tasksRevision, live: isLive)
     }
+
+    /// Counts changes to `tasks`: the factory's (FactoryClient.tasksRevision) or the mockup's.
+    var tasksRevision: Int { isLive ? client?.tasksRevision ?? 0 : mockRevision }
 
     private var mockTasks: [FactoryTask] = (FactoryData.seedTasks + FactoryData.queuedTasks).enumerated().map { at, seed in
         var task = seed
@@ -2246,6 +2249,9 @@ final class AppState {
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
             case "diff": NotificationCenter.default.post(name: DiffView.demo, object: Array(parts.dropFirst()))
             case "tab": NotificationCenter.default.post(name: TaskFocusView.demoTab, object: parts[1])
+            // The Activity page: `activity:seed:2400` gives the mockup's tasks that many events, `activity:more` is Show 50 more,
+            // `activity:bottom` and `activity:top` scroll to its footer and its header, `activity:filter:Agents` picks a filter.
+            case "activity": NotificationCenter.default.post(name: ActivityView.demo, object: Array(parts.dropFirst()))
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
