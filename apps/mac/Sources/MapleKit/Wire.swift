@@ -5040,18 +5040,20 @@ public enum Wire {
         }
     }
 
-    /// The answer to `task.token_request`.
+    /// The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write).
     public struct ServerToRunnerTaskToken: Codable, Hashable, Sendable {
         public var reqId: String
         public var token: String?
         public var error: String?
         public var code: String?
+        public var settingsUrl: String?
 
-        public init(reqId: String, token: String? = nil, error: String? = nil, code: String? = nil) {
+        public init(reqId: String, token: String? = nil, error: String? = nil, code: String? = nil, settingsUrl: String? = nil) {
             self.reqId = reqId
             self.token = token
             self.error = error
             self.code = code
+            self.settingsUrl = settingsUrl
         }
     }
 

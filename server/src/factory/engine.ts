@@ -29,7 +29,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
-import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { appSettingsUrl, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -1535,8 +1535,8 @@ export class Engine {
       case "task.token_request": {
         // A token for the task's repo, only for the machine it's on; without the app the runner
         // fetches and pushes with the machine's own credentials.
-        const reply = (token: string | null, error: string | null, code: string | null) =>
-          this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
+        const reply = (token: string | null, error: string | null, code: string | null, settingsUrl?: string) =>
+          this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code, ...(settingsUrl ? { settingsUrl } : {}) });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
         const draft = this.drafts.forRun(msg.taskId, machine), scouting = this.scout.forRun(msg.taskId, machine), setup = this.setup.forRun(msg.taskId, machine);
@@ -1572,7 +1572,9 @@ export class Engine {
         if (repo && repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
         try {
           const { token } = await repoToken(app, msg.owner, msg.repo, msg.purpose === "fetch" ? PERMISSIONS.fetch : PERMISSIONS.push);
-          await reply(token, null, null);
+          // Where to approve Workflows: write, should GitHub refuse the push for a workflow change.
+          const slug = msg.purpose === "fetch" ? "" : this.env.GITHUB_APP_SLUG?.trim();
+          await reply(token, null, null, slug && this.env.GITHUB_ORG ? `${appSettingsUrl(this.env, slug)}/permissions` : undefined);
         } catch (e) {
           await reply(null, (e as Error).message, e instanceof GitHubError ? e.code : "api");
         }

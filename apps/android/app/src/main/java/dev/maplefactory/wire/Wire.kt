@@ -2353,13 +2353,14 @@ sealed class ServerToRunner {
         /** Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch. */
         val deleteRemote: Boolean? = null,
     ) : ServerToRunner()
-    /** The answer to `task.token_request`. */
+    /** The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write). */
     @Serializable
     data class TaskToken(
         val reqId: String,
         val token: String? = null,
         val error: String? = null,
         val code: String? = null,
+        val settingsUrl: String? = null,
     ) : ServerToRunner()
     /** The answer to `secrets.request`: `values` by name, or `error` with a `code`. */
     @Serializable

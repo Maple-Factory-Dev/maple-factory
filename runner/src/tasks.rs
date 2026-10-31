@@ -509,6 +509,14 @@ pub struct TokenReply {
     pub token: Option<String>,
     pub error: Option<String>,
     pub code: Option<String>,
+    /// The app's permissions page on GitHub (push tokens), to link to when GitHub refuses a push.
+    pub settings_url: Option<String>,
+}
+
+/// An app token, and where its permissions are changed.
+struct AppToken {
+    token: String,
+    settings_url: Option<String>,
 }
 
 /// Sends a message to the hub (the session list's outbox, or a fake in tests).
@@ -529,7 +537,7 @@ enum NoApp {
     NotInstalled(String),
 }
 
-async fn token(emit: Emit<'_>, task_id: &str, owner: &str, repo: &str, purpose: Option<&'static str>) -> Result<std::result::Result<String, NoApp>> {
+async fn token(emit: Emit<'_>, task_id: &str, owner: &str, repo: &str, purpose: Option<&'static str>) -> Result<std::result::Result<AppToken, NoApp>> {
     let req_id = Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
     PENDING.lock().unwrap().insert(req_id.clone(), tx);
@@ -541,7 +549,7 @@ async fn token(emit: Emit<'_>, task_id: &str, owner: &str, repo: &str, purpose: 
         _ => bail!("The control plane didn't send a GitHub token in time."),
     };
     match (reply.token, reply.error, reply.code.as_deref()) {
-        (Some(t), None, _) if !t.is_empty() => Ok(Ok(t)),
+        (Some(t), None, _) if !t.is_empty() => Ok(Ok(AppToken { token: t, settings_url: reply.settings_url })),
         (_, Some(e), Some("not_installed" | "no_app")) => Ok(Err(NoApp::NotInstalled(e))),
         (_, Some(e), _) => Err(anyhow!(e)),
         _ => bail!("The control plane sent back an empty token."),
@@ -782,11 +790,11 @@ async fn push(emit: Emit<'_>, task_id: &str, dir: &Path, branch: &str, fallback:
     let refspec = format!("HEAD:refs/heads/{branch}");
     let no_app = match target {
         Ok((owner, repo)) => match token(emit, task_id, &owner, &repo, purpose).await? {
-            Ok(token) => {
+            Ok(AppToken { token, settings_url }) => {
                 let url = push_url(&owner, &repo, &token, std::env::var(PUSH_URL_ENV).ok().as_deref());
                 git(dir, &["-c", "credential.helper=", "push", "--quiet", &url, &refspec], Some(&token))
                     .await
-                    .map_err(|e| anyhow!("Couldn't push {branch} to {owner}/{repo}: {e}"))?;
+                    .map_err(|e| app_push_error(branch, &owner, &repo, &format!("{e:#}"), settings_url.as_deref()))?;
                 tracing::info!("task {task_id}: pushed {branch} to {owner}/{repo}");
                 return Ok(Pushed { how: "app", owner: Some(owner), repo: Some(repo), reason: None });
             }
@@ -807,6 +815,20 @@ async fn push(emit: Emit<'_>, task_id: &str, dir: &Path, branch: &str, fallback:
     git(dir, &["push", "--quiet", "origin", &refspec], None).await.map_err(|e| anyhow!("Couldn't push {branch} to origin: {e}"))?;
     tracing::info!("task {task_id}: pushed {branch} to origin with this machine's credentials");
     Ok(Pushed { how: "fallback", owner: None, repo: None, reason: Some(reason) })
+}
+
+/// A failed app push as the task's error: GitHub refusing a workflow change because the app lacks Workflows: write says so,
+/// with where to approve it; anything else is the plain "Couldn't push".
+fn app_push_error(branch: &str, owner: &str, repo: &str, stderr: &str, settings_url: Option<&str>) -> anyhow::Error {
+    // "refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission"
+    if stderr.contains("without `workflows` permission") {
+        let at = settings_url.map(|u| format!(" ({u})")).unwrap_or_default();
+        return anyhow!(
+            "GitHub refused to push {branch} to {owner}/{repo} because it changes .github/workflows and the Maple GitHub App doesn't \
+             have the Workflows: write permission. Approve it in the app's settings{at} and on the installation, then retry."
+        );
+    }
+    anyhow!("Couldn't push {branch} to {owner}/{repo}: {stderr}")
 }
 
 // ---- handing off ----
@@ -1227,7 +1249,7 @@ pub(crate) async fn fetch_base(
     let mut source = "origin".to_string();
     if let Some((owner, repo)) = parse_github(&origin) {
         // Without the app there (a public repo, or one this machine can reach itself): origin.
-        if let Ok(t) = token(emit, task_id, &owner, &repo, Some("fetch")).await? {
+        if let Ok(AppToken { token: t, .. }) = token(emit, task_id, &owner, &repo, Some("fetch")).await? {
             source = fetch_url(&owner, &repo, &t, fetch_override);
             secret = Some(t);
         }
@@ -1299,6 +1321,22 @@ async fn git(dir: &Path, args: &[&str], secret: Option<&str>) -> Result<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_push_refused_for_workflows_names_the_permission() {
+        let url = "https://github.com/organizations/acme/settings/apps/maple/permissions";
+        let refused = "! [remote rejected] HEAD -> mf-1 (refusing to allow a GitHub App to create or update workflow \
+                       `.github/workflows/ci.yml` without `workflows` permission) failed to push some refs to 'https://github.com/acme/widgets.git'";
+        let msg = format!("{:#}", app_push_error("mf-1", "acme", "widgets", refused, Some(url)));
+        assert!(msg.contains("Workflows: write") && msg.contains(url) && msg.contains(".github/workflows"), "{msg}");
+        assert!(!msg.contains("Couldn't push"), "{msg}");
+        // Without the link it still names the permission.
+        let msg = format!("{:#}", app_push_error("mf-1", "acme", "widgets", refused, None));
+        assert!(msg.contains("Workflows: write") && !msg.contains("()"), "{msg}");
+        // Anything else stays the generic failure.
+        let msg = format!("{:#}", app_push_error("mf-1", "acme", "widgets", "Could not resolve host: github.com", Some(url)));
+        assert_eq!(msg, "Couldn't push mf-1 to acme/widgets: Could not resolve host: github.com");
+    }
 
     #[test]
     fn parses_github_remotes() {
@@ -1973,7 +2011,7 @@ mod tests {
             sent.lock().unwrap().push(serde_json::to_string(&m).unwrap());
             if let Outbound::TaskTokenRequest { req_id, purpose, .. } = m {
                 assert_eq!(purpose, Some("fetch"));
-                resolve(&req_id, TokenReply { token: Some(token.into()), error: None, code: None });
+                resolve(&req_id, TokenReply { token: Some(token.into()), error: None, code: None, settings_url: None });
             }
         }
     }

@@ -1524,7 +1524,7 @@ mod tests {
         let emit = |m: Outbound| {
             if let Outbound::TaskTokenRequest { req_id, purpose, .. } = &m {
                 assert_eq!(*purpose, Some("fetch"));
-                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None });
+                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None, settings_url: None });
             }
             sent.lock().unwrap().push(serde_json::to_value(&m).unwrap());
         };
@@ -1925,7 +1925,7 @@ mod tests {
         // The fetch is answered from the repo itself.
         let emit = |m: Outbound| {
             if let Outbound::TaskTokenRequest { req_id, .. } = &m {
-                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None });
+                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None, settings_url: None });
             }
         };
         let fetch = repo.to_string_lossy().to_string();

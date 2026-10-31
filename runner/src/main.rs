@@ -1039,7 +1039,7 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
             info!("cleaning up task {} in {}", c.task_id, c.cwd);
             tokio::spawn(tasks::run_cleanup(sessions.clone(), c));
         }
-        Inbound::TaskToken { req_id, token, error, code } => tasks::resolve(&req_id, tasks::TokenReply { token, error, code }),
+        Inbound::TaskToken { req_id, token, error, code, settings_url } => tasks::resolve(&req_id, tasks::TokenReply { token, error, code, settings_url }),
         Inbound::SecretsReply { req_id, values, error, code } => secrets::resolve(&req_id, secrets::Reply { values, error, code }),
         Inbound::UsageConfig { claude_check } => usage::configure(claude_check),
         Inbound::UsageRefresh { agent } => usage::refresh_now(&agent),

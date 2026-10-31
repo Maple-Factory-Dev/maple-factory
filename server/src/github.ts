@@ -233,9 +233,9 @@ export const PERMISSIONS = {
   /** A runner fetching (or cloning) a task's repo. */
   fetch: { contents: "read" },
   /** A runner pushing a task's branch (finishing, or handing it off). */
-  push: { contents: "write" },
+  push: { contents: "write", workflows: "write" },
   /** The factory opening, merging and closing the pull request. */
-  pulls: { contents: "write", pull_requests: "write" },
+  pulls: { contents: "write", pull_requests: "write", workflows: "write" },
   /** Reading CI, and asking for failed checks again. */
   checks: { checks: "write", statuses: "read", actions: "write" },
 } as const satisfies Record<string, Record<string, "read" | "write">>;
@@ -243,7 +243,17 @@ export const PERMISSIONS = {
 /** A token for owner/repo alone, with `permissions`. It lasts an hour. */
 export async function repoToken(app: GitHubApp, owner: string, repo: string, permissions: Record<string, "read" | "write">): Promise<{ token: string; expiresAt: string }> {
   const id = await installationId(app, owner, repo);
-  const res = await call(app, "POST", `/app/installations/${id}/access_tokens`, `Bearer ${await appJwt(app)}`, { repositories: [repo], permissions });
+  const ask = async (perms: Record<string, "read" | "write">) =>
+    call(app, "POST", `/app/installations/${id}/access_tokens`, `Bearer ${await appJwt(app)}`, { repositories: [repo], permissions: perms });
+  let res = await ask(permissions);
+  // An install from before the app asked for `workflows` hasn't approved it yet: get the token without it, so everything else
+  // keeps working. A push that changes .github/workflows then fails, and the runner says which permission is missing.
+  if ((res.status === 422 || res.status === 403) && "workflows" in permissions) {
+    const { workflows: _, ...rest } = permissions;
+    console.log(`github: the installation for ${owner}/${repo} hasn't granted workflows; asking for a token without it`);
+    permissions = rest;
+    res = await ask(permissions);
+  }
   if (res.status === 422 || res.status === 403) {
     throw await failure(res, `give a token for ${owner}/${repo} (${Object.keys(permissions).join(", ")}): check the app's repository permissions are approved on the installation`);
   }
