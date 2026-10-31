@@ -252,8 +252,10 @@ test("a GitHub merge that never answers with its pull request still open stops M
     assert.equal(task.hand ?? null, null);
     assert.equal(task.liveLog, "Merging…");
     assert.equal(f.store.private("MF-1").merging, true);
-    await new Promise((r) => setTimeout(r, 50)); // the token, then the merge call
-    assert.equal(gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length, puts + 1);
+    // The token, then the merge call: wait for it rather than a fixed time, which a busy test run can outlast.
+    const merges = () => gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length;
+    for (const until = Date.now() + 5_000; merges() <= puts && Date.now() < until; ) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(merges(), puts + 1);
   } finally {
     gh.restore();
   }
