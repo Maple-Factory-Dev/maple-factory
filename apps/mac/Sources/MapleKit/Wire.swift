@@ -3851,6 +3851,48 @@ public enum Wire {
         }
     }
 
+    /// One quiet-hours window: on these days, from `start` to `end`.
+    public struct QuietWindow: Codable, Hashable, Sendable {
+        /// The days it starts on, 0 Sunday to 6 Saturday.
+        public var days: [UInt16]
+        /// Minutes after midnight (0–1439) it starts, in the schedule's time zone.
+        public var start: UInt16
+        /// Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day.
+        public var end: UInt16
+
+        public init(days: [UInt16] = [], start: UInt16, end: UInt16) {
+            self.days = days
+            self.start = start
+            self.end = end
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            days = try c.decodeIfPresent([UInt16].self, forKey: .days) ?? []
+            start = try c.decode(UInt16.self, forKey: .start)
+            end = try c.decode(UInt16.self, forKey: .end)
+        }
+    }
+
+    /// Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.
+    public struct QuietHours: Codable, Hashable, Sendable {
+        /// An IANA time zone, like America/Toronto.
+        public var timeZone: String
+        /// Up to 7 windows.
+        public var windows: [QuietWindow]
+
+        public init(timeZone: String, windows: [QuietWindow] = []) {
+            self.timeZone = timeZone
+            self.windows = windows
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            timeZone = try c.decode(String.self, forKey: .timeZone)
+            windows = try c.decodeIfPresent([QuietWindow].self, forKey: .windows) ?? []
+        }
+    }
+
     public struct Member: Codable, Hashable, Sendable {
         public var login: String
         public var name: String?
@@ -5409,6 +5451,16 @@ public enum Wire {
         }
     }
 
+    /// Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`.
+    public struct ClientMessageQuietHoursSet: Codable, Hashable, Sendable {
+        /// None: no quiet hours.
+        public var quietHours: QuietHours?
+
+        public init(quietHours: QuietHours? = nil) {
+            self.quietHours = quietHours
+        }
+    }
+
     /// Follow a goal (it's in your sidebar) or stop following it.
     public struct ClientMessageGoalFollow: Codable, Hashable, Sendable {
         public var id: String
@@ -6114,6 +6166,7 @@ public enum Wire {
         case goalScout(ClientMessageGoalScout)
         case repoSetupStart(ClientMessageRepoSetupStart)
         case repoSetupCancel(ClientMessageRepoSetupCancel)
+        case quietHoursSet(ClientMessageQuietHoursSet)
         case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
@@ -6196,6 +6249,7 @@ public enum Wire {
             case "goal.scout": self = .goalScout(try ClientMessageGoalScout(from: decoder))
             case "repo.setup.start": self = .repoSetupStart(try ClientMessageRepoSetupStart(from: decoder))
             case "repo.setup.cancel": self = .repoSetupCancel(try ClientMessageRepoSetupCancel(from: decoder))
+            case "quietHours.set": self = .quietHoursSet(try ClientMessageQuietHoursSet(from: decoder))
             case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
@@ -6315,6 +6369,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .repoSetupCancel(let body):
                 try c.encode("repo.setup.cancel", forKey: .type)
+                try body.encode(to: encoder)
+            case .quietHoursSet(let body):
+                try c.encode("quietHours.set", forKey: .type)
                 try body.encode(to: encoder)
             case .goalFollow(let body):
                 try c.encode("goal.follow", forKey: .type)
@@ -6508,6 +6565,8 @@ public enum Wire {
         public var online: [Presence]
         public var notes: [Note]
         public var follows: [GoalFollow]
+        /// Your quiet hours. None: none set, or an older server.
+        public var quietHours: QuietHours?
         public var intake: [IntakeRequest]
         public var repos: [OrgRepo]
         /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
@@ -6538,7 +6597,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -6556,6 +6615,7 @@ public enum Wire {
             self.online = online
             self.notes = notes
             self.follows = follows
+            self.quietHours = quietHours
             self.intake = intake
             self.repos = repos
             self.repoOwners = repoOwners
@@ -6593,6 +6653,7 @@ public enum Wire {
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
+            quietHours = try c.decodeIfPresent(QuietHours.self, forKey: .quietHours)
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
@@ -6747,6 +6808,16 @@ public enum Wire {
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
+        }
+    }
+
+    /// Your quiet hours changed, to your apps only.
+    public struct ServerToClientQuietHoursUpdated: Codable, Hashable, Sendable {
+        /// None: cleared.
+        public var quietHours: QuietHours?
+
+        public init(quietHours: QuietHours? = nil) {
+            self.quietHours = quietHours
         }
     }
 
@@ -6995,6 +7066,7 @@ public enum Wire {
         case scoutUpdated(ServerToClientScoutUpdated)
         case repoSetupUpdated(ServerToClientRepoSetupUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
+        case quietHoursUpdated(ServerToClientQuietHoursUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case promptsUpdated(ServerToClientPromptsUpdated)
@@ -7035,6 +7107,7 @@ public enum Wire {
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "repo.setup.updated": self = .repoSetupUpdated(try ServerToClientRepoSetupUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
+            case "quietHours.updated": self = .quietHoursUpdated(try ServerToClientQuietHoursUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
@@ -7103,6 +7176,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .followsUpdated(let body):
                 try c.encode("follows.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .quietHoursUpdated(let body):
+                try c.encode("quietHours.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)

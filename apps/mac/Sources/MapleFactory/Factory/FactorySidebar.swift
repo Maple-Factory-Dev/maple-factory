@@ -40,6 +40,15 @@ struct FactorySidebar: View {
                     .onTapGesture { Notifier.shared.resume() }
                     .help("Resume notifications")
                 }
+                else if Notifier.shared.enabled, let until = Notifier.shared.quietUntil {
+                    row(selected: false) {
+                        Image(systemName: "moon").font(.system(size: 11)).frame(width: 16)
+                        Text("Quiet hours until \(Notifier.untilText(until))")
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.textMuted)
+                    .help("Your quiet hours, on every device: Settings › Notifications")
+                }
             }
 
             // Goals, people and machines grow with the org; they scroll so the window never has to.

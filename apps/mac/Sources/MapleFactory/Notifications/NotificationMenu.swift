@@ -20,10 +20,11 @@ struct NotificationMenu: View {
 extension Notifier {
     var bellIcon: String { isOn ? "bell" : "bell.slash" }
 
-    /// "Notifications on", "Snoozed until 3:40 PM", or "Notifications off".
+    /// "Notifications on", "Snoozed until 3:40 PM", "Quiet hours until 7:00 AM", or "Notifications off".
     var statusText: String {
         if !enabled { return "Notifications off" }
         if isSnoozed, let snoozedUntil { return "Snoozed until \(Notifier.untilText(snoozedUntil))" }
+        if let quietUntil { return "Quiet hours until \(Notifier.untilText(quietUntil))" }
         return "Notifications on"
     }
 

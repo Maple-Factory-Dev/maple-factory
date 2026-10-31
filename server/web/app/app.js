@@ -12,6 +12,7 @@ import { loadCollapsed, toggleCollapsed } from "./sections.js";
 import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
+import { inQuietHours } from "./quiet-hours.js";
 import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
 
@@ -178,6 +179,8 @@ function receive(m) {
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
       state.older = older(m.tallies, m.tasks, m.olderTasks ?? 0);
       state.notes = m.notes ?? [];
+      // My quiet hours (the same on every device): no mention notifications inside them.
+      state.quietHours = m.quietHours ?? null;
       state.machines = m.machines ?? [];
       // The factory's settings, for admins' Settings page.
       Object.assign(state, { policy: m.policy ?? null, prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
@@ -192,6 +195,7 @@ function receive(m) {
       showGitHubStatus(m.githubStatus);
       break;
     case "github.status": showGitHubStatus(m.status); return;
+    case "quietHours.updated": state.quietHours = m.quietHours ?? null; return;
     case "icon.updated": showIcon(m.icon); return;
     case "name.updated": state.name = m.name ?? null; $("org").textContent = m.name || state.org || "Maple Factory"; break;
     case "policy.updated": state.policy = m.policy; break;
@@ -353,6 +357,7 @@ function mentions() {
 /** A browser notification for each comment newly mentioning me, while this tab is in the background. */
 function notifyMentions(before, task) {
   if (!before || !document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  if (inQuietHours(state.quietHours)) return;
   const seen = new Set(before.comments.map((c) => c.id));
   for (const c of task.comments.filter((c) => !seen.has(c.id) && mentionsMe(c))) {
     const n = new Notification(`${name(c.author)} mentioned you`, { body: `${task.id} · ${task.title}\n${c.text.slice(0, 180)}`, tag: c.id });

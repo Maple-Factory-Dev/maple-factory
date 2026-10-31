@@ -1135,6 +1135,24 @@ export interface GoalFollow {
   following: boolean;
 }
 
+/** One quiet-hours window: on these days, from `start` to `end`. */
+export interface QuietWindow {
+  /** The days it starts on, 0 Sunday to 6 Saturday. */
+  days: number[];
+  /** Minutes after midnight (0–1439) it starts, in the schedule's time zone. */
+  start: number;
+  /** Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day. */
+  end: number;
+}
+
+/** Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices. */
+export interface QuietHours {
+  /** An IANA time zone, like America/Toronto. */
+  timeZone: string;
+  /** Up to 7 windows. */
+  windows: QuietWindow[];
+}
+
 export interface Member {
   login: string;
   name?: string | null;
@@ -1854,6 +1872,13 @@ export interface ClientMessage_RepoSetupCancel {
   repo: string;
 }
 
+/** Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`. */
+export interface ClientMessage_QuietHoursSet {
+  type: "quietHours.set";
+  /** None: no quiet hours. */
+  quietHours?: QuietHours | null;
+}
+
 /** Follow a goal (it's in your sidebar) or stop following it. */
 export interface ClientMessage_GoalFollow {
   type: "goal.follow";
@@ -2267,8 +2292,8 @@ export interface ClientMessage_TaskGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","repo.setup.start","repo.setup.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","tasks.older","task.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","repo.setup.start","repo.setup.cancel","quietHours.set","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","tasks.older","task.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -2296,6 +2321,8 @@ export interface ServerToClient_Snapshot {
   online: Presence[];
   notes: Note[];
   follows: GoalFollow[];
+  /** Your quiet hours. None: none set, or an older server. */
+  quietHours?: QuietHours | null;
   intake: IntakeRequest[];
   repos: OrgRepo[];
   /** Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server. */
@@ -2406,6 +2433,13 @@ export interface ServerToClient_RepoSetupUpdated {
 export interface ServerToClient_FollowsUpdated {
   type: "follows.updated";
   follows: GoalFollow[];
+}
+
+/** Your quiet hours changed, to your apps only. */
+export interface ServerToClient_QuietHoursUpdated {
+  type: "quietHours.updated";
+  /** None: cleared. */
+  quietHours?: QuietHours | null;
 }
 
 /** Who's online and what they're looking at, whenever it changes. */
@@ -2530,5 +2564,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","stats","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","stats","checkLog","error"] as const;
