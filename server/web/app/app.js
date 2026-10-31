@@ -326,10 +326,11 @@ const prioritySelect = (value, onpick, attrs = {}) => h("select", { ...attrs, on
   h("option", { value: "", selected: !value }, "No priority"),
   Object.entries(PRIORITY_TITLE).map(([p, title]) => h("option", { value: p, selected: p === value }, `${p.toUpperCase()} · ${title}`)));
 
-/** Its state's title, or "Merging…" (the server's live log while it merges) or the auto-merge countdown. */
+/** Its state's title, or "Merging…" / "In merge queue…" (the server's live log while it merges, or waits in
+ *  GitHub's merge queue) or the auto-merge countdown. */
 function stateLabel(t) {
   if (t.state !== "reviewing") return STATE_TITLE[t.state];
-  if (t.liveLog === "Merging…") return "Merging…";
+  if (t.liveLog === "Merging…" || t.liveLog === "In merge queue…") return t.liveLog;
   if (t.mergeAt != null && !t.hand) return h("span", { "data-merge-at": t.mergeAt }, countdownLabel(t.mergeAt));
   return STATE_TITLE[t.state];
 }
@@ -795,7 +796,7 @@ function decisions(t) {
     const countdown = mergeCountdown(t);
     if (merging(t)) {
       // The factory has it (or a click is on its way): nothing to click until it lands.
-      buttons.push(h("button", { class: "btn go", disabled: true }, "Merging…"));
+      buttons.push(h("button", { class: "btn go", disabled: true }, t.liveLog === "In merge queue…" ? "In merge queue…" : "Merging…"));
     } else if (countdown) {
       // The factory merges when the fill drains: its delay is the part of the window already gone,
       // so a re-render (or a reload) carries on from where it is.
@@ -868,7 +869,7 @@ function mergeCountdown(t) {
  *  countdown ran out (the server says Merging… a moment later). */
 function merging(t) {
   if (t.state !== "reviewing") return false;
-  if (t.liveLog === "Merging…" || mergeSent.has(t.id)) return true;
+  if (t.liveLog === "Merging…" || t.liveLog === "In merge queue…" || mergeSent.has(t.id)) return true;
   const countdown = !t.hand && mergeCountdown(t);
   return !!countdown && countdown.left === 0;
 }
