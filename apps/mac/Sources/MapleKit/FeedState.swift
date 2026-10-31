@@ -18,6 +18,8 @@ public struct FeedState: Sendable {
     public var online: [Wire.Presence] = []
     public var runnerLatest: String?
     public var serverVersion: String?
+    /// What githubstatus.com reports while GitHub is having issues; nil while all is clear.
+    public var githubStatus: Wire.GitHubStatus?
     public var hasSnapshot = false
 
     public init() {}
@@ -45,6 +47,7 @@ public struct FeedState: Sendable {
             online = snapshot.online
             runnerLatest = snapshot.runnerLatest
             serverVersion = snapshot.serverVersion
+            githubStatus = Self.githubNotice(snapshot.githubStatus)
             hasSnapshot = true
         case .taskUpdated(let update):
             Self.upsert(update.task, into: &tasks, front: true)
@@ -69,6 +72,8 @@ public struct FeedState: Sendable {
             name = update.name
         case .runnerReleased(let release):
             runnerLatest = release.runnerLatest
+        case .githubStatus(let update):
+            githubStatus = Self.githubNotice(update.status)
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
@@ -77,6 +82,12 @@ public struct FeedState: Sendable {
             break
         }
         return nil
+    }
+
+    /// An all-clear status (indicator none, nothing listed) is no notice.
+    public static func githubNotice(_ status: Wire.GitHubStatus?) -> Wire.GitHubStatus? {
+        guard let status else { return nil }
+        return status.indicator == .none && status.incidents.isEmpty && status.components.isEmpty ? nil : status
     }
 
     private static func upsert<T: Identifiable>(_ item: T, into list: inout [T], front: Bool) {

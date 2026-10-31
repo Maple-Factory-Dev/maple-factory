@@ -85,6 +85,8 @@ import Foundation
     /// This factory's maple-server version, and a newer one when there is (admins only).
     private(set) var serverVersion: String?
     private(set) var serverUpdate: Wire.ServerUpdate?
+    /// What githubstatus.com reports while GitHub is having issues (the server checks); nil while all is clear.
+    private(set) var githubStatus: Wire.GitHubStatus?
     /// The factory's icon link (`/icon/<id>`), nil when it has none (or the server is older).
     private(set) var iconLink: String?
     /// The factory's icon, from this Mac's cache; nil shows the letter tile (and the Maple Dock icon).
@@ -306,6 +308,7 @@ import Foundation
         runnerReleases = []
         serverVersion = nil
         serverUpdate = nil
+        githubStatus = nil
         iconLink = nil
         icon = nil
         displayName = nil
@@ -437,6 +440,7 @@ import Foundation
             runnerReleases = snapshot.runnerReleases ?? []
             serverVersion = snapshot.serverVersion
             serverUpdate = snapshot.serverUpdate
+            githubStatus = FeedState.githubNotice(snapshot.githubStatus)
             displayName = snapshot.name
             rebuild()
             hasSnapshot = true
@@ -523,6 +527,8 @@ import Foundation
             // The hub's hourly look at the release feed: every outdated badge and What's new follows.
             runnerLatest = update.runnerLatest
             runnerReleases = update.runnerReleases
+        case .githubStatus(let update):
+            githubStatus = FeedState.githubNotice(update.status)
         case .promptsUpdated(let update):
             prompts = update.prompts
         case .membersUpdated(let update):
