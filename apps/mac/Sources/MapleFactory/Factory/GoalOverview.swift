@@ -12,6 +12,8 @@ struct GoalOverview: View {
     /// A draft dragged over Drafts' empty space, to go to the bottom; a task over Queue's, to go to the back.
     @SwiftUI.State private var draftsTargeted = false
     @SwiftUI.State private var queueTargeted = false
+    /// A task dragged over the folded Up next header, to go to the back of the queue.
+    @SwiftUI.State private var upNextTargeted = false
 
     /// `overview:toggle:<section>` clicks a section's header; `overview:dropqueue:<id>` and `overview:dropdrafts:<id>`
     /// drop a task on the Queue or Drafts lane (its header, when collapsed), lit as a drag over it would be.
@@ -116,9 +118,24 @@ struct GoalOverview: View {
 
     private func upNext(_ sections: GoalOverviewSections) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            header(icon: "arrow.right.circle", title: "Up next", count: sections.drafts.count + sections.queued.count + sections.planning.count,
-                   color: Theme.State.building, section: .upNext)
-            if isOpen(.upNext) { upNextLanes(sections) }
+            let upNextHeader = header(icon: "arrow.right.circle", title: "Up next", count: sections.drafts.count + sections.queued.count + sections.planning.count,
+                                      color: Theme.State.building, section: .upNext)
+            if isOpen(.upNext) {
+                upNextHeader
+                upNextLanes(sections)
+            } else {
+                // Folded, the lanes and their drop targets are gone, so the header queues what's dropped on it.
+                upNextHeader
+                    .padding(.vertical, 6)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Theme.State.building.opacity(upNextTargeted ? 0.6 : 0), lineWidth: 1.5)
+                            .padding(.horizontal, -4)
+                    }
+                    .dropDestination(for: String.self) { ids, _ in
+                        ids.first.map(dropOnQueue) ?? false
+                    } isTargeted: { upNextTargeted = $0 }
+            }
         }
     }
 
