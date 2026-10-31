@@ -86,6 +86,27 @@ const TOOLS: Tool[] = [
     roles: ["planner"],
   },
   {
+    name: "propose_tasks",
+    description: "Propose new tasks for this goal, e.g. work you were asked to find. Each becomes a draft in this goal that a person sends to planning or deletes; nothing runs until they do. Call once with every proposal; don't build them yourself.",
+    inputSchema: obj(
+      {
+        tasks: list(
+          obj(
+            {
+              title: str("A short title for the task."),
+              brief: str("What the task should do and why, for its own planner."),
+              repo: str("One of the goal's repos (owner/name). Left out: this task's repo."),
+            },
+            ["title", "brief"],
+          ),
+          "1–20 proposals.",
+        ),
+      },
+      ["tasks"],
+    ),
+    roles: ["planner", "builder"],
+  },
+  {
     name: "ask",
     description: "Ask a person a question you can't answer from the code or brief. End your turn after; the answer is typed into this session.",
     inputSchema: obj({ question: str("One question."), options: list(str(""), "Likely answers, if there are some.") }, ["question"]),

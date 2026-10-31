@@ -1957,6 +1957,42 @@ export class Engine {
         return { summary: `Plan v${task.planVersion} submitted for approval. Your work here is done; end your turn.` };
       }
 
+      case "propose_tasks": {
+        if (!goal) fail("The task's goal is gone.");
+        const asked = arr(a.tasks).map((x) => obj(x));
+        if (!asked.length) fail("tasks: at least one.");
+        if (asked.length > 20) fail("tasks: at most 20 per call.");
+        const repos = goalRepos(goal!);
+        // Checked before any is made, so a bad proposal makes none.
+        const picks = asked.map((p) => {
+          const named = typeof p.repo === "string" ? p.repo.trim() : "";
+          const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `tasks[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
+          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo };
+        });
+        // Drafts only: nothing plans or builds until a person sends one to planning.
+        const made = picks.map((p) => {
+          const draft = this.newTask(goal!, task.owner, {
+            title: p.title,
+            brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`,
+            tickets: [],
+            shareable: task.shareable,
+            agent: task.agent,
+            model: task.model ?? null,
+            intake: null,
+            repo: p.repo,
+            after: [],
+            effort: task.effort ?? null,
+          });
+          this.event(draft, s.role, `proposed by ${task.id}`);
+          this.save(draft);
+          this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));
+          return draft.id;
+        });
+        this.event(task, s.role, `proposed ${made.join(", ")}`);
+        this.hooks.broadcast({ type: "toast", text: `${task.id}'s ${s.role} proposed ${made.length} task${made.length === 1 ? "" : "s"}; they're in ${goal!.name}'s drafts.`, taskId: task.id });
+        return { summary: `Proposed ${made.join(", ")} as drafts in ${goal!.name}. A person sends each to planning or deletes it; don't build them yourself.`, data: { tasks: made } };
+      }
+
       case "ask": {
         const question = str(a.question, "question");
         task.question = { text: question, options: arr(a.options).map(String), role: s.role, at: now() };
