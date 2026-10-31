@@ -70,14 +70,14 @@ import SwiftUI
         return ActivityLog(entries: order.map { all[$0] })
     }
 
-    /// What the filter picks, in the goals `inScope` shows.
-    func entries(filter: Filter, inScope: (FactoryTask) -> Bool = { _ in true }) -> [Entry] {
+    /// What the filter picks, in the goals `inScope` shows; `me` is whose tasks are "My tasks".
+    func entries(filter: Filter, inScope: (FactoryTask) -> Bool = { _ in true }, me: String = FactoryData.me.id) -> [Entry] {
         entries.filter { entry in
             let picked = switch filter {
             case .everyone: true
             case .people: !entry.isAgent
             case .agents: entry.isAgent
-            case .mine: entry.task.owner.id == FactoryData.me.id
+            case .mine: entry.task.owner.id == me
             }
             return picked && inScope(entry.task)
         }
