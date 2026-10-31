@@ -79,6 +79,15 @@ enum DemoData {
                 t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory", "Only the last one"], role: .builder, at: ago(9))
                 t.approvals = [me]
             },
+            task("APP-16", goal: "g-app", title: "Crash reports with Sentry", state: .building, updated: 2) { t in
+                t.brief = "Send crashes and errors from the app to Sentry, with release and user context."
+                t.plan = [
+                    .init(text: "Add @sentry/react-native and initialise it before the app renders", file: "app/index.ts", progress: .active, added: false),
+                    .init(text: "Upload source maps from the release build", file: "app/eas.json", progress: .pending, added: false),
+                ]
+                t.worker = .init(role: .builder, agent: "claude", machine: "m-studio", session: "s2", startedAt: ago(6))
+                t.approvals = [me]
+            },
             task("API-31", goal: "g-api", title: "Rate limit API tokens per org", state: .reviewing, owner: "kit", updated: 18) { t in
                 t.brief = "Each org gets 600 requests a minute across its tokens; over that, 429 with Retry-After."
                 t.plan = [
@@ -130,7 +139,9 @@ enum DemoData {
             Wire.Machine(id: "m-studio", name: "Andrea's Mac Studio", owner: me, online: true, version: "0.65.0", os: "macOS 27.0",
                          health: .init(cpu: 0.42, cores: 24, load1: 6.2, memUsed: 41 * gig, memTotal: 96 * gig, diskUsed: 610 * gig, diskTotal: 2000 * gig, uptime: 86400 * 3, agents: agents),
                          sessions: [.init(session: .init(id: "s1", agent: "claude", cwd: "~/maple/worktrees/app-12", startedAt: ago(25), taskId: "APP-12"),
-                                          activity: .init(state: .waiting, message: "Asked a question", at: ago(9)))],
+                                          activity: .init(state: .waiting, message: "Asked a question", at: ago(9))),
+                                    .init(session: .init(id: "s2", agent: "claude", cwd: "~/maple/worktrees/app-16", startedAt: ago(6), taskId: "APP-16"),
+                                          activity: .init(state: .waiting, message: "Claude needs your permission to use Bash", question: permissionQuestion, at: ago(2)))],
                          capacity: 4),
             Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
                          health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),
@@ -140,6 +151,14 @@ enum DemoData {
             Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0"),
         ]
     }
+
+    /// What APP-16's builder is stopped at: the runner's `question.permission`.
+    private static let permissionQuestion: Wire.JSONValue = .object(["permission": .object([
+        "tool": .string("Bash"),
+        "summary": .string("npm install @sentry/react-native"),
+        "detail": .string("cd app && npm install @sentry/react-native --save"),
+        "warning": .string("Runs the package's install scripts on your machine."),
+    ])])
 
     /// A compact `stats` reply for Statistics; its counts scale with the range, so 24h reads smaller than 90d.
     static func stats(days: Int) -> Wire.StatsSummary {

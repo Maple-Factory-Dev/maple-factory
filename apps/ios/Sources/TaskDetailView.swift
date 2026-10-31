@@ -68,6 +68,9 @@ struct TaskDetailView: View {
     }
 
     @ViewBuilder private func overview(_ task: Wire.Task) -> some View {
+        if let worker = task.worker, let activity = store.feed.workerActivity(for: worker), let prompt = activity.permission {
+            PermissionPromptCard(task: task, role: worker.role.rawValue, prompt: prompt).id(activity.at)
+        }
         if let hand = task.hand { HandCard(task: task, hand: hand) }
         if let question = task.question { QuestionCard(task: task, question: question) }
         if !task.brief.isEmpty {
@@ -240,6 +243,75 @@ struct HandCard: View {
             }
         }
         .tint(Theme.warning)
+    }
+}
+
+/// The worker stopped at a permission prompt in its session: what it wants to run, and Yes / No.
+/// A new prompt (a new activity) gives it a fresh identity, so "Sent" only covers the one answered.
+struct PermissionPromptCard: View {
+    @Environment(FactoryStore.self) private var store
+    let task: Wire.Task
+    let role: String
+    let prompt: PermissionPrompt
+
+    @State private var sent: Wire.PromptChoice?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("\(role.capitalized) is waiting on you", systemImage: "hand.raised.fill")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(Theme.state(.awaitingApproval).opacity(0.15)))
+                .foregroundStyle(Theme.state(.awaitingApproval))
+            (Text("Wants to run ") + Text(prompt.tool).bold() + Text(": \(prompt.summary)"))
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail = prompt.detail {
+                ScrollView {
+                    Text(detail)
+                        .font(.footnote.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(maxHeight: 140)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(.tertiarySystemGroupedBackground)))
+            }
+            if let warning = prompt.warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.warning)
+            }
+            if let sent {
+                Label("Sent: \(sent == .yes ? "Yes" : "No")", systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("permission-sent")
+            }
+            VStack(spacing: 8) {
+                Button { answer(.yes) } label: { Text("Yes").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.approve)
+                    .accessibilityIdentifier("permission-yes")
+                Button { answer(.no) } label: { Text("No").frame(maxWidth: .infinity) }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("permission-no")
+            }
+            .controlSize(.large)
+            .disabled(sent != nil)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.state(.awaitingApproval).opacity(0.5)))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("permission-card")
+    }
+
+    private func answer(_ choice: Wire.PromptChoice) {
+        sent = choice
+        store.answerPrompt(task.id, choice: choice)
     }
 }
 
