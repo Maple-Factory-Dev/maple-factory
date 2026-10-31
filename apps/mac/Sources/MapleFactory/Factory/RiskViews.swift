@@ -53,7 +53,16 @@ struct RiskBox: View {
                 BudgetMeter(label: "Lines", value: risk.lines, limit: state.policy.maxLines, estimated: risk.estimated)
             }
 
-            if !risk.areas.isEmpty {
+            if !risk.factors.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Why this risk")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textMuted)
+                    ForEach(risk.factors) { factor in
+                        RiskFactorRow(factor: factor)
+                    }
+                }
+            } else if !risk.areas.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(risk.areas) { area in
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
@@ -62,8 +71,8 @@ struct RiskBox: View {
                                 .foregroundStyle(area.level.color)
                             Text("Touches \(area.name)")
                                 .foregroundStyle(Theme.text)
-                            Text(area.paths.first ?? "")
-                                .font(.system(size: 10.5, design: .monospaced))
+                            Text(area.rule ?? area.paths.first ?? "")
+                                .font(.system(size: 10.5, design: area.isRule ? .default : .monospaced))
                                 .foregroundStyle(Theme.textMuted)
                                 .lineLimit(1)
                         }
@@ -173,6 +182,43 @@ struct RiskBox: View {
     }
 }
 
+/// One of the server's reasons for a task's risk: its level, what raised it, and the files or rule behind it.
+struct RiskFactorRow: View {
+    let factor: RiskFactor
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Circle()
+                .fill(factor.level.color)
+                .frame(width: 7, height: 7)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                .help("\(factor.level.title) risk")
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(factor.label).fontWeight(.medium).foregroundStyle(Theme.text)
+                    Text(factor.level.title.uppercased())
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                if let detail = factor.detail {
+                    Text(detail)
+                        .foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !factor.files.isEmpty {
+                    Text(factor.files.joined(separator: ", "))
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .font(.system(size: 12))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// Usage against a budget; the bar turns red and overflows its track when the limit is exceeded.
 struct BudgetMeter: View {
     let label: String
@@ -241,18 +287,26 @@ struct RiskPolicyEditor: View {
                 }
             }
 
-            group("Sensitive areas") {
+            group("Risk checks") {
+                Text("A change's risk is the highest of the planner's read, each check it trips, and medium over the PR budget. Path checks match the diff's files; the planner cites rules that apply.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
                 ForEach($state.policy.sensitiveAreas) { $area in
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         Toggle("", isOn: $area.enabled)
                             .toggleStyle(.switch)
                             .controlSize(.mini)
                             .labelsHidden()
                         VStack(alignment: .leading, spacing: 2) {
                             Text(area.name).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.text)
-                            Text(area.paths.joined(separator: "  "))
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(Theme.textMuted)
+                            if area.isRule {
+                                RiskRuleField(rule: area.rule ?? "") { area.rule = $0 }
+                            } else {
+                                Text(area.paths.joined(separator: "  "))
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(Theme.textMuted)
+                            }
                         }
                         Spacer()
                         Picker("", selection: $area.level) {
@@ -261,14 +315,18 @@ struct RiskPolicyEditor: View {
                         .labelsHidden()
                         .controlSize(.small)
                         .fixedSize()
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textMuted)
+                            .padding(.top, 3)
+                            .contentShape(Rectangle())
+                            .onTapGesture { state.policy.sensitiveAreas.removeAll { $0.id == area.id } }
+                            .help("Remove \(area.name)")
+                            .accessibilityLabel("Remove \(area.name)")
+                            .accessibilityAddTraits(.isButton)
                     }
                 }
-                HStack(spacing: 5) {
-                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
-                    Text("Add area")
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textMuted)
+                RiskCheckAdder { state.policy.sensitiveAreas.append($0) }
             }
 
             group("Factory auto-merge by goal") {
@@ -389,6 +447,103 @@ struct RiskPolicyEditor: View {
         .frame(height: 22)
         .background(RoundedRectangle(cornerRadius: 5).fill(Theme.fill))
         .gridColumnAlignment(.center)
+    }
+}
+
+/// A rule check's text, saved when editing ends so a half-typed rule isn't sent on every keystroke.
+private struct RiskRuleField: View {
+    let rule: String
+    let save: (String) -> Void
+    @SwiftUI.State private var text = ""
+
+    var body: some View {
+        TextField("Rule", text: $text, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.textMuted)
+            .onAppear { text = rule }
+            .onChange(of: rule) { _, new in text = new }
+            .onSubmit(commit)
+            .onDisappear(perform: commit)
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed != rule { save(trimmed) }
+    }
+}
+
+/// Adds a risk check: a name, a level, and either paths (comma or space separated) or a plain-language rule.
+private struct RiskCheckAdder: View {
+    let add: (SensitiveArea) -> Void
+    @Environment(AppState.self) private var state
+    @SwiftUI.State private var open = false
+    @SwiftUI.State private var name = ""
+    @SwiftUI.State private var isRule = true
+    @SwiftUI.State private var text = ""
+    @SwiftUI.State private var level: RiskLevel = .medium
+
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
+    private var paths: [String] { text.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init) }
+    private var ready: Bool {
+        !trimmedName.isEmpty
+            && !state.policy.sensitiveAreas.contains { $0.name.lowercased() == trimmedName.lowercased() }
+            && (isRule ? !text.trimmingCharacters(in: .whitespaces).isEmpty : !paths.isEmpty)
+    }
+
+    var body: some View {
+        if open {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField("Name", text: $name).textFieldStyle(.roundedBorder)
+                    Picker("", selection: $level) {
+                        ForEach(RiskLevel.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Picker("", selection: $isRule) {
+                    Text("Rule").tag(true)
+                    Text("Paths").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                TextField(isRule ? "Changes the public HTTP API" : "db/migrations/**, lib/auth/**", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: isRule ? .default : .monospaced))
+                HStack {
+                    Spacer()
+                    Button("Cancel") { reset() }
+                    Button("Add") {
+                        add(SensitiveArea(name: trimmedName, paths: isRule ? [] : paths, level: level,
+                                          rule: isRule ? text.trimmingCharacters(in: .whitespaces) : nil))
+                        reset()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!ready)
+                }
+                .controlSize(.small)
+            }
+            .font(.system(size: 12))
+        } else {
+            HStack(spacing: 5) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
+                Text("Add check")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
+            .contentShape(Rectangle())
+            .onTapGesture { open = true }
+            .accessibilityAddTraits(.isButton)
+        }
+    }
+
+    private func reset() {
+        open = false
+        name = ""
+        text = ""
+        isRule = true
+        level = .medium
     }
 }
 
