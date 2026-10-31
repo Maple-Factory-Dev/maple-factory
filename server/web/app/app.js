@@ -153,12 +153,16 @@ function receive(m) {
     case "task.removed": state.tasks.delete(m.id); break;
     case "machine.updated":
     case "machine.removed": {
-      // Machines change with every step an agent takes; only a prompt starting or ending redraws.
+      // Machines change with every step an agent takes; only a prompt starting or ending redraws, or a
+      // machine going on- or offline (the nav's count). The Machines page shows them all: it redraws on
+      // every change, at most about once a second.
       const before = prompts();
+      const onlineBefore = online();
       state.machines = state.machines.filter((x) => x.id !== (m.machine?.id ?? m.id));
       if (m.machine) state.machines.push(m.machine);
-      if (prompts() === before) return;
-      break;
+      if (prompts() !== before || online() !== onlineBefore) break;
+      if (route().name === "machines") redrawSoon();
+      return;
     }
     case "goal.updated": state.goals = [...state.goals.filter((g) => g.id !== m.goal.id), m.goal]; break;
     case "note.updated": state.notes = [...state.notes.filter((n) => n.id !== m.note.id), m.note]; break;
@@ -186,6 +190,17 @@ function receive(m) {
     default: return;
   }
   render();
+}
+
+const online = () => state.machines.filter((m) => m.online).length;
+
+/** A redraw at most once a second: the first at once, the rest folded into one at the end of the second. */
+let lastDraw = 0;
+let drawTimer = null;
+function redrawSoon() {
+  if (drawTimer) return;
+  const wait = Math.max(0, lastDraw + 1000 - Date.now());
+  drawTimer = setTimeout(() => { drawTimer = null; lastDraw = Date.now(); render(); }, wait);
 }
 
 /** GitHub's incident under the header, linking to it on githubstatus.com; all clear (or an older server) hides it. */
@@ -301,7 +316,7 @@ function render() {
   $("nav-settings").hidden = state.me.role !== "admin";
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
-  $("machines-count").textContent = state.machines.filter((m) => m.online).length || "";
+  $("machines-count").textContent = online() || "";
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
   const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
