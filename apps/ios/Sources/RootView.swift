@@ -2,7 +2,7 @@ import MapleKit
 import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings` and `-task <id>`
-/// open a screen directly, for screenshots.
+/// open a screen directly, for screenshots; `-stats YES` (with `-statsDays N`) opens Statistics.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -11,6 +11,7 @@ struct RootView: View {
     @State private var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "tab") ?? "") ?? .inbox
     @State private var inboxPath = NavigationPath()
     @State private var goalsPath = NavigationPath()
+    @State private var settingsPath = NavigationPath()
 
     var body: some View {
         TabView(selection: $tab) {
@@ -31,7 +32,7 @@ struct RootView: View {
                 .tabItem { Label("Machines", systemImage: "desktopcomputer") }
                 .tag(Tab.machines)
 
-            NavigationStack { SettingsView() }
+            NavigationStack(path: $settingsPath) { SettingsView().withTaskDestinations() }
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
@@ -48,12 +49,17 @@ struct RootView: View {
             } else if tab == .goals, let goal = UserDefaults.standard.string(forKey: "goal") {
                 goalsPath.append(GoalRoute(id: goal))
             }
+            if UserDefaults.standard.bool(forKey: "stats"), store.isAdmin {
+                tab = .settings
+                settingsPath.append(StatsRoute())
+            }
         }
     }
 }
 
 struct TaskRoute: Hashable { let id: String }
 struct GoalRoute: Hashable { let id: String }
+struct StatsRoute: Hashable {}
 
 extension View {
     func withTaskDestinations() -> some View {
@@ -402,6 +408,9 @@ struct SettingsView: View {
                 if let server = store.server { LabeledContent("Address", value: server.host() ?? server.absoluteString) }
                 if let version = store.feed.serverVersion { LabeledContent("Server", value: version) }
                 LabeledContent("Members", value: "\(store.feed.members.count)")
+                if store.isAdmin {
+                    NavigationLink(value: StatsRoute()) { Label("Statistics", systemImage: "chart.bar") }
+                }
             }
             if let me = store.feed.me {
                 Section("Account") {
@@ -435,5 +444,6 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
     }
 }
