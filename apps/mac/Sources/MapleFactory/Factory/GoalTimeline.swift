@@ -194,7 +194,7 @@ struct GoalTimeline: View {
     private func bar(for task: FactoryTask) -> some View {
         let x = CGFloat(task.span.lowerBound) * dayWidth + 2
         let width = CGFloat(task.span.count) * dayWidth - 4
-        let finished = task.state == .merged || task.state == .cancelled
+        let finished = task.state.isFinished
         let elapsed = CGFloat(FactoryData.todayOffset + 1 - task.span.lowerBound) * dayWidth
         let doneWidth = finished ? width : min(max(elapsed, 0), width)
         let color = task.state.color.opacity(task.state == .cancelled ? 0.5 : 1)

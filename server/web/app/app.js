@@ -37,7 +37,7 @@ const STATES = ["drafting", "planning", "awaitingApproval", "building", "reviewi
 const allTasks = () => [...state.tasks.values()];
 /** Links the factory's task IDs (`MF-12`) in rendered Markdown. */
 const knownTasks = () => taskResolver(state.tasks.values());
-const STATE_TITLE = { drafting: "Drafting", planning: "Planning", awaitingApproval: "Awaiting approval", backlog: "Backlog", building: "Building", reviewing: "Reviewing", merged: "Merged", cancelled: "Cancelled" };
+const STATE_TITLE = { drafting: "Drafting", planning: "Planning", awaitingApproval: "Awaiting approval", backlog: "Backlog", building: "Building", reviewing: "Reviewing", merged: "Merged", cancelled: "Cancelled", closed: "Closed" };
 const name = (login) => {
   if (["planner", "builder", "reviewer", "factory"].includes(login)) return login[0].toUpperCase() + login.slice(1);
   if (login === state.me?.login) return "You";
@@ -384,7 +384,7 @@ function tasksView() {
   const drafts = [...state.tasks.values()].filter((t) => t.state === "drafting").sort((a, b) => b.updatedAt - a.updatedAt);
   const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
   const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
-  const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
+  const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled", "closed"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
   const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   return h("div", {},
     h("h1", {}, "Tasks"),
@@ -622,7 +622,7 @@ function taskView(id) {
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
   // Parked in the backlog: as far as its plan got.
-  const reached = t.state === "cancelled" ? -1 : t.state === "backlog" ? (t.plan.length ? 2 : 0) : STATES.indexOf(t.state);
+  const reached = t.state === "cancelled" || t.state === "closed" ? -1 : t.state === "backlog" ? (t.plan.length ? 2 : 0) : STATES.indexOf(t.state);
   return h("div", {},
     h("div", { class: "row muted" }, h("a", { href: "#/" }, "← Inbox"), h("span", { class: "spacer" }), h("span", { class: "mono" }, t.id)),
     h("h1", {}, t.title),
@@ -660,7 +660,7 @@ const effortTasks = (t, effort) => [...state.tasks.values()].filter((x) => x.goa
 // Its owner: a select for its owner or an admin (who can give it to anyone), Take over for everyone else.
 function ownerControl(t) {
   const me = state.me?.login;
-  const open = t.state !== "merged" && t.state !== "cancelled";
+  const open = t.state !== "merged" && t.state !== "cancelled" && t.state !== "closed";
   const assign = (owner) => owner && owner !== t.owner && send({ type: "task.assign", id: t.id, owner });
   if (!open) return h("span", { class: "muted" }, `${name(t.owner)} ·`);
   const canGive = t.owner === me || state.me?.role === "admin";
@@ -674,7 +674,7 @@ function ownerControl(t) {
 }
 
 function priorityLine(t) {
-  const open = t.state !== "merged" && t.state !== "cancelled";
+  const open = t.state !== "merged" && t.state !== "cancelled" && t.state !== "closed";
   const from = t.followUpOf && h("span", {}, " · Follow-up of ", h("a", { href: `#/t/${t.followUpOf.split("#")[0]}` }, t.followUpOf));
   if (!open) return (t.priority || from) && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Priority: ", t.priority ? t.priority.toUpperCase() : "none", from);
   return h("div", { class: "muted row prio-line", style: "font-size:13px;margin-top:4px;gap:6px" }, "Priority",
@@ -709,7 +709,7 @@ function effortLine(t) {
 
 function effortCard(t) {
   const tasks = effortTasks(t, t.effort);
-  const counted = tasks.filter((x) => x.state !== "cancelled");
+  const counted = tasks.filter((x) => x.state !== "cancelled" && x.state !== "closed");
   return [h("h2", { class: "row" }, h("span", {}, `Effort · ${t.effort}`), h("span", { class: "spacer" }),
       h("span", { style: "text-transform:none;letter-spacing:0;font-weight:500" }, `${counted.filter((x) => x.state === "merged").length} of ${counted.length} merged`)),
     h("div", { class: "list" }, tasks.map((x) => h("a", { class: `item${x.id === t.id ? " current" : ""}`, href: `#/t/${x.id}` },
@@ -838,7 +838,7 @@ function decisions(t) {
   if (t.state !== "merged") {
     // Waiting on its plan's approval or in the backlog, nothing is running to retry; requesting a change plans again.
     if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
-    if (t.state !== "cancelled") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
+    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
   }
   const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state) || (t.state === "backlog" && t.plan.length > 0);
   const [placeholder, label] = {
@@ -850,7 +850,7 @@ function decisions(t) {
   return h("div", {},
     renaming && renameRow(t),
     buttons.length > 0 && h("div", { class: "actions" }, buttons),
-    cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && cancelCard(t),
+    cancelling.has(t.id) && t.state !== "cancelled" && t.state !== "merged" && t.state !== "closed" && cancelCard(t),
     reviewAsks.has(t.id) && reviewRequestable(t) && reviewAskCard(t),
     steerable && compose(t, "steer", placeholder, label, (text) => send({ type: "task.steer", id: t.id, text })));
 }

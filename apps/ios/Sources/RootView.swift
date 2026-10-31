@@ -272,7 +272,7 @@ struct GoalRow: View {
 
     var body: some View {
         let tasks = store.feed.tasks(in: goal.id)
-        let open = tasks.filter { $0.state != .merged && $0.state != .cancelled }
+        let open = tasks.filter { $0.state != .merged && $0.state != .cancelled && $0.state != .closed }
         NavigationLink(value: GoalRoute(id: goal.id)) {
             HStack(spacing: 12) {
                 Text(goal.prefix)
@@ -297,7 +297,7 @@ struct GoalView: View {
     @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
     let id: String
 
-    private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .cancelled]
+    private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .closed, .cancelled]
 
     /// Edit mode for the Drafts section, where drafts are dragged into order.
     @State private var editMode: EditMode = .inactive

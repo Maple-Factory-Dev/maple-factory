@@ -56,6 +56,8 @@ pub enum TaskState {
     Merged,
     /// Stopped.
     Cancelled,
+    /// Finished without code to merge, e.g. its planner proposed tasks instead of a plan.
+    Closed,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -1961,6 +1963,9 @@ pub struct StatsTotals {
     pub merged: u32,
     pub auto_merged: u32,
     pub cancelled: u32,
+    /// Tasks that finished with nothing to merge. None from a factory before it had the closed state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed: Option<u32>,
     pub created: u32,
     pub tasks_touched: u32,
     pub hands_raised: u32,

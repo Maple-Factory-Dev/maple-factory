@@ -8,7 +8,7 @@ struct BoardColumnsTests {
     private typealias ID = BoardColumns.Column.ID
     private let order: [ID] = [.task(.drafting), .queued, .task(.planning), .task(.awaitingApproval),
                                .task(.backlog), .task(.building), .task(.reviewing), .pendingMerge,
-                               .task(.merged), .task(.cancelled)]
+                               .task(.merged), .task(.cancelled), .task(.closed)]
 
     private func task(_ id: String, state: TaskState = .building, queued: Bool = false, rank: Double = 0) -> FactoryTask {
         FactoryTask(id: id, title: id, state: state, detail: "", queued: queued, queueRank: rank)

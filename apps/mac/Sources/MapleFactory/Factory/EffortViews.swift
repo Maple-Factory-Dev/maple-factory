@@ -69,7 +69,7 @@ struct EffortSection: View {
 
     var body: some View {
         let siblings = state.tasks(inEffort: effort, goal: task.goal)
-        let counted = siblings.filter { $0.state != .cancelled }
+        let counted = siblings.filter { $0.state != .cancelled && $0.state != .closed }
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 SectionLabel(title: "Effort")

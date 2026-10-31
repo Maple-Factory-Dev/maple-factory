@@ -505,7 +505,7 @@ final class AppState {
     var archiving: String? = nil
 
     func unfinishedTasks(in goal: String) -> [FactoryTask] {
-        tasks.filter { $0.goal == goal && $0.state != .merged && $0.state != .cancelled }
+        tasks.filter { $0.goal == goal && !$0.state.isFinished }
     }
 
     /// Archives (or brings back) a goal; with unfinished tasks it asks first.
@@ -560,7 +560,7 @@ final class AppState {
     }
 
     func stats(for goal: Goal) -> (merged: Int, total: Int) {
-        let live = tasks(for: goal).filter { $0.state != .cancelled }
+        let live = tasks(for: goal).filter { $0.state != .cancelled && $0.state != .closed }
         return (live.filter { $0.state == .merged }.count, live.count)
     }
 
@@ -1108,14 +1108,14 @@ final class AppState {
             return
         }
         if destination == .myTasks {
-            let mine = tasks.filter { $0.owner.id == FactoryData.me.id && $0.state != .merged && $0.state != .cancelled }
+            let mine = tasks.filter { $0.owner.id == FactoryData.me.id && !$0.state.isFinished }
             if !mine.contains(where: { $0.id == selectedTask }), let first = mine.first { selectedTask = first.id }
             return
         }
         guard case .goal(let name) = destination else { return }
         let goalTasks = tasks.filter { $0.goal == name }
         guard !goalTasks.contains(where: { $0.id == selectedTask }) else { return }
-        if let pick = goalTasks.first(where: { $0.state != .merged && $0.state != .cancelled }) ?? goalTasks.first {
+        if let pick = goalTasks.first(where: { !$0.state.isFinished }) ?? goalTasks.first {
             selectedTask = pick.id
         }
     }
@@ -1280,8 +1280,8 @@ final class AppState {
         }
         // Back to the stage it was in, as the factory does.
         update(id) { task in
-            guard task.state == .cancelled || task.state == .reviewing else { return }
-            if task.state == .cancelled {
+            guard task.state == .cancelled || task.state == .closed || task.state == .reviewing else { return }
+            if task.state == .cancelled || task.state == .closed {
                 if task.pr != nil {
                     task.state = .reviewing
                     if task.pr?.state == .closed { task.pr?.state = .open }

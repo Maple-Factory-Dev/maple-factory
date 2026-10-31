@@ -18,7 +18,8 @@ export type StatKind =
   | "session.restarted" // detail: cause
   | "session.ended" // detail: cause (an end nobody chose that stopped the task)
   | "merged" // detail: auto, cycleMs
-  | "cancelled"; // detail: state
+  | "cancelled" // detail: state
+  | "closed"; // detail: proposed (finished with nothing to merge)
 
 export interface StatEvent {
   id: string;
@@ -82,6 +83,7 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
     add(at, "merged", null, auto ? "factory" : null, { auto, cycleMs: at - task.createdAt });
   }
   if (task.state === "cancelled") add(task.updatedAt, "cancelled", null, null, {});
+  if (task.state === "closed") add(task.updatedAt, "closed", null, null, {});
   return out;
 }
 
@@ -209,6 +211,7 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
       merged: merges.length,
       autoMerged: merges.filter((e) => e.detail.auto === true).length,
       cancelled: of("cancelled").length,
+      closed: of("closed").length,
       created,
       tasksTouched: touched.size,
       handsRaised: hands.length,

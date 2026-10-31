@@ -44,6 +44,7 @@ export const enums: Record<string, Enum> = {
       reviewing: "Pushed: the review agent and people are reviewing it.",
       merged: "Merged into its base.",
       cancelled: "Stopped.",
+      closed: "Finished without code to merge, e.g. its planner proposed tasks instead of a plan.",
     },
   },
   Role: {
@@ -910,6 +911,7 @@ export const structs: Record<string, Struct> = {
       merged: "u32",
       autoMerged: "u32",
       cancelled: "u32",
+      closed: "u32?",
       created: "u32",
       tasksTouched: "u32",
       handsRaised: "u32",
@@ -936,6 +938,7 @@ export const structs: Record<string, Struct> = {
       answerMedianMs: "How long an agent's question waits for its answer.",
       firstTryApproval: "Plans approved at version 1.",
       handsOpen: "Up right now, whenever they were raised.",
+      closed: "Tasks that finished with nothing to merge. None from a factory before it had the closed state.",
     },
   },
   StatsCount: { fields: { key: "string", count: "u32", medianMs: "u64?" } },
