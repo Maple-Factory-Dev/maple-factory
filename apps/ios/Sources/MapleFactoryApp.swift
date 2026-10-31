@@ -1,3 +1,4 @@
+import MapleKit
 import SwiftUI
 
 /// Maple Factory for iPhone. `-demo YES` opens the sample factory; otherwise the last factory
@@ -25,7 +26,11 @@ struct MapleFactoryApp: App {
             .task {
                 if UserDefaults.standard.bool(forKey: "demo") { store.startDemo() } else { store.restore() }
             }
-            .onOpenURL { _ in }
+            .onOpenURL { url in
+                // maplefactory://task/<id> or maplefactory://session/<machine>/<id>; RootView opens it
+                // once you're signed in. Anything else is ignored.
+                if let link = FactoryLink(url: url) { store.pendingLink = link }
+            }
         }
     }
 }

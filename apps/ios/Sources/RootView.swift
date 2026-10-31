@@ -2,7 +2,8 @@ import MapleKit
 import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings` and `-task <id>`
-/// open a screen directly, for screenshots.
+/// open a screen directly, for screenshots. A `maplefactory://` link (FactoryStore.pendingLink) opens
+/// its task on the Inbox tab, or a session's machine on Machines.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -47,6 +48,19 @@ struct RootView: View {
                 }
             } else if tab == .goals, let goal = UserDefaults.standard.string(forKey: "goal") {
                 goalsPath.append(GoalRoute(id: goal))
+            }
+        }
+        .onChange(of: store.pendingLink, initial: true) { _, link in
+            guard let link else { return }
+            store.pendingLink = nil
+            switch link {
+            case .task(let id):
+                // Replaces whatever was pushed, so the task isn't stacked twice. It needn't be in the
+                // feed yet: the detail fills in when the snapshot lands.
+                tab = .inbox
+                inboxPath = NavigationPath([TaskRoute(id: id)])
+            case .session:
+                tab = .machines
             }
         }
     }
