@@ -46,6 +46,12 @@ const where = destination();
 const key = releaseKey(["runner/src/update.rs", "installer/maple.mjs"]);
 const server = join(root, "server");
 const version = JSON.parse(readFileSync(join(server, "package.json"), "utf8")).version;
+const dev = parseJsonc(readFileSync(join(server, "wrangler.jsonc"), "utf8"));
+// Every factory reports errors to the built-in Sentry project unless it says otherwise (src/sentry.ts),
+// so a feed release needs its DSN in web/sentry.json; the SDK needs nodejs_als, which config.json carries.
+const sentry = JSON.parse(readFileSync(join(server, "web/sentry.json"), "utf8"));
+if (where.to === "feed" && !sentry.projects.server.dsn) throw new Error("server/web/sentry.json has no server DSN.");
+if (!(dev.compatibility_flags ?? []).includes("nodejs_als")) throw new Error("wrangler.jsonc lost the nodejs_als flag the Sentry SDK needs.");
 if (where.to === "feed") {
   const git = (...argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" }).trim();
   const tag = `server-v${version}`;
@@ -57,12 +63,6 @@ if (where.to === "feed") {
   git("push", "-q", "origin", tag);
   console.log(`Tagged ${tag}.`);
 }
-const dev = parseJsonc(readFileSync(join(server, "wrangler.jsonc"), "utf8"));
-// Every factory reports errors to the built-in Sentry project unless it says otherwise (src/sentry.ts),
-// so a feed release needs its DSN in web/sentry.json; the SDK needs nodejs_als, which config.json carries.
-const sentry = JSON.parse(readFileSync(join(server, "web/sentry.json"), "utf8"));
-if (where.to === "feed" && !sentry.projects.server.dsn) throw new Error("server/web/sentry.json has no server DSN.");
-if (!(dev.compatibility_flags ?? []).includes("nodejs_als")) throw new Error("wrangler.jsonc lost the nodejs_als flag the Sentry SDK needs.");
 
 const stage = mkdtempSync(join(tmpdir(), `maple-server-${version}-`));
 execFileSync("npx", ["wrangler", "deploy", "--dry-run", "--outdir", join(stage, "worker")], { cwd: server, stdio: "inherit" });
