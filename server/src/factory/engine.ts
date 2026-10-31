@@ -29,7 +29,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { mentionsIn } from "./mentions.ts";
-import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, mergePullRequest, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -79,11 +79,27 @@ const MERGE_CHECK = "git merge-tree origin/<base> (does it merge?)";
 const RUNNING_CHECKS = "Running checks…";
 /** What a task says while it's merging, from its countdown running out until it lands. */
 const MERGING = "Merging…";
+/** What a task says while it waits in its base branch's merge queue on GitHub, until GitHub merges it. */
+const IN_MERGE_QUEUE = "In merge queue…";
+/** Says the factory is merging it (or GitHub's merge queue is): nothing to click until it lands. */
+const mergingLog = (log: string | null | undefined) => log === MERGING || log === IN_MERGE_QUEUE;
 /** How long an auto-merge waits for its dry-run merge's answer before merging anyway. */
 const MERGE_CHECK_WAIT_MS = 60_000;
 /** How long a merge goes unanswered before the factory looks into it: GitHub's merge call takes
  *  seconds; the runner's merge may run the repo's hooks. */
-const MERGE_STUCK_MS = { github: 3 * 60_000, runner: 10 * 60_000 };
+const MERGE_STUCK_MS = { github: 3 * 60_000, runner: 10 * 60_000, queue: 60 * 60_000 };
+/** Why GitHub took a pull request out of its merge queue (the `dequeued` webhook's reason), in words. */
+const DEQUEUE_REASONS: Record<string, string> = {
+  CI_FAILURE: "the checks on its merge group failed",
+  CI_TIMEOUT: "the checks on its merge group timed out",
+  MERGE_CONFLICT: "it conflicts with the pull requests ahead of it",
+  BRANCH_PROTECTIONS: "it doesn't meet the branch's protections",
+  GIT_TREE_INVALID: "its merge group couldn't be built",
+  INVALID_MERGE_COMMIT: "its merge group's commit was invalid",
+  MANUAL: "someone removed it",
+  QUEUE_CLEARED: "the queue was cleared",
+  ROLLUPS_CLEARED: "the queue was cleared",
+};
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
@@ -1742,7 +1758,7 @@ export class Engine {
     this.reposUpdated();
   }
 
-  async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean }) {
+  async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean; enqueued?: boolean; dequeued?: boolean; reason?: string | null }) {
     const repo = `${event.owner}/${event.repo}`.toLowerCase();
     for (const task of this.store.tasks()) {
       const gh = this.store.private(task.id).gh;
@@ -1757,8 +1773,45 @@ export class Engine {
         }
         continue;
       }
+      if (event.dequeued) {
+        this.dequeued(task, event.reason ?? null);
+        continue;
+      }
+      if (event.enqueued) {
+        // Queued by someone on GitHub rather than by the factory: worth a line on its timeline.
+        if (task.state === "reviewing" && !this.store.private(task.id).queued) {
+          this.event(task, "factory", `pull request #${task.pr.number} was added to GitHub's merge queue`);
+          this.save(task);
+        }
+        continue;
+      }
       await this.refreshChecks(task.id);
     }
+  }
+
+  /** GitHub took its pull request out of the merge queue (`dequeued`). One the factory queued stops
+   *  waiting and goes to a person with GitHub's reason; leaving because it merged lands it as usual. */
+  private dequeued(task: Task, reason: string | null) {
+    if (task.state !== "reviewing" || !task.pr) return;
+    // Out of the queue because it merged (or already had): its closed webhook, or the stuck-merge look-up, lands it.
+    if (reason === "MERGE" || reason === "ALREADY_MERGED") return;
+    const why = (reason && DEQUEUE_REASONS[reason]) ?? (reason ? reason.toLowerCase().replace(/_/g, " ") : "no reason given");
+    const priv = this.store.private(task.id);
+    if (!priv.merging || !priv.queued) {
+      this.event(task, "factory", `pull request #${task.pr.number} was taken out of GitHub's merge queue: ${why}`);
+      this.save(task);
+      return;
+    }
+    this.store.savePrivate(task.id, { ...priv, merging: false, queued: false, mergeStartedAt: null });
+    task.liveLog = null;
+    this.event(task, "factory", `GitHub took pull request #${task.pr.number} out of the merge queue: ${why}`);
+    this.hooks.broadcast({ type: "toast", text: `${task.id} didn't merge: GitHub took it out of the merge queue (${why}).`, taskId: task.id });
+    this.raise(task, "factory", "mergeFailed", `GitHub took it out of the merge queue: ${why}.`, [
+      { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves any conflicts and pushes; review and approvals run again.`, recommended: reason === "MERGE_CONFLICT" || reason === "CI_FAILURE" },
+      { title: MERGE_RETRY, detail: "Add it to the merge queue again as it is.", recommended: reason !== "MERGE_CONFLICT" && reason !== "CI_FAILURE" },
+      { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
+    ]);
+    this.save(task);
   }
 
   private merged(msg: Extract<RunnerMessage, { type: "task.merged" }>) {
@@ -1768,7 +1821,7 @@ export class Engine {
     // A failure for a merge the factory already stopped waiting for: its hand is up, and a retry's own answer is what counts.
     if (!msg.ok && !this.store.private(task.id).merging && task.hand?.reason === "mergeFailed") return;
     task.liveLog = null;
-    this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false, mergeStartedAt: null });
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), merging: false, queued: false, mergeStartedAt: null });
     if (!msg.ok) {
       const why = msg.message ?? "no reason given";
       // With the policy's say-so, a builder fixes it (a few times at most) before a person is asked.
@@ -2357,7 +2410,7 @@ export class Engine {
     }
     task.mergeAt = null;
     await this.startMerge(task, "factory", a.accepted ? "auto-merged it (the goal accepted this risk)" : `auto-merged it (${a.level} risk)`).catch(() => {
-      if (!this.store.private(task.id).merging && task.liveLog === MERGING) task.liveLog = null;
+      if (!this.store.private(task.id).merging && mergingLog(task.liveLog)) task.liveLog = null;
       this.save(task);
     });
   }
@@ -2374,6 +2427,7 @@ export class Engine {
   }
 
   private mergeStuckMs(task: Task) {
+    if (this.store.private(task.id).queued) return MERGE_STUCK_MS.queue;
     return githubApp(this.env) && this.store.private(task.id).gh && task.pr?.url ? MERGE_STUCK_MS.github : MERGE_STUCK_MS.runner;
   }
 
@@ -2385,7 +2439,7 @@ export class Engine {
       if (task.state !== "reviewing") continue;
       const priv = this.store.private(task.id);
       if (!priv.merging) {
-        if (task.liveLog === MERGING && task.mergeAt == null) this.save(task, false); // save() clears it
+        if (mergingLog(task.liveLog) && task.mergeAt == null) this.save(task, false); // save() clears it
         continue;
       }
       const limit = this.mergeStuckMs(task);
@@ -2415,7 +2469,7 @@ export class Engine {
       if (app && gh && pr) this.hooks.waitUntil(this.deleteMergedBranch(task.id, app, gh, pr));
       return;
     }
-    this.store.savePrivate(task.id, { ...priv, merging: false, mergeStartedAt: null });
+    this.store.savePrivate(task.id, { ...priv, merging: false, queued: false, mergeStartedAt: null });
     task.liveLog = null;
     if (onGitHub?.state === "closed" && pr) {
       pr.state = "closed";
@@ -2425,6 +2479,18 @@ export class Engine {
     }
     // Not a merge-fix try: nothing says it conflicts, so it stays here for a person rather than going back to its builder.
     const after = started != null ? ` after ${Math.round((now() - started) / 60_000)} min` : "";
+    if (priv.queued && onGitHub) {
+      // Queued, and still not merged: a long queue, or one that's stuck. A person decides.
+      const waited = started != null ? ` for ${Math.round((now() - started) / 60_000)} min` : "";
+      this.event(task, "factory", `has been in GitHub's merge queue${waited} without merging`);
+      this.raise(task, "factory", "mergeFailed", `It's been in GitHub's merge queue${waited} and hasn't merged; its pull request is still open.`, [
+        { title: MERGE_RETRY, detail: "Add it to the merge queue again as it is, and keep waiting.", recommended: true },
+        { title: MERGE_FIX, detail: `A builder updates the branch from ${pr?.base ?? "its base"}, resolves any conflicts and pushes; review and approvals run again.`, recommended: false },
+        { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
+      ]);
+      this.save(task);
+      return;
+    }
     this.event(task, "factory", `didn't hear back from the merge${after}`);
     const where = onGitHub ? "its pull request is still open on GitHub" : app && gh && pr?.url ? "GitHub couldn't be asked whether it merged" : "it may or may not have merged on its machine";
     this.raise(task, "factory", "mergeFailed", `The merge didn't answer${after}; ${where}.`, [
@@ -2448,17 +2514,7 @@ export class Engine {
       this.save(task);
       this.hooks.wakeIn(MERGE_STUCK_MS.github);
       await audit(this.env, who, "task.merged", task.id);
-      const pr = task.pr;
-      this.hooks.waitUntil(
-        mergePullRequest(app, priv.gh.owner, priv.gh.repo, pr.number, { sha: pr.head ?? null, title: `${task.id}: ${task.title}` })
-          .then(
-            (m) => {
-              this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: m.sha, message: null });
-              return this.deleteMergedBranch(task.id, app, priv.gh!, pr);
-            },
-            (e) => this.merged({ type: "task.merged", taskId: task.id, ok: false, commit: null, message: (e as Error).message }),
-          ),
-      );
+      this.hooks.waitUntil(this.mergeOnGitHub(task.id, app, priv.gh, task.pr));
       return;
     }
     if (!task.machine || !priv.worktree || !task.pr) fail("Its worktree isn't known; it can't be merged from here.");
@@ -2477,6 +2533,42 @@ export class Engine {
     this.save(task);
     this.hooks.wakeIn(MERGE_STUCK_MS.runner);
     await audit(this.env, who, "task.merged", task.id);
+  }
+
+  /** Merges a pull request on GitHub: a squash-merge pinned to the reviewed head, or, when its base
+   *  branch requires a merge queue, adds it to the queue pinned to that head (GitHub merges it later). */
+  private async mergeOnGitHub(taskId: string, app: GitHubApp, gh: { owner: string; repo: string }, pr: NonNullable<Task["pr"]>) {
+    const title = `${taskId}: ${this.store.task(taskId)?.title ?? ""}`;
+    const enqueue = () => enqueuePullRequest(app, gh.owner, gh.repo, pr.number, pr.head ?? null).then((q) => ({ queued: q.position ?? -1, sha: null }));
+    let outcome: { queued: number | null; sha: string | null };
+    try {
+      // Unknown rules (an older app, a call that failed) try the merge: GitHub's refusal says if it needs the queue.
+      if (await mergeQueueRequired(app, gh.owner, gh.repo, pr.base).catch(() => false)) outcome = await enqueue();
+      else {
+        outcome = await mergePullRequest(app, gh.owner, gh.repo, pr.number, { sha: pr.head ?? null, title })
+          .then((m) => ({ queued: null, sha: m.sha }), (e) => (needsMergeQueue(e) ? enqueue() : Promise.reject(e)));
+      }
+    } catch (e) {
+      this.merged({ type: "task.merged", taskId, ok: false, commit: null, message: (e as Error).message });
+      return;
+    }
+    if (outcome.queued != null) return this.inMergeQueue(taskId, pr, outcome.queued);
+    this.merged({ type: "task.merged", taskId, ok: true, commit: outcome.sha, message: null });
+    return this.deleteMergedBranch(taskId, app, gh, pr);
+  }
+
+  /** Its pull request is in GitHub's merge queue: it waits there (longer than a merge call) until the
+   *  pull_request webhook says it merged or was taken out, or the stuck-merge look-up asks GitHub. */
+  private inMergeQueue(taskId: string, pr: NonNullable<Task["pr"]>, position: number) {
+    const task = this.store.task(taskId);
+    const priv = this.store.private(taskId);
+    // Merged already (its webhook came first), or cancelled or answered meanwhile.
+    if (!task || task.state !== "reviewing" || !priv.merging) return;
+    this.store.savePrivate(taskId, { ...priv, queued: true, mergeStartedAt: now() });
+    this.event(task, "factory", `added pull request #${pr.number} to GitHub's merge queue${position > 0 ? ` (position ${position})` : ""}`);
+    task.liveLog = IN_MERGE_QUEUE;
+    this.save(task);
+    this.hooks.wakeIn(MERGE_STUCK_MS.queue);
   }
 
   /** After the factory merged a pull request: deletes its agent/ branch on GitHub, if it's still the head
@@ -2875,11 +2967,11 @@ export class Engine {
       if (!this.mergeReady(task) || !this.assessment(task).autoMerge || priv.mergeHead !== head || priv.mergeHeld === head) {
         task.mergeAt = null;
         // Said "Merging…" when its countdown ran out, but it isn't merging after all.
-        if (task.liveLog === MERGING && !priv.merging) task.liveLog = null;
+        if (mergingLog(task.liveLog) && !priv.merging) task.liveLog = null;
       }
     }
     // "Merging…" with no merge in flight and no countdown behind it would lock the card for good.
-    if (task.liveLog === MERGING && task.mergeAt == null && task.state === "reviewing" && !this.store.private(task.id).merging) task.liveLog = null;
+    if (mergingLog(task.liveLog) && task.mergeAt == null && task.state === "reviewing" && !this.store.private(task.id).merging) task.liveLog = null;
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
   }
