@@ -471,7 +471,7 @@ export class Engine {
         }
         const effort = msg.effort != null ? effortName(msg.effort) : undefined;
         // Effort and priority get events of their own.
-        const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null && msg.after == null;
+        const onlyEffort = msg.title == null && msg.brief == null && msg.shareable == null && msg.repo == null;
         if (effort !== undefined && effort !== (task.effort ?? null)) {
           // Any state: an effort only groups tasks, it doesn't change the work.
           const was = task.effort;
