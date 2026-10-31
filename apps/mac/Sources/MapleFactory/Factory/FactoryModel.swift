@@ -219,6 +219,8 @@ struct FactoryTask: Identifiable {
     var footprint: (files: Int, lines: Int, estimated: Bool)? = nil
     /// Names of sensitive areas (see `RiskPolicy`) the change touches.
     var areas: [String] = []
+    /// Why the server gave it the risk it has (live only).
+    var riskFactors: [RiskFactor] = []
     /// The session working on it right now (live only).
     struct Worker: Equatable {
         let role: String

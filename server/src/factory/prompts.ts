@@ -1,7 +1,7 @@
 // What each factory session is told. Agents report back only through the `maple` MCP tools
 // (tools.ts); the prompts say which, and when to stop.
 
-import type { Goal, PromptAdditions, Role, Task } from "../wire.ts";
+import type { Goal, PromptAdditions, Role, SensitiveArea, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
 
 /** The anchor on a change request made because the branch didn't merge: "Didn't merge into <base>". */
@@ -74,11 +74,22 @@ function comments(task: Task) {
   return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}: ${c.text}`).join("\n");
 }
 
-export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null): string {
+/** The org's enabled risk checks, for the planner to judge and cite. */
+function riskChecks(checks: SensitiveArea[]) {
+  const on = checks.filter((c) => c.enabled);
+  if (!on.length) return "";
+  const line = (c: SensitiveArea) => {
+    const what = [c.rule?.trim(), c.paths.length ? `touches ${c.paths.join(", ")}` : ""].filter(Boolean).join("; or ");
+    return `- ${c.name} (${c.level}): ${what}`;
+  };
+  return `\n\n## Risk checks\nThe org's checks; each one that applies raises the change to at least its level. Path checks are also matched against the diff's files once there's code.\n${on.map(line).join("\n")}`;
+}
+
+export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = []): string {
   const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
-${brief(task, goal)}${extra("planner", org, goal, repo)}${moving(inFlight)}${comments(task)}${changes(task)}${
+${brief(task, goal)}${extra("planner", org, goal, repo)}${riskChecks(checks)}${moving(inFlight)}${comments(task)}${changes(task)}${
     others.length
       ? `\n\n## The goal's other repos\n${others.map((r) => `- ${r}`).join("\n")}\nThis task changes ${taskRepo(task, goal)} only. If the work also needs changes in one of these, plan just this repo's part and list each other repo's part in \`otherRepos\` (repo, title, brief): it becomes its own task, planned and built there once this one merges.`
       : ""
@@ -89,7 +100,7 @@ Read the repository (this worktree) to understand where the change goes. Then ca
 - title (optional): a clearer title for the task, only when its current one ("${task.title}") is vague or misleading; it's renamed once the plan is approved.
 - steps: 3–8 concrete steps, each with the main file it touches.
 - doneWhen: 2–5 checks that prove it works, each with the proof kind the builder will produce (tests, terminal, screenshot or video).
-- risk: low, medium or high, with reasons (auth, payments, migrations and public APIs are high) and the areas it touches.
+- risk: low, medium or high, with reasons; in \`areas\`, name each risk check above that applies (its exact name), and say why in \`reasons\`.
 - footprint: your estimate of files and lines changed.
 - mockups: for UI changes, at least one screen mockup as a small self-contained HTML page (inline CSS, no scripts) of the changed screen,
   with numbered callouts in its notes; for CLI or API changes, a terminal mockup (lines with style command/output/highlight/dim/error,

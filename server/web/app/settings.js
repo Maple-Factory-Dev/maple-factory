@@ -41,19 +41,46 @@ export function formFromPolicy(p) {
     maxFiles: p.maxFiles,
     maxLines: p.maxLines,
     scoutItems: p.scoutItems ?? 3,
+    checks: (p.areas ?? []).map((a) => ({
+      name: a.name,
+      level: a.level,
+      enabled: a.enabled,
+      kind: a.rule?.trim() ? "rule" : "paths",
+      paths: a.paths.join(", "),
+      rule: a.rule ?? "",
+    })),
   };
+}
+
+/** A SensitiveArea from a risk check's row: a path check keeps its globs, a rule check its text. */
+export function areaFromCheck(c) {
+  const area = { name: c.name.trim(), paths: c.kind === "rule" ? [] : String(c.paths).split(/[\s,]+/).filter(Boolean), level: c.level, enabled: !!c.enabled };
+  if (c.kind === "rule") area.rule = c.rule.trim();
+  return area;
+}
+
+/** What the server would refuse in the risk checks (policy.ts's validPolicy), or null. */
+export function checksProblem(checks) {
+  const names = new Set();
+  for (const c of checks.map(areaFromCheck)) {
+    if (!c.name) return "Every risk check needs a name.";
+    if (names.has(c.name.toLowerCase())) return `There are two risk checks named ${c.name}.`;
+    names.add(c.name.toLowerCase());
+    if (!c.paths.length && !c.rule) return `Give ${c.name} ${c.rule === undefined ? "some paths" : "a rule"}.`;
+  }
+  return null;
 }
 
 /** The RiskPolicy to save from the form: numbers clamped to what the server takes (a budget of at least
  *  one file and line, approvals and reviews 0–10, Scout 1–10 items), anything blank or unreadable back to
- *  `base`'s, and what the form doesn't show (the sensitive areas) kept from `base`. */
+ *  `base`'s, and the risk checks as their rows say (or `base`'s, for a form without them). */
 export function policyFromForm(form, base) {
   const counts = (key) => Object.fromEntries(LEVELS.map((l) => [l, clampInt(form[key]?.[l], 0, 10, base[key]?.[l] ?? 1)]));
   return {
     ...base,
     maxFiles: clampInt(form.maxFiles, 1, 10_000, base.maxFiles),
     maxLines: clampInt(form.maxLines, 1, 1_000_000, base.maxLines),
-    areas: base.areas,
+    areas: form.checks ? form.checks.map(areaFromCheck) : base.areas,
     planApprovals: counts("planApprovals"),
     finalReviews: counts("finalReviews"),
     autoMerge: Object.fromEntries(LEVELS.map((l) => [l, !!form.autoMerge?.[l]])),
@@ -404,6 +431,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
     const d = draft("policy", formFromPolicy(state.policy));
     const f = d.value;
     const set = (fn) => { fn(f); render(); };
+    const problem = checksProblem(f.checks);
     const num = (key, value, min, max, onset) => keep(`policy:${key}`, h("input", { type: "number", inputmode: "numeric", class: "set-num", min, max, value,
       oninput: (e) => set(() => onset(e.target.value === "" ? "" : e.target.valueAsNumber)) }));
     return [
@@ -428,12 +456,37 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       h("div", { class: "card set-card" },
         field("Most files", "Over this, a change is at least medium risk and should be split.", num("maxFiles", f.maxFiles, 1, 10000, (v) => (f.maxFiles = v))),
         field("Most lines", "Added and removed, together.", num("maxLines", f.maxLines, 1, 1000000, (v) => (f.maxLines = v)))),
+      h("h2", {}, "Risk checks"),
+      h("p", { class: "muted" }, "A change's risk is the highest of: the planner's read, each check below it trips, and medium when it's over the PR budget. Path checks match the diff's files; the planner judges rules and cites the ones that apply."),
+      h("div", { class: "card set-card" },
+        f.checks.length ? f.checks.map((c, i) => riskCheckRow(f, c, i, set)) : h("p", { class: "muted", style: "margin:0" }, "No risk checks: only the planner's read and the size count."),
+        h("div", { class: "row" },
+          h("button", { type: "button", class: "btn small", onclick: () => set((x) => x.checks.push({ name: "", level: "medium", enabled: true, kind: "rule", paths: "", rule: "" })) }, "Add check"))),
       h("h2", {}, "Scout"),
       h("div", { class: "card set-card" },
         field("Items per Scout run", "The most leftovers one run turns into drafted plans (1–10).", num("scoutItems", f.scoutItems, 1, 10, (v) => (f.scoutItems = v))),
-        saveBar("policy", isDirty(d), () => go({ type: "policy.save", policy: policyFromForm(f, state.policy) }, { key: "policy", text: "Saved Merging & risk." }), () => { drafts.delete("policy"); render(); })),
-      macOnly("Sensitive areas"),
+        problem && h("p", { class: "set-warn" }, problem),
+        saveBar("policy", isDirty(d), () => go({ type: "policy.save", policy: policyFromForm(f, state.policy) }, { key: "policy", text: "Saved Merging & risk." }), () => { drafts.delete("policy"); render(); },
+          { ready: isDirty(d) && !problem })),
     ];
+  }
+
+  function riskCheckRow(f, c, i, set) {
+    const text = (key, attrs) => keep(`check:${i}:${key}`, h("input", { type: "text", value: c[key], spellcheck: "false", ...attrs, oninput: (e) => set(() => (c[key] = e.target.value)) }));
+    return h("div", { class: "risk-check-row" },
+      h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": `${c.name || "This check"} on`, checked: c.enabled, onchange: (e) => set(() => (c.enabled = e.target.checked)) }),
+      h("div", { class: "risk-check-body" },
+        h("div", { class: "row risk-check-head" },
+          text("name", { placeholder: "Name", "aria-label": "Name", class: "risk-check-name" }),
+          h("select", { "aria-label": "Level", onchange: (e) => set(() => (c.level = e.target.value)) },
+            LEVELS.map((l) => h("option", { value: l, selected: l === c.level }, l[0].toUpperCase() + l.slice(1)))),
+          h("select", { "aria-label": "Kind", onchange: (e) => set(() => (c.kind = e.target.value)) },
+            h("option", { value: "paths", selected: c.kind === "paths" }, "Paths"),
+            h("option", { value: "rule", selected: c.kind === "rule" }, "Rule")),
+          h("button", { type: "button", class: "btn small danger-text", onclick: () => set((x) => x.checks.splice(i, 1)) }, "Remove")),
+        c.kind === "rule"
+          ? text("rule", { placeholder: "Changes the public HTTP API", "aria-label": "Rule" })
+          : text("paths", { placeholder: "db/migrations/**, lib/auth/**", "aria-label": "Paths", class: "mono", autocapitalize: "off" })));
   }
 
   const BODIES = { general, repos, secrets, people, prompts, integrations, merging };

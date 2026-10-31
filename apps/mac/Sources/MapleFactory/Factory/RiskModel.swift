@@ -30,13 +30,29 @@ enum RiskLevel: Int, CaseIterable, Comparable {
     }
 }
 
-/// Code paths that raise a task's risk just by being touched.
+/// A risk check: code paths that raise a task's risk just by being touched, or a plain-language rule
+/// the planner judges and cites (like "changes the public HTTP API").
 struct SensitiveArea: Identifiable {
-    let name: String
-    let paths: [String]
+    var name: String
+    var paths: [String]
     var level: RiskLevel
     var enabled = true
+    var rule: String? = nil
+    /// Names are unique (the server refuses two the same) and the Mac editor doesn't rename checks.
     var id: String { name }
+
+    var isRule: Bool { !(rule ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+}
+
+/// One reason the server gave for a task's risk level (Wire.RiskFactor).
+struct RiskFactor: Identifiable, Equatable {
+    enum Source { case planner, check, size, acceptance }
+    let source: Source
+    let label: String
+    let level: RiskLevel
+    var detail: String? = nil
+    var files: [String] = []
+    var id: String { "\(source)/\(label)" }
 }
 
 /// Team-wide rules for how big a change may be and how much human sign-off each risk level needs.
@@ -76,6 +92,7 @@ struct RiskPolicy {
             lines: footprint.lines,
             estimated: footprint.estimated,
             areas: areas,
+            factors: task.riskFactors,
             overFiles: overFiles,
             overLines: overLines,
             approvals: planApprovals[level, default: 1],
@@ -97,6 +114,8 @@ struct RiskAssessment {
     /// Planning-stage numbers are the agent's estimate; building and later are measured from the diff.
     let estimated: Bool
     let areas: [SensitiveArea]
+    /// The server's reasons for the level, highest first; empty from an older server or in the demo.
+    let factors: [RiskFactor]
     let overFiles: Bool
     let overLines: Bool
     let approvals: Int

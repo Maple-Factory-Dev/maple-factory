@@ -381,6 +381,22 @@ pub enum RiskLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum RiskFactorSource {
+    /// The planner's own read of the change.
+    Planner,
+    /// A risk check that matched: a path check against the diff's files, or a rule the planner cited.
+    Check,
+    /// The change's size against the PR budget.
+    Size,
+    /// A goal's acceptance of risk up to a level.
+    Acceptance,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum IntegrationKind {
     /// Slack's /maple slash command.
     Slack,
@@ -1205,6 +1221,22 @@ pub struct FollowUp {
     pub task: Option<String>,
 }
 
+/// One reason a change has the risk level it has.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskFactor {
+    pub source: RiskFactorSource,
+    /// What set or raised the level, e.g. the check's name.
+    pub label: String,
+    pub level: RiskLevel,
+    /// Why: the planner's reasons, the rule's text or the budget it went over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// For a path check, the diff's files that matched it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Risk {
@@ -1213,6 +1245,9 @@ pub struct Risk {
     pub reasons: Vec<String>,
     #[serde(default)]
     pub areas: Vec<String>,
+    /// Set by the server from the org's risk policy: every reason behind the level, highest first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub factors: Option<Vec<RiskFactor>>,
 }
 
 /// The session working on a task right now.
@@ -1374,15 +1409,19 @@ pub struct Task {
     pub merge_forecast: Option<MergeForecast>,
 }
 
-/// Code that raises a change's risk when touched.
+/// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SensitiveArea {
     pub name: String,
+    /// Globs matched against the diff's files. May be empty for a rule check.
     #[serde(default)]
     pub paths: Vec<String>,
     pub level: RiskLevel,
     pub enabled: bool,
+    /// A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 /// The org's rules for how much sign-off a change needs, by its risk.
