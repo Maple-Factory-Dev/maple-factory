@@ -35,4 +35,33 @@ struct TaskRefHoverTests {
         #expect(TaskRefQuery.reference(at: 3, in: "MF-999 is gone", known: known) == nil)
         #expect(TaskRefQuery.reference(at: 3, in: "MF-116", known: []) == nil)
     }
+
+    // MF-147: the card on an overlap link lists the files the two tasks share.
+
+    @Test func noFilesShowsNoSection() {
+        let summary = TaskHovercard.filesSummary([])
+        #expect(summary.shown.isEmpty)
+        #expect(summary.more == nil)
+    }
+
+    @Test func aFewFilesAllShow() {
+        let files = ["server/src/env.ts", "server/src/util.ts", "server/README.md"]
+        let summary = TaskHovercard.filesSummary(files)
+        #expect(summary.shown == files)
+        #expect(summary.more == nil)
+    }
+
+    @Test func manyFilesShowFiveAndCountTheRest() {
+        let files = (1...8).map { "src/file\($0).ts" }
+        let summary = TaskHovercard.filesSummary(files)
+        #expect(summary.shown == Array(files.prefix(5)))
+        #expect(summary.more == "+3 more")
+    }
+
+    @MainActor @Test func anIDTheFactoryDoesntHaveOpensNoCard() {
+        let tasks = [FactoryTask(id: "MF-89", title: "Security audit", state: .reviewing, detail: "")]
+        #expect(TaskIDHover.task("MF-89", in: tasks)?.title == "Security audit")
+        #expect(TaskIDHover.task("MF-999", in: tasks) == nil)
+        #expect(TaskIDHover.task("MF-89", in: []) == nil)
+    }
 }

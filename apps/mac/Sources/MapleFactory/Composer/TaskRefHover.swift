@@ -185,7 +185,89 @@ struct TaskRefHover: ViewModifier {
     }
 }
 
-/// Carried by a demoHover note so one Text answers it.
+// MARK: - Hovering a task ID chip
+
+/// Hovering a whole view that stands for one task (an overlap link, a "Split from" chip) shows the same
+/// TaskHovercard as TaskRefHover, with the same delays and demo hook, plus the files it shares when given.
+struct TaskIDHover: ViewModifier {
+    let id: String
+    var files: [String] = []
+
+    @Environment(AppState.self) private var appState: AppState?
+    @State private var frame: CGRect = .zero
+    @State private var hovered = false
+    @State private var shown = false
+    @State private var cardHovered = false
+    @State private var pending: Task<Void, Never>?
+    @State private var demo = false
+
+    /// The task the card previews: none for an ID the factory doesn't have, so no empty card opens.
+    static func task(_ id: String, in tasks: [FactoryTask]) -> FactoryTask? {
+        tasks.first { $0.id == id }
+    }
+
+    func body(content: Content) -> some View {
+        let task = appState.flatMap { Self.task(id, in: $0.tasks) }
+        content
+            .pointerStyle(.link)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+            .onHover { inside in
+                guard !demo, task != nil else { return }
+                hover(inside)
+            }
+            .popover(isPresented: $shown, arrowEdge: .bottom) {
+                if let task {
+                    TaskHovercard(task: task, files: files)
+                        .onHover { inside in
+                            guard !demo else { return }
+                            cardHovered = inside
+                            if !inside, !hovered { schedule(false) }
+                        }
+                        .onTapGesture {
+                            shown = false
+                            appState?.openReference(id)
+                        }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: TaskRefHover.demoHover)) { note in
+                let target = note.userInfo?["id"] as? String ?? "none"
+                guard target != "none" else {
+                    if demo { demo = false; cardHovered = false; hover(false) }
+                    return
+                }
+                guard target == id, task != nil, let claim = note.object as? DemoClaim, !claim.taken else { return }
+                claim.taken = true
+                demo = true
+                hover(true)
+            }
+            .onChange(of: shown) { _, open in
+                guard Headless.isOn else { return }
+                Headless.popoverAnchor = open ? frame : nil
+            }
+            .onDisappear { pending?.cancel() }
+    }
+
+    private func hover(_ inside: Bool) {
+        guard inside != hovered else { return }
+        hovered = inside
+        pending?.cancel()
+        pending = nil
+        if inside == shown { return }
+        schedule(inside)
+    }
+
+    private func schedule(_ open: Bool) {
+        pending = Task { @MainActor in
+            try? await Task.sleep(for: open ? TaskRefHover.openDelay : TaskRefHover.closeGrace)
+            guard !Task.isCancelled else { return }
+            pending = nil
+            if !open, cardHovered { return }
+            shown = open
+        }
+    }
+}
+
+/// Carried by a demoHover note so one view answers it.
 final class DemoClaim {
     var taken = false
 }
@@ -195,6 +277,11 @@ extension View {
     func taskRefHover(_ text: AttributedString, size: CGFloat, weight: NSFont.Weight = .regular, lineSpacing: CGFloat = 0, known: Set<String>) -> some View {
         modifier(TaskRefHover(text: text, size: size, weight: weight, lineSpacing: lineSpacing, known: known))
     }
+
+    /// Hovering this view, which stands for task `id`, shows TaskHovercard, listing `files` when given.
+    func taskHovercard(_ id: String, files: [String] = []) -> some View {
+        modifier(TaskIDHover(id: id, files: files))
+    }
 }
 
 // MARK: - The card
@@ -202,6 +289,14 @@ extension View {
 /// A read-only preview of a referenced task: its ID and state, title, and goal, agent and last change.
 struct TaskHovercard: View {
     let task: FactoryTask
+    /// Files it shares with the task being looked at (a merge overlap); none hides the section.
+    var files: [String] = []
+
+    /// The paths shown, at most `limit`, and how many more there are.
+    static func filesSummary(_ files: [String], limit: Int = 5) -> (shown: [String], more: String?) {
+        let more = files.count - limit
+        return (Array(files.prefix(limit)), more > 0 ? "+\(more) more" : nil)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -237,6 +332,25 @@ struct TaskHovercard: View {
             }
             .font(.system(size: 11.5))
             .foregroundStyle(Theme.textMuted)
+            if !files.isEmpty {
+                let summary = Self.filesSummary(files)
+                Divider()
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Overlapping files")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                    ForEach(summary.shown, id: \.self) { path in
+                        Text(path)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if let more = summary.more {
+                        Text(more).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                    }
+                }
+            }
         }
         .padding(12)
         .frame(width: 300, alignment: .leading)
