@@ -115,6 +115,18 @@ export const enums: Record<string, Enum> = {
       mergeFailed: "It was approved but didn't merge.",
     },
   },
+  ArtifactKind: {
+    doc: "What an agent shared on a task, which decides how the apps show it.",
+    values: {
+      html: "An HTML page, run sandboxed with no network.",
+      image: "A PNG, JPEG, WebP or GIF.",
+      svg: "An SVG drawing, shown like an HTML page.",
+      pdf: "A PDF.",
+      markdown: "Markdown text.",
+      text: "Plain text.",
+      data: "CSV or JSON, shown as text.",
+    },
+  },
   MockupStatus: { values: { proposed: "Proposed with the plan.", approved: "Approved.", changesRequested: "Someone asked for changes." } },
   PRState: { values: { draft: "Draft.", open: "Open.", merged: "Merged.", closed: "Closed without merging." } },
   CheckStatus: { values: { queued: "Queued.", running: "Running.", passed: "Passed.", failed: "Failed." } },
@@ -410,9 +422,10 @@ export const structs: Record<string, Struct> = {
     fields: { text: "string", proof: "ProofKind", status: "ProofStatus", evidence: "Evidence?" },
   },
   Comment: {
-    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?" },
+    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?", replyTo: "string?" },
     fieldDocs: {
       author: "A login, or an agent like \"planner\".",
+      replyTo: "The id of the comment that starts its thread. Replies to a reply sit under that same root.",
       via: "Where it came in from, e.g. \"Slack #requests\".",
       mentions: "Logins of the org members this comment @mentions, worked out by the server. Never the author.",
     },
@@ -489,6 +502,26 @@ export const structs: Record<string, Struct> = {
       differences: "string[]",
     },
     fieldDocs: { kind: "\"screen\" (html, shown in a browser frame at url) or \"terminal\" (lines)." },
+  },
+  Artifact: {
+    doc: "A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.",
+    fields: {
+      id: "string",
+      title: "string",
+      kind: "ArtifactKind",
+      summary: "string?",
+      file: "string",
+      mime: "string",
+      bytes: "u64",
+      by: "string",
+      at: "u64",
+      version: "u32",
+    },
+    fieldDocs: {
+      file: "Its upload's link, /attachments/<id>/<name> (members fetch it there).",
+      by: "The role of the agent that shared it.",
+      version: "1 for the first share, one more each time the same title is shared again.",
+    },
   },
   TicketLink: {
     fields: { system: "string", key: "string", title: "string", status: "string", url: "string?", asContext: "bool" },
@@ -619,6 +652,7 @@ export const structs: Record<string, Struct> = {
       risk: "Risk?",
       autoReview: "AutoReview?",
       mockups: "Mockup[]",
+      artifacts: "Artifact[]",
       tickets: "TicketLink[]",
       shareable: "bool",
       agent: "string",
@@ -641,6 +675,7 @@ export const structs: Record<string, Struct> = {
       mergeForecast: "MergeForecast?",
     },
     fieldDocs: {
+      artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",
       mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
       suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
@@ -1358,7 +1393,11 @@ export const unions: Record<string, Union> = {
       },
       "task.plan": { doc: "Send a draft to planning, or pick up a backlog task (one with a plan is planned again).", fields: { id: "string" } },
       "task.backlog": { doc: "Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.", fields: { id: "string" } },
-      "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
+      "task.comment": {
+        doc: "Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.",
+        fields: { id: "string", text: "string", anchor: "string?", replyTo: "string?" },
+        fieldDocs: { replyTo: "The id of a comment on this task to reply to; a reply to a reply goes under its root." },
+      },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
       "task.review": {
         doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",

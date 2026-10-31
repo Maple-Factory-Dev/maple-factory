@@ -1043,7 +1043,7 @@ fn list_tools(backend: &dyn Backend) -> Value {
 }
 
 /// Built-in names the factory also serves, with its own arguments: never checked against ours.
-const FACTORY_OWNED: &[&str] = &["prove"];
+const FACTORY_OWNED: &[&str] = &["prove", "share_artifact"];
 
 pub fn call_tool(backend: &dyn Backend, name: &str, args: &Value) -> Value {
     // The built-in tools are checked here; the factory checks its own. `prove` is the factory's in a
@@ -1169,6 +1169,16 @@ pub async fn forward(sessions: &Sessions, request: &Value) -> Value {
         args = match crate::proof::prepare(sessions, session, args).await {
             Ok(args) => args,
             Err(e) => return answer(Err(e)),
+        };
+    }
+    // An artifact's file goes up the same way, to its own route.
+    if tool == "share_artifact" {
+        args = match crate::proof::prepare_artifact(sessions, session, args).await {
+            Ok(args) => args,
+            Err(e) => {
+                PENDING.lock().unwrap().remove(&req_id);
+                return answer(Err(e));
+            }
         };
     }
     sessions.emit(Outbound::McpRequest { req_id: req_id.clone(), session, tool: tool.to_string(), args });

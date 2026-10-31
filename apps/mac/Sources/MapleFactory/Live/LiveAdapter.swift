@@ -108,7 +108,7 @@ import SwiftUI
         task.approvals = t.approvals.map(who)
         task.approvalsNeeded = t.approvalsNeeded.int
         task.reviews = t.reviews.map(who)
-        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions) }
+        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions, replyTo: $0.replyTo) }
         task.changeRequests = t.changes.map { change in
             var request = ChangeRequest(author: who(change.author), text: change.text, anchor: change.anchor,
                                         status: changeStatus(change.status), when: ago(change.at))
@@ -144,6 +144,7 @@ import SwiftUI
             TicketLink(system: $0.system.lowercased() == "jira" ? .jira : .linear, key: $0.key, title: $0.title, status: $0.status, asContext: $0.asContext)
         }
         task.mockups = t.mockups.map(mockup)
+        task.artifacts = t.artifacts
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)

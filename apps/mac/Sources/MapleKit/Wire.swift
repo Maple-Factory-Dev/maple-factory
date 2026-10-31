@@ -1058,6 +1058,67 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// What an agent shared on a task, which decides how the apps show it.
+    public enum ArtifactKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// An HTML page, run sandboxed with no network.
+        case html
+        /// A PNG, JPEG, WebP or GIF.
+        case image
+        /// An SVG drawing, shown like an HTML page.
+        case svg
+        /// A PDF.
+        case pdf
+        /// Markdown text.
+        case markdown
+        /// Plain text.
+        case text
+        /// CSV or JSON, shown as text.
+        case data
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ArtifactKind] = [.html, .image, .svg, .pdf, .markdown, .text, .data]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "html": self = .html
+            case "image": self = .image
+            case "svg": self = .svg
+            case "pdf": self = .pdf
+            case "markdown": self = .markdown
+            case "text": self = .text
+            case "data": self = .data
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .html: "html"
+            case .image: "image"
+            case .svg: "svg"
+            case .pdf: "pdf"
+            case .markdown: "markdown"
+            case .text: "text"
+            case .data: "data"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ArtifactKind, b: ArtifactKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum MockupStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Proposed with the plan.
         case proposed
@@ -2255,8 +2316,10 @@ public enum Wire {
         public var via: String?
         /// Logins of the org members this comment @mentions, worked out by the server. Never the author.
         public var mentions: [String]?
+        /// The id of the comment that starts its thread. Replies to a reply sit under that same root.
+        public var replyTo: String?
 
-        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil) {
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil, replyTo: String? = nil) {
             self.id = id
             self.author = author
             self.text = text
@@ -2264,6 +2327,7 @@ public enum Wire {
             self.anchor = anchor
             self.via = via
             self.mentions = mentions
+            self.replyTo = replyTo
         }
     }
 
@@ -2549,6 +2613,36 @@ public enum Wire {
             version = try c.decode(UInt32.self, forKey: .version)
             visualMatch = try c.decodeIfPresent(Double.self, forKey: .visualMatch)
             differences = try c.decodeIfPresent([String].self, forKey: .differences) ?? []
+        }
+    }
+
+    /// A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.
+    public struct Artifact: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+        public var kind: ArtifactKind
+        public var summary: String?
+        /// Its upload's link, /attachments/<id>/<name> (members fetch it there).
+        public var file: String
+        public var mime: String
+        public var bytes: UInt64
+        /// The role of the agent that shared it.
+        public var by: String
+        public var at: UInt64
+        /// 1 for the first share, one more each time the same title is shared again.
+        public var version: UInt32
+
+        public init(id: String, title: String, kind: ArtifactKind, summary: String? = nil, file: String, mime: String, bytes: UInt64, by: String, at: UInt64, version: UInt32) {
+            self.id = id
+            self.title = title
+            self.kind = kind
+            self.summary = summary
+            self.file = file
+            self.mime = mime
+            self.bytes = bytes
+            self.by = by
+            self.at = at
+            self.version = version
         }
     }
 
@@ -2899,6 +2993,8 @@ public enum Wire {
         public var risk: Risk?
         public var autoReview: AutoReview?
         public var mockups: [Mockup]
+        /// Files its agents shared: charts, images, pages. Empty on older tasks.
+        public var artifacts: [Artifact]
         public var tickets: [TicketLink]
         public var shareable: Bool
         /// claude or codex: what builds it.
@@ -2936,7 +3032,7 @@ public enum Wire {
         /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
         public var mergeForecast: MergeForecast?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2969,6 +3065,7 @@ public enum Wire {
             self.risk = risk
             self.autoReview = autoReview
             self.mockups = mockups
+            self.artifacts = artifacts
             self.tickets = tickets
             self.shareable = shareable
             self.agent = agent
@@ -3025,6 +3122,7 @@ public enum Wire {
             risk = try c.decodeIfPresent(Risk.self, forKey: .risk)
             autoReview = try c.decodeIfPresent(AutoReview.self, forKey: .autoReview)
             mockups = try c.decodeIfPresent([Mockup].self, forKey: .mockups) ?? []
+            artifacts = try c.decodeIfPresent([Artifact].self, forKey: .artifacts) ?? []
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             shareable = try c.decode(Bool.self, forKey: .shareable)
             agent = try c.decode(String.self, forKey: .agent)
@@ -5676,15 +5774,19 @@ public enum Wire {
         }
     }
 
+    /// Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.
     public struct ClientMessageTaskComment: Codable, Hashable, Sendable {
         public var id: String
         public var text: String
         public var anchor: String?
+        /// The id of a comment on this task to reply to; a reply to a reply goes under its root.
+        public var replyTo: String?
 
-        public init(id: String, text: String, anchor: String? = nil) {
+        public init(id: String, text: String, anchor: String? = nil, replyTo: String? = nil) {
             self.id = id
             self.text = text
             self.anchor = anchor
+            self.replyTo = replyTo
         }
     }
 

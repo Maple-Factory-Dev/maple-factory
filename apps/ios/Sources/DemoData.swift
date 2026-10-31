@@ -170,7 +170,8 @@ enum DemoData {
             Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
                          health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),
                          sessions: [.init(session: .init(id: "s3", agent: "codex", cwd: "~/maple/worktrees/bil-7", startedAt: ago(50), taskId: "BIL-7"),
-                                          activity: .init(state: .waiting, message: "Raised a hand", at: ago(35)))],
+                                          activity: .init(state: .waiting, message: "Raised a hand", at: ago(35)),
+                                          shares: [.init(login: me, canType: false, by: "sam", at: ago(40))])],
                          capacity: 2),
             Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0",
                          sessions: [.init(session: .init(id: "s4", agent: "claude", cwd: "~/maple/worktrees/bil-8", startedAt: ago(320), taskId: "BIL-8"),
@@ -178,6 +179,31 @@ enum DemoData {
                                     .init(session: .init(id: "s5", agent: "claude", cwd: "~/maple/worktrees/api-34", startedAt: ago(330), taskId: "API-34"),
                                           activity: .init(state: .working, message: "Lost contact", at: ago(300)))]),
         ]
+    }
+
+    /// What a session's terminal shows in the demo, played into SessionTerminalView instead of a socket.
+    static func terminal(for session: String) -> String {
+        let blue = "\u{1B}[34m", green = "\u{1B}[32m", red = "\u{1B}[31m", yellow = "\u{1B}[33m", dim = "\u{1B}[2m", off = "\u{1B}[0m"
+        let lines = session == "s3" ? [
+            "\(blue)•\(off) Reading billing/invoices.ts",
+            "\(blue)•\(off) Bash(npm test -- invoices)",
+            "  \(red)✗ 1 failed\(off), \(green)22 passed\(off)",
+            "\(dim)  rounding: expected 10.01, received 10.00\(off)",
+            "",
+            "\(yellow)✋ Raised a hand: which rounding mode does finance want?\(off)",
+        ] : [
+            "\(blue)⏺\(off) Reading apps/web/src/limits.ts",
+            "\(blue)⏺\(off) Update(apps/web/src/limits.ts)",
+            "  \(green)+ const PER_ORG = 600; // req/min\(off)",
+            "  \(red)- const PER_ORG = 100;\(off)",
+            "\(blue)⏺\(off) Bash(npm test -- limits)",
+            "  \(green)✓ 14 passed\(off)",
+            "",
+            "\(dim)A wide line, the way agents print them: 120 columns, so it runs off the side of the phone and scrolls sideways →|\(off)",
+            "",
+            "\(yellow)✻ Thinking…\(off)",
+        ]
+        return lines.joined(separator: "\r\n") + "\r\n"
     }
 
     /// What APP-16's builder is stopped at: the runner's `question.permission`.

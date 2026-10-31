@@ -514,6 +514,27 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
   .usage-reset { grid-column: 2 / -1; margin-top: -6px; }
 }
 
+/* Artifacts (MF-205): chips to pick one, then its frame, image or text. */
+.artifact-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.artifact-chip { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--stroke); background: transparent; color: var(--muted); cursor: pointer; }
+.artifact-chip.on { background: var(--fill); color: inherit; font-weight: 600; }
+.artifact-view { min-height: 60px; }
+.artifact-frame { width: 100%; height: 420px; border: 1px solid var(--stroke); border-radius: 8px; background: #fff; display: block; }
+.artifact-foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-top: 10px; font-size: 13.5px; }
+@media (max-width: 640px) { .artifact-frame { height: 320px; } }
+
+/* Comment threads (MF-214): replies nested under their first comment, with a Reply box. */
+.thread .replies { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 0 6px; padding-left: 12px; border-left: 2px solid var(--stroke); }
+.thread .reply.by-agent { background: color-mix(in srgb, var(--planning) 6%, transparent); border-radius: 8px; padding: 6px 8px; margin-left: -8px; }
+.thread .reply-link, .thread .reply-box .link { background: none; border: 0; padding: 0; margin-top: 6px; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.thread .reply-link:hover { color: var(--accent); }
+.thread .reply-box { margin: 6px 0 0 18px; }
+.thread .reply-box .compose { margin-top: 4px; }
+.agent-avatar { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--planning); color: #fff; font-size: 11px; font-weight: 700; }
+.agent-avatar.builder { background: var(--building); }
+.agent-avatar.reviewer { background: var(--reviewing); }
+.agent-avatar .agent-icon { width: 12px; height: 12px; margin: 0; vertical-align: 0; }
+
 /* ---- Icons (icons.js: Lucide, stroked in currentColor) and the polish around them ---- */
 .icon { flex: none; display: inline-block; vertical-align: -0.15em; stroke: currentColor; }
 .spin { animation: spin 1.2s linear infinite; }

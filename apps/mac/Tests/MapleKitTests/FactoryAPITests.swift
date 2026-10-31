@@ -25,6 +25,16 @@ struct FactoryAPITests {
         #expect(request.httpMethod == "DELETE")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer t0k")
     }
+
+    @Test func terminalRequestsNameTheSessionAndSizeOnlyWhenGiven() {
+        let server = URL(string: "https://factory.acme.dev")!
+        let sized = FactoryAPI.terminalRequest(server, token: "t0k", machine: "m1", session: "s1", cols: 120, rows: 40)
+        #expect(sized.url?.absoluteString == "wss://factory.acme.dev/client/terminal?machine=m1&session=s1&cols=120&rows=40")
+        #expect(sized.value(forHTTPHeaderField: "Authorization") == "Bearer t0k")
+        // The phone attaches without a size, so the agent's pane keeps its width.
+        let unsized = FactoryAPI.terminalRequest(server, token: "t0k", machine: "m1", session: "s1")
+        #expect(unsized.url?.absoluteString == "wss://factory.acme.dev/client/terminal?machine=m1&session=s1")
+    }
 }
 
 /// A task's diff as the factory serves it, parsed into files and hunks.

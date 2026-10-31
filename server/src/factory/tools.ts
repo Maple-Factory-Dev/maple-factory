@@ -158,6 +158,32 @@ const TOOLS: Tool[] = [
     roles: ["builder"],
   },
   {
+    name: "share_artifact",
+    description: "Share a file on the task for people to look at in the Mac app and on the web: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. Not evidence for Done when (that's `prove`). Sharing again under the same title adds a new version of it.",
+    inputSchema: obj(
+      {
+        title: str("A short name, e.g. \"Latency before/after\". The same title replaces that artifact with a new version."),
+        summary: str("What it shows, one line."),
+        file: str("The full path of an HTML, SVG, PNG, JPEG, WebP, GIF, PDF, Markdown (.md), text, CSV or JSON file, at most 10 MB, saved under ~/.cache/maple-proof/<this task's branch>/, never in the worktree. HTML runs with scripts but no network: inline everything. The runner uploads it."),
+        kind: oneOf(["html", "image", "svg", "pdf", "markdown", "text", "data"], "Left out: worked out from the file."),
+      },
+      ["title", "file"],
+    ),
+    roles: ["planner", "builder", "reviewer"],
+  },
+  {
+    name: "reply",
+    description: "Answer a person in a task's comment thread: they wrote to you there (it's typed in as \"<who> in comment thread <id>: …\", or listed in get_task's threads). It's conversation, not a change request: answer briefly and carry on with your work.",
+    inputSchema: obj(
+      {
+        thread: str("The thread's id, from the message (any comment's id in it works)."),
+        text: str("Your answer. Short, plain words."),
+      },
+      ["thread", "text"],
+    ),
+    roles: ["planner", "builder", "reviewer"],
+  },
+  {
     name: "finish",
     description: "Every step is done and every item proven: the factory runs the repo's checks (if it has any), then commits, pushes and starts the review. A failing check stops it, with nothing pushed, and is typed into this session to fix. End your turn after.",
     inputSchema: obj({ summary: str("What changed, for the review and the pull request.") }, ["summary"]),

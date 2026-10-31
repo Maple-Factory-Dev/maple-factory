@@ -21,3 +21,13 @@ test("each member once, never the author", () => {
   assert.deepEqual(mentionsIn("@alice note to self, @bob", members, "Alice"), ["Bob"]);
   assert.deepEqual(mentionsIn("@alice", members, "alice"), []);
 });
+
+test("agents are found by role, apart from members", async () => {
+  const { agentsIn } = await import("../src/factory/mentions.ts");
+  assert.deepEqual(agentsIn("@builder can you explain? cc @Planner and @builder"), ["builder", "planner"]);
+  assert.deepEqual(agentsIn("@reviewer: why?"), ["reviewer"]);
+  assert.deepEqual(agentsIn("no agents here: builder@x.com, @builders, @bob"), []);
+  // Roles aren't members: mentionsIn only finds a role name when it's a member's login.
+  assert.deepEqual(mentionsIn("@builder look", members), []);
+  assert.deepEqual(mentionsIn("@builder look", [...members, { login: "builder" }]), ["builder"]);
+});

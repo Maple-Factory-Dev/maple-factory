@@ -84,6 +84,33 @@ public struct FactoryAPI: Sendable {
         return components.url!
     }
 
+    /// A socket request for one session's terminal (`/client/terminal`). With `cols` × `rows`, a viewer who can type
+    /// resizes the session's pane to fit; without them (the phone) the pane keeps its size.
+    public static func terminalRequest(_ server: URL, token: String, machine: String, session: String, cols: Int? = nil, rows: Int? = nil) -> URLRequest {
+        var components = URLComponents(url: websocketURL(server, path: "/client/terminal"), resolvingAgainstBaseURL: false)!
+        var items: [URLQueryItem] = [.init(name: "machine", value: machine), .init(name: "session", value: session)]
+        if let cols, let rows { items += [.init(name: "cols", value: String(cols)), .init(name: "rows", value: String(rows))] }
+        components.queryItems = items
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
+    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
+    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
+    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    public static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
+        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
+        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
+              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        request.url = components.url
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 403,
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
+        return text
+    }
+
     public static func probe(_ server: URL) async throws -> (Health, Duration) {
         let clock = ContinuousClock()
         let start = clock.now

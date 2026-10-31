@@ -433,6 +433,30 @@ enum class HandReason(val raw: String) {
     object Serializer : WireEnumSerializer<HandReason>("HandReason", entries, { it.raw }, Unknown)
 }
 
+/** What an agent shared on a task, which decides how the apps show it. */
+@Serializable(with = ArtifactKind.Serializer::class)
+enum class ArtifactKind(val raw: String) {
+    /** An HTML page, run sandboxed with no network. */
+    Html("html"),
+    /** A PNG, JPEG, WebP or GIF. */
+    Image("image"),
+    /** An SVG drawing, shown like an HTML page. */
+    Svg("svg"),
+    /** A PDF. */
+    Pdf("pdf"),
+    /** Markdown text. */
+    Markdown("markdown"),
+    /** Plain text. */
+    Text("text"),
+    /** CSV or JSON, shown as text. */
+    Data("data"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<ArtifactKind>("ArtifactKind", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = MockupStatus.Serializer::class)
 enum class MockupStatus(val raw: String) {
     /** Proposed with the plan. */
@@ -971,6 +995,8 @@ data class Comment(
     val via: String? = null,
     /** Logins of the org members this comment @mentions, worked out by the server. Never the author. */
     val mentions: List<String>? = null,
+    /** The id of the comment that starts its thread. Replies to a reply sit under that same root. */
+    val replyTo: String? = null,
 )
 
 /** Steering: someone redirecting the planner or builder mid-flight. */
@@ -1105,6 +1131,24 @@ data class Mockup(
     val version: Long,
     val visualMatch: Double? = null,
     val differences: List<String> = emptyList(),
+)
+
+/** A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version. */
+@Serializable
+data class Artifact(
+    val id: String,
+    val title: String,
+    val kind: ArtifactKind,
+    val summary: String? = null,
+    /** Its upload's link, /attachments/<id>/<name> (members fetch it there). */
+    val file: String,
+    val mime: String,
+    val bytes: Long,
+    /** The role of the agent that shared it. */
+    val by: String,
+    val at: Long,
+    /** 1 for the first share, one more each time the same title is shared again. */
+    val version: Long,
 )
 
 @Serializable
@@ -1323,6 +1367,8 @@ data class Task(
     val risk: Risk? = null,
     val autoReview: AutoReview? = null,
     val mockups: List<Mockup> = emptyList(),
+    /** Files its agents shared: charts, images, pages. Empty on older tasks. */
+    val artifacts: List<Artifact> = emptyList(),
     val tickets: List<TicketLink> = emptyList(),
     val shareable: Boolean,
     /** claude or codex: what builds it. */
@@ -2673,11 +2719,14 @@ sealed class ClientMessage {
     data class TaskBacklog(
         val id: String,
     ) : ClientMessage()
+    /** Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation. */
     @Serializable
     data class TaskComment(
         val id: String,
         val text: String,
         val anchor: String? = null,
+        /** The id of a comment on this task to reply to; a reply to a reply goes under its root. */
+        val replyTo: String? = null,
     ) : ClientMessage()
     /** A change request for the planner or builder. */
     @Serializable

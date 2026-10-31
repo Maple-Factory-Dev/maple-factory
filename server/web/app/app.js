@@ -1107,6 +1107,7 @@ function overview(t) {
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
     t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
+    (t.artifacts ?? []).length > 0 && [h("h2", {}, "Artifacts"), artifacts(t)],
     t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
       h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
         h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
@@ -1357,6 +1358,69 @@ function attestForm(t, i) {
 /** `/attachments/<uuid>/<name>`, the shape the server keeps a proof's file under (attachments.ts). */
 const ATTACHMENT = /^\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[\w.\-]{1,120}$/;
 
+// ---- artifacts: files an agent shared with `share_artifact` (MF-205) ----
+
+/** No network, no frames, no forms: only the page's own inline scripts and styles, and data: images. */
+const ARTIFACT_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:";
+/** The artifact picked on each task's page, by task id. */
+const pickedArtifact = new Map();
+/** Fetched artifact text, by file: they never change (a new version is a new file). */
+const artifactText = new Map();
+
+/** Chips to pick an artifact, above the one picked (the newest by default). */
+function artifacts(t) {
+  const list = t.artifacts;
+  const active = list.find((a) => a.id === pickedArtifact.get(t.id)) ?? list[list.length - 1];
+  const chips = h("div", { class: "artifact-chips" }, list.map((a) => h("button", {
+    class: `artifact-chip${a === active ? " on" : ""}`, title: a.summary ?? a.title,
+    onclick: () => { pickedArtifact.set(t.id, a.id); render(); },
+  }, a.title, a.version > 1 && h("span", { class: "muted mono" }, ` v${a.version}`))));
+  return h("div", { class: "card" }, chips, artifactBody(active),
+    h("div", { class: "artifact-foot" },
+      h("div", {}, active.summary && h("div", {}, active.summary), h("div", { class: "muted" }, `Shared by the ${active.by}${active.version > 1 ? ` · v${active.version}` : ""} · ${kb(active.bytes)}`)),
+      ATTACHMENT.test(active.file) && h("a", { class: "proof-file", href: active.file, download: active.file.split("/").pop() }, "Download")));
+}
+
+const kb = (n) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function artifactBody(a) {
+  if (!ATTACHMENT.test(a.file)) return null;
+  const name = a.file.split("/").pop();
+  const chip = () => h("a", { class: "proof-file", href: a.file, target: "_blank", rel: "noopener noreferrer" }, name, h("span", { class: "muted" }, " ↗"));
+  if (a.kind === "image") {
+    const link = h("a", { class: "proof-img", href: a.file, target: "_blank", rel: "noopener noreferrer", title: "Open full size" },
+      h("img", { src: a.file, alt: a.title, loading: "lazy", onerror: () => link.replaceWith(chip()) }));
+    return link;
+  }
+  if (!["html", "svg", "markdown", "text", "data"].includes(a.kind)) return chip();
+  // Text kinds come in with the session cookie and are drawn here: HTML and SVG in an iframe with
+  // scripts but no same-origin (an opaque origin: no cookies, no factory) and a CSP that blocks the network.
+  const box = h("div", { class: "artifact-view" }, h("div", { class: "muted" }, "Loading…"));
+  const draw = (text) => {
+    box.textContent = "";
+    if (a.kind === "html" || a.kind === "svg") box.append(h("iframe", { class: "artifact-frame", sandbox: "allow-scripts", srcdoc: artifactPage(text, a.kind), title: a.title }));
+    else if (a.kind === "markdown") box.append(markdown(text, h, knownTasks()));
+    else box.append(h("pre", { class: "out" }, text.slice(0, 512 * 1024)));
+  };
+  if (artifactText.has(a.file)) draw(artifactText.get(a.file));
+  else fetch(a.file, { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+    .then((text) => { artifactText.set(a.file, text); draw(text); })
+    .catch(() => { box.textContent = ""; box.append(chip()); });
+  return box;
+}
+
+/** An HTML or SVG artifact as the iframe's page, with the CSP before anything else in it. */
+function artifactPage(text, kind) {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  if (kind === "svg") return `<!doctype html><html><head>${meta}<style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#fff}svg{max-width:100%;max-height:100%}</style></head><body>${text}</body></html>`;
+  // First in the document (after a leading doctype only): the parser puts it in the implicit <head> ahead of
+  // every other tag. Looking for "<head" instead would also match <header>, or a <head> in a comment or script.
+  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(text);
+  const at = doctype ? doctype[0].length : 0;
+  return text.slice(0, at) + meta + text.slice(at);
+}
+
 /** The screenshot or recording the runner uploaded: shown in place, or a chip to open it if it won't load. */
 function proofFile(e) {
   const src = e.file;
@@ -1372,11 +1436,58 @@ function proofFile(e) {
   return link;
 }
 
+const AGENT_ROLES = ["planner", "builder", "reviewer"];
+/** Comment threads that have a Reply box open, by root id. */
+const replying = new Set();
+
+/** Comments grouped into threads: each root with its replies, oldest first, placed at its latest word.
+ *  A reply whose root isn't there any more shows as a root of its own. */
+function threads(comments) {
+  const ids = new Set(comments.map((c) => c.id));
+  const rootOf = (c) => (c.replyTo && ids.has(c.replyTo) ? c.replyTo : c.id);
+  const byRoot = new Map();
+  for (const c of comments) {
+    const r = rootOf(c);
+    if (!byRoot.has(r)) byRoot.set(r, { root: null, replies: [] });
+    if (r === c.id) byRoot.get(r).root = c;
+    else byRoot.get(r).replies.push(c);
+  }
+  return [...byRoot.values()].filter((th) => th.root).map((th) => {
+    th.replies.sort((a, b) => a.at - b.at);
+    th.at = Math.max(th.root.at, ...th.replies.map((c) => c.at));
+    return th;
+  });
+}
+
+function commentBody(t, c, known) {
+  const agent = AGENT_ROLES.includes(c.author);
+  return [
+    h("div", { class: "row" },
+      agent && h("span", { class: `agent-avatar ${c.author}`, title: `${name(c.author)} (${agentTitle(t.agent) || "agent"})` }, agentIcon(t.agent) ?? c.author[0].toUpperCase()),
+      h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))),
+    markdown(c.text, h, known),
+  ];
+}
+
+/** A comment and its replies, nested, with a Reply link that opens a box under them. */
+function thread(t, th, known) {
+  const root = th.root.id;
+  const open = replying.has(root);
+  const toggle = (e) => { e.preventDefault(); open ? replying.delete(root) : replying.add(root); render(); };
+  return h("div", { class: "comment thread" },
+    commentBody(t, th.root, known),
+    th.replies.length > 0 && h("div", { class: "replies" }, th.replies.map((c) => h("div", { class: `reply${AGENT_ROLES.includes(c.author) ? " by-agent" : ""}` }, commentBody(t, c, known)))),
+    open
+      ? h("div", { class: "reply-box" }, compose(t, `reply:${root}`, "Reply…", "Reply", (text) => { send({ type: "task.comment", id: t.id, text, replyTo: root }); }),
+          h("button", { class: "link faint small", onclick: toggle }, "Cancel"))
+      : h("button", { class: "link reply-link", onclick: toggle }, th.replies.length ? `Reply · ${th.replies.length}` : "Reply"));
+}
+
 function timeline(t) {
   const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...threads(t.comments).map((th) => ({ at: th.at, el: thread(t, th, known) })),
     ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
