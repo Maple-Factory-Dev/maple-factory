@@ -91,7 +91,8 @@ test("each proposal becomes a draft in the caller's goal, owned by its task's ow
   assert.equal(a.repo, "acme/mac", "left out, it's the proposing task's repo");
   assert.equal(b.repo, "acme/ios", "named, it's the goal's spelling");
   assert.equal(b.title, "iOS: share sheet");
-  assert.deepEqual(store.drafts("g").map((t) => t.id), ["IOS-1", "IOS-2"]);
+  // Both drafts (made in the same millisecond, they tie on draftRank).
+  assert.deepEqual(store.drafts("g").map((t) => t.id).sort(), ["IOS-1", "IOS-2"]);
   assert.equal(store.task("MF-1")!.events.at(-1)!.text, "proposed IOS-1, IOS-2");
   assert.equal(toasts.length, 1);
   assert.match(toasts[0], /MF-1's builder proposed 2 tasks/);

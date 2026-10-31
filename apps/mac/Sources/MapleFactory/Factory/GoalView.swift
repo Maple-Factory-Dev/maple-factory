@@ -680,6 +680,7 @@ struct TaskCard: View {
                         .background(Capsule().fill(Theme.fill))
                         .help(repo)
                 }
+                PriorityChip(priority: task.priority)
                 if let risk = state.risk(for: task), risk.level > .low {
                     RiskBadge(level: risk.level, compact: true)
                 }
@@ -705,6 +706,16 @@ struct TaskCard: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textMuted)
                 .help(from.contains("#") ? "A review finding left open on \(from.replacingOccurrences(of: "#", with: " (")))" : "Scout picked it up from \(from)")
+            }
+
+            if let from = task.followUpOf {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.turn.down.right").font(.system(size: 9.5))
+                    Text("Follow-up of \(from.split(separator: "#").first.map(String.init) ?? from)")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textMuted)
+                .help(from.contains("#") ? "Made from a review finding on \(from.replacingOccurrences(of: "#", with: " (")))" : "A follow-up of \(from)")
             }
 
             if task.queued {

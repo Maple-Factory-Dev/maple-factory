@@ -852,6 +852,55 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// How soon a task should be done.
+    public enum Priority: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Do it right away.
+        case p0
+        /// Next.
+        case p1
+        /// Soon.
+        case p2
+        /// When there's room.
+        case p3
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [Priority] = [.p0, .p1, .p2, .p3]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "p0": self = .p0
+            case "p1": self = .p1
+            case "p2": self = .p2
+            case "p3": self = .p3
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .p0: "p0"
+            case .p1: "p1"
+            case .p2: "p2"
+            case .p3: "p3"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: Priority, b: Priority) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum FindingStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Open.
         case open
@@ -2546,6 +2595,23 @@ public enum Wire {
         }
     }
 
+    /// One draft for task.followUp to make.
+    public struct FollowUpItem: Codable, Hashable, Sendable {
+        /// The review finding it follows up (f3); none: a free-form note about the task.
+        public var finding: String?
+        public var title: String
+        /// What to do; the finding's text is quoted ahead of it.
+        public var brief: String
+        public var priority: Priority?
+
+        public init(finding: String? = nil, title: String, brief: String, priority: Priority? = nil) {
+            self.finding = finding
+            self.title = title
+            self.brief = brief
+            self.priority = priority
+        }
+    }
+
     /// Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.
     public struct FollowUp: Codable, Hashable, Sendable {
         public var repo: String
@@ -2753,12 +2819,16 @@ public enum Wire {
         public var force: Bool?
         /// The bigger effort it's part of, like an epic: shared by name with other tasks in its goal.
         public var effort: String?
+        /// How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).
+        public var priority: Priority?
+        /// What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).
+        public var followUpOf: String?
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
         /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
         public var mergeForecast: MergeForecast?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -2807,6 +2877,8 @@ public enum Wire {
             self.startAt = startAt
             self.force = force
             self.effort = effort
+            self.priority = priority
+            self.followUpOf = followUpOf
             self.mergeAt = mergeAt
             self.mergeForecast = mergeForecast
         }
@@ -2861,6 +2933,8 @@ public enum Wire {
             startAt = try c.decodeIfPresent(UInt64.self, forKey: .startAt)
             force = try c.decodeIfPresent(Bool.self, forKey: .force)
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
+            priority = try c.decodeIfPresent(Priority.self, forKey: .priority)
+            followUpOf = try c.decodeIfPresent(String.self, forKey: .followUpOf)
             mergeAt = try c.decodeIfPresent(UInt64.self, forKey: .mergeAt)
             mergeForecast = try c.decodeIfPresent(MergeForecast.self, forKey: .mergeForecast)
         }
@@ -5342,8 +5416,9 @@ public enum Wire {
         public var repo: String?
         public var after: [String]?
         public var effort: String?
+        public var priority: Priority?
 
-        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil, effort: String? = nil) {
+        public init(goal: String, title: String, brief: String, shareable: Bool, plan: Bool, tickets: [TicketLink] = [], agent: String? = nil, intake: String? = nil, repo: String? = nil, after: [String]? = nil, effort: String? = nil, priority: Priority? = nil) {
             self.goal = goal
             self.title = title
             self.brief = brief
@@ -5355,6 +5430,7 @@ public enum Wire {
             self.repo = repo
             self.after = after
             self.effort = effort
+            self.priority = priority
         }
 
         public init(from decoder: Decoder) throws {
@@ -5370,6 +5446,7 @@ public enum Wire {
             repo = try c.decodeIfPresent(String.self, forKey: .repo)
             after = try c.decodeIfPresent([String].self, forKey: .after)
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
+            priority = try c.decodeIfPresent(Priority.self, forKey: .priority)
         }
     }
 
@@ -5385,8 +5462,12 @@ public enum Wire {
         public var agent: String?
         /// The model its next sessions use; an empty string goes back to the agent's default.
         public var model: String?
+        /// Set its priority; refused once it's merged or cancelled. Setting a queued task to P0 moves it to the front of the queue.
+        public var priority: Priority?
+        /// Take its priority off.
+        public var clearPriority: Bool?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil, priority: Priority? = nil, clearPriority: Bool? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
@@ -5395,6 +5476,25 @@ public enum Wire {
             self.effort = effort
             self.agent = agent
             self.model = model
+            self.priority = priority
+            self.clearPriority = clearPriority
+        }
+    }
+
+    /// Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused.
+    public struct ClientMessageTaskFollowUp: Codable, Hashable, Sendable {
+        public var id: String
+        public var items: [FollowUpItem]
+
+        public init(id: String, items: [FollowUpItem] = []) {
+            self.id = id
+            self.items = items
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            items = try c.decodeIfPresent([FollowUpItem].self, forKey: .items) ?? []
         }
     }
 
@@ -5726,6 +5826,7 @@ public enum Wire {
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
         case taskEdit(ClientMessageTaskEdit)
+        case taskFollowUp(ClientMessageTaskFollowUp)
         case taskAssign(ClientMessageTaskAssign)
         case taskPlan(ClientMessageTaskPlan)
         case taskBacklog(ClientMessageTaskBacklog)
@@ -5803,6 +5904,7 @@ public enum Wire {
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
+            case "task.followUp": self = .taskFollowUp(try ClientMessageTaskFollowUp(from: decoder))
             case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
             case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
@@ -5964,6 +6066,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskEdit(let body):
                 try c.encode("task.edit", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskFollowUp(let body):
+                try c.encode("task.followUp", forKey: .type)
                 try body.encode(to: encoder)
             case .taskAssign(let body):
                 try c.encode("task.assign", forKey: .type)

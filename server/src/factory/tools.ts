@@ -96,6 +96,7 @@ const TOOLS: Tool[] = [
               title: str("A short title for the task."),
               brief: str("What the task should do and why, for its own planner."),
               repo: str("One of the goal's repos (owner/name). Left out: this task's repo."),
+              priority: oneOf(["p0", "p1", "p2", "p3"], "How soon: p0 do it right away, p1 next, p2 soon, p3 when there's room. Use p3 for non-urgent clean-ups. Left out: none."),
             },
             ["title", "brief"],
           ),
