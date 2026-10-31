@@ -1397,6 +1397,35 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// The finish path by hand, on a real worktree: MAPLE_FINISH_DIR (on an agent/ branch, with an
+    /// origin) and MAPLE_FINISH_CHECKS, pushed with the machine's credentials.
+    /// `MAPLE_FINISH_DIR=… MAPLE_FINISH_CHECKS=… cargo test finish_by_hand -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn finish_by_hand() {
+        let dir = std::env::var("MAPLE_FINISH_DIR").expect("MAPLE_FINISH_DIR");
+        let branch = sh(Path::new(&dir), &["branch", "--show-current"]);
+        let emit = |m: Outbound| {
+            if let Outbound::TaskProgress { text, .. } = m {
+                println!("progress: {text}");
+            }
+        };
+        let f = Finish {
+            task_id: "SCRATCH-1".into(),
+            cwd: dir.clone(),
+            repo_dir: dir,
+            branch,
+            base: Some("main".into()),
+            title: "Scratch: finish by hand".into(),
+            fallback: true,
+            checks: std::env::var("MAPLE_FINISH_CHECKS").ok(),
+        };
+        match finish(&emit, &f).await {
+            Ok(out) => println!("task.finished: {}", serde_json::to_string_pretty(&out).unwrap()),
+            Err(e) => println!("finish failed: {e:#}"),
+        }
+    }
+
     // ---- starting ----
 
     use crate::repos::tests::sh;

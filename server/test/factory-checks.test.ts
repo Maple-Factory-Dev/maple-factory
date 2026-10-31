@@ -93,7 +93,7 @@ test("checks are tidied (trimmed, blank lines dropped) and validated on save", (
   assert.deepEqual(parsed.suggestion.scripts, { setup: "npm ci", checks: "npm run lint\nlefthook run pre-commit --all-files" });
 });
 
-test("save_repo_setup and repos.scripts.set keep checks, tidied", async () => {
+test("repos.scripts.set keeps checks, tidied, and refuses more than 20", async () => {
   const f = factory(null);
   await f.engine.command({ type: "repos.scripts.set", repo: REPO, scripts: { checks: " npm run lint\n\n npm test " } }, { member: { login: "boss", role: "admin" } } as never);
   assert.deepEqual(f.store.scriptsFor(REPO), { checks: "npm run lint\nnpm test" });
