@@ -1,6 +1,6 @@
 import XCTest
 
-/// Machines in the demo: Build Mini's runner is behind, Kit's MacBook Air is offline with APP-17 (the demo
+/// Machines in the demo: Build Mini's runner is behind, Kit's MacBook Air is offline with BIL-8 (the demo
 /// user's) and API-34 (Kit's) stranded on it. As an admin: Update shows progress and then the new version,
 /// long-press → Rename changes the name shown, and Move takes the session off the Air with a toast. As a
 /// plain member (`-demoRole member`): no Update or Rename on others' machines, and Move only on your own task.
@@ -41,8 +41,8 @@ final class MachineActionsTests: XCTestCase {
         XCTAssertTrue(named(app, "Release Mini").waitForExistence(timeout: 5), "the new name should show")
         XCTAssertFalse(named(app, "Build Mini").exists)
 
-        // Move: the offline Air's sessions offer it; confirming re-queues APP-17 and toasts.
-        let move = app.buttons["move-APP-17"]
+        // Move: the offline Air's sessions offer it; confirming re-queues BIL-8 and toasts.
+        let move = app.buttons["move-BIL-8"]
         scroll(app, to: move)
         XCTAssertTrue(app.buttons["move-API-34"].exists, "an admin can move anyone's task off a stuck machine")
         snap(app, "machines-move-button")
@@ -52,10 +52,10 @@ final class MachineActionsTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["It re-queues first and carries on from its last push."].exists)
         snap(app, "machines-move-confirm")
         confirm.tap()
-        XCTAssertTrue(app.staticTexts["APP-17 moves to the next free machine"].waitForExistence(timeout: 5), "the toast should say where it goes")
+        XCTAssertTrue(app.staticTexts["BIL-8 moves to the next free machine"].waitForExistence(timeout: 5), "the toast should say where it goes")
         snap(app, "machines-moved")
-        XCTAssertTrue(move.waitForNonExistence(timeout: 5), "APP-17's session should leave the Air")
-        XCTAssertFalse(app.buttons.containing(NSPredicate(format: "label BEGINSWITH 'APP-17'")).firstMatch.exists)
+        XCTAssertTrue(move.waitForNonExistence(timeout: 5), "BIL-8's session should leave the Air")
+        XCTAssertFalse(app.buttons.containing(NSPredicate(format: "label BEGINSWITH 'BIL-8'")).firstMatch.exists)
         XCTAssertTrue(app.buttons["move-API-34"].exists, "the other stranded session stays")
     }
 
@@ -70,7 +70,7 @@ final class MachineActionsTests: XCTestCase {
         XCTAssertFalse(app.buttons["Rename…"].waitForExistence(timeout: 2), "no Rename on Sam's machine")
         dismissMenu(app)
 
-        scroll(app, to: app.buttons["move-APP-17"])
+        scroll(app, to: app.buttons["move-BIL-8"])
         XCTAssertFalse(app.buttons["move-API-34"].exists, "no Move on Kit's task")
         snap(app, "machines-as-member")
         app.descendants(matching: .any)["machine-m-air"].press(forDuration: 1.2)

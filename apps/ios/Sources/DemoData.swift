@@ -22,7 +22,7 @@ enum DemoData {
             Wire.Member(login: "kit", name: "Kit Okafor", role: "member", teams: ["platform"]),
         ]
         feed.goals = [
-            Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app"], team: "mobile"),
+            Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),
             Wire.Goal(id: "g-web", name: "Billing", prefix: "BIL", color: "#14A866", summary: "Usage-based plans and invoices.", lead: "sam", repo: "acme/web", repos: ["acme/web"]),
         ]
@@ -129,8 +129,8 @@ enum DemoData {
                 t.brief = "Sign in on the phone with a code, like the Mac app."
             },
             // Both stranded on Kit's MacBook Air, which went offline: Machines offers to move them.
-            task("APP-17", goal: "g-app", title: "Haptics on approve and merge", state: .building, updated: 300) { t in
-                t.brief = "A light haptic when you approve a plan or merge from the phone."
+            task("BIL-8", goal: "g-web", title: "Receipt emails after a payment", state: .building, updated: 300) { t in
+                t.brief = "Email a receipt with the invoice PDF once a payment clears."
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s4", startedAt: ago(320))
                 t.approvals = [me]
             },
@@ -161,7 +161,7 @@ enum DemoData {
                                           activity: .init(state: .waiting, message: "Raised a hand", at: ago(35)))],
                          capacity: 2),
             Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0",
-                         sessions: [.init(session: .init(id: "s4", agent: "claude", cwd: "~/maple/worktrees/app-17", startedAt: ago(320), taskId: "APP-17"),
+                         sessions: [.init(session: .init(id: "s4", agent: "claude", cwd: "~/maple/worktrees/bil-8", startedAt: ago(320), taskId: "BIL-8"),
                                           activity: .init(state: .working, message: "Lost contact", at: ago(300))),
                                     .init(session: .init(id: "s5", agent: "claude", cwd: "~/maple/worktrees/api-34", startedAt: ago(330), taskId: "API-34"),
                                           activity: .init(state: .working, message: "Lost contact", at: ago(300)))]),
