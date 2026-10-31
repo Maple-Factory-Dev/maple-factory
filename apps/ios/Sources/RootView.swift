@@ -49,10 +49,12 @@ struct RootView: View {
             } else if tab == .goals, let goal = UserDefaults.standard.string(forKey: "goal") {
                 goalsPath.append(GoalRoute(id: goal))
             }
-            if UserDefaults.standard.bool(forKey: "stats"), store.isAdmin {
-                tab = .settings
-                settingsPath.append(StatsRoute())
-            }
+        }
+        // Live, who you are arrives with the snapshot, after the first appearance.
+        .onChange(of: store.isAdmin, initial: true) { _, isAdmin in
+            guard isAdmin, UserDefaults.standard.bool(forKey: "stats"), settingsPath.isEmpty else { return }
+            tab = .settings
+            settingsPath.append(StatsRoute())
         }
     }
 }
