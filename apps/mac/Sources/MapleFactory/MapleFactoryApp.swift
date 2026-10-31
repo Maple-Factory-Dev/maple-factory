@@ -33,6 +33,9 @@ struct MapleFactoryApp: App {
         _state = State(initialValue: state)
         AppDelegate.client = client
         if Headless.isOn { AppDelegate.headless = (state, client) }
+        #if PERF_REPRO
+        PerfRepro.start(state)
+        #endif
     }
 
     var body: some Scene {
@@ -104,6 +107,8 @@ struct MapleFactoryApp: App {
 
         Settings {
             OrgSettingsView()
+                .onAppear { ErrorReports.screen("settings") }
+                .onDisappear { ErrorReports.screenClosed("settings") }
                 .environment(state)
                 .environment(client)
                 .defaultAppStorage(AppDefaults)
@@ -157,11 +162,13 @@ struct ContentView: View {
         if state.showOnboarding {
             OnboardingView()
                 .transition(.opacity)
+                .onAppear { ErrorReports.screen("onboarding") }
                 .onAppear { NSApp.appearance = appearance.nsAppearance }
         } else {
             workspace
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
                 .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
+                .onChange(of: screen, initial: true) { _, kind in ErrorReports.screen(kind) }
                 .onOpenURL { url in
                     // maplefactory://task/<id>, from a copied link (the server's /t/<id> page opens it),
                     // or maplefactory://session/<machine>/<id>, a shared session's.
@@ -206,6 +213,26 @@ struct ContentView: View {
                     state.focusedTask = open
                 }
         }
+    }
+
+    /// The screen's kind, for crash and hang reports: no ids, titles or goal names.
+    private var screen: String {
+        if state.focusedTask != nil { return "task.focus" }
+        let page: String
+        switch state.destination {
+        case .goal: page = "goal.\(state.layout.rawValue.lowercased())"
+        case .inbox: page = "inbox"
+        case .myTasks: page = "mytasks"
+        case .activity: page = "activity"
+        case .scratchpad: page = "scratchpad"
+        case .usage: page = "usage"
+        case .statistics: page = "statistics"
+        case .needsHand: page = "hands"
+        case .machines: page = "machines"
+        case .intake: page = "requests"
+        case .allGoals: page = "goals"
+        }
+        return state.showInspector ? "\(page)+task.panel" : page
     }
 
     /// The task on screen, for teammates' presence: open full-size, or in the inspector.

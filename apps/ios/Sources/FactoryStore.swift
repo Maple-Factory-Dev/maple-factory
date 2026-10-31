@@ -312,6 +312,26 @@ final class FactoryStore {
         notice = .toast(plan ? "Sent to planning" : "Saved as a draft", taskId: nil)
     }
 
+    // MARK: Machines
+
+    /// The machine's owner or an admin: who the server lets update or rename it.
+    func canManage(_ machine: Wire.Machine) -> Bool { !me.isEmpty && (machine.owner == me || isAdmin) }
+    /// Moving a task off a stuck machine: its machine's owner, an admin, or the task's own owner.
+    func canMove(task id: String, on machine: Wire.Machine) -> Bool { canManage(machine) || (!me.isEmpty && feed.task(id)?.owner == me) }
+    /// A machine its tasks can be moved off: offline, or paused by its owner.
+    static func isStuck(_ machine: Wire.Machine) -> Bool { !machine.online || machine.settings?.paused == true }
+
+    /// Asks the machine to install the latest runner; `machine.update` on it says how it goes.
+    func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id))) }
+    /// A nickname everyone sees; empty goes back to its id.
+    func renameMachine(_ machine: Wire.Machine, name: String) { send(.machineRename(.init(machine: machine.id, name: name))) }
+    /// Moves a task off its offline or paused machine: it re-queues first and carries on from its last push.
+    func moveTask(_ id: String) {
+        let pushed = feed.task(id)?.pr != nil
+        send(.taskMove(.init(id: id)))
+        notice = .toast("\(id) moves to the next free machine\(pushed ? " · carries on from its last push" : "")", taskId: id)
+    }
+
     /// Tells the factory which task you're looking at, so others see you there.
     func viewing(_ id: String?) { send(.presence(.init(viewing: id))) }
 
@@ -404,6 +424,31 @@ final class FactoryStore {
             var machine = feed.machines[mi]
             machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
             feed.apply(.machineUpdated(.init(machine: machine)))
+        case .machineUpdate(let m):
+            // Installing, then back on the latest a moment later, as a runner would report it.
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            let target = feed.runnerLatest, from = machine.version
+            machine.update = .init(state: .installing, target: target, from: from, at: DemoData.now)
+            feed.apply(.machineUpdated(.init(machine: machine)))
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(UserDefaults.standard.double(forKey: "demoUpdateSeconds").nonZero ?? 2.5))
+                guard let self, self.status == .demo, var machine = self.feed.machines.first(where: { $0.id == m.machine }) else { return }
+                machine.version = target ?? machine.version
+                machine.update = .init(state: .updated, target: target, from: from, at: DemoData.now)
+                self.feed.apply(.machineUpdated(.init(machine: machine)))
+            }
+        case .machineRename(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            let name = m.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            machine.name = name.isEmpty ? machine.id : name
+            feed.apply(.machineUpdated(.init(machine: machine)))
+        case .taskMove(let m):
+            // The task re-queues: its session leaves the stuck machine.
+            for var machine in feed.machines where machine.sessions.contains(where: { $0.session.taskId == m.id }) {
+                machine.sessions.removeAll { $0.session.taskId == m.id }
+                feed.apply(.machineUpdated(.init(machine: machine)))
+            }
+            update(m.id) { $0.worker = nil; $0.events.append(.init(who: me, text: "moved it to the next free machine", at: DemoData.now)) }
         case .taskCheckedIt(let m):
             // As the server does: the item is proven by your word, with the note as its reason.
             guard let task = feed.task(m.id), task.doneWhen.indices.contains(Int(m.item)) else { break }
@@ -476,6 +521,10 @@ final class FactoryStore {
             break
         }
     }
+}
+
+private extension Double {
+    var nonZero: Double? { self == 0 ? nil : self }
 }
 
 extension Wire.Task {
