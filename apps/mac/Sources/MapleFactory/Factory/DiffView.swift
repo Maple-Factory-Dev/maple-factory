@@ -1,17 +1,21 @@
 import AppKit
 import SwiftUI
 
-/// The task's diff as a review: a file tree on the left, the picked file's diff taking the rest of the
+/// The task's changes as a review: a file tree on the left, the picked file's diff taking the rest of the
 /// width. Click a line number to comment on it (shift-click or drag for a range); comments wait in a
 /// pending review until it's sent, all at once, as one change request. A task with a GitHub pull
 /// request shows its review threads under the lines they're on. Each file and hunk is tagged with the
-/// plan step it implements so the review reads against the approved plan.
+/// plan step it implements so the review reads against the approved plan. The toolbar's picker shows
+/// one commit at a time instead, read-only: comments go on All changes, where their line numbers hold.
 struct DiffView: View {
     @Environment(AppState.self) private var appState
     @Environment(FactoryClient.self) private var client
     let task: FactoryTask
-    let files: [DiffFile]
+    /// The whole branch's files: All changes.
+    let allFiles: [DiffFile]
     @State private var selected: String
+    /// The commit picked in the toolbar, by sha; none: All changes.
+    @State private var commit: String?
     /// Hunks fetched on demand for files that arrive collapsed (large or generated files).
     @State private var loaded: [String: [DiffHunk]] = [:]
     @State private var loading: Set<String> = []
@@ -42,11 +46,27 @@ struct DiffView: View {
 
     init(task: FactoryTask, files: [DiffFile]) {
         self.task = task
-        self.files = files
+        self.allFiles = files
         _selected = State(initialValue: files.first { !$0.hunks.isEmpty }?.path ?? files.first?.path ?? "")
     }
 
     private var draft: ReviewDraft { appState.reviewDraft(for: task.id) }
+
+    /// The branch's commits, oldest first; none from a runner that predates them.
+    private var commits: [DiffCommit] {
+        appState.isLive ? client.commits[task.id]?.commits ?? [] : FactoryData.commits(for: task.id)
+    }
+
+    private var pickedCommit: DiffCommit? { commit.flatMap { sha in commits.first { $0.sha == sha } } }
+
+    /// A commit on its own is read-only: its line numbers aren't the ones a comment is sent against.
+    private var readOnly: Bool { pickedCommit != nil }
+
+    /// What's shown: All changes, or the picked commit's files.
+    private var files: [DiffFile] {
+        guard let pickedCommit else { return allFiles }
+        return appState.isLive ? client.commitDiffs["\(task.id)@\(pickedCommit.sha)"] ?? [] : FactoryData.diff(for: task.id, commit: pickedCommit.sha)
+    }
 
     /// The picked file, else the tree's first with hunks (files can arrive after the view does).
     private var current: DiffFile? {
@@ -63,21 +83,31 @@ struct DiffView: View {
         VStack(spacing: 0) {
             toolbar
             Hairline()
+            if let pickedCommit {
+                commitStrip(pickedCommit)
+                Hairline()
+            }
             HStack(spacing: 0) {
                 if !files.isEmpty {
                     DiffFileTree(
                         task: task,
                         nodes: cache.tree(files),
                         selected: current?.path,
-                        pending: draft.paths,
-                        threaded: Set(threads.map(\.path)),
+                        pending: readOnly ? [] : draft.paths,
+                        threaded: readOnly ? [] : Set(threads.map(\.path)),
                         onSelect: pick
                     )
                     .frame(width: treeWidth)
                     .background(Theme.fillSubtle)
                     resizeHandle
                 }
-                if let current { fileDiff(current) } else { Spacer() }
+                if let current {
+                    fileDiff(current)
+                } else if readOnly {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Spacer()
+                }
             }
             .frame(maxHeight: .infinity)
             Hairline()
@@ -89,6 +119,9 @@ struct DiffView: View {
         .task(id: task.diffKey) {
             if appState.isLive, task.pr != nil, let key = task.diffKey { await client.loadThreads(task: task.id, key: key) }
         }
+        .task(id: commit) {
+            if appState.isLive, let commit, let key = task.diffKey { await client.loadDiff(task: task.id, key: key, commit: commit) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
             if let parts = note.object as? [String] { playDemo(parts) }
         }
@@ -98,6 +131,7 @@ struct DiffView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
+            if !commits.isEmpty { commitPicker }
             Text(files.count == 1 ? "1 file" : "\(files.count) files")
                 .foregroundStyle(Theme.textMuted)
             HStack(spacing: 4) {
@@ -106,7 +140,7 @@ struct DiffView: View {
             }
             .monospacedDigit()
             Spacer()
-            if !threads.isEmpty {
+            if !threads.isEmpty, !readOnly {
                 let open = threads.filter { !$0.resolved }.count
                 HStack(spacing: 5) {
                     Image(systemName: showThreads ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
@@ -128,6 +162,112 @@ struct DiffView: View {
         .font(.system(size: 12))
         .padding(.horizontal, 12)
         .frame(height: 38)
+    }
+
+    /// All changes, or one commit: a menu of them in order, and ‹ › to step from one to the next.
+    private var commitPicker: some View {
+        let index = commit.flatMap { sha in commits.firstIndex { $0.sha == sha } }
+        return HStack(spacing: 4) {
+            Menu {
+                Button { choose(nil) } label: {
+                    if commit == nil { Label("All changes", systemImage: "checkmark") } else { Text("All changes") }
+                }
+                Divider()
+                ForEach(Array(commits.enumerated()), id: \.element.sha) { offset, c in
+                    Button { choose(c.sha) } label: {
+                        let title = "\(offset + 1). \(c.subject)   \(c.shortSHA)   +\(c.added) −\(c.removed)"
+                        if c.sha == commit { Label(title, systemImage: "checkmark") } else { Text(title) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: commit == nil ? "square.stack.3d.up" : "smallcircle.filled.circle").font(.system(size: 10.5))
+                    Text(pickedCommit.map { $0.subject } ?? "All changes").lineLimit(1).frame(maxWidth: 280, alignment: .leading)
+                    Text(index.map { "\($0 + 1)/\(commits.count)" } ?? "\(commits.count) commit\(commits.count == 1 ? "" : "s")")
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textMuted)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
+            .fixedSize()
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 6).fill(commit == nil ? Theme.fill : Theme.fillSelected))
+            .help("Show All changes, or one commit at a time")
+            stepButton("chevron.left", help: "Previous commit", enabled: index != nil) { stepCommit(-1) }
+            stepButton("chevron.right", help: "Next commit", enabled: index.map { $0 < commits.count - 1 } ?? true) { stepCommit(1) }
+        }
+    }
+
+    private func stepButton(_ icon: String, help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(enabled ? Theme.text : Theme.textFaint)
+                .frame(width: 22, height: 24)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
+    }
+
+    /// Shows a commit (or All changes, nil), keeping the picked file when it's in that one too.
+    private func choose(_ sha: String?) {
+        guard sha != commit else { return }
+        selection = nil
+        composing = false
+        editing = nil
+        scroll = ScrollPosition(edge: .top)
+        withAnimation(.snappy(duration: 0.15)) { commit = sha }
+    }
+
+    /// The next commit (`by` 1) or the one before (-1); before the first is All changes.
+    private func stepCommit(_ by: Int) {
+        let order: [String?] = [nil] + commits.map(\.sha)
+        let at = order.firstIndex(of: commit) ?? 0
+        choose(order[min(max(at + by, 0), order.count - 1)])
+    }
+
+    /// The picked commit's message, who made it and when.
+    private func commitStrip(_ c: DiffCommit) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text(c.subject)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+                Spacer()
+                Text(c.shortSHA)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.textMuted)
+                    .textSelection(.enabled)
+                    .help(c.sha)
+            }
+            if let body = c.body {
+                Text(body)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 6) {
+                Text("\(c.author) committed \(c.at.formatted(.relative(presentation: .named)))")
+                if c.truncated {
+                    Text("·")
+                    Text("Too big to show in full").foregroundStyle(Theme.State.awaitingApproval)
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.textFaint)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.State.planning.opacity(0.05))
     }
 
     private var resizeHandle: some View {
@@ -232,10 +372,10 @@ struct DiffView: View {
     /// pending comment or the composer. Long runs are cut again so only those on screen get built.
     private func fileBody(_ file: DiffFile, hunks: [DiffHunk], rendered: DiffRenderCache.Entry) -> some View {
         let lines = rendered.lines
-        let fileThreads = showThreads ? threads.filter { $0.path == file.path } : []
+        let fileThreads = showThreads && !readOnly ? threads.filter { $0.path == file.path } : []
         let placed = DiffReview.place(fileThreads, in: lines)
         var notes: [Int: [DraftNote]] = [:]
-        for note in draft.notes where note.note.path == file.path {
+        for note in draft.notes where note.note.path == file.path && !readOnly {
             let row = DiffReview.row(side: note.note.side, line: Int(note.note.end), in: lines) ?? lines.count - 1
             notes[row, default: []].append(note)
         }
@@ -315,6 +455,7 @@ struct DiffView: View {
             codeWidth: codeWidth,
             rowHeight: rowHeight,
             gutterWidth: gutterWidth,
+            readOnly: readOnly,
             onDrag: { row in drag(to: row, path: path, count: rendered.lines.count) },
             onDragEnd: { dragging = false },
             onComment: { row in startComment(path: path, row: row) }
@@ -345,6 +486,7 @@ struct DiffView: View {
     // MARK: Comments
 
     private func startComment(path: String, row: Int) {
+        guard !readOnly else { return }
         if selection?.contains(path, row) != true { selection = LineSelection(path: path, row: row) }
         editing = nil
         composerText = ""
@@ -554,7 +696,15 @@ struct DiffView: View {
         @Bindable var draft = draft
         let count = draft.notes.count
         return HStack(spacing: 10) {
-            if count == 0 {
+            if let pickedCommit {
+                Image(systemName: "lock").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                Text("Viewing \(pickedCommit.shortSHA) on its own, read-only. Comments go on All changes\(count == 0 ? "." : ", where \(count) pending wait.")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                Spacer()
+                smallButton("All changes") { choose(nil) }
+            } else if count == 0 {
                 Image(systemName: "text.bubble").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                 Text("Click a line number to comment on it; shift-click or drag for a range. Comments wait here until you submit the review.")
                     .font(.system(size: 12))
@@ -664,13 +814,19 @@ struct DiffView: View {
 
     /// `diff:file:<path>` picks a file, `diff:select:<from>:<to>` lines by their row in the file,
     /// `diff:comment` opens the composer, `diff:type:<text>` types into it, `diff:add` adds it,
-    /// `diff:summary:<text>` fills the summary, `diff:submit` submits the review and `diff:scroll:<y>` (or
-    /// `diff:scroll:bottom`) scrolls the file's lines.
+    /// `diff:summary:<text>` fills the summary, `diff:submit` submits the review, `diff:scroll:<y>` (or
+    /// `diff:scroll:bottom`) scrolls the file's lines, and `diff:commit:<n>|all`, `diff:next` and `diff:prev`
+    /// work the commit picker.
     private func playDemo(_ parts: [String]) {
         guard let action = parts.first else { return }
         let argument = parts.dropFirst().joined(separator: ":")
         switch action {
         case "file": if let file = files.first(where: { $0.path == argument }) { pick(file) }
+        case "commit":
+            // `diff:commit:<n>` (from 1), or `diff:commit:all`.
+            if let n = Int(argument), commits.indices.contains(n - 1) { choose(commits[n - 1].sha) } else { choose(nil) }
+        case "next": stepCommit(1)
+        case "prev": stepCommit(-1)
         case "select":
             let count = current.map { DiffReview.rows(hunks($0)).count } ?? 0
             guard let current, count > 0, parts.count > 1, let from = Int(parts[1]) else { return }
@@ -694,7 +850,7 @@ struct DiffView: View {
     }
 }
 
-/// What the Diff tab works out once rather than on every pass: each file's rows, where its hunks
+/// What the Changes tab works out once rather than on every pass: each file's rows, where its hunks
 /// start and its lines' highlighted text, and the file tree. Not observed, so filling it in while a
 /// view is drawn redraws nothing.
 @MainActor final class DiffRenderCache {
@@ -767,6 +923,8 @@ private struct DiffRun: View {
     let codeWidth: CGFloat
     let rowHeight: CGFloat
     let gutterWidth: CGFloat
+    /// A commit on its own: no selecting, no commenting.
+    let readOnly: Bool
     let onDrag: (Int) -> Void
     let onDragEnd: () -> Void
     let onComment: (Int) -> Void
@@ -779,7 +937,7 @@ private struct DiffRun: View {
                 ForEach(rows, id: \.self) { row in
                     let picked = selection?.contains(path, row) == true
                     let selectionEnd = selection.map { $0.path == path && $0.rows.upperBound == row } ?? false
-                    let showsPlus = !dragging && (hovered == row || (selectionEnd && !composing))
+                    let showsPlus = !readOnly && !dragging && (hovered == row || (selectionEnd && !composing))
                     DiffGutterRow(
                         line: rendered.lines[row],
                         picked: picked,
@@ -796,7 +954,7 @@ private struct DiffRun: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 onDrag(rows.lowerBound + Int((value.location.y / rowHeight).rounded(.down)))
-            }.onEnded { _ in onDragEnd() })
+            }.onEnded { _ in onDragEnd() }, including: readOnly ? .none : .all)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {

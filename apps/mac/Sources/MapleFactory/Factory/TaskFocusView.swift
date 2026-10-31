@@ -22,7 +22,7 @@ struct TaskFocusView: View {
     init(task: FactoryTask) {
         self.task = task
         _mode = State(initialValue: task.isSteerable ? .steer : .comment)
-        // `-tab diff` opens straight onto the diff, handy for screenshots and demos.
+        // `-tab diff` opens straight onto the Changes tab, handy for screenshots and demos.
         let start: Tab = switch AppDefaults.string(forKey: "tab") {
         case "diff": .diff
         case "session": .session
@@ -35,6 +35,7 @@ struct TaskFocusView: View {
     private var comments: [Comment] { task.comments + appState.postedComments[task.id, default: []] }
     private var goal: Goal { FactoryData.goal(named: task.goal) }
     private var diffFiles: [DiffFile] { appState.isLive ? client.diffs[task.id]?.files ?? [] : FactoryData.diff(for: task.id) }
+    private var commitCount: Int { appState.isLive ? client.commits[task.id]?.commits.count ?? 0 : FactoryData.commits(for: task.id).count }
     private var risk: RiskAssessment? { appState.risk(for: task) }
 
     private var hasSession: Bool { appState.isLive ? task.worker != nil : appState.session(for: task.id) != nil }
@@ -50,7 +51,9 @@ struct TaskFocusView: View {
             }
         }
         .task(id: task.diffKey) {
-            if let key = task.diffKey { await client.loadDiff(task: task.id, key: key) }
+            guard let key = task.diffKey else { return }
+            await client.loadDiff(task: task.id, key: key)
+            await client.loadCommits(task: task.id, key: key)
         }
         .onAppear {
             if appState.pendingTab == "session", hasSession { tab = .session }
@@ -91,7 +94,7 @@ struct TaskFocusView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Reviewing the diff takes the whole window, however wide: no rail, no cap on the width.
+    /// Reviewing the changes takes the whole window, however wide: no rail, no cap on the width.
     private var diffLayout: some View {
         pageLayout {
             DiffView(task: task, files: diffFiles)
@@ -259,12 +262,13 @@ struct TaskFocusView: View {
     private var tabBar: some View {
         HStack(spacing: 22) {
             tabButton("Overview", tab: .overview) { EmptyView() }
-            tabButton("Diff", tab: .diff, enabled: !diffFiles.isEmpty) {
+            tabButton("Changes", tab: .diff, enabled: !diffFiles.isEmpty) {
                 if diffFiles.isEmpty {
                     Text("No changes yet").foregroundStyle(Theme.textFaint)
                 } else {
                     HStack(spacing: 4) {
-                        Text("\(diffFiles.count) \(diffFiles.count == 1 ? "file" : "files")\(task.state == .building ? " so far" : "")").foregroundStyle(Theme.textMuted)
+                        Text("\(diffFiles.count) \(diffFiles.count == 1 ? "file" : "files")\(commitCount > 0 ? " · \(commitCount) \(commitCount == 1 ? "commit" : "commits")" : "")\(task.state == .building ? " so far" : "")")
+                            .foregroundStyle(Theme.textMuted)
                         Text("+\(diffFiles.map(\.added).reduce(0, +))").foregroundStyle(Theme.State.merged)
                         Text("−\(diffFiles.map(\.removed).reduce(0, +))").foregroundStyle(Theme.State.cancelled)
                     }
@@ -524,7 +528,7 @@ struct TaskFocusView: View {
                 detailRow("Proofs") { Text("\(task.proven) of \(task.doneWhen.count) proven") }
             }
             if let diff = task.diff {
-                detailRow("Diff") {
+                detailRow("Changes") {
                     HStack(spacing: 6) {
                         Text("+\(diff.added)").foregroundStyle(Theme.State.merged)
                         Text("−\(diff.removed)").foregroundStyle(Theme.State.cancelled)
