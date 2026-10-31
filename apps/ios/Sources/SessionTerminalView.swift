@@ -204,10 +204,13 @@ final class PhoneTerminalView: TerminalView {
 
     override var canBecomeFirstResponder: Bool { typing }
 
-    /// The screen's text, for VoiceOver and UI tests.
+    /// The visible screen's text, for VoiceOver and UI tests. Only the screen, not the scrollback: UI tests read
+    /// it on every query, and a busy session's scrollback is hundreds of 120-column lines.
     override var accessibilityValue: String? {
         get {
-            String(data: getTerminal().getBufferAsData(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let terminal = getTerminal()
+            return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
+                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         set {}
     }

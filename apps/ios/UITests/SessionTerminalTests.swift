@@ -85,7 +85,8 @@ final class SessionTerminalTests: XCTestCase {
 
 /// The terminal against a live dev factory (scripts/dev-stack.sh) with a running session MAPLE_SESSION on MAPLE_MACHINE.
 /// MAPLE_AS signs in as another member (a teammate the session is shared with); MAPLE_EXPECT is "Watching",
-/// "Typing", or "refused" (no share: the server's 403 shows and nothing retries).
+/// "Typing", or "refused" (no share: the server's 403 shows and nothing retries). MAPLE_VIA=row taps the session's
+/// row on Machines instead of opening its link; MAPLE_TYPE is text to type when it can.
 ///   TEST_RUNNER_MAPLE_FACTORY=localhost:8788 TEST_RUNNER_MAPLE_MACHINE=… TEST_RUNNER_MAPLE_SESSION=… \
 ///     xcodebuild test -scheme "Maple Factory" -only-testing:MapleFactoryUITests/LiveSessionTerminalTests …
 final class LiveSessionTerminalTests: XCTestCase {
@@ -101,7 +102,15 @@ final class LiveSessionTerminalTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Machines"].waitForExistence(timeout: 60), "didn't sign in")
         sleep(3)
-        app.openLink("maplefactory://session/\(machine)/\(session)")
+        if env["MAPLE_VIA"] == "row" {
+            // Tapping the session's row on Machines (a shell session's row reads "shell").
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'shell'")).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 30), "no session row")
+            sleep(2)
+            row.tap()
+        } else {
+            app.openLink("maplefactory://session/\(machine)/\(session)")
+        }
         let terminal = app.descendants(matching: .any)["sessionTerminal"]
         XCTAssertTrue(terminal.waitForExistence(timeout: 30), "the terminal didn't open")
         let status = app.staticTexts["terminalStatus"]
