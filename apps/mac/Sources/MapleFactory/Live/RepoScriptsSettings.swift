@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One repo in Settings › Repositories: its worktree scripts, the repo's own commands for making,
-/// preparing the machine for (preflight), setting up, tearing down and archiving a task's worktree, and its prompt additions (after the
+/// preparing the machine for (preflight), setting up, checking before a finish is pushed, tearing down and archiving a task's worktree, and its prompt additions (after the
 /// org's, before a goal's). Admins edit them; everyone else sees them. The runner runs each script
 /// with `sh -c` in the repo's main checkout, with the MAPLE_* variables and the repo's secrets (see
 /// runner/src/worktree_scripts.rs). Set up with AI has an agent on the admin's machine suggest them.
@@ -24,10 +24,10 @@ struct RepoScriptsDetail: View {
         return run.suggestion
     }
 
-    /// The fields as typed: commands as text, preflight's watched files one per line, the timeout as
-    /// digits (blank: the default), and the prompts.
+    /// The fields as typed: commands as text, preflight's watched files and the checks one per line, the
+    /// timeout as digits (blank: the default), and the prompts.
     struct Draft: Equatable {
-        var create = "", preflight = "", watch = "", setup = "", teardown = "", archive = "", timeout = ""
+        var create = "", preflight = "", watch = "", setup = "", checks = "", teardown = "", archive = "", timeout = ""
         var prompts = Wire.PromptAdditions(planner: "", builder: "", reviewer: "")
 
         init() {}
@@ -36,6 +36,7 @@ struct RepoScriptsDetail: View {
             preflight = s?.preflight ?? ""
             watch = s?.preflightWatch ?? ""
             setup = s?.setup ?? ""
+            checks = s?.checks ?? ""
             teardown = s?.teardown ?? ""
             archive = s?.archive ?? ""
             timeout = s?.timeoutSecs.map(String.init) ?? ""
@@ -50,12 +51,22 @@ struct RepoScriptsDetail: View {
             return nil
         }
         var tooLong: String? {
-            [("create", create), ("preflight", preflight), ("setup", setup), ("teardown", teardown), ("archive", archive)].first { $0.1.utf8.count > 4096 }.map { "The \($0.0) script is over 4 KB." }
+            if let script = [("create", create), ("preflight", preflight), ("setup", setup), ("teardown", teardown), ("archive", archive)].first(where: { $0.1.utf8.count > 4096 }) {
+                return "The \(script.0) script is over 4 KB."
+            }
+            let checks = Self.lines(checks)
+            if checks.count > 20 { return "At most 20 checks." }
+            if checks.contains(where: { $0.utf8.count > 4096 }) { return "A check is over 4 KB." }
+            return nil
+        }
+        /// One entry per line, trimmed, blank lines dropped.
+        static func lines(_ text: String) -> [String] {
+            text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
         var wire: Wire.WorktreeScripts {
             let clean = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : s.trimmingCharacters(in: .whitespacesAndNewlines) }
-            let watched = watch.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            return .init(create: clean(create), preflight: clean(preflight), preflightWatch: watched.isEmpty ? nil : watched.joined(separator: "\n"), setup: clean(setup), teardown: clean(teardown), archive: clean(archive), timeoutSecs: timeoutSecs)
+            let joined = { (lines: [String]) in lines.isEmpty ? nil : lines.joined(separator: "\n") }
+            return .init(create: clean(create), preflight: clean(preflight), preflightWatch: joined(Self.lines(watch)), setup: clean(setup), checks: joined(Self.lines(checks)), teardown: clean(teardown), archive: clean(archive), timeoutSecs: timeoutSecs)
         }
     }
 
@@ -66,7 +77,7 @@ struct RepoScriptsDetail: View {
         ("MAPLE_BRANCH", "the task's branch, agent/<task>"),
         ("MAPLE_BASE", "the branch it starts from (create, preflight and setup)"),
         ("MAPLE_TASK_ID", "the task, like MF-74"),
-        ("MAPLE_PHASE", "create, preflight, setup, teardown or archive"),
+        ("MAPLE_PHASE", "create, preflight, setup, checks, teardown or archive"),
     ]
 
     var body: some View {
@@ -108,6 +119,8 @@ struct RepoScriptsDetail: View {
                 field("Preflight", "Sets the machine up for this repo: runtimes, brew bundle, services. Runs in the new worktree before setup, the first time this machine's checkout is used and again when the command or a watched file changes.", "mise install && brew bundle", $draft.preflight)
                 watchField
                 field("Setup", "Runs once the worktree exists, before the agent starts: install, seed, copy config.", "bin/worktree-setup", $draft.setup)
+                linesField("Checks", "Must exit cleanly before a builder's work is pushed: linters, formatters, lefthook. One command per line, run in the worktree.",
+                           "bundle exec rubocop\nlefthook run pre-commit --all-files", $draft.checks)
                 field("Teardown", "Runs before a finished task's worktree is removed: stop services, drop databases.", "bin/worktree-teardown", $draft.teardown)
                 field("Archive", "Runs instead of the removal when a finished task is cleaned up. It owns the folder and the branch.", "bin/worktree-archive", $draft.archive)
                 SettingsRow("Timeout", detail: draft.timeoutProblem, detailColor: Theme.State.cancelled) {
@@ -245,13 +258,18 @@ struct RepoScriptsDetail: View {
 
     /// The files that re-run preflight, one per line: a multi-line editor whose placeholder lists the defaults.
     private var watchField: some View {
-        let defaults = ".ruby-version  .tool-versions  .node-version  .nvmrc\n.python-version  Brewfile  mise.toml"
-        let lines = max(2, min(7, draft.watch.split(whereSeparator: \.isNewline).count + 1))
+        linesField("Watch", "Re-run preflight when these change: paths from the repo's root, one per line (at most 20). Blank watches the files shown.",
+                   ".ruby-version  .tool-versions  .node-version  .nvmrc\n.python-version  Brewfile  mise.toml", $draft.watch)
+    }
+
+    /// One entry per line: a multi-line editor with a placeholder.
+    private func linesField(_ label: String, _ hint: String, _ placeholder: String, _ text: Binding<String>) -> some View {
+        let lines = max(2, min(7, text.wrappedValue.split(whereSeparator: \.isNewline).count + 1))
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Watch").font(.system(size: 13)).foregroundStyle(Theme.text).frame(width: 70, alignment: .leading)
+                Text(label).font(.system(size: 13)).foregroundStyle(Theme.text).frame(width: 70, alignment: .leading)
                 if isAdmin {
-                    TextEditor(text: $draft.watch)
+                    TextEditor(text: text)
                         .font(.system(size: 12.5, design: .monospaced))
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
@@ -259,16 +277,16 @@ struct RepoScriptsDetail: View {
                         .frame(height: CGFloat(lines) * 16 + 6)
                         .background(RoundedRectangle(cornerRadius: 5).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.stroke)))
                         .overlay(alignment: .topLeading) {
-                            if draft.watch.isEmpty {
-                                Text(defaults).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.textFaint)
+                            if text.wrappedValue.isEmpty {
+                                Text(placeholder).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.textFaint)
                                     .padding(.horizontal, 8).padding(.vertical, 3).allowsHitTesting(false)
                             }
                         }
                 } else {
-                    readOnly(draft.watch.isEmpty ? "" : draft.watch)
+                    readOnly(text.wrappedValue)
                 }
             }
-            Text("Re-run preflight when these change: paths from the repo's root, one per line (at most 20). Blank watches the files shown.")
+            Text(hint)
                 .font(SettingsKit.caption).foregroundStyle(Theme.textMuted).padding(.leading, 78).fixedSize(horizontal: false, vertical: true)
         }
         .settingsRowPadding()
