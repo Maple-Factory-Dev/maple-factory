@@ -18,6 +18,8 @@ const tasks = new Map();
 let goals = [];
 const errors = [];
 const requested = new Map();
+/** Each toast the feed sent, with its task. */
+const toasts = [];
 let poke = null;
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
@@ -27,6 +29,7 @@ feed.onmessage = (e) => {
   // Each round a teammate asked for, as it was first seen running.
   const round = m.task?.autoReview?.rounds.at(-1);
   if (round?.focus && round.verdict === "inProgress" && !requested.has(`${m.task.id}#${round.number}`)) requested.set(`${m.task.id}#${round.number}`, { ...round });
+  if (m.type === "toast") toasts.push(m);
   if (m.type === "error") errors.push(m.message);
   poke?.();
 };
@@ -74,6 +77,10 @@ await ann({ type: "task.approvePlan", id });
 const passed = (x) => x?.state === "reviewing" && x.pr?.number && x.autoReview?.rounds.at(-1)?.verdict === "passed";
 let t = await wait("review passed", () => passed(tasks.get(id)) && tasks.get(id), 180000);
 step(`${id} is in review with pull request #${t.pr.number}`);
+// It needs a person's review, so its passed-review toast says so (MF-172).
+const passedToast = await wait(`${id} passed-review toast`, () => toasts.find((m) => m.taskId === id && m.text.includes("passed review")), 5000);
+check(t.reviewsNeeded > 0 && passedToast.text === `${id} passed review; it's ready for yours.`, `${id} (${t.reviewsNeeded} reviews needed) toast: ${passedToast.text}`);
+step(`${id} toast: "${passedToast.text}"`);
 
 // Its review threads, from GitHub's GraphQL.
 const none = await fetch(`${base}/api/tasks/${id}/threads`, { headers: { authorization: `Bearer ${token}` } });

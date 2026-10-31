@@ -20,6 +20,8 @@ let goals = [];
 let policy = null;
 let errors = [];
 let poke = null;
+/** Each toast the feed sent, with its task. */
+const toasts = [];
 /** Each task's states as the feed reported them, with when it saw each. */
 const seen = new Map();
 feed.onmessage = (e) => {
@@ -30,6 +32,7 @@ feed.onmessage = (e) => {
     seen.set(m.task.id, [...(seen.get(m.task.id) ?? []), { at: Date.now(), state: m.task.state, mergeAt: m.task.mergeAt ?? null, liveLog: m.task.liveLog ?? null }]);
   }
   if (m.type === "policy.updated") policy = m.policy;
+  if (m.type === "toast") toasts.push(m);
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "error") errors.push(m.message);
   poke?.();
@@ -81,6 +84,11 @@ const onMain = (id) => { try { return git("-C", origin, "show", "main:hello.txt"
 
 // (a) The countdown: mergeAt ≈ now + grace, reviewing until then, merged after.
 const a = await counted(1, "Say hello after a countdown");
+// Its passed-review toast says it merges on its own: nobody's review is needed (MF-172).
+const passedToast = await wait(`${a.id} passed-review toast`, () => toasts.find((m) => m.taskId === a.id && m.text.includes("passed review")), 5000);
+if (!passedToast.text.includes("merges on its own")) throw new Error(`${a.id}'s toast: ${passedToast.text}`);
+if (toasts.some((m) => m.taskId === a.id && m.text.includes("ready for yours"))) throw new Error(`${a.id} was toasted ready for yours`);
+step(`${a.id} toast: "${passedToast.text}"`);
 if (a.grace < 500 || a.grace > 60000) throw new Error(`a grace of ${a.grace}ms`);
 if (Math.abs(a.t.mergeAt - Date.now() - a.grace) > 1000) throw new Error(`mergeAt is ${a.t.mergeAt - Date.now()}ms away, the grace is ${a.grace}ms`);
 step(`${a.id}: "${a.started.text}", mergeAt = then + ${a.grace}ms`);
