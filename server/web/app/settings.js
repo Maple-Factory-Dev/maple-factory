@@ -41,6 +41,8 @@ export function formFromPolicy(p) {
     maxFiles: p.maxFiles,
     maxLines: p.maxLines,
     scoutItems: p.scoutItems ?? 3,
+    taskMinutes: p.taskMinutes ?? 60,
+    taskCostUsd: p.taskCostUsd ?? "",
     checks: (p.areas ?? []).map((a) => ({
       name: a.name,
       level: a.level,
@@ -87,7 +89,22 @@ export function policyFromForm(form, base) {
     autoFixMerges: !!form.autoFixMerges,
     autoMerges: !!form.autoMerges,
     scoutItems: clampInt(form.scoutItems, 1, 10, base.scoutItems ?? 3),
+    taskMinutes: taskMinutes(form.taskMinutes, base.taskMinutes ?? 60),
+    taskCostUsd: taskCost(form.taskCostUsd, base.taskCostUsd ?? null),
   };
+}
+
+/** A task's time budget from the form: 0 (or below) is off, otherwise 5–1440 minutes; blank keeps `fallback`. */
+export function taskMinutes(value, fallback) {
+  const n = clampInt(value, -1, 1440, fallback);
+  return n <= 0 ? 0 : Math.max(5, n);
+}
+
+/** A task's cost budget from the form, to the cent: blank is no limit; unreadable keeps `fallback`. */
+export function taskCost(value, fallback) {
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * 100) / 100) : fallback;
 }
 
 /** GitHub logins from what an admin typed: "a, @b, https://github.com/c/" → ["a", "b", "c"], once each
@@ -482,6 +499,14 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       h("div", { class: "card set-card" },
         field("Most files", "Over this, a change is at least medium risk and should be split.", num("maxFiles", f.maxFiles, 1, 10000, (v) => (f.maxFiles = v))),
         field("Most lines", "Added and removed, together.", num("maxLines", f.maxLines, 1, 1000000, (v) => (f.maxLines = v)))),
+      h("h2", {}, "Task budget"),
+      h("div", { class: "card set-card" },
+        field("Agent time per task", "Minutes of agent work, all its sessions together, before it's asked to stop and raise a hand (5–1440; 0 is off).",
+          num("taskMinutes", f.taskMinutes, 0, 1440, (v) => (f.taskMinutes = v))),
+        field("Cost per task", "Dollars of agent work before it asks. Blank: no cost limit.",
+          keep("policy:taskCostUsd", h("input", { type: "number", inputmode: "decimal", class: "set-num", min: 0, step: "0.01", placeholder: "No limit", value: f.taskCostUsd,
+            oninput: (e) => set(() => (f.taskCostUsd = e.target.value === "" ? "" : e.target.valueAsNumber)) }))),
+        h("p", { class: "set-detail", style: "margin:8px 0 0" }, "Past either, the agent is asked to stop and raise a hand; if it doesn't within 10 minutes, the factory raises one for it.")),
       h("h2", {}, "Risk checks"),
       h("p", { class: "muted" }, "A change's risk is the highest of: the planner's read, each check below it trips, and medium when it's over the PR budget. Path checks match the diff's files; the planner judges rules and cites the ones that apply."),
       h("div", { class: "card set-card" },
