@@ -14,3 +14,18 @@ export function mentionsIn(text: string, members: { login: string }[], author?: 
   }
   return found;
 }
+
+/** The factory's agents a comment can talk to: `@planner`, `@builder`, `@reviewer`, matched
+ *  case-insensitively, once each. Kept apart from members: an org member who happens to be
+ *  called `builder` is still mentioned by `mentionsIn`; this only says which agents are addressed. */
+export const AGENT_ROLES = ["planner", "builder", "reviewer"] as const;
+export type AgentRole = (typeof AGENT_ROLES)[number];
+
+export function agentsIn(text: string): AgentRole[] {
+  const found: AgentRole[] = [];
+  for (const [, name] of text.matchAll(MENTION)) {
+    const role = AGENT_ROLES.find((r) => r === name.toLowerCase());
+    if (role && !found.includes(role)) found.push(role);
+  }
+  return found;
+}

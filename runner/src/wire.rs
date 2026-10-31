@@ -1011,6 +1011,9 @@ pub struct Comment {
     /// Logins of the org members this comment @mentions, worked out by the server. Never the author.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mentions: Option<Vec<String>>,
+    /// The id of the comment that starts its thread. Replies to a reply sit under that same root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
 }
 
 /// Steering: someone redirecting the planner or builder mid-flight.
@@ -2995,12 +2998,16 @@ pub enum ClientMessage {
     TaskBacklog {
         id: String,
     },
+    /// Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.
     #[serde(rename = "task.comment")]
     TaskComment {
         id: String,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<String>,
+        /// The id of a comment on this task to reply to; a reply to a reply goes under its root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
     },
     /// A change request for the planner or builder.
     #[serde(rename = "task.steer")]

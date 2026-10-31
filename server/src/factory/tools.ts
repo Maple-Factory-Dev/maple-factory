@@ -172,6 +172,18 @@ const TOOLS: Tool[] = [
     roles: ["planner", "builder", "reviewer"],
   },
   {
+    name: "reply",
+    description: "Answer a person in a task's comment thread: they wrote to you there (it's typed in as \"<who> in comment thread <id>: …\", or listed in get_task's threads). It's conversation, not a change request: answer briefly and carry on with your work.",
+    inputSchema: obj(
+      {
+        thread: str("The thread's id, from the message (any comment's id in it works)."),
+        text: str("Your answer. Short, plain words."),
+      },
+      ["thread", "text"],
+    ),
+    roles: ["planner", "builder", "reviewer"],
+  },
+  {
     name: "finish",
     description: "Every step is done and every item proven: the factory runs the repo's checks (if it has any), then commits, pushes and starts the review. A failing check stops it, with nothing pushed, and is typed into this session to fix. End your turn after.",
     inputSchema: obj({ summary: str("What changed, for the review and the pull request.") }, ["summary"]),

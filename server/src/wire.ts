@@ -434,6 +434,8 @@ export interface Comment {
   via?: string | null;
   /** Logins of the org members this comment @mentions, worked out by the server. Never the author. */
   mentions?: string[] | null;
+  /** The id of the comment that starts its thread. Replies to a reply sit under that same root. */
+  replyTo?: string | null;
 }
 
 /** Steering: someone redirecting the planner or builder mid-flight. */
@@ -2067,11 +2069,14 @@ export interface ClientMessage_TaskBacklog {
   id: string;
 }
 
+/** Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation. */
 export interface ClientMessage_TaskComment {
   type: "task.comment";
   id: string;
   text: string;
   anchor?: string | null;
+  /** The id of a comment on this task to reply to; a reply to a reply goes under its root. */
+  replyTo?: string | null;
 }
 
 /** A change request for the planner or builder. */
