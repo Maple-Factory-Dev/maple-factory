@@ -524,6 +524,10 @@ export class Store {
   set(key: string, value: string) {
     this.sql.exec("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value);
   }
+
+  delete(key: string) {
+    this.sql.exec("DELETE FROM kv WHERE key = ?", key);
+  }
 }
 
 /** A stored goal, with fields added since it was saved. */
