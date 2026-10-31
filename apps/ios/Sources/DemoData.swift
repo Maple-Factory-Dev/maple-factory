@@ -20,7 +20,7 @@ enum DemoData {
             Wire.Member(login: "kit", name: "Kit Okafor", role: "member", teams: ["platform"]),
         ]
         feed.goals = [
-            Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app"], team: "mobile"),
+            Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),
             Wire.Goal(id: "g-web", name: "Billing", prefix: "BIL", color: "#14A866", summary: "Usage-based plans and invoices.", lead: "sam", repo: "acme/web", repos: ["acme/web"]),
         ]
