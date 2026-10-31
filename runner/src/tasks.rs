@@ -70,6 +70,9 @@ pub struct Finish {
 /// What a check that's really the commit's own git hooks (lefthook, husky) is called.
 pub const HOOK_CHECK: &str = "git commit (pre-commit hook)";
 
+/// What the dry-run merge of the branch into its base, before a push, is called as a check.
+pub const MERGE_CHECK: &str = "git merge-tree origin/<base> (does it merge?)";
+
 /// `task.cleanup` from the hub: the task's PR was merged or closed and its session has ended, so
 /// remove the worktree and local branch if nothing would be lost (see `worktrees::remove_task`).
 #[derive(Debug, Clone, Deserialize)]
@@ -520,6 +523,20 @@ async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
             anyhow!("{} has no branch checked out, so there's nothing to open a pull request against. Give the task a base branch.", f.repo_dir)
         })?,
     };
+    // The branch must merge into origin/<base>: a conflict goes back to the builder, unpushed. One that
+    // can't be checked (offline, no origin) goes ahead; the hub's dry run before a merge still catches it.
+    match merge_check(&dir, &base).await {
+        Ok(conflicts) if !conflicts.is_empty() => {
+            checks.push(merge_conflicts(&base, &conflicts));
+            let mut out = checks_failed(f, checks);
+            if let Outbound::TaskFinished { message, .. } = &mut out {
+                *message = Some(format!("The branch doesn't merge into {base} (conflicts in {}), so nothing was pushed.", conflicts.join(", ")));
+            }
+            return Ok(out);
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("task {}: couldn't check that it merges into {base}, so pushing anyway: {e:#}", f.task_id),
+    }
     if let Some(n) = ahead_of(&dir, &base).await
         && n == 0
     {
@@ -608,7 +625,17 @@ async fn commit_with_hooks(dir: &Path, title: &str) -> Result<Option<crate::wire
     Ok(Some(crate::wire::CheckRun { command: HOOK_CHECK.into(), code: out.status.code(), timed_out: false, ms: began.elapsed().as_millis() as u64, output }))
 }
 
-/// `task.finished` for a finish a check stopped: nothing committed or pushed.
+/// The failed check for a branch that doesn't merge into `origin/<base>`: the conflicting paths, and what to do.
+fn merge_conflicts(base: &str, conflicts: &[String]) -> crate::wire::CheckRun {
+    let output = format!(
+        "Conflicts with origin/{base} in:\n{}\n\nFetch origin/{base}, merge it into the branch, resolve every conflict, keep the tests passing, then call finish again.",
+        conflicts.iter().map(|c| format!("  {c}")).collect::<Vec<_>>().join("\n")
+    );
+    crate::wire::CheckRun { command: MERGE_CHECK.into(), code: Some(1), timed_out: false, ms: 0, output }
+}
+
+/// `task.finished` for a finish a check stopped: nothing committed or pushed. (A merge check that
+/// fails comes after the commit, so `finish` words its message itself.)
 fn checks_failed(f: &Finish, checks: Vec<crate::wire::CheckRun>) -> Outbound {
     let last = checks.last().expect("a failed check");
     let how = match (last.timed_out, last.code) {
@@ -616,7 +643,7 @@ fn checks_failed(f: &Finish, checks: Vec<crate::wire::CheckRun>) -> Outbound {
         (false, Some(code)) => format!("exited {code}"),
         (false, None) => "was killed".to_string(),
     };
-    tracing::info!("task {}: check `{}` {how}; nothing committed or pushed", f.task_id, last.command);
+    tracing::info!("task {}: check `{}` {how}; nothing pushed", f.task_id, last.command);
     Outbound::TaskFinished {
         task_id: f.task_id.clone(),
         ok: false,
@@ -1391,6 +1418,76 @@ mod tests {
         assert!(sh(&bare, &["branch", "--list"]).is_empty());
 
         std::fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+        let (ok, _) = checks_of(&finish(&emit, &f).await.unwrap());
+        assert!(ok);
+        assert_eq!(sh(&bare, &["log", "-1", "--format=%B", "agent/fix-1a2b"]), "Fix the flaky test");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// main, pushed to the fixture's origin, then moved on there by another clone with `file` changed.
+    fn main_moves_on(root: &Path, bare: &Path, work: &Path, file: &str) {
+        sh(work, &["push", "--quiet", "origin", "main"]);
+        let other = root.join("other");
+        sh(root, &["clone", "--quiet", bare.to_str().unwrap(), other.to_str().unwrap()]);
+        for (k, v) in [("user.name", "Other"), ("user.email", "other@example.com"), ("commit.gpgsign", "false")] {
+            sh(&other, &["config", k, v]);
+        }
+        commit(&other, file, "main's line\n", "another task merges");
+        sh(&other, &["push", "--quiet", "origin", "main"]);
+    }
+
+    /// A branch that doesn't merge into origin/<base> is a failed MERGE_CHECK naming the files: committed
+    /// but not pushed, and the worktree clean, not left mid-merge. Once main is merged in, it pushes.
+    #[tokio::test]
+    async fn a_finish_that_conflicts_with_its_base_goes_back_unpushed() {
+        let (root, bare, work, f) = finish_fixture("merge-conflict");
+        main_moves_on(&root, &bare, &work, "a.txt");
+        let emit = |m: Outbound| panic!("unexpected message {m:?}");
+
+        let out = finish(&emit, &f).await.unwrap();
+        let (ok, checks) = checks_of(&out);
+        assert!(!ok, "{out:?}");
+        let last = checks.last().unwrap();
+        assert_eq!((last.command.as_str(), last.code), (MERGE_CHECK, Some(1)));
+        assert!(last.output.contains("a.txt") && last.output.contains("merge it into the branch"), "{:?}", last.output);
+        let Outbound::TaskFinished { message, pushed, .. } = &out else { unreachable!() };
+        let message = message.as_deref().unwrap();
+        assert!(message.contains("doesn't merge into main (conflicts in a.txt)") && message.contains("nothing was pushed"), "{message}");
+        assert_eq!(*pushed, None);
+        assert!(sh(&bare, &["branch", "--list", "agent/fix-1a2b"]).is_empty(), "nothing pushed");
+        assert_eq!(sh(&work, &["log", "-1", "--format=%B"]), "Fix the flaky test", "committed");
+        assert_eq!(sh(&work, &["status", "--porcelain"]), "");
+        assert!(!work.join(".git/MERGE_HEAD").exists(), "not mid-merge");
+
+        // The builder merges main and resolves the conflict, then finishes again.
+        let _ = Command::new("git").arg("-C").arg(&work).args(["merge", "--quiet", "origin/main"]).output().await;
+        std::fs::write(work.join("a.txt"), "two, and main's line\n").unwrap();
+        sh(&work, &["commit", "--quiet", "-am", "Merge origin/main"]);
+        let (ok, checks) = checks_of(&finish(&emit, &f).await.unwrap());
+        assert!(ok && checks.is_empty(), "{checks:?}");
+        assert!(!sh(&bare, &["branch", "--list", "agent/fix-1a2b"]).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// main moving on in other files doesn't stop a finish, and no check is reported for it.
+    #[tokio::test]
+    async fn a_finish_that_merges_cleanly_pushes() {
+        let (root, bare, work, f) = finish_fixture("merge-clean");
+        main_moves_on(&root, &bare, &work, "c.txt");
+        let emit = |m: Outbound| panic!("unexpected message {m:?}");
+        let out = finish(&emit, &f).await.unwrap();
+        let (ok, checks) = checks_of(&out);
+        assert!(ok && checks.is_empty(), "{out:?}");
+        assert_eq!(sh(&bare, &["log", "-1", "--format=%B", "agent/fix-1a2b"]), "Fix the flaky test");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// An origin/<base> that can't be fetched (here origin has no main) doesn't hold the finish up.
+    #[tokio::test]
+    async fn a_finish_whose_base_cant_be_fetched_still_pushes() {
+        let (root, bare, work, f) = finish_fixture("merge-unfetchable");
+        assert!(merge_check(&work, "main").await.is_err());
+        let emit = |m: Outbound| panic!("unexpected message {m:?}");
         let (ok, _) = checks_of(&finish(&emit, &f).await.unwrap());
         assert!(ok);
         assert_eq!(sh(&bare, &["log", "-1", "--format=%B", "agent/fix-1a2b"]), "Fix the flaky test");
