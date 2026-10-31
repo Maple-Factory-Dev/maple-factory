@@ -291,6 +291,16 @@ export async function mergePullRequest(app: GitHubApp, owner: string, repo: stri
   return { sha: typeof j.sha === "string" ? j.sha : null };
 }
 
+/** Where a pull request stands on GitHub now, and its merge commit once merged. */
+export async function pullRequestState(app: GitHubApp, owner: string, repo: string, number: number): Promise<{ state: "open" | "closed" | "merged"; sha: string | null }> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth);
+  if (!res.ok) throw await failure(res, `read pull request #${number}`);
+  const j = (await res.json()) as { state?: string; merged?: boolean; merge_commit_sha?: string | null };
+  if (j.merged) return { state: "merged", sha: typeof j.merge_commit_sha === "string" ? j.merge_commit_sha : null };
+  return { state: j.state === "closed" ? "closed" : "open", sha: null };
+}
+
 /** Closes a pull request without merging, after saying why in a comment on it. */
 export async function closePullRequest(app: GitHubApp, owner: string, repo: string, number: number, comment: string): Promise<void> {
   const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
