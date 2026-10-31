@@ -1945,7 +1945,7 @@ export class Engine {
         // Checked before any is made, so a bad proposal makes none.
         const picks = asked.map((p) => {
           const named = typeof p.repo === "string" ? p.repo.trim() : "";
-          const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(`tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).`) : task.repo ?? null;
+          const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `tasks[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
           return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo };
         });
         // Drafts only: nothing plans or builds until a person sends one to planning.
