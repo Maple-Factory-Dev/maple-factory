@@ -19,7 +19,8 @@ final class SessionTerminalTests: XCTestCase {
 
     private func openSession(_ task: String) {
         let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", task)).firstMatch
-        if !row.waitForExistence(timeout: 5) { app.swipeUp() }
+        // Further machines' rows are below the fold (and the list loads them lazily).
+        for _ in 0..<5 where !(row.waitForExistence(timeout: 3) && row.isHittable) { app.swipeUp() }
         XCTAssertTrue(row.waitForExistence(timeout: 10), "no session row for \(task)")
         row.tap()
         XCTAssertTrue(terminal.waitForExistence(timeout: 20), "\(task)'s terminal didn't open")
