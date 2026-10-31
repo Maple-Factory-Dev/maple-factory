@@ -1406,12 +1406,15 @@ function artifactBody(a) {
   return box;
 }
 
-/** An HTML or SVG artifact as the iframe's page, with the CSP first in its head. */
+/** An HTML or SVG artifact as the iframe's page, with the CSP before anything else in it. */
 function artifactPage(text, kind) {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
   if (kind === "svg") return `<!doctype html><html><head>${meta}<style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#fff}svg{max-width:100%;max-height:100%}</style></head><body>${text}</body></html>`;
-  const head = /<head[^>]*>/i.exec(text);
-  return head ? text.slice(0, head.index + head[0].length) + meta + text.slice(head.index + head[0].length) : meta + text;
+  // First in the document (after a leading doctype only): the parser puts it in the implicit <head> ahead of
+  // every other tag. Looking for "<head" instead would also match <header>, or a <head> in a comment or script.
+  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(text);
+  const at = doctype ? doctype[0].length : 0;
+  return text.slice(0, at) + meta + text.slice(at);
 }
 
 /** The screenshot or recording the runner uploaded: shown in place, or a chip to open it if it won't load. */

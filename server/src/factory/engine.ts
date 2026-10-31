@@ -2094,6 +2094,21 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // Agents' tools
 
+  /** A `share_artifact` file is only one the runner uploaded as an artifact of this task
+   *  (`PUT /runner/artifact/<task>`): not a proof, a member's attachment or another task's file. Its `type`
+   *  becomes what was stored. An error to give the agent, or null. */
+  private async checkArtifactUpload(taskId: string, args: Record<string, unknown>): Promise<string | null> {
+    const up = args.file && typeof args.file === "object" ? (args.file as { key?: unknown; type?: unknown }) : null;
+    // A missing or malformed key is refused in `run`, with the save-it-here hint.
+    if (!up || !isAttachmentKey(up.key)) return null;
+    const stored = await this.env.RELEASES.head(up.key.slice(1));
+    if (!stored || stored.customMetadata?.artifact !== "1" || stored.customMetadata?.task !== taskId) {
+      return "file: that upload isn't an artifact of this task. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.";
+    }
+    if (stored.httpMetadata?.contentType) up.type = stored.httpMetadata.contentType;
+    return null;
+  }
+
   private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
     if (!s) {
@@ -2111,6 +2126,10 @@ export class Engine {
     }
     if (name === "tools/list") return { result: { summary: "", data: { tools: toolsFor(s.role) } } };
     if (!allowed(s.role, name)) return { error: `${name} isn't one of the ${s.role}'s tools.` };
+    if (name === "share_artifact") {
+      const refused = await this.checkArtifactUpload(s.task, args);
+      if (refused) return { error: refused };
+    }
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
@@ -2368,6 +2387,7 @@ export class Engine {
         // The runner uploaded the file (PUT /runner/artifact/<task>) and put `{key, name, type, bytes}` in its place.
         const up = a.file && typeof a.file === "object" ? (a.file as { key?: unknown; type?: unknown; bytes?: unknown }) : null;
         if (!up || !isAttachmentKey(up.key)) fail("file: the runner didn't upload it. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.");
+        // `tool` checked the upload is this task's artifact and set `type` from what was stored.
         const mime = typeof up!.type === "string" ? up!.type : "application/octet-stream";
         const kind: ArtifactKind = a.kind != null && ArtifactKindValues.includes(a.kind as ArtifactKind) && a.kind !== "other" ? (a.kind as ArtifactKind) : artifactKind(mime);
         const summary = typeof a.summary === "string" && a.summary.trim() ? a.summary.trim().slice(0, 300) : null;

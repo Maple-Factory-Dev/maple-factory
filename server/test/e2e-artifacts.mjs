@@ -6,8 +6,8 @@
 // Checks: the uploads answer {key, type, bytes}; the task feed carries both artifacts with their kind,
 // file and version; sharing again under the same title bumps the version instead of adding one; a
 // member GETs the bytes back, the HTML only ever as a sandboxed download; a wrong or missing runner
-// token gets 401, a 12 MB file 413 and a binary blob 415; and a key that isn't an attachment's is
-// refused. The task is left building with its artifacts, to look at in the apps.
+// token gets 401, a 12 MB file 413 and a binary blob 415; and a key that isn't an attachment's, a
+// proof's or another task's artifact's is refused. The task is left building with its artifacts, to look at in the apps.
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -149,6 +149,16 @@ check(/^attachment/.test(pageGot.headers.get("content-disposition") ?? "") && (p
 // A key that isn't an attachment's link is refused.
 const bad = await call(builder.id, "share_artifact", { title: "Elsewhere", file: { key: "https://evil.example/x.html" } });
 check(!!bad.error && !tasks.get(id).artifacts.some((a) => a.title === "Elsewhere"), `a file that isn't /attachments/<id>/<name> is refused (${bad.error})`);
+
+// A real attachment that wasn't uploaded as this task's artifact is refused: a proof, or another task's artifact.
+const proofRes = await fetch(`${base}/runner/proof/${id}?runner=${runnerId}&name=shot.png`, { method: "PUT", headers: { "content-type": "image/png", authorization: `Bearer ${enrolled.token}` }, body: png });
+const proof = await proofRes.json();
+const asProof = await call(builder.id, "share_artifact", { title: "A proof", file: { key: proof.key, name: "shot.png", type: "image/png", bytes: png.length } });
+check(proofRes.ok && !!asProof.error && !tasks.get(id).artifacts.some((a) => a.title === "A proof"), `a proof's key isn't an artifact (${proofRes.status}; ${asProof.error})`);
+const otherRes = await putArtifact(`${prefix}-999`, pngName, png, "image/png");
+const other = await otherRes.json();
+const asOther = await call(builder.id, "share_artifact", { title: "Not mine", file: { key: other.key, name: pngName, type: "image/png", bytes: png.length } });
+check(!!asOther.error && !tasks.get(id).artifacts.some((a) => a.title === "Not mine"), `another task's artifact is refused (${otherRes.status}; ${asOther.error})`);
 
 console.log(`${id}: ${failures ? `${failures} failed` : "all passed"}`);
 process.exit(failures ? 1 : 0);

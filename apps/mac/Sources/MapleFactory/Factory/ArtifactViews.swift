@@ -215,16 +215,17 @@ enum ArtifactFiles {
     /// No network, no frames, no forms: only the page's own inline scripts, styles and data: images.
     static let csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:"
 
-    /// An HTML or SVG artifact as the page the viewer loads, with the CSP first in its head.
+    /// An HTML or SVG artifact as the page the viewer loads, with the CSP before anything else in it.
     static func page(_ data: Data, kind: Wire.ArtifactKind) -> String {
         let source = String(decoding: data, as: UTF8.self)
         let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
         if kind == .svg {
             return "<!doctype html><html><head>\(meta)<style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#fff}svg{max-width:100%;max-height:100%}</style></head><body>\(source)</body></html>"
         }
-        // Before anything else, so no earlier tag can load something first.
-        if let head = source.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) {
-            return source.replacingCharacters(in: head, with: source[head] + meta)
+        // First in the document (after a leading doctype only): the parser puts it in the implicit <head> ahead
+        // of every other tag. Looking for "<head" instead would also match <header>, or one in a comment or script.
+        if let doctype = source.range(of: "^\\uFEFF?\\s*<!doctype[^>]*>", options: [.regularExpression, .caseInsensitive]) {
+            return source.replacingCharacters(in: doctype, with: source[doctype] + meta)
         }
         return meta + source
     }
@@ -299,6 +300,11 @@ struct SandboxedPage: NSViewRepresentable {
 private struct PDFArtifact: NSViewRepresentable {
     let data: Data
 
+    /// The bytes the view shows, so an update compares them instead of re-serializing the document.
+    final class Coordinator { var loaded: Data? }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
@@ -307,7 +313,8 @@ private struct PDFArtifact: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
-        guard view.document?.dataRepresentation() != data else { return }
+        guard context.coordinator.loaded != data else { return }
+        context.coordinator.loaded = data
         view.document = PDFDocument(data: data)
     }
 }
