@@ -1257,8 +1257,8 @@ export const unions: Record<string, Union> = {
         },
       },
       "task.token": {
-        doc: "The answer to `task.token_request`.",
-        fields: { reqId: "string", token: "string?", error: "string?", code: "string?" },
+        doc: "The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write).",
+        fields: { reqId: "string", token: "string?", error: "string?", code: "string?", settingsUrl: "string?" },
       },
       "secrets.reply": {
         doc: "The answer to `secrets.request`: `values` by name, or `error` with a `code`.",

@@ -1696,13 +1696,14 @@ export interface ServerToRunner_TaskCleanup {
   deleteRemote?: boolean | null;
 }
 
-/** The answer to `task.token_request`. */
+/** The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write). */
 export interface ServerToRunner_TaskToken {
   type: "task.token";
   reqId: string;
   token?: string | null;
   error?: string | null;
   code?: string | null;
+  settingsUrl?: string | null;
 }
 
 /** The answer to `secrets.request`: `values` by name, or `error` with a `code`. */

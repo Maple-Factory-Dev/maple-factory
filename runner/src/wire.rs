@@ -2637,7 +2637,7 @@ pub enum ServerToRunner {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delete_remote: Option<bool>,
     },
-    /// The answer to `task.token_request`.
+    /// The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write).
     #[serde(rename = "task.token")]
     TaskToken {
         req_id: String,
@@ -2647,6 +2647,8 @@ pub enum ServerToRunner {
         error: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settings_url: Option<String>,
     },
     /// The answer to `secrets.request`: `values` by name, or `error` with a `code`.
     #[serde(rename = "secrets.reply")]

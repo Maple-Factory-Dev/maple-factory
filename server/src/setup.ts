@@ -50,6 +50,8 @@ function manifest(origin: string, org: string, personal: boolean) {
       pull_requests: "write",
       checks: "write",
       actions: "write",
+      // Pushing and merging a change to .github/workflows/* needs it: GitHub refuses those without it.
+      workflows: "write",
       statuses: "read",
       // A personal account has no members; its owner is the only one who signs in.
       ...(personal ? {} : { members: "read" }),

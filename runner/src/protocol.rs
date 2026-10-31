@@ -647,6 +647,9 @@ pub enum Inbound {
         error: Option<String>,
         #[serde(default)]
         code: Option<String>,
+        /// The app's permissions page, with a push token.
+        #[serde(default, rename = "settingsUrl")]
+        settings_url: Option<String>,
     },
     /// The hub's answer to `secrets.request`: `values` by name, or `error` with a `code`.
     #[serde(rename = "secrets.reply")]

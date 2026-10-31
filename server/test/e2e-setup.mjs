@@ -26,6 +26,7 @@ check(manifest.redirect_url === `${base}/setup/github` && manifest.callback_urls
 check(manifest.public === true, "the app is public, so other orgs can install it");
 check(personal ? !("members" in (manifest.default_permissions ?? {})) : manifest.default_permissions?.members === "read",
   personal ? "the app doesn't ask for org members" : "the app may read org members");
+check(manifest.default_permissions?.workflows === "write", "the app may push and merge changes to .github/workflows (Workflows: write)");
 
 const stranger = await get(`/setup/github?code=app-someone-else&state=${encodeURIComponent(state)}`, cookie);
 check(stranger.status === 403, `an app owned by another account is refused (${stranger.status})`);
