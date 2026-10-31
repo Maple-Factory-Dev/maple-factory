@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// A goal sorted by what you should do with it: what's waiting on you across the top, what's up next
-/// (drafts and the queue, in order and draggable) beside what's moving, and what landed lately below.
+/// (the queue, then tasks being planned, then drafts; the queue and drafts in order and draggable)
+/// beside what's moving, and what landed lately below.
 struct GoalOverview: View {
     @Environment(AppState.self) private var state
     let goal: Goal
@@ -85,6 +86,12 @@ struct GoalOverview: View {
                 return true
             } isTargeted: { queueTargeted = $0 }
 
+            if !sections.planning.isEmpty {
+                lane(icon: TaskState.planning.icon, title: "Planning", count: sections.planning.count, color: TaskState.planning.color, targeted: false) {
+                    ForEach(sections.planning) { OverviewRow(task: $0) }
+                }
+            }
+
             lane(icon: TaskState.drafting.icon, title: "Drafts", count: sections.drafts.count, color: TaskState.drafting.color, targeted: draftsTargeted) {
                 ForEach(sections.drafts) { task in
                     OverviewRow(task: task, drop: .draftAhead)
@@ -96,12 +103,6 @@ struct GoalOverview: View {
                 withAnimation(.snappy) { state.rankDraft(id, before: nil) }
                 return true
             } isTargeted: { draftsTargeted = $0 }
-
-            if !sections.planning.isEmpty {
-                lane(icon: TaskState.planning.icon, title: "Planning", count: sections.planning.count, color: TaskState.planning.color, targeted: false) {
-                    ForEach(sections.planning) { OverviewRow(task: $0) }
-                }
-            }
         }
     }
 
