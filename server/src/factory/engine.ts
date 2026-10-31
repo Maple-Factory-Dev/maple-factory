@@ -2190,6 +2190,7 @@ export class Engine {
     if (task.state !== "reviewing" || !priv.merging || priv.mergeStartedAt !== (started ?? priv.mergeStartedAt)) return;
     if (onGitHub?.state === "merged") {
       this.event(task, "factory", "didn't hear back from the merge; GitHub says it merged");
+      this.save(task, false); // merged() reads it again
       this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: onGitHub.sha, message: null });
       if (app && gh && pr) this.hooks.waitUntil(this.deleteMergedBranch(task.id, app, gh, pr));
       return;
