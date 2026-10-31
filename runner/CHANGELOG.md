@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.72.0 — 2026-10-30
+
+The runner keeps up with the factory's protocol for @Maple in Slack: integrations now carry a setup link and a status line.
+
 ## 0.71.0 — 2026-10-31
 
 Agents can give a proposed task a priority (P0 to P3), and the runner keeps up with the factory's protocol for task priority and follow-ups.
