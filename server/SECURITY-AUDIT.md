@@ -174,6 +174,8 @@ before forwarding, or pass the member's role to `MachineHub /view` and drop inpu
 viewers. Not changed here: it's a product decision (team slots, pairing on a task), and it touches the
 web app and the Mac app.
 
+> **Since merging main (2026-10-30):** main now gates the terminal socket and keeps per-session shares (commits 71fbf3f, 3331c64): watch-only viewers' input is dropped and resizing needs the owner or an admin. This audit hasn't re-reviewed that gate, so F-02 stays a follow-up to verify.
+
 ### F-03 · medium · Removed org members keep access until their session or token expires — follow-up
 
 **Where:** `src/auth.ts:64` (`stillAllowed` re-checks only personal factories), `src/auth.ts:11-12`
@@ -190,6 +192,8 @@ lists the org's members with the app's installation token and deletes the rows a
 gone. Then `currentMember`'s join fails at once. The GitHub App could also subscribe to `organization`
 `member_removed` events at `/integrations/github`. Sessions should carry something revocable, such as a
 per-member generation number in `members`, so deleting or bumping it signs every browser out.
+
+> **Since merging main (2026-10-30):** main now re-checks membership every 10 minutes, and `members.revoke` / `revoked_at` cut off sessions, app tokens and runner tokens issued before a revocation (commits 273afc3, df6dcb2, 3331c64). `authenticateRunner` now combines that check with this task's constant-time compare (F-09). This audit hasn't re-reviewed the change, so F-03 stays a follow-up to verify.
 
 ### F-04 · medium · App tokens can't be revoked, and signing out doesn't revoke them — follow-up
 
