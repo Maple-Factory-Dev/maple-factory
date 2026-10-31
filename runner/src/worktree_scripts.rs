@@ -264,7 +264,7 @@ struct Stamp {
 }
 
 fn sha(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::update::hex(&Sha256::digest(bytes))
 }
 
 impl Stamp {
@@ -339,6 +339,13 @@ mod tests {
         let d = std::env::temp_dir().join(format!("maple-wts-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn sha_is_lowercase_hex_of_sha256() {
+        // Stored preflight stamps hold these strings, so the format can't drift across sha2 bumps.
+        assert_eq!(sha(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(sha(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 
     fn scripts(setup: &str, timeout: Option<u32>) -> WorktreeScripts {
