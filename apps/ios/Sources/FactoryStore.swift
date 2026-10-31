@@ -230,6 +230,12 @@ final class FactoryStore {
     func requestMockupChange(_ id: String, mockup: String, text: String) { send(.taskMockupChange(.init(id: id, mockup: mockup, text: text))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
+    /// Sends a draft to planning, or picks up a backlog task.
+    func plan(_ id: String) { send(.taskPlan(.init(id: id))) }
+    /// Parks a draft (or a plan waiting for approval) in the backlog.
+    func sendToBacklog(_ id: String) { send(.taskBacklog(.init(id: id))) }
+    /// Moves a draft ahead of `before` ("top": first; nil: last) in its goal's drafts.
+    func rankDraft(_ id: String, before: String?) { send(.taskRankDraft(.init(id: id, before: before))) }
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
     /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
     func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
@@ -311,6 +317,25 @@ final class FactoryStore {
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
+        case .taskPlan(let m):
+            guard let state = feed.task(m.id)?.state, state == .drafting || state == .backlog else { return }
+            update(m.id) { $0.state = .planning }
+            notice = .toast("Sent to planning", taskId: m.id)
+        case .taskBacklog(let m):
+            guard let state = feed.task(m.id)?.state, state == .drafting || state == .awaitingApproval else { return }
+            update(m.id) { $0.state = .backlog; $0.approvals = []; $0.waiting = nil }
+            notice = .toast("Sent to the backlog", taskId: m.id)
+        case .taskRankDraft(let m):
+            guard let task = feed.task(m.id) else { return }
+            let line = feed.tasks(in: task.goal).filter { $0.state == .drafting && $0.id != m.id }.sorted(by: Wire.Task.draftOrder)
+            let target = m.before == "top" ? line.first : line.first { $0.id == m.before }
+            let rank: Double
+            if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+                rank = at > 0 ? (line[at - 1].draftOrderRank + target.draftOrderRank) / 2 : target.draftOrderRank - 1000
+            } else {
+                rank = (line.map(\.draftOrderRank).max() ?? 0) + 1
+            }
+            update(m.id) { $0.draftRank = rank }
         case .taskAnswerPrompt(let m):
             // The runner passes the answer to the session, which carries on.
             guard let worker = feed.task(m.id)?.worker, let mi = feed.machines.firstIndex(where: { $0.id == worker.machine }),
@@ -355,5 +380,15 @@ final class FactoryStore {
         default:
             break
         }
+    }
+}
+
+extension Wire.Task {
+    /// Where a draft sits in its goal's drafts: its rank, or when it was made, as the factory orders them.
+    var draftOrderRank: Double { draftRank ?? Double(createdAt) }
+
+    /// A goal's drafts, first first.
+    static func draftOrder(_ a: Wire.Task, _ b: Wire.Task) -> Bool {
+        (a.draftOrderRank, a.id) < (b.draftOrderRank, b.id)
     }
 }

@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class NewTaskTests: XCTestCase {
     func testSaveAsDraft() throws {
-        try create(title: "Haptics when a plan is approved", plan: false, section: "Drafting · 2")
+        try create(title: "Haptics when a plan is approved", plan: false, section: "Drafting · 3")
     }
 
     func testPlanNow() throws {
@@ -32,6 +32,8 @@ final class NewTaskTests: XCTestCase {
         app.buttons["newTask.send"].tap()
 
         let row = app.staticTexts[title]
+        // The goal runs past the screen; the list only builds rows near the viewport.
+        for _ in 0..<3 where !row.waitForExistence(timeout: 2) { app.collectionViews.firstMatch.swipeUp() }
         XCTAssertTrue(row.waitForExistence(timeout: 5), "the new task isn't in the goal")
         XCTAssertTrue(app.staticTexts["APP-16"].exists, "the new task isn't APP-16")
         XCTAssertTrue(app.staticTexts[section].exists, "no \(section) section")
