@@ -56,6 +56,8 @@ pub enum TaskState {
     Merged,
     /// Stopped.
     Cancelled,
+    /// Finished without code to merge, e.g. its planner proposed tasks instead of a plan.
+    Closed,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,

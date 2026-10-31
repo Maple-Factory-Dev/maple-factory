@@ -111,6 +111,8 @@ enum class TaskState(val raw: String) {
     Merged("merged"),
     /** Stopped. */
     Cancelled("cancelled"),
+    /** Finished without code to merge, e.g. its planner proposed tasks instead of a plan. */
+    Closed("closed"),
     /** A value this build doesn't know yet; newer servers may send them. */
     Unknown("unknown"),
     ;

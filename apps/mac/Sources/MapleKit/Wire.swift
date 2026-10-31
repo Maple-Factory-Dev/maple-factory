@@ -123,11 +123,13 @@ public enum Wire {
         case merged
         /// Stopped.
         case cancelled
+        /// Finished without code to merge, e.g. its planner proposed tasks instead of a plan.
+        case closed
         /// A value this build doesn't know yet; newer servers may send them.
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged, .cancelled]
+        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged, .cancelled, .closed]
 
         public init(rawValue: String) {
             switch rawValue {
@@ -139,6 +141,7 @@ public enum Wire {
             case "reviewing": self = .reviewing
             case "merged": self = .merged
             case "cancelled": self = .cancelled
+            case "closed": self = .closed
             default: self = .other(rawValue)
             }
         }
@@ -153,6 +156,7 @@ public enum Wire {
             case .reviewing: "reviewing"
             case .merged: "merged"
             case .cancelled: "cancelled"
+            case .closed: "closed"
             case .other(let value): value
             }
         }

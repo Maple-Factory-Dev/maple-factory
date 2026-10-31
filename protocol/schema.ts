@@ -44,6 +44,7 @@ export const enums: Record<string, Enum> = {
       reviewing: "Pushed: the review agent and people are reviewing it.",
       merged: "Merged into its base.",
       cancelled: "Stopped.",
+      closed: "Finished without code to merge, e.g. its planner proposed tasks instead of a plan.",
     },
   },
   Role: {

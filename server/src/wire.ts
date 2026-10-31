@@ -7,8 +7,8 @@ export type EndCause = "exited" | "killed" | "signaled" | "outOfMemory" | "machi
 export const EndCauseValues: readonly EndCause[] = ["exited","killed","signaled","outOfMemory","machineSlept","tmuxLost","runnerUpdated","authExpired","usageLimit","unknown"];
 
 /** Where a task is in the loop. */
-export type TaskState = "drafting" | "planning" | "awaitingApproval" | "backlog" | "building" | "reviewing" | "merged" | "cancelled";
-export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","backlog","building","reviewing","merged","cancelled"];
+export type TaskState = "drafting" | "planning" | "awaitingApproval" | "backlog" | "building" | "reviewing" | "merged" | "cancelled" | "closed";
+export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","backlog","building","reviewing","merged","cancelled","closed"];
 
 /** What a factory session is for. */
 export type Role = "planner" | "builder" | "reviewer";
