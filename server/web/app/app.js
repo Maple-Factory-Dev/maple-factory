@@ -14,7 +14,65 @@ import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
+
+/**
+ * The finished tasks the snapshot left out (it sends those of the last 14 days) and not loaded since:
+ * `byGoal` their counts per goal id, `left` how many in all. `cursor` is where each `tasks.older` page
+ * starts (by goal id, "" for every goal), `loading` the pages on their way, `fetching` the `task.get`s.
+ */
+function older(tallies = null, tasks = [], left = 0) {
+  const byGoal = {};
+  for (const t of tallies ?? []) {
+    const sent = tasks.filter((x) => x.goal === t.goal);
+    const finished = t.merged + t.cancelled + t.closed - sent.filter((x) => FINISHED.includes(x.state)).length;
+    byGoal[t.goal] = { merged: Math.max(0, t.merged - sent.filter((x) => x.state === "merged").length), finished: Math.max(0, finished) };
+  }
+  return { byGoal, left, cursor: new Map(), loading: new Set(), fetching: new Set(), missing: new Set() };
+}
+const FINISHED = ["merged", "cancelled", "closed"];
+
+/** Older tasks from `tasks.page` or `task.get` join the tasks; one a live update already brought stays as it is. */
+function mergeOlder(tasks) {
+  for (const t of tasks) {
+    if (state.tasks.has(t.id)) continue;
+    state.tasks.set(t.id, t);
+    const counts = state.older.byGoal[t.goal];
+    if (counts && FINISHED.includes(t.state)) {
+      counts.finished = Math.max(0, counts.finished - 1);
+      if (t.state === "merged") counts.merged = Math.max(0, counts.merged - 1);
+      state.older.left = Math.max(0, state.older.left - 1);
+    }
+  }
+}
+
+/** Whether the goal (its id; none: any goal) has finished tasks older than the snapshot's still to load. */
+const hasOlder = (goal = null) => goal ? (state.older.byGoal[goal]?.finished ?? 0) > 0 : state.older.left > 0;
+
+/** The next 50 older finished tasks: the goal's, or every goal's. */
+function loadOlder(goal = null) {
+  const key = goal ?? "";
+  if (!hasOlder(goal) || state.older.loading.has(key)) return;
+  const cursor = state.older.cursor.get(key);
+  if (send({ type: "tasks.older", goal, before: cursor?.before ?? null, beforeId: cursor?.id ?? null, limit: 50 })) state.older.loading.add(key);
+  render();
+}
+
+/** A task opened by ID that isn't loaded, maybe one the snapshot left out: ask for it. */
+function fetchTask(id) {
+  if (!state.live || state.tasks.has(id) || state.older.fetching.has(id) || state.older.missing.has(id)) return;
+  if (send({ type: "task.get", id })) state.older.fetching.add(id);
+}
+
+/** "Load older" and its state, for under a list of finished tasks. */
+function loadOlderLink(goal = null) {
+  if (!hasOlder(goal)) return null;
+  const loading = state.older.loading.has(goal ?? "");
+  const left = goal ? state.older.byGoal[goal].finished : state.older.left;
+  return h("div", { class: "muted", style: "font-size:13px;margin-top:8px" },
+    loading ? "Loading older finished tasks…" : h("a", { href: "javascript:void 0", "data-load-older": goal ?? "", onclick: () => loadOlder(goal) }, "Load older"),
+    ` · ${left} finished more than 14 days ago`);
+}
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
 let socket = null;
 let retry = 1000;
@@ -117,6 +175,7 @@ function receive(m) {
     case "snapshot":
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
+      state.older = older(m.tallies, m.tasks, m.olderTasks ?? 0);
       state.notes = m.notes ?? [];
       state.machines = m.machines ?? [];
       // The factory's settings, for admins' Settings page.
@@ -145,12 +204,25 @@ function receive(m) {
     case "secrets.updated": state.secrets = m.secrets; break;
     case "integrations.updated": state.integrations = m.integrations; break;
     case "task.updated":
+      // One asked for by ID (`task.get`): no news, just here now.
+      if (state.older.fetching.delete(m.task.id) && !state.tasks.has(m.task.id)) { mergeOlder([m.task]); break; }
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
       mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
+    case "tasks.page": {
+      const key = m.goal ?? "";
+      state.older.loading.delete(key);
+      const last = m.tasks.at(-1);
+      if (last) state.older.cursor.set(key, { before: last.updatedAt, id: last.id });
+      mergeOlder(m.tasks);
+      // The server knows best: none left means none left, whatever the counts drifted to.
+      if (!m.more && m.goal && state.older.byGoal[m.goal]) state.older.byGoal[m.goal] = { merged: 0, finished: 0 };
+      if (!m.more && !m.goal) { state.older.left = 0; for (const c of Object.values(state.older.byGoal)) Object.assign(c, { merged: 0, finished: 0 }); }
+      break;
+    }
     case "machine.updated":
     case "machine.removed": {
       // Machines change with every step an agent takes; only a prompt starting or ending redraws, or a
@@ -175,6 +247,13 @@ function receive(m) {
       break;
     }
     case "error":
+      // A task asked for by ID that isn't there: its page says so, once.
+      if (m.requestId?.startsWith("task.get:")) {
+        const id = m.requestId.slice(9);
+        state.older.fetching.delete(id);
+        state.older.missing.add(id);
+        break;
+      }
       // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its panel.
       if (m.requestId?.startsWith("checkLog:")) {
         const key = m.requestId.slice(9);
@@ -398,12 +477,16 @@ const rank = (t) => t.queueRank ?? t.createdAt;
 const scheduled = (t) => t.startAt != null && t.startAt > Date.now();
 const queueLine = (t) => scheduled(t) ? `Starts ${new Date(t.startAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : t.waiting || "Waiting for a slot";
 
+/** How many merged tasks the Tasks page lists: 10, or every one loaded once someone asks for more. */
+let mergedShown = 0;
+
 function tasksView() {
   const drafts = [...state.tasks.values()].filter((t) => t.state === "drafting").sort((a, b) => b.updatedAt - a.updatedAt);
   const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
   const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
   const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled", "closed"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
-  const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
+  const merged = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt);
+  const done = merged.slice(0, Math.max(10, mergedShown));
   return h("div", {},
     h("h1", {}, "Tasks"),
     drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
@@ -411,7 +494,11 @@ function tasksView() {
     backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
     section("tasks:active", "In flight", active.length, () =>
       active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
-    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
+    (done.length > 0 || hasOlder()) && section("tasks:merged", mergedShown ? "Merged" : "Recently merged", null, () => h("div", {},
+      h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`))),
+      merged.length > done.length
+        ? h("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, h("a", { href: "javascript:void 0", onclick: () => { mergedShown = merged.length; render(); } }, `Show all ${merged.length} loaded`))
+        : loadOlderLink())));
 }
 
 // ---- machines: read-only; what each one is doing, how loaded it is and how much plan it has left ----
@@ -695,7 +782,11 @@ const taskTabs = new Map(); // id → "overview" | "diff"
 
 function taskView(id) {
   const t = state.tasks.get(id);
-  if (!t) return h("div", { class: "card empty" }, state.live ? `There's no task ${id}.` : "Loading…");
+  if (!t) {
+    // One the snapshot left out (finished over 14 days ago) comes when asked for.
+    fetchTask(id);
+    return h("div", { class: "card empty" }, state.live && !state.older.fetching.has(id) ? `There's no task ${id}.` : "Loading…");
+  }
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
   // Parked in the backlog: as far as its plan got.
@@ -789,6 +880,8 @@ function effortCard(t) {
   const counted = tasks.filter((x) => x.state !== "cancelled" && x.state !== "closed");
   return [h("h2", { class: "row" }, h("span", {}, `Effort · ${t.effort}`), h("span", { class: "spacer" }),
       h("span", { style: "text-transform:none;letter-spacing:0;font-weight:500" }, `${counted.filter((x) => x.state === "merged").length} of ${counted.length} merged`)),
+    // The effort's older tasks may be among the goal's finished ones the snapshot left out.
+    loadOlderLink(t.goal),
     h("div", { class: "list" }, tasks.map((x) => h("a", { class: `item${x.id === t.id ? " current" : ""}`, href: `#/t/${x.id}` },
       h("span", { class: `dot bg-${x.state}` }),
       h("div", { style: "flex:1;min-width:0" },
