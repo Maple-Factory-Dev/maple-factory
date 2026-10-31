@@ -112,40 +112,18 @@ pub struct DiffRequest {
 /// The longest patch sent; the server keeps it in a SQLite row.
 const MAX_PATCH: usize = 1024 * 1024;
 
-/// Answers with `task.diff`: per-file line counts and the unified patch (cut at `MAX_PATCH`).
+/// Answers with `task.diff`: per-file line counts and the unified patch (cut at `MAX_PATCH`), and
+/// the branch's commits, each with its own.
 pub async fn run_diff(sessions: Sessions, d: DiffRequest) {
-    let dir = expand_home(&d.cwd);
-    let range = format!("origin/{}...HEAD", d.base);
-    let report = async {
-        let numstat = git(&dir, &["diff", "--numstat", "--no-renames", &range], None).await?;
-        let files = numstat
-            .lines()
-            .filter_map(|l| {
-                let mut parts = l.splitn(3, '\t');
-                let (added, removed, path) = (parts.next()?, parts.next()?, parts.next()?);
-                // Binary files count as "-": no lines.
-                Some(crate::wire::DiffStat { path: path.to_string(), added: added.parse().unwrap_or(0), removed: removed.parse().unwrap_or(0) })
-            })
-            .collect::<Vec<_>>();
-        let mut patch = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--no-renames", &range], None).await?;
-        let truncated = patch.len() > MAX_PATCH;
-        if truncated {
-            let mut cut = MAX_PATCH;
-            while !patch.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            patch.truncate(cut);
-        }
-        anyhow::Ok((files, patch, truncated))
-    };
-    sessions.emit(match report.await {
-        Ok((files, patch, truncated)) => Outbound::Wire(crate::wire::RunnerMessage::TaskDiff {
+    sessions.emit(match diff_report(&expand_home(&d.cwd), &d.base).await {
+        Ok(r) => Outbound::Wire(crate::wire::RunnerMessage::TaskDiff {
             task_id: d.task_id,
             ok: true,
-            files,
-            patch,
-            truncated,
+            files: r.files,
+            patch: r.patch,
+            truncated: r.truncated,
             message: None,
+            commits: Some(r.commits),
         }),
         Err(e) => Outbound::Wire(crate::wire::RunnerMessage::TaskDiff {
             task_id: d.task_id,
@@ -154,8 +132,98 @@ pub async fn run_diff(sessions: Sessions, d: DiffRequest) {
             patch: String::new(),
             truncated: false,
             message: Some(format!("{e:#}")),
+            commits: None,
         }),
     });
+}
+
+struct DiffReport {
+    files: Vec<crate::wire::DiffStat>,
+    patch: String,
+    truncated: bool,
+    commits: Vec<crate::wire::DiffCommit>,
+}
+
+async fn diff_report(dir: &Path, base: &str) -> Result<DiffReport> {
+    if base.starts_with('-') {
+        bail!("{base} isn't a branch name.");
+    }
+    let range = format!("origin/{base}...HEAD");
+    let files = numstat(&git(dir, &["diff", "--numstat", "--no-renames", &range], None).await?);
+    let (patch, truncated) = cut_patch(git(dir, &["diff", "--no-color", "--no-ext-diff", "--no-renames", &range], None).await?, MAX_PATCH);
+
+    // Fields split by US, commits by RS: neither turns up in a commit message.
+    let log = git(dir, &["log", "--reverse", "--format=%H%x1f%an%x1f%ct%x1f%s%x1f%b%x1e", &format!("origin/{base}..HEAD")], None).await?;
+    let mut commits = Vec::new();
+    // The commits share what's left of one message after the whole-branch patch; once a commit's
+    // patch doesn't fit, it and every later one come without theirs.
+    let mut room = (crate::protocol::MAX_MESSAGE - crate::protocol::ENVELOPE).saturating_sub(crate::protocol::json_len(&patch) + files.iter().map(|f| f.path.len() + 48).sum::<usize>());
+    for record in log.split('\x1e').map(|r| r.trim_start_matches('\n')).filter(|r| !r.is_empty()) {
+        let mut f = record.splitn(5, '\x1f');
+        let (Some(sha), Some(author), Some(at), Some(subject)) = (f.next(), f.next(), f.next(), f.next()) else { continue };
+        let body = f.next().map(str::trim).filter(|b| !b.is_empty()).map(str::to_string);
+        // A merge commit shows what it brought in from its first parent.
+        let show = ["show", "--no-color", "--no-ext-diff", "--no-renames", "--diff-merges=first-parent", "--format="];
+        let files = numstat(&git(dir, &[&show[..], &["--numstat", sha]].concat(), None).await?);
+        let meta = 128 + sha.len() + crate::protocol::json_len(subject) + body.as_deref().map_or(0, crate::protocol::json_len) + author.len() + files.iter().map(|f| f.path.len() + 48).sum::<usize>();
+        if meta > room {
+            break;
+        }
+        room -= meta;
+        let (patch, truncated) = match room {
+            0 => (String::new(), true),
+            _ => {
+                let (patch, cut) = cut_patch(git(dir, &[&show[..], &[sha]].concat(), None).await?, MAX_PATCH);
+                match crate::protocol::json_len(&patch) {
+                    n if n <= room => {
+                        room -= n;
+                        (patch, cut)
+                    }
+                    _ => {
+                        room = 0;
+                        (String::new(), true)
+                    }
+                }
+            }
+        };
+        commits.push(crate::wire::DiffCommit {
+            sha: sha.to_string(),
+            subject: subject.to_string(),
+            body,
+            author: author.to_string(),
+            at: at.parse::<u64>().unwrap_or(0) * 1000,
+            added: files.iter().map(|f| f.added).sum(),
+            removed: files.iter().map(|f| f.removed).sum(),
+            files,
+            patch,
+            truncated,
+        });
+    }
+    Ok(DiffReport { files, patch, truncated, commits })
+}
+
+/// `git diff --numstat` lines as line counts per file; binary files count as "-": no lines.
+fn numstat(out: &str) -> Vec<crate::wire::DiffStat> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.splitn(3, '\t');
+            let (added, removed, path) = (parts.next()?, parts.next()?, parts.next()?);
+            Some(crate::wire::DiffStat { path: path.to_string(), added: added.parse().unwrap_or(0), removed: removed.parse().unwrap_or(0) })
+        })
+        .collect()
+}
+
+/// The patch cut to at most `max` bytes (on a character boundary), and whether it was.
+fn cut_patch(mut patch: String, max: usize) -> (String, bool) {
+    let truncated = patch.len() > max;
+    if truncated {
+        let mut cut = max;
+        while !patch.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        patch.truncate(cut);
+    }
+    (patch, truncated)
 }
 
 /// `task.merge_check` from the hub: would the task's branch still merge into its base, now that
@@ -1718,6 +1786,33 @@ mod tests {
         assert_eq!((sh(&wt, &["rev-parse", "HEAD"]), sh(&wt, &["status", "--porcelain"])), (head, String::new()));
         assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "the task's line\n");
         assert!(merge_check(&wt, "--upload-pack=x").await.is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The Changes tab's commits: two on the branch (the builder's b.txt, then c.txt and more of
+    /// b.txt), oldest first, each with its own counts and patch, and the whole-branch diff as before.
+    #[tokio::test]
+    async fn a_diff_lists_the_branchs_commits_with_their_own_patches() {
+        let root = tmp("diff-commits");
+        let bare = root.join("remotes/widgets.git");
+        let (_cwd, wt) = worktree(&root, &bare).await;
+        std::fs::write(wt.join("b.txt"), "fixed\nand again\n").unwrap();
+        commit(&wt, "c.txt", "two\nthree\n", "Add c.txt\n\nWith a body.");
+        let whole = sh(&wt, &["diff", "--no-color", "--no-renames", "origin/main...HEAD"]);
+
+        let r = diff_report(&wt, "main").await.unwrap();
+        assert_eq!((r.patch.trim_end(), r.truncated), (whole.trim_end(), false));
+        assert_eq!(r.files.iter().map(|f| (f.path.as_str(), f.added)).collect::<Vec<_>>(), vec![("b.txt", 2), ("c.txt", 2)]);
+        assert_eq!(r.commits.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["the builder's work", "Add c.txt"]);
+        let (first, second) = (&r.commits[0], &r.commits[1]);
+        assert_eq!(second.sha, sh(&wt, &["rev-parse", "HEAD"]).trim());
+        assert_eq!((first.body.as_deref(), second.body.as_deref()), (None, Some("With a body.")));
+        assert_eq!(first.files.iter().map(|f| (f.path.as_str(), f.added, f.removed)).collect::<Vec<_>>(), vec![("b.txt", 1, 0)]);
+        assert_eq!(second.files.iter().map(|f| (f.path.as_str(), f.added, f.removed)).collect::<Vec<_>>(), vec![("b.txt", 1, 0), ("c.txt", 2, 0)]);
+        assert_eq!((second.added, second.removed, second.truncated), (3, 0, false));
+        assert!(first.patch.contains("+++ b/b.txt") && first.patch.contains("+fixed") && !first.patch.contains("c.txt"));
+        assert!(second.patch.contains("+and again") && second.patch.contains("+three") && !second.patch.contains("+fixed"));
+        assert!(first.at > 1_000_000_000_000);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
