@@ -143,3 +143,78 @@ test("only ended sessions' shares: no D1 query at all", async () => {
   assert.equal(db.queries, 0);
   assert.equal(store.data.has("shares:ended"), false);
 });
+
+/** A hub whose D1 takes the hello's statements and dedupes session_ends by id, and whose org hub keeps every post. */
+function helloHub() {
+  const store = storage();
+  const posts: { url: string; body: any }[] = [];
+  const ends = new Set<string>();
+  const env = {
+    DB: {
+      prepare: (sql: string) => ({
+        bind: (...args: unknown[]) => ({
+          async run() { return {}; },
+          async all() { return { results: [] }; },
+          async first() {
+            if (!sql.includes("INSERT INTO session_ends")) return null;
+            const id = args[0] as string;
+            if (ends.has(id)) return null;
+            ends.add(id);
+            return { id };
+          },
+        }),
+      }),
+    },
+    ORG: {
+      idFromName: (name: string) => name,
+      get: () => ({ async fetch(url: string, init: RequestInit) { posts.push({ url, body: JSON.parse(init.body as string) }); return new Response(null, { status: 204 }); } }),
+    },
+  };
+  const ctx = { storage: store, getWebSockets: () => [], setWebSocketAutoResponse() {}, getTags: () => ["runner"] };
+  const instance = new MachineHub(ctx as never, env as never);
+  instance.now = () => 5_000_000;
+  const send = (msg: unknown) => instance.webSocketMessage({} as never, JSON.stringify(msg));
+  return { instance, store, posts, send };
+}
+
+function hello(sessions: string[], ended: { id: string; cause: string }[] = []) {
+  return {
+    type: "hello", runnerId: "m1", hostname: "studio", os: "darwin", arch: "arm64", version: "1.0.0",
+    sessions: sessions.map((id) => ({ session: { id, taskId: `t-${id}` }, activity: null })),
+    ended: ended.map((e) => ({ ...e, at: 1, lastOutput: [] })),
+  };
+}
+
+test("a session missing from a reconnect hello gets one tmuxLost end sent to the factory", async () => {
+  const { store, posts, send } = helloHub();
+  const m = machine("s1", "s2");
+  m.sessions.forEach((s) => ((s.session as { taskId?: string }).taskId = `t-${s.session.id}`));
+  await store.put("machine", m);
+  await send(hello(["s2"]));
+  const ended = posts.filter((p) => p.url === "https://org/ended");
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].body.machine, "m1");
+  assert.equal(ended[0].body.end.id, "s1");
+  assert.equal(ended[0].body.end.cause, "tmuxLost");
+  assert.match(ended[0].body.end.detail, /gone when studio reconnected/);
+  assert.equal(ended[0].body.end.at, 5_000_000);
+  // The end goes before the machine's report, and the report lists only what the runner has.
+  const report = posts.findIndex((p) => p.url === "https://org/machine");
+  assert.ok(report > posts.indexOf(ended[0]));
+  assert.deepEqual(posts[report].body.sessions.map((s: any) => s.session.id), ["s2"]);
+
+  // Reconnecting again (s1 is no longer stored) or the runner repeating s1's end: no second one.
+  await store.put("machine", m);
+  await send(hello(["s2"], [{ id: "s1", cause: "tmuxLost" }]));
+  await send(hello(["s2"]));
+  assert.equal(posts.filter((p) => p.url === "https://org/ended").length, 1);
+});
+
+test("a hello that reports a session's end itself doesn't get a made-up one", async () => {
+  const { store, posts, send } = helloHub();
+  await store.put("machine", machine("s1", "s2"));
+  await send(hello(["s2"], [{ id: "s1", cause: "exited" }]));
+  const ended = posts.filter((p) => p.url === "https://org/ended");
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].body.end.cause, "exited");
+});
