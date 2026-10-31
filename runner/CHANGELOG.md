@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.68.0 — 2026-10-31
+
+Fixes 0.67.0 crashing as it connects to the factory (two TLS crypto providers were built in): the runner now picks one at startup. A machine stuck on 0.67.0 needs `maple-runner update` run by hand, then its service restarted.
+
 ## 0.67.0 — 2026-10-30
 
 Reports panics and errors to Maple Factory's Sentry project, without the machine's name and with ~ for your home folder; MAPLE_TELEMETRY=off turns it off. Checks that a builder's branch merges into its base (origin/<base>, fetched fresh) before its finish is pushed: on a conflict nothing is pushed, and the conflicting files go back to the builder to merge the base in, resolve and finish again. A base that can't be fetched doesn't hold the push up.
