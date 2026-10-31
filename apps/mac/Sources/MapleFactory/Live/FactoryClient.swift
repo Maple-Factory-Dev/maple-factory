@@ -332,6 +332,9 @@ import Foundation
         var request = URLRequest(url: Self.websocketURL(server, path: "/client/connect"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
+        // The snapshot carries every task the factory has had, so it outgrows URLSession's 1 MiB default
+        // ("Message too long") as a factory gets used.
+        socket.maximumMessageSize = 64 << 20
         self.socket = socket
         lastHeard = Date()
         socket.resume()
@@ -920,29 +923,12 @@ import Foundation
     /// A socket request for one session's terminal.
     func terminalRequest(machine: String, session: String, cols: Int, rows: Int) -> URLRequest? {
         guard let server, let token else { return nil }
-        var components = URLComponents(url: Self.websocketURL(server, path: "/client/terminal"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            .init(name: "machine", value: machine), .init(name: "session", value: session),
-            .init(name: "cols", value: String(cols)), .init(name: "rows", value: String(rows)),
-        ]
-        var request = URLRequest(url: components.url!)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return request
+        return FactoryAPI.terminalRequest(server, token: token, machine: machine, session: session, cols: cols, rows: rows)
     }
 
-    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
-    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
-    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    /// Why a terminal socket was refused (FactoryAPI.terminalRefusal). Nil: try again as usual.
     nonisolated static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
-        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
-        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
-              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        components.scheme = components.scheme == "wss" ? "https" : "http"
-        request.url = components.url
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 403,
-              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
-        return text
+        await FactoryAPI.terminalRefusal(socket)
     }
 
     /// The factory's statistics over the last `days`; the answer lands in `stats`.

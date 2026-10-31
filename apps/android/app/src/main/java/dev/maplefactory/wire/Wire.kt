@@ -433,6 +433,30 @@ enum class HandReason(val raw: String) {
     object Serializer : WireEnumSerializer<HandReason>("HandReason", entries, { it.raw }, Unknown)
 }
 
+/** What an agent shared on a task, which decides how the apps show it. */
+@Serializable(with = ArtifactKind.Serializer::class)
+enum class ArtifactKind(val raw: String) {
+    /** An HTML page, run sandboxed with no network. */
+    Html("html"),
+    /** A PNG, JPEG, WebP or GIF. */
+    Image("image"),
+    /** An SVG drawing, shown like an HTML page. */
+    Svg("svg"),
+    /** A PDF. */
+    Pdf("pdf"),
+    /** Markdown text. */
+    Markdown("markdown"),
+    /** Plain text. */
+    Text("text"),
+    /** CSV or JSON, shown as text. */
+    Data("data"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<ArtifactKind>("ArtifactKind", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = MockupStatus.Serializer::class)
 enum class MockupStatus(val raw: String) {
     /** Proposed with the plan. */
@@ -1107,6 +1131,24 @@ data class Mockup(
     val differences: List<String> = emptyList(),
 )
 
+/** A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version. */
+@Serializable
+data class Artifact(
+    val id: String,
+    val title: String,
+    val kind: ArtifactKind,
+    val summary: String? = null,
+    /** Its upload's link, /attachments/<id>/<name> (members fetch it there). */
+    val file: String,
+    val mime: String,
+    val bytes: Long,
+    /** The role of the agent that shared it. */
+    val by: String,
+    val at: Long,
+    /** 1 for the first share, one more each time the same title is shared again. */
+    val version: Long,
+)
+
 @Serializable
 data class TicketLink(
     val system: String,
@@ -1323,6 +1365,8 @@ data class Task(
     val risk: Risk? = null,
     val autoReview: AutoReview? = null,
     val mockups: List<Mockup> = emptyList(),
+    /** Files its agents shared: charts, images, pages. Empty on older tasks. */
+    val artifacts: List<Artifact> = emptyList(),
     val tickets: List<TicketLink> = emptyList(),
     val shareable: Boolean,
     /** claude or codex: what builds it. */

@@ -113,6 +113,56 @@ export async function uploadProof(request: Request, env: Env, task: string): Pro
   return Response.json({ key: `/attachments/${id}/${name}`, type: mime, bytes: body.byteLength }, { status: 201 });
 }
 
+/** An artifact file's limit: a chart, an image, a page, a PDF. */
+export const MAX_ARTIFACT = 10 * 1024 * 1024;
+
+/** What an artifact file is, from its first bytes and (for text) its name, as the runner decides it
+ *  (`sniff_artifact` in runner/src/proof.rs). Text that isn't one of the named kinds is plain text. */
+export function sniffArtifact(b: Uint8Array, name: string): string | null {
+  const at = (i: number, s: string) => [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
+  if (b[0] === 0x89 && at(1, "PNG")) return "image/png";
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (at(0, "RIFF") && at(8, "WEBP")) return "image/webp";
+  if (at(0, "GIF87a") || at(0, "GIF89a")) return "image/gif";
+  if (at(0, "%PDF-")) return "application/pdf";
+  if (b.includes(0)) return null;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b);
+  } catch {
+    return null;
+  }
+  const ext = (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? "").toLowerCase();
+  const head = text.slice(0, 1024).trimStart().toLowerCase();
+  if (ext === "svg" || (head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg")))) return "image/svg+xml";
+  if (ext === "html" || ext === "htm" || head.startsWith("<!doctype html") || head.startsWith("<html")) return "text/html";
+  if (ext === "md" || ext === "markdown") return "text/markdown";
+  if (ext === "csv") return "text/csv";
+  if (ext === "json") return "application/json";
+  return "text/plain";
+}
+
+/** PUT /runner/artifact/<task>?runner=<machine>&name=<file name>, with that machine's token: a
+ *  `share_artifact` call's file (runner/src/proof.rs `prepare_artifact`). Kept like an attachment; HTML and
+ *  SVG are only ever served as sandboxed downloads (`serve`), so a direct link never runs on this origin. */
+export async function uploadArtifact(request: Request, env: Env, task: string): Promise<Response> {
+  const url = new URL(request.url);
+  const runner = url.searchParams.get("runner") ?? "";
+  if (!MACHINE_ID.test(runner) || !(await authenticateRunner(env, runner, request))) return text("Unknown machine or bad token.", 401);
+  if (!TASK_ID.test(task)) return text("Not a task.", 400);
+  const name = storedName(url.searchParams.get("name") ?? "");
+  if (!name) return text("Give the file a name without folders or '..'.", 400);
+  const body = await readCapped(request, MAX_ARTIFACT);
+  if (!body) return text(`An artifact is at most ${MAX_ARTIFACT / 1024 / 1024} MB.`, 413);
+  if (!body.byteLength) return text("The file is empty.", 400);
+  const mime = sniffArtifact(body, name);
+  if (!mime) return text("An artifact is HTML, SVG, PNG, JPEG, WebP, GIF, PDF, Markdown, CSV, JSON or text.", 415);
+  const id = crypto.randomUUID();
+  await env.RELEASES.put(`attachments/${id}/${name}`, body, { httpMetadata: { contentType: mime }, customMetadata: { task, runner, artifact: "1" } });
+  await audit(env, `runner:${runner}`, "artifact.upload", `${id}/${name}`, { task, size: body.byteLength, mime });
+  return Response.json({ key: `/attachments/${id}/${name}`, type: mime, bytes: body.byteLength }, { status: 201 });
+}
+
 /** Whether `key` is a stored attachment's link, `/attachments/<uuid>/<name>`. */
 export const isAttachmentKey = (key: unknown): key is string => typeof key === "string" && key.startsWith("/attachments/") && LINK.test(key.slice("/attachments/".length));
 

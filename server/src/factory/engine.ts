@@ -6,9 +6,9 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
-import { PriorityValues } from "../wire.ts";
+import { ArtifactKindValues, PriorityValues } from "../wire.ts";
 import type {
-  ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -39,6 +39,19 @@ const MAX_RESTARTS = 2;
 /// How long a session that reported its last word gets to wrap up before it's closed.
 const CLOSE_AFTER_MS = 8_000;
 const MAX_EVENTS = 200;
+/** Artifacts a task keeps; sharing more drops the oldest. */
+const MAX_ARTIFACTS = 20;
+
+/** An uploaded artifact's kind from the type the server sniffed (attachments.ts `sniffArtifact`). */
+function artifactKind(mime: string): ArtifactKind {
+  if (mime === "text/html") return "html";
+  if (mime === "image/svg+xml") return "svg";
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "text/markdown") return "markdown";
+  if (mime === "text/csv" || mime === "application/json") return "data";
+  return "text";
+}
 const COLS = 160;
 const ROWS = 48;
 
@@ -231,8 +244,8 @@ export class Engine {
         goal.due ??= null;
         if (goal.due !== null && !(Number.isSafeInteger(goal.due) && goal.due > 0)) fail("A goal's due date is a time in epoch milliseconds, or none.");
         if (!goal.id) goal.id = crypto.randomUUID();
-        // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.
-        if (!goal.lead?.trim()) goal.lead = who;
+        // Whoever makes a goal leads it unless they named someone, so it's in their sidebar; none keeps an existing goal's lead.
+        if (!goal.lead?.trim()) goal.lead = this.store.goal(goal.id)?.lead ?? who;
         goal.team = goal.team?.trim().replace(/^@/, "").toLowerCase() || null;
         if (goal.team && !/^[a-z0-9][a-z0-9_.-]*$/.test(goal.team)) fail(`${goal.team} isn't a GitHub team's name.`);
         goal.repos = goalRepos({ ...goal, repo: goal.repo?.trim() || null, repos: (goal.repos ?? []).map((r) => r.trim()).filter(Boolean) });
@@ -243,12 +256,21 @@ export class Engine {
         if (unknown) fail(`${unknown} isn't one of the org's repos. Add it in Settings → Repositories (or grant the GitHub App access) first.`);
         if (this.store.goals().some((g) => g.prefix === goal.prefix && g.id !== goal.id)) fail(`Another goal already uses ${goal.prefix}.`);
         const before = this.store.goal(goal.id);
+        // Same login whatever its case, `@` or spaces; a new lead (or a new goal's lead other than its creator) has to have signed in.
+        goal.lead = goal.lead.trim().replace(/^@/, "");
+        const was = before?.lead ?? who;
+        if (goal.lead.toLowerCase() === was.toLowerCase()) goal.lead = was;
+        else {
+          if (before && member.role !== "admin" && before.lead !== who) fail(`Only admins or ${before.lead}, its lead, can hand ${goal.name} to someone else.`);
+          const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === goal.lead.toLowerCase()) ?? fail(`${goal.lead} hasn't signed in to this factory.`);
+          goal.lead = to.login;
+        }
         // None (an older app) keeps what it had; all empty is none.
         goal.prompts = goal.prompts ? cleanPrompts(goal.prompts) : (before?.prompts ?? null);
         if (goal.prompts && !goal.prompts.planner && !goal.prompts.builder && !goal.prompts.reviewer) goal.prompts = null;
         if (JSON.stringify(goal.prompts ?? null) !== JSON.stringify(before?.prompts ?? null) && member.role !== "admin") {
-          // Its lead before this save, so nobody can make themselves lead and change the prompts in one go.
-          const lead = before ? before.lead : goal.lead;
+          // Its lead before this save (a new goal's creator), so nobody can make themselves lead and change the prompts in one go.
+          const lead = before ? before.lead : who;
           if (lead !== who) fail(`Only admins or ${lead}, its lead, can change ${goal.name}'s agent instructions.`);
         }
         this.store.saveGoal(goal);
@@ -939,6 +961,7 @@ export class Engine {
             changes: [],
             events: [{ who, text: `split it off ${task.id}`, at: t }],
             mockups: [],
+            artifacts: [],
             question: null,
             hand: null,
             worker: null,
@@ -1138,6 +1161,7 @@ export class Engine {
       changes: [],
       events: [{ who, text: "created it", at: t }],
       mockups: [],
+      artifacts: [],
       followUps: [],
       queueRank: t,
       draftRank: t,
@@ -2079,6 +2103,21 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // Agents' tools
 
+  /** A `share_artifact` file is only one the runner uploaded as an artifact of this task
+   *  (`PUT /runner/artifact/<task>`): not a proof, a member's attachment or another task's file. Its `type`
+   *  becomes what was stored. An error to give the agent, or null. */
+  private async checkArtifactUpload(taskId: string, args: Record<string, unknown>): Promise<string | null> {
+    const up = args.file && typeof args.file === "object" ? (args.file as { key?: unknown; type?: unknown }) : null;
+    // A missing or malformed key is refused in `run`, with the save-it-here hint.
+    if (!up || !isAttachmentKey(up.key)) return null;
+    const stored = await this.env.RELEASES.head(up.key.slice(1));
+    if (!stored || stored.customMetadata?.artifact !== "1" || stored.customMetadata?.task !== taskId) {
+      return "file: that upload isn't an artifact of this task. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.";
+    }
+    if (stored.httpMetadata?.contentType) up.type = stored.httpMetadata.contentType;
+    return null;
+  }
+
   private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
     if (!s) {
@@ -2096,6 +2135,10 @@ export class Engine {
     }
     if (name === "tools/list") return { result: { summary: "", data: { tools: toolsFor(s.role) } } };
     if (!allowed(s.role, name)) return { error: `${name} isn't one of the ${s.role}'s tools.` };
+    if (name === "share_artifact") {
+      const refused = await this.checkArtifactUpload(s.task, args);
+      if (refused) return { error: refused };
+    }
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
@@ -2345,6 +2388,28 @@ export class Engine {
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
         const left = task.doneWhen.filter((d) => d.status !== "proven").length;
         return { summary: left ? `Attached. ${left} item${left === 1 ? "" : "s"} left to prove.` : "Attached. Every item is proven." };
+      }
+
+      case "share_artifact": {
+        const title = str(a.title, "title").trim().slice(0, 120);
+        if (!title) fail("title: give it a short name.");
+        // The runner uploaded the file (PUT /runner/artifact/<task>) and put `{key, name, type, bytes}` in its place.
+        const up = a.file && typeof a.file === "object" ? (a.file as { key?: unknown; type?: unknown; bytes?: unknown }) : null;
+        if (!up || !isAttachmentKey(up.key)) fail("file: the runner didn't upload it. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.");
+        // `tool` checked the upload is this task's artifact and set `type` from what was stored.
+        const mime = typeof up!.type === "string" ? up!.type : "application/octet-stream";
+        const kind: ArtifactKind = a.kind != null && ArtifactKindValues.includes(a.kind as ArtifactKind) && a.kind !== "other" ? (a.kind as ArtifactKind) : artifactKind(mime);
+        const summary = typeof a.summary === "string" && a.summary.trim() ? a.summary.trim().slice(0, 300) : null;
+        task.artifacts ??= [];
+        const same = task.artifacts.findIndex((x) => x.title.toLowerCase() === title.toLowerCase());
+        const version = same >= 0 ? task.artifacts[same]!.version + 1 : 1;
+        const artifact: Artifact = { id: crypto.randomUUID(), title, kind, summary, file: up!.key as string, mime, bytes: num(up!.bytes ?? 0), by: s.role, at: now(), version };
+        if (same >= 0) task.artifacts.splice(same, 1);
+        task.artifacts.push(artifact);
+        // Newest kept: an agent that shares a lot loses its oldest first.
+        if (task.artifacts.length > MAX_ARTIFACTS) task.artifacts.splice(0, task.artifacts.length - MAX_ARTIFACTS);
+        this.event(task, s.role, `shared an artifact: ${title}${version > 1 ? ` (v${version})` : ""}`);
+        return { summary: `Shared "${title}"${version > 1 ? ` as v${version}` : ""}. People see it in the task's Artifacts.`, data: { id: artifact.id, version } };
       }
 
       case "finish": {

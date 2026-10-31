@@ -144,6 +144,7 @@ import SwiftUI
             TicketLink(system: $0.system.lowercased() == "jira" ? .jira : .linear, key: $0.key, title: $0.title, status: $0.status, asContext: $0.asContext)
         }
         task.mockups = t.mockups.map(mockup)
+        task.artifacts = t.artifacts
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)

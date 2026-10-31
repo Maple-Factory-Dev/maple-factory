@@ -240,7 +240,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "onboardingStep", "goaltasks"]
+                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -401,6 +401,7 @@ final class AppState {
         task.after = FactoryData.seedAfter[task.id] ?? []
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
+        task.artifacts = FactoryData.seedArtifacts[task.id] ?? []
         if task.id == "ATL-160" {
             task.intakeID = "req-sso"
             task.comments.append(Comment(author: FactoryData.dana,
@@ -2353,6 +2354,7 @@ final class AppState {
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
+            case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             // The Changes tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.

@@ -5,7 +5,7 @@ import SwiftUI
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
 /// `-stats YES` (with `-statsDays N`) opens Statistics.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
-/// machine on Machines.
+/// terminal on Machines.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -14,6 +14,7 @@ struct RootView: View {
     @State private var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "tab") ?? "") ?? .inbox
     @State private var inboxPath = NavigationPath()
     @State private var goalsPath = NavigationPath()
+    @State private var machinesPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
 
     var body: some View {
@@ -31,7 +32,7 @@ struct RootView: View {
             .tabItem { Label("Goals", systemImage: "flag") }
             .tag(Tab.goals)
 
-            NavigationStack { MachinesView().withTaskDestinations() }
+            NavigationStack(path: $machinesPath) { MachinesView().withTaskDestinations() }
                 .tabItem { Label("Machines", systemImage: "desktopcomputer") }
                 .tag(Tab.machines)
 
@@ -62,8 +63,9 @@ struct RootView: View {
                 // feed yet: the detail fills in when the snapshot lands.
                 tab = .inbox
                 inboxPath = NavigationPath([TaskRoute(id: id)])
-            case .session:
+            case .session(let machine, let id):
                 tab = .machines
+                machinesPath = NavigationPath([SessionRoute(machine: machine, session: id)])
             }
         }
         // Live, who you are arrives with the snapshot, after the first appearance.
@@ -78,11 +80,13 @@ struct RootView: View {
 struct TaskRoute: Hashable { let id: String }
 struct GoalRoute: Hashable { let id: String }
 struct StatsRoute: Hashable {}
+struct SessionRoute: Hashable { let machine: String; let session: String }
 
 extension View {
     func withTaskDestinations() -> some View {
         navigationDestination(for: TaskRoute.self) { TaskDetailView(id: $0.id) }
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
+            .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
     }
 }
 
@@ -490,7 +494,7 @@ struct MachineRows: View {
             let movable = live.session.taskId.flatMap { id in
                 FactoryStore.isStuck(machine) && store.canMove(task: id, on: machine) ? id : nil
             }
-            NavigationLink(value: live.session.taskId.map { TaskRoute(id: $0) }) {
+            NavigationLink(value: SessionRoute(machine: machine.id, session: live.session.id)) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(live.session.taskId ?? live.session.agent).font(.subheadline.monospaced())
@@ -511,7 +515,6 @@ struct MachineRows: View {
                     }
                 }
             }
-            .disabled(live.session.taskId == nil)
             .swipeActions(edge: .trailing) {
                 if let movable {
                     Button("Move to another machine", systemImage: "arrow.uturn.forward") { moving = movable }.tint(Theme.accent)

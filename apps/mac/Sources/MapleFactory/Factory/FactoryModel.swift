@@ -284,6 +284,8 @@ struct FactoryTask: Identifiable {
     var intakeID: String? = nil
     /// Screens and terminal output the planner drew for the change.
     var mockups: [Mockup] = []
+    /// Files its agents shared: charts, pages, images (MF-205).
+    var artifacts: [Wire.Artifact] = []
     /// Waiting for its next session (to plan, build or review) with nobody on it: on the board's Queued column.
     var queued = false
     /// Its place in the queue: lower starts first.
