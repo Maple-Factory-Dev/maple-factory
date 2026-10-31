@@ -145,6 +145,12 @@ if (t.state !== "reviewing" || t.worker) throw new Error(`it's ${t.state} with $
 send({ type: "task.merge", id });
 await wait("merge refused", () => errors.length);
 step(`Merge while the hand is open is refused: ${errors.splice(0).join("; ")}`);
+// A teammate's review request would open a round nothing starts while the hand is up: refused.
+send({ type: "task.requestReview", id, focus: "Check error handling." });
+await wait("review request refused", () => errors.length);
+const handRefusal = errors.splice(0).join("; ");
+if (!/hand up/.test(handRefusal) || tasks.get(id).autoReview.rounds.length !== rounds) throw new Error(`a review request with the hand up: ${handRefusal}`);
+step(`Request a review while the hand is open is refused: ${handRefusal}`);
 await pause(5000);
 if (failedMerges(tasks.get(id)) !== 1) throw new Error(`it tried ${failedMerges(tasks.get(id))} merges on its own`);
 step("5s later: still 1 failed merge; auto-merge didn't retry");

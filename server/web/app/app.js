@@ -942,7 +942,7 @@ function cancelCard(t) {
 }
 
 const reviewAsks = new Map(); // id → the focus being typed into its "Request a review…"
-const reviewRequestable = (t) => t.state === "reviewing" && !!t.autoReview?.rounds.length && t.autoReview.rounds.at(-1).verdict !== "inProgress" && !merging(t);
+const reviewRequestable = (t) => t.state === "reviewing" && !!t.autoReview?.rounds.length && t.autoReview.rounds.at(-1).verdict !== "inProgress" && !merging(t) && !t.hand && !t.question;
 
 /** Asks what one more automated-review round should look for. */
 function reviewAskCard(t) {

@@ -769,7 +769,8 @@ struct ReviewActions: View {
                     RequestChangesButton(enabled: !approving && !merging, action: onRequestChanges)
                 }
                 // Another automated-review round, with this person's focus, once the last one is in.
-                if let round = task.autoReview?.current, round.verdict != .inProgress, !merging {
+                if let round = task.autoReview?.current, round.verdict != .inProgress, !merging,
+                   task.hand == nil, task.question == nil {
                     SecondaryButton(title: "Request review…", enabled: !approving) { requestingReview = true }
                         .help("Run the review agent again, looking first at what you ask")
                 }

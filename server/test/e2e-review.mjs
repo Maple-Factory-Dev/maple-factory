@@ -8,7 +8,7 @@
 // waiting for approval goes to the planner; one while the builder works is typed into its session. A
 // teammate's `task.requestReview` on a passed task opens one more round with their focus (in the
 // reviewer's prompt), keeps the approvals already given, and the task merges once it passes; one while
-// a round runs, or on a task that isn't in review, is refused.
+// a round runs, or on a task that isn't in review, is refused (and with a hand up, in e2e-merge-conflict).
 
 const [base = "http://localhost:8788", folder = "/tmp/mfgh/greeter", gh = "http://localhost:18803"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -181,6 +181,9 @@ check(asked.focus === focus && asked.by === "ann", JSON.stringify(asked));
 check(t.comments.some((c) => c.author === "ann" && c.anchor === "Review request" && c.text === focus), "no Review request comment");
 check(t.events.some((e) => e.text === `asked for a review: ${focus}`), t.events.map((e) => e.text).join(" / "));
 step(`ann asked for round ${asked.number}: ${JSON.stringify(asked)}`);
+// Room for a fix round after it, should it ask for changes, rather than a hand at the cap.
+check(t.autoReview.maxRounds >= asked.number + 1, `maxRounds ${t.autoReview.maxRounds} leaves no fix round after round ${asked.number}`);
+step(`maxRounds is ${t.autoReview.maxRounds}: room for a fix round after round ${asked.number}`);
 step(`a request while round ${asked.number} runs is refused: ${busy.join("; ")}`);
 t = await wait("requested round passed", () => passed(tasks.get(id4)) && tasks.get(id4).autoReview.rounds.length === rounds + 1 && tasks.get(id4), 120000);
 check(t.autoReview.summary.includes(`Looked at what ann asked: ${focus}`), `the reviewer's prompt didn't carry the focus: ${t.autoReview.summary}`);
