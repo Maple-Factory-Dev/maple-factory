@@ -1,11 +1,14 @@
 // The web Settings page's helpers (web/app/settings.js): the Merging & risk form round-trips a policy and
 // clamps what the server would refuse, approved GitHub accounts parse from what an admin types, and a
 // form's draft follows another admin's save only while nobody has touched it; an integration's status reads
-// as the Mac app's, and its save keeps stored secrets and leaves the env vars' values out.
+// as the Mac app's, and its save keeps stored secrets and leaves the env vars' values out. And how the
+// policy's risk checks, size budget and a goal's acceptance give a change its level, with a factor for each.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_POLICY, validPolicy } from "../src/factory/policy.ts";
-import { clampInt, cleanOwners, formFromPolicy, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, syncDraft, webhookUrl } from "../web/app/settings.js";
+import type { RiskPolicy, Task } from "../src/wire.ts";
+import { DEFAULT_POLICY, assess, matchesGlob, validPolicy } from "../src/factory/policy.ts";
+import { plannerPrompt } from "../src/factory/prompts.ts";
+import { areaFromCheck, checksProblem, clampInt, cleanOwners, formFromPolicy, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, syncDraft, webhookUrl } from "../web/app/settings.js";
 
 const policy = structuredClone(DEFAULT_POLICY);
 
@@ -157,4 +160,104 @@ test("the webhook URL: on this server when it's a path, as given when it's whole
   assert.equal(webhookUrl(linear, "https://maple.example.com/"), "https://maple.example.com/integrations/linear");
   assert.equal(webhookUrl({ ...linear, webhookUrl: "https://factory.acme.dev/integrations/linear" }, "http://localhost:8788"), "https://factory.acme.dev/integrations/linear");
   assert.equal(webhookUrl({ ...linear, kind: "jira", webhookUrl: "/integrations/jira" }, "http://localhost:8788"), "http://localhost:8788/integrations/jira?secret=<webhook secret>");
+});
+
+// ---- risk checks ----
+
+function task(f: Partial<Task> = {}): Task {
+  return {
+    id: "T-1", goal: "g", title: "A change", state: "reviewing", owner: "me", brief: "Change it", createdAt: 1, updatedAt: 1, plan: [], planVersion: 1, doneWhen: [],
+    approvals: [], approvalsNeeded: 1, reviews: [], reviewsNeeded: 1, comments: [], changes: [], events: [], mockups: [], tickets: [],
+    shareable: false, agent: "claude", after: [], followUps: [], risk: { level: "low", reasons: ["A small fix"], areas: [] }, ...f,
+  } as Task;
+}
+const withApi: RiskPolicy = { ...policy, areas: [...policy.areas, { name: "Public API", paths: [], rule: "Changes the public HTTP API", level: "high", enabled: true }] };
+
+test("globs: ** spans folders, * stays in one, a bare folder covers what's under it", () => {
+  assert.ok(matchesGlob("db/migrations/x.sql", "db/migrations/**"));
+  assert.ok(matchesGlob("src/a/b.ts", "**/*.ts"));
+  assert.ok(matchesGlob("b.ts", "**/*.ts"));
+  assert.ok(matchesGlob("app/models/user.rb", "app/models"));
+  assert.ok(!matchesGlob("app/b/a.rb", "app/*.rb"));
+  assert.ok(!matchesGlob("lib/authz/x.ts", "lib/auth/**"));
+});
+
+test("a diff touching db/migrations raises a planner-low task to medium, naming the Migrations check and the file", () => {
+  const a = assess(task({ diff: { added: 10, removed: 2, files: ["db/migrations/x.sql", "src/app.ts"] } }), policy, undefined);
+  assert.equal(a.level, "medium");
+  assert.deepEqual(a.areas, ["Migrations"]);
+  const check = a.factors.find((f) => f.source === "check");
+  assert.deepEqual(check, { source: "check", label: "Migrations", level: "medium", detail: null, files: ["db/migrations/x.sql"] });
+  // Highest first, and the planner's own read is still there.
+  assert.equal(a.factors[0].label, "Migrations");
+  assert.deepEqual(a.factors.find((f) => f.source === "planner"), { source: "planner", label: "The planner's read", level: "low", detail: "A small fix", files: null });
+});
+
+test("a path check the planner named counts before there's a diff, and goes by the files once there is", () => {
+  const named = task({ risk: { level: "low", reasons: [], areas: ["auth"] }, footprint: { files: 2, lines: 30, estimated: true } });
+  assert.equal(assess(named, policy, undefined).level, "high");
+  assert.equal(assess({ ...named, diff: { added: 5, removed: 0, files: ["src/app.ts"] } }, policy, undefined).level, "low");
+});
+
+test("a rule check the planner cites raises the level, with the rule as its detail", () => {
+  const t = task({ risk: { level: "low", reasons: ["Adds GET /v1/users"], areas: ["Public API"] }, diff: { added: 20, removed: 0, files: ["src/routes.ts"] } });
+  const a = assess(t, withApi, undefined);
+  assert.equal(a.level, "high");
+  assert.deepEqual(a.factors[0], { source: "check", label: "Public API", level: "high", detail: "Changes the public HTTP API", files: null });
+  assert.equal(assess(t, { ...withApi, areas: withApi.areas.map((x) => ({ ...x, enabled: false })) }, undefined).level, "low");
+});
+
+test("the size budget is a factor: within it low, over it medium", () => {
+  const small = assess(task({ diff: { added: 10, removed: 5, files: ["a.ts"] } }), policy, undefined);
+  assert.deepEqual(small.factors.find((f) => f.source === "size"), { source: "size", label: "1 file, 15 lines", level: "low", detail: "Within the PR budget of 12 files and 500 lines", files: null });
+  const big = assess(task({ diff: { added: 600, removed: 0, files: ["a.ts", "b.ts"] } }), policy, undefined);
+  assert.equal(big.level, "medium");
+  assert.equal(big.factors.find((f) => f.source === "size")?.detail, "Over the PR budget of 12 files and 500 lines");
+});
+
+test("factors list the planner, each check, the size and the goal's acceptance; reassessing keeps the planner's own level", () => {
+  const acceptance = { goal: "g", upTo: "medium" as const, by: "sam", at: 1 };
+  const t = task({ diff: { added: 10, removed: 0, files: ["db/migrations/1.sql"] } });
+  const a = assess(t, policy, acceptance);
+  assert.deepEqual(a.factors.map((f) => f.source), ["check", "acceptance", "planner", "size"]);
+  assert.equal(a.accepted, true);
+  assert.equal(a.reviews, 0);
+  assert.equal(a.factors.find((f) => f.source === "acceptance")?.detail, "Accepted by sam: no final review needed");
+  // applyPolicy writes the raised level back; without the migration the planner's low comes back.
+  const again = { ...t, risk: { ...t.risk!, level: a.level, factors: a.factors }, diff: { added: 10, removed: 0, files: ["src/a.ts"] } };
+  assert.equal(assess(again, policy, undefined).level, "low");
+});
+
+test("validPolicy refuses a check without a name, with neither paths nor a rule, or named twice", () => {
+  assert.equal(validPolicy(withApi), null);
+  const one = (area: object) => validPolicy({ ...policy, areas: [...policy.areas, { name: "X", paths: [], level: "high", enabled: true, ...area }] });
+  assert.equal(one({}), "Give X some paths or a rule.");
+  assert.equal(one({ rule: "  " }), "Give X some paths or a rule.");
+  assert.equal(one({ name: " " }), "Every risk check needs a name.");
+  assert.equal(one({ name: "auth", paths: ["x/**"] }), "There are two risk checks named auth.");
+});
+
+test("the form's risk checks: a rule row saves its rule without paths, and the form says what the server would refuse", () => {
+  const form = formFromPolicy(policy);
+  form.checks.push({ name: "Public API", level: "high", enabled: true, kind: "rule", paths: "", rule: " Changes the public HTTP API " });
+  const saved = policyFromForm(form, policy);
+  assert.deepEqual(saved.areas.at(-1), { name: "Public API", paths: [], level: "high", enabled: true, rule: "Changes the public HTTP API" });
+  assert.equal(validPolicy(saved), null);
+  assert.deepEqual(policyFromForm(formFromPolicy(saved), saved), saved);
+  assert.deepEqual(areaFromCheck({ name: "Docs", level: "low", enabled: true, kind: "paths", paths: "docs/**, README.md", rule: "" }).paths, ["docs/**", "README.md"]);
+  assert.equal(checksProblem(form.checks), null);
+  form.checks.push({ name: "", level: "low", enabled: true, kind: "rule", paths: "", rule: "" });
+  assert.equal(checksProblem(form.checks), "Every risk check needs a name.");
+  form.checks.at(-1).name = "Docs";
+  assert.equal(checksProblem(form.checks), "Give Docs a rule.");
+});
+
+test("the planner's prompt lists the enabled risk checks, with their level and paths or rule", () => {
+  const off = { ...withApi, areas: withApi.areas.map((a) => (a.name === "Billing" ? { ...a, enabled: false } : a)) };
+  const p = plannerPrompt(task({ state: "planning", planVersion: 0 }), null, null, [], null, off.areas);
+  assert.match(p, /## Risk checks\n/);
+  assert.match(p, /- Public API \(high\): Changes the public HTTP API/);
+  assert.match(p, /- Migrations \(medium\): touches db\/migrations\/\*\*/);
+  assert.doesNotMatch(p, /Billing/);
+  assert.doesNotMatch(p, /auth, payments, migrations and public APIs are high/);
 });

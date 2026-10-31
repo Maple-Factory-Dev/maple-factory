@@ -108,6 +108,14 @@ export const enums: Record<string, Enum> = {
   PRState: { values: { draft: "Draft.", open: "Open.", merged: "Merged.", closed: "Closed without merging." } },
   CheckStatus: { values: { queued: "Queued.", running: "Running.", passed: "Passed.", failed: "Failed." } },
   RiskLevel: { values: { low: "Low.", medium: "Medium.", high: "High." } },
+  RiskFactorSource: {
+    values: {
+      planner: "The planner's own read of the change.",
+      check: "A risk check that matched: a path check against the diff's files, or a rule the planner cited.",
+      size: "The change's size against the PR budget.",
+      acceptance: "A goal's acceptance of risk up to a level.",
+    },
+  },
   IntegrationKind: { values: { slack: "Slack's /maple slash command.", linear: "Linear issues with the factory's label.", jira: "Jira issues with the factory's label." } },
   McpTransport: { values: { stdio: "A local command the runner starts.", http: "A server reached by URL (streamable HTTP)." } },
   PromptChoice: { values: { yes: "Allow it once (the menu's 1).", no: "Deny it (Esc: the menu's No isn't always 2)." } },
@@ -513,7 +521,19 @@ export const structs: Record<string, Struct> = {
     fields: { repo: "string", title: "string", brief: "string", task: "string?" },
     fieldDocs: { task: "The task made for it, once the plan is approved." },
   },
-  Risk: { fields: { level: "RiskLevel", reasons: "string[]", areas: "string[]" } },
+  RiskFactor: {
+    doc: "One reason a change has the risk level it has.",
+    fields: { source: "RiskFactorSource", label: "string", level: "RiskLevel", detail: "string?", files: "string[]?" },
+    fieldDocs: {
+      label: "What set or raised the level, e.g. the check's name.",
+      detail: "Why: the planner's reasons, the rule's text or the budget it went over.",
+      files: "For a path check, the diff's files that matched it.",
+    },
+  },
+  Risk: {
+    fields: { level: "RiskLevel", reasons: "string[]", areas: "string[]", factors: "RiskFactor[]?" },
+    fieldDocs: { factors: "Set by the server from the org's risk policy: every reason behind the level, highest first." },
+  },
   Worker: {
     doc: "The session working on a task right now.",
     fields: { role: "Role", agent: "string", machine: "string", session: "uuid", startedAt: "u64" },
@@ -612,8 +632,12 @@ export const structs: Record<string, Struct> = {
     },
   },
   SensitiveArea: {
-    doc: "Code that raises a change's risk when touched.",
-    fields: { name: "string", paths: "string[]", level: "RiskLevel", enabled: "bool" },
+    doc: "A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).",
+    fields: { name: "string", paths: "string[]", level: "RiskLevel", enabled: "bool", rule: "string?" },
+    fieldDocs: {
+      paths: "Globs matched against the diff's files. May be empty for a rule check.",
+      rule: "A plain-language check, like \"changes the public HTTP API\"; the planner names it in risk.areas when it applies.",
+    },
   },
   RiskPolicy: {
     doc: "The org's rules for how much sign-off a change needs, by its risk.",

@@ -83,6 +83,9 @@ export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","pa
 export type RiskLevel = "low" | "medium" | "high";
 export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
 
+export type RiskFactorSource = "planner" | "check" | "size" | "acceptance";
+export const RiskFactorSourceValues: readonly RiskFactorSource[] = ["planner","check","size","acceptance"];
+
 export type IntegrationKind = "slack" | "linear" | "jira";
 export const IntegrationKindValues: readonly IntegrationKind[] = ["slack","linear","jira"];
 
@@ -628,10 +631,24 @@ export interface FollowUp {
   task?: string | null;
 }
 
+/** One reason a change has the risk level it has. */
+export interface RiskFactor {
+  source: RiskFactorSource;
+  /** What set or raised the level, e.g. the check's name. */
+  label: string;
+  level: RiskLevel;
+  /** Why: the planner's reasons, the rule's text or the budget it went over. */
+  detail?: string | null;
+  /** For a path check, the diff's files that matched it. */
+  files?: string[] | null;
+}
+
 export interface Risk {
   level: RiskLevel;
   reasons: string[];
   areas: string[];
+  /** Set by the server from the org's risk policy: every reason behind the level, highest first. */
+  factors?: RiskFactor[] | null;
 }
 
 /** The session working on a task right now. */
@@ -743,12 +760,15 @@ export interface Task {
   mergeForecast?: MergeForecast | null;
 }
 
-/** Code that raises a change's risk when touched. */
+/** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
 export interface SensitiveArea {
   name: string;
+  /** Globs matched against the diff's files. May be empty for a rule check. */
   paths: string[];
   level: RiskLevel;
   enabled: boolean;
+  /** A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies. */
+  rule?: string | null;
 }
 
 /** The org's rules for how much sign-off a change needs, by its risk. */

@@ -5,9 +5,13 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
-## 0.69.0
+## 0.70.0 — 2026-10-31
 
-`maple-runner stop` stops the installed service so launchd or systemd can't start it again (a runner stuck crashing and restarting stays down) until `maple-runner start`, which starts it in the background and waits for it to connect, or your next login. Both take `--dry-run`.
+Keeps up with the factory's latest protocol, which now carries the reasons behind a change's risk level and plain-language risk checks; nothing changes in how the runner works.
+
+## 0.69.0 — 2026-10-31
+
+A task's diff now lists each commit on its branch with its own patch, for the Changes tab's commit picker; agents propose found work with `propose_tasks` (the old `create_task` and `propose_cards` tools are gone). `maple-runner stop` stops the installed service so launchd or systemd can't start it again (a runner stuck crashing and restarting stays down) until `maple-runner start`, which starts it in the background and waits for it to connect, or your next login. Both take `--dry-run`.
 
 ## 0.68.0 — 2026-10-31
 

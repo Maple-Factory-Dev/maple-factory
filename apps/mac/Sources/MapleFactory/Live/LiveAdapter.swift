@@ -121,6 +121,7 @@ import SwiftUI
         task.liveLog = t.waiting.map { $0.hasPrefix("Scheduled") ? "Scheduled" : $0 } ?? t.liveLog
         task.footprint = t.diff.map { ($0.files.count, ($0.added + $0.removed).int, false) } ?? t.footprint.map { ($0.files.int, $0.lines.int, $0.estimated) }
         task.areas = t.risk?.areas ?? []
+        task.riskFactors = (t.risk?.factors ?? []).map(riskFactor)
         task.plannedRisk = t.risk.map { riskLevel($0.level) } ?? .low
         task.pr = t.pr.map { pr in
             var request = PullRequest(number: pr.number.int, state: prState(pr.state), checks: pr.checks.map(check))
@@ -270,6 +271,16 @@ import SwiftUI
         }
     }
 
+    static func riskFactor(_ f: Wire.RiskFactor) -> RiskFactor {
+        let source: RiskFactor.Source = switch f.source {
+        case .planner: .planner
+        case .size: .size
+        case .acceptance: .acceptance
+        case .check, .other: .check
+        }
+        return RiskFactor(source: source, label: f.label, level: riskLevel(f.level), detail: f.detail, files: f.files ?? [])
+    }
+
     static func wireLevel(_ level: RiskLevel) -> Wire.RiskLevel {
         switch level {
         case .low: .low
@@ -282,7 +293,7 @@ import SwiftUI
         var policy = RiskPolicy()
         policy.maxFiles = Int(p.maxFiles)
         policy.maxLines = Int(p.maxLines)
-        policy.sensitiveAreas = p.areas.map { SensitiveArea(name: $0.name, paths: $0.paths, level: riskLevel($0.level), enabled: $0.enabled) }
+        policy.sensitiveAreas = p.areas.map { SensitiveArea(name: $0.name, paths: $0.paths, level: riskLevel($0.level), enabled: $0.enabled, rule: $0.rule) }
         for level in RiskLevel.allCases {
             let key = wireLevel(level).rawValue
             policy.planApprovals[level] = p.planApprovals[key].map(Int.init) ?? policy.planApprovals[level]
@@ -299,7 +310,7 @@ import SwiftUI
         let keyed = { (values: [RiskLevel: Int]) in Dictionary(uniqueKeysWithValues: values.map { (wireLevel($0.key).rawValue, UInt32($0.value)) }) }
         return Wire.RiskPolicy(
             maxFiles: UInt32(policy.maxFiles), maxLines: UInt32(policy.maxLines),
-            areas: policy.sensitiveAreas.map { Wire.SensitiveArea(name: $0.name, paths: $0.paths, level: wireLevel($0.level), enabled: $0.enabled) },
+            areas: policy.sensitiveAreas.map { Wire.SensitiveArea(name: $0.name, paths: $0.paths, level: wireLevel($0.level), enabled: $0.enabled, rule: $0.isRule ? $0.rule : nil) },
             planApprovals: keyed(policy.planApprovals), finalReviews: keyed(policy.finalReviews),
             autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
             autoFixMerges: policy.autoFixMerges,

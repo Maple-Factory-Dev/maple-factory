@@ -994,7 +994,24 @@ function overview(t) {
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
         f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
     t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))],
+    t.risk && riskCard(t.risk),
     timeline(t));
+}
+
+/** The server's reasons for the risk level, highest first; older servers send none. */
+function riskCard(risk) {
+  const factors = risk.factors ?? [];
+  return [h("h2", {}, `Risk · ${risk.level}`), h("div", { class: "card" },
+    h("div", { class: "muted", style: "font-size:13px;margin-bottom:4px" }, "Why this risk"),
+    factors.length
+      ? h("div", {}, factors.map((f) => h("div", { class: "check risk-factor" },
+        h("span", { class: `dot risk-dot-${f.level}`, title: f.level }),
+        h("div", { style: "flex:1;min-width:0" },
+          h("div", {}, h("b", {}, f.label), " ", h("span", { class: "lvl" }, f.level)),
+          f.detail && h("div", { class: "muted" }, f.detail),
+          (f.files ?? []).length > 0 && h("div", { class: "mono muted" }, f.files.join(", "))))))
+      : h("div", { class: "muted" }, risk.reasons.join("; ") || "The planner's read.")),
+  ];
 }
 
 function review(t) {

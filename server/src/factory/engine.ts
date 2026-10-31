@@ -1147,7 +1147,7 @@ export class Engine {
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
     const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal)))) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal)))) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -2232,7 +2232,7 @@ export class Engine {
   /** The risk level, approvals and reviews the policy gives this task now. */
   private applyPolicy(task: Task) {
     const a = this.assessment(task);
-    task.risk = { level: a.level, reasons: task.risk?.reasons ?? [], areas: task.risk?.areas ?? [] };
+    task.risk = { level: a.level, reasons: task.risk?.reasons ?? [], areas: task.risk?.areas ?? [], factors: a.factors };
     task.approvalsNeeded = a.approvals;
     task.reviewsNeeded = a.reviews;
   }
@@ -2241,9 +2241,9 @@ export class Engine {
     this.hooks.broadcast({ type: "policy.updated", policy: this.store.policy(), acceptances: this.store.acceptances() });
     for (const task of this.store.tasks()) {
       if (task.state === "merged" || task.state === "cancelled" || !task.risk) continue;
-      const before = `${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}`;
+      const before = `${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}/${JSON.stringify(task.risk.factors)}`;
       this.applyPolicy(task);
-      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}` !== before) {
+      if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}/${JSON.stringify(task.risk.factors)}` !== before) {
         this.save(task, false);
         if (task.state === "awaitingApproval" && task.approvals.length >= task.approvalsNeeded) {
           await this.approved(task, "queued it for building (the policy needs fewer approvals now)");
