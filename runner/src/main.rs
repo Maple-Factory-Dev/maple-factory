@@ -281,6 +281,8 @@ fn settings(args: &Args, config: Option<Config>, host: &str) -> Result<Settings>
 }
 
 fn main() -> Result<()> {
+    // Sentry's reqwest brings in aws-lc-rs next to everyone else's ring, so rustls can't pick one on its own.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     // Agents call `maple-runner hook …` from inside sessions.
     if std::env::args().nth(1).as_deref() == Some("hook") {
         hooks::run_hook();
