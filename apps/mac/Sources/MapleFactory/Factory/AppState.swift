@@ -2286,6 +2286,17 @@ final class AppState {
             case "drafttop": moveDraftToTop(parts[1])
             case "draftbottom": moveDraftToBottom(parts[1])
             case "layout": layout = GoalLayout(rawValue: parts[1].capitalized) ?? layout
+            // A goal with many cards in one column, for the board's paging: `fill:<goal>:<count>:<state>`, owners alternating.
+            case "fill" where parts.count > 3:
+                let seeds = tasks.filter { $0.goal == parts[1] }
+                let state = TaskState.allCases.first { "\($0)" == parts[3] } ?? .merged
+                for n in 0..<(Int(parts[2]) ?? 0) {
+                    var task = FactoryTask(id: "FIL-\(n + 1)", goal: parts[1], title: "Paged card #\(n + 1)", state: state, detail: "")
+                    if let seed = seeds.isEmpty ? nil : seeds[n % seeds.count] { task.owner = seed.owner; task.agent = seed.agent; task.updated = seed.updated }
+                    tasks.append(task)
+                }
+            case "board" where parts[1] == "bottom": NotificationCenter.default.post(name: BoardColumns.demoScroll, object: nil)
+            case "goto": destination = .goal(parts.dropFirst().joined(separator: ":"))
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil

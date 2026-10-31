@@ -320,6 +320,8 @@ struct BoardColumns: View {
     /// How many cards each column shows, grown a page at a time; a column not here shows `pageSize`.
     /// It survives live updates, and the goal view gives the board a new identity for a new goal or filter.
     @State private var limits: [Column.ID: Int] = [:]
+    /// Headless demos: every column scrolls to its last card (`board:bottom`), as a person scrolling down would.
+    static let demoScroll = Notification.Name("BoardColumns.demoScroll")
 
     /// Whether columns are cut off past the trailing edge, so the board fades there.
     @State private var moreTrailing = false
@@ -511,7 +513,7 @@ struct BoardColumns: View {
 }
 
 /// The last row of a column with cards still to show. The stack is lazy, so it appears only when scrolled
-/// to, and appearing loads the next page; Show all loads the rest at once.
+/// to, and a moment on screen loads the next page; Show all loads the rest at once.
 private struct ColumnPageFooter: View {
     let shown: Int, total: Int
     let more: () -> Void
@@ -531,7 +533,11 @@ private struct ColumnPageFooter: View {
         }
         .padding(.horizontal, 6)
         .frame(height: 28)
-        .onAppear(perform: more)
+        // A beat on screen before the next page, so the count reads and a quick scroll past doesn't load it.
+        .task {
+            try? await Task.sleep(for: .milliseconds(250))
+            if !Task.isCancelled { more() }
+        }
     }
 }
 
@@ -544,11 +550,18 @@ private struct ColumnCards<Content: View>: View {
     /// The cards' height, once measured: the column hugs it.
     @State private var height: CGFloat?
     @State private var scrolls = false
+    @State private var position = ScrollPosition()
+    @State private var container: CGFloat = 0
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 8) { content }
                 .padding(.trailing, scrolls ? 6 : 0)
+        }
+        .scrollPosition($position)
+        .onReceive(NotificationCenter.default.publisher(for: BoardColumns.demoScroll)) { _ in
+            // By offset: scrolling to the bottom edge again, once more cards loaded, does nothing.
+            withAnimation(.easeInOut(duration: 0.4)) { position.scrollTo(y: max(0, (height ?? 0) - container)) }
         }
         .scrollIndicators(.automatic)
         .scrollBounceBehavior(.basedOnSize)
@@ -556,6 +569,7 @@ private struct ColumnCards<Content: View>: View {
         .scrollClipDisabled(!scrolls)
         .onScrollGeometryChange(for: Size.self) { Size(content: $0.contentSize.height, container: $0.containerSize.height) } action: { _, size in
             if height != size.content { height = size.content }
+            if container != size.container { container = size.container }
             let over = size.content > size.container + 0.5
             if scrolls != over { scrolls = over }
         }
