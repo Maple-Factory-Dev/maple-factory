@@ -24,7 +24,7 @@ import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.t
 import { threadAddress } from "../slack.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
-import { assess, validPolicy } from "./policy.ts";
+import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
@@ -115,6 +115,25 @@ const DEQUEUE_REASONS: Record<string, string> = {
 };
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
+/** How long the factory waits for an agent to raise its own over-budget hand before it raises one for it. */
+const BUDGET_HAND_AFTER_MS = 10 * 60_000;
+/** The way forward on the factory's overBudget hand that stops the task. */
+const BUDGET_CANCEL = "Cancel it";
+/** A pick on a budget hand that stops the task rather than giving it more (the factory's Cancel it, or an agent's own). */
+const BUDGET_STOP = /\b(cancel|stop|abandon|drop)\b/i;
+/** "62 min" or "1 h 5 min". */
+const minutesText = (m: number) => {
+  const r = Math.round(m);
+  return r < 60 ? `${r} min` : `${Math.floor(r / 60)} h${r % 60 ? ` ${r % 60} min` : ""}`;
+};
+const dollars = (n: number) => `$${n.toFixed(2)}`;
+/** What a task has used against what it may: "62 min of its 60 min budget" (or the cost). */
+export function budgetText(use: BudgetUse): string {
+  return use.over === "cost"
+    ? `${dollars(use.costUsd)} of the ${dollars(use.allowCostUsd ?? 0)} budget`
+    : `${minutesText(use.minutes)} of the ${minutesText(use.allowMinutes ?? 0)} budget`;
+}
+
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
 const MERGE_GRACE_MS = 10_000;
 
@@ -677,7 +696,16 @@ export class Engine {
         if (decision) task.comments.push(await this.comment(who, decision, { anchor: `Hand: ${hand.summary}` }));
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
         if (hand.reason === "reviewLoop" && task.autoReview) task.autoReview.maxRounds += 2;
-        this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0, discard: false, cleaned: false });
+        const priv = this.store.private(task.id);
+        // A time or cost budget hand (the factory's, or the agent's after the nudge; not a PR size one) answered
+        // with anything but a way to stop: one more budget's worth, counted from what it has used now, so the
+        // time it spent waiting for this answer isn't taken out of it.
+        const granted = hand.reason === "overBudget" && priv.budgetAskedAt != null && !(option && BUDGET_STOP.test(option.title));
+        const use = granted ? this.budget(task) : null;
+        this.store.savePrivate(task.id, {
+          ...priv, restarts: 0, discard: false, cleaned: false,
+          ...(use ? { budgetBase: { minutes: use.minutes, costUsd: use.costUsd }, budgetAskedAt: null } : {}),
+        });
         this.save(task);
         if (!(await this.type(task, `${who} answered your raised hand: ${decision || "carry on."}`))) await this.pump();
         return;
@@ -1327,7 +1355,7 @@ export class Engine {
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
     const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal)))) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal))), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task));
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -1487,6 +1515,7 @@ export class Engine {
           tokens: { input: c.inputTokens, output: c.outputTokens, cacheRead: c.cacheReadTokens, cacheWrite: c.cacheWriteTokens },
           updated: Date.now(),
         });
+        await this.checkBudgets(task.id);
         return null;
       }
       case "task.started": {
@@ -2628,6 +2657,57 @@ export class Engine {
       if (!this.store.private(task.id).merging && mergingLog(task.liveLog)) task.liveLog = null;
       this.save(task);
     });
+  }
+
+  /** A task's use of its time and cost budget so far. */
+  budget(task: Task): BudgetUse {
+    const priv = this.store.private(task.id);
+    return budgetUse(this.store.taskSessions(task.id), this.store.taskCosts(task.id), this.store.policy(), priv.budgetBase ?? null);
+  }
+
+  /** Running tasks past their budget (policy.taskMinutes, taskCostUsd): the first time, a nudge is typed into the
+   *  session asking its agent to raise an overBudget hand; no hand 10 minutes on, the factory raises one. Tasks
+   *  with a hand or question up wait for that first. The hub's alarm calls this (and wakes for the next deadline);
+   *  so does each session.cost, for `only` that task. */
+  async checkBudgets(only?: string) {
+    const policy = this.store.policy();
+    if (budgetMinutes(policy) == null && budgetCostUsd(policy) == null) return;
+    const ids = new Set(this.store.liveSessions().map((s) => s.task).filter((id) => !only || id === only));
+    let next: number | null = null;
+    const wake = (ms: number) => { next = next == null ? ms : Math.min(next, ms); };
+    for (const id of ids) {
+      const task = this.store.task(id);
+      if (!task?.worker || isFinished(task.state) || task.hand || task.question) continue;
+      const use = this.budget(task);
+      if (!use.over) {
+        if (use.allowMinutes != null) wake((use.allowMinutes - use.minutes) * 60_000);
+        continue;
+      }
+      const priv = this.store.private(task.id);
+      const asked = priv.budgetAskedAt ?? null;
+      if (asked == null) {
+        const nudge = `You've used ${budgetText(use)} for this task. Stop at a safe point and call raise_hand with reason overBudget: `
+          + "say where you are, what's left, and the options (carry on, cut the scope, or stop). Then end your turn and wait.";
+        // Offline: try again on a later alarm.
+        if (!(await this.type(task, nudge))) { wake(60_000); continue; }
+        this.store.savePrivate(task.id, { ...priv, budgetAskedAt: now() });
+        this.event(task, "factory", `budget reached: ${budgetText(use)}; asked the ${task.worker.role} to raise a hand`);
+        this.stat(task, "budget.reached", { over: use.over, minutes: Math.round(use.minutes), costUsd: use.costUsd, allowMinutes: use.allowMinutes, allowCostUsd: use.allowCostUsd }, null, task.worker.role);
+        this.save(task);
+        wake(BUDGET_HAND_AFTER_MS);
+      } else if (now() - asked >= BUDGET_HAND_AFTER_MS) {
+        const more = use.over === "cost" ? `another ${dollars(budgetCostUsd(policy) ?? 0)}` : `another ${minutesText(budgetMinutes(policy) ?? 0)}`;
+        this.raise(task, "factory", "overBudget", `It's used ${budgetText(use)} and didn't stop to ask, 10 minutes after it was asked to.`, [
+          { title: use.over === "cost" ? "Give it more budget" : `Give it another ${budgetMinutes(policy) === 60 ? "hour" : minutesText(budgetMinutes(policy) ?? 0)}`, detail: `Let it carry on for ${more}, then ask again.`, recommended: true },
+          { title: BUDGET_CANCEL, detail: "Stop the task; its branch stays.", recommended: false },
+        ]);
+        this.save(task);
+        // The hand doesn't stop the session, so the agent is told to wait for the answer.
+        await this.type(task, `You're past this task's budget (${budgetText(use)}), so the factory raised an overBudget hand for you. `
+          + "Stop at a safe point now, say where you are, and end your turn; the answer will be typed in here.");
+      } else wake(asked + BUDGET_HAND_AFTER_MS - now());
+    }
+    if (next != null) this.hooks.wakeIn(Math.max(1_000, Math.ceil(next)));
   }
 
   /** Its auto-merge countdown ran out: the factory is merging it (or checking it merges first). */

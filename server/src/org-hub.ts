@@ -95,6 +95,7 @@ export class OrgHub extends DurableObject<Env> {
     await this.recheckConnected();
     await this.engine.pollCI();
     await this.engine.mergeDue();
+    await this.engine.checkBudgets();
     await this.engine.pump();
     await this.engine.slack.sweep();
     await this.checkRunnerRelease();
@@ -314,6 +315,14 @@ export class OrgHub extends DurableObject<Env> {
           const task = this.store.task(t.id);
           if (task) this.store.saveTask({ ...task, state: t.state, updatedAt: t.updatedAt });
         }
+        return new Response(null, { status: 204 });
+      }
+      case "/dev/age-sessions": {
+        // Local dev (the Worker checked), for a task's time budget: its sessions (and any over-budget nudge) as if `ms` earlier.
+        const { task, ms } = (await request.json()) as { task: string; ms: number };
+        this.store.ageSessions(task, ms);
+        const priv = this.store.private(task);
+        if (priv.budgetAskedAt != null) this.store.savePrivate(task, { ...priv, budgetAskedAt: priv.budgetAskedAt - ms });
         return new Response(null, { status: 204 });
       }
       case "/intake": {

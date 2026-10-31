@@ -420,7 +420,7 @@ enum class HandReason(val raw: String) {
     ProofBurden("proofBurden"),
     /** Needs more input than the plan has. */
     NeedsInput("needsInput"),
-    /** The fix goes over the size budget. */
+    /** The task goes over its budget: the change's size, or the time or money spent on it. */
     OverBudget("overBudget"),
     /** Its session ended in a way that needs a person. */
     SessionEnded("sessionEnded"),
@@ -1436,6 +1436,10 @@ data class RiskPolicy(
     val autoMerges: Boolean? = null,
     /** The most leftovers one Scout run turns into drafted plans (1–10). None: 3. */
     val scoutItems: Long? = null,
+    /** Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60. */
+    val taskMinutes: Long? = null,
+    /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
+    val taskCostUsd: Double? = null,
 )
 
 /** An MCP server the factory adds to every session, alongside its own `maple` server. */

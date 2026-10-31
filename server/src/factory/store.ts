@@ -55,6 +55,11 @@ export interface TaskPrivate {
   checks?: import("../github.ts").Check[];
   /** When its pull request was opened or found, so CI that never shows up stops being waited for. */
   prOpenedAt?: number;
+  /** What it had used when a person last gave it more budget (an overBudget budget hand answered with anything
+   *  but Cancel); its next limit is one budget on from there. */
+  budgetBase?: import("./policy.ts").BudgetBase | null;
+  /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
+  budgetAskedAt?: number | null;
   /** Cancelled with its goal's archive, to have its worktree removed (when nothing would be lost). */
   discard?: boolean;
 }
@@ -207,6 +212,12 @@ export class Store {
         session: r.session, task: r.task, goal: r.goal, role: r.role as Role, agent: r.agent, model: r.model, costUsd: r.cost_usd,
         tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...JSON.parse(r.tokens) }, updated: r.updated,
       }));
+  }
+
+  /** A task's sessions' spend: what its cost budget adds up. */
+  taskCosts(task: string): { session: string; costUsd: number | null }[] {
+    return this.sql.exec<{ session: string; cost_usd: number | null }>("SELECT session, cost_usd FROM session_costs WHERE task = ?", task)
+      .toArray().map((r) => ({ session: r.session, costUsd: r.cost_usd }));
   }
 
   // Goals
@@ -364,6 +375,16 @@ export class Store {
        WHERE COALESCE(s.ended, ?) > ? GROUP BY t.goal, s.task`,
       now, now, since, now, since,
     ).toArray();
+  }
+
+  /** Every session a task has had, ended or running: what its time budget adds up. */
+  taskSessions(task: string): TaskSession[] {
+    return this.sql.exec("SELECT * FROM sessions WHERE task = ?", task).toArray() as unknown as TaskSession[];
+  }
+
+  /** Local dev only (/dev/age-sessions): moves a task's sessions `ms` into the past. */
+  ageSessions(task: string, ms: number) {
+    this.sql.exec("UPDATE sessions SET started = started - ?, ended = ended - ? WHERE task = ?", ms, ms, task);
   }
 
   liveSessions(): TaskSession[] {

@@ -842,6 +842,10 @@ export interface RiskPolicy {
   autoMerges?: boolean | null;
   /** The most leftovers one Scout run turns into drafted plans (1–10). None: 3. */
   scoutItems?: number | null;
+  /** Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60. */
+  taskMinutes?: number | null;
+  /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
+  taskCostUsd?: number | null;
 }
 
 /** An MCP server the factory adds to every session, alongside its own `maple` server. */

@@ -3,6 +3,7 @@
 
 import type { Goal, PromptAdditions, Role, SensitiveArea, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
+import type { BudgetUse } from "./policy.ts";
 
 /** The anchor on a change request made because the branch didn't merge: "Didn't merge into <base>". */
 export const MERGE_ANCHOR = "Didn't merge into";
@@ -121,7 +122,16 @@ function unmerged(task: Task) {
 The branch already has the reviewed, approved work, but it doesn't merge into ${base}. Only bring it up to date with origin/${base} and resolve the conflicts (${c.id}); don't redo or extend the plan. Re-prove only the Done when items the conflict resolution touched, then call \`finish\`.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: string[] = []): string {
+/** The task's time and cost budget, what's left of it, and to ask before going past it. Empty with both limits off. */
+export function budgetSection(use: BudgetUse | null): string {
+  if (!use || (use.allowMinutes == null && use.allowCostUsd == null)) return "";
+  const parts: string[] = [];
+  if (use.allowMinutes != null) parts.push(`${Math.max(0, Math.round(use.allowMinutes - use.minutes))} of its ${Math.round(use.allowMinutes)} minutes of agent time`);
+  if (use.allowCostUsd != null) parts.push(`$${Math.max(0, use.allowCostUsd - use.costUsd).toFixed(2)} of its $${use.allowCostUsd.toFixed(2)}`);
+  return `\n\n## Budget\nThis task has ${parts.join(" and ")} left (all its sessions count). As soon as it looks like you'll go past that (stuck proving something, say, or the fix keeps growing), call \`raise_hand\` with reason \`overBudget\`: where you are, what's left, and the options. Ask before you reach it, not after.`;
+}
+
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: string[] = [], budget: BudgetUse | null = null): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
@@ -138,7 +148,7 @@ ${done}${moving(others)}${comments(task)}${changes(task)}${
     review?.length
       ? `\n\n## Review round ${task.autoReview!.rounds.length} asked for changes\n` + review.map((f) => `- [${f.severity}] (${f.id}) ${f.text}${f.file ? ` (${f.file})` : ""}`).join("\n")
       : ""
-  }${unmerged(task)}${checksSection(checks)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
+  }${unmerged(task)}${checksSection(checks)}${budgetSection(budget)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
 
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
@@ -164,7 +174,7 @@ function checksSection(checks: string[]): string {
   return `\n\n## Checks\nThese must exit 0 in the worktree before \`finish\` is accepted; run them yourself first and fix what they find:\n${checks.map((c) => `- \`${c}\``).join("\n")}\nIf one fails when you finish, nothing is committed or pushed and its output is typed into this session: fix it, then call \`finish\` again.`;
 }
 
-export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null): string {
+export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null, budget: BudgetUse | null = null): string {
   const done = task.doneWhen
     .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
@@ -182,7 +192,7 @@ ${task.planSummary ?? ""}
 ${task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})`).join("\n")}
 
 ## Done when, with the builder's evidence
-${done}
+${done}${budgetSection(budget)}
 ${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}${asked}
 Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/${base}..HEAD\`). Answer three things:
 1. Did it do the ask? One check per part of the brief: met, partial or missed.
