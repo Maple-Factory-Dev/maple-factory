@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.83.0 — 2026-10-31
+
+The runner keeps up with the factory's protocol for task budgets, quiet hours and mobile presence.
+
 ## 0.82.0 — 2026-10-31
 
 When GitHub refuses a push that changes workflow files, the runner says the GitHub App needs Workflows: write and links to its permissions page.
