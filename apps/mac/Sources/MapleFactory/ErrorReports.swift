@@ -40,6 +40,10 @@ enum ErrorReports {
                 return event
             }
         }
+        // Until the feed says, the factory this app was last in.
+        if let org = SavedFactories.load(AppDefaults)?.max(by: { $0.lastUsed < $1.lastUsed })?.org, !org.isEmpty {
+            tag(org: org)
+        }
         // `-sentryTest YES`: one test error, to see it arrive.
         if AppDefaults.bool(forKey: "sentryTest") {
             SentrySDK.capture(error: NSError(domain: "dev.maplefactory.app", code: 1, userInfo: [NSLocalizedDescriptionKey: "Maple Factory Mac app: Sentry test error"]))

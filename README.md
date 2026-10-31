@@ -313,8 +313,12 @@ Sentry auth token is committed: the Mac release uploads dSYMs only when `SENTRY_
 
 **What's never sent:** code, diffs, prompts or terminal output; tokens, secrets or cookies; request bodies,
 query strings or Authorization headers; the signed-in person; the machine's hostname (the runner also
-writes `~` for paths under your home). The runner sends only `error!` logs and panics, and the web and Mac
+writes `~` for paths under your home). The Mac app's events carry Sentry's anonymous install ID. The runner sends only `error!` logs and panics, and the web and Mac
 apps send no console, click or network breadcrumbs.
+
+The SDKs tell Sentry not to take the user's IP address from the connection. Sentry can still store a
+coarse location from it, so turn on Settings → Security & Privacy → Prevent Storing of IP Addresses in
+the Sentry org (ours, or yours if you redirect reports).
 
 **Turning it off, or sending it elsewhere:**
 
