@@ -2,7 +2,8 @@ import Foundation
 
 /// A goal's tasks sorted by what a person should do with them, for the Overview layout: what's
 /// waiting on you, what's up next (and in what order), what's moving, and what landed lately.
-/// Each open task sits in exactly one section; cancelled tasks and older merges are left out.
+/// Each open task sits in exactly one section; cancelled, closed and backlogged tasks and older merges
+/// are left out (a backlogged task that needs a person still shows under Needs you).
 struct GoalOverviewSections {
     /// Why a task is waiting on a person, most pressing first.
     enum Reason: Int, Comparable {
@@ -43,7 +44,7 @@ struct GoalOverviewSections {
     var drafts: [FactoryTask] = []
     /// Waiting for a session, front of the queue first.
     var queued: [FactoryTask] = []
-    /// Being planned, or parked in the backlog, with nothing asked of a person.
+    /// Being planned or waiting for plan approval, with nothing asked of a person.
     var planning: [FactoryTask] = []
     /// Building or in review with nothing asked of a person.
     var inMotion: [FactoryTask] = []
@@ -59,7 +60,7 @@ struct GoalOverviewSections {
     init(tasks: [FactoryTask], today: Int, pendingMerge: (FactoryTask) -> Bool = { _ in false }) {
         for task in tasks {
             switch task.state {
-            case .cancelled:
+            case .cancelled, .closed:
                 continue
             case .merged:
                 if today - task.span.upperBound <= Self.recentDays { recentlyLanded.append(task) }
@@ -69,13 +70,17 @@ struct GoalOverviewSections {
             }
             if let waiting = Self.waiting(task, pendingMerge: pendingMerge(task)) {
                 needsYou.append(waiting)
+            } else if task.state == .backlog {
+                // Parked: it lives on the Board's Backlog column, not in the Overview.
+                continue
             } else if task.queued {
                 queued.append(task)
             } else {
                 switch task.state {
                 case .drafting: drafts.append(task)
                 case .building, .reviewing: inMotion.append(task)
-                default: planning.append(task)
+                case .planning, .awaitingApproval: planning.append(task)
+                case .backlog, .merged, .cancelled, .closed: break
                 }
             }
         }
