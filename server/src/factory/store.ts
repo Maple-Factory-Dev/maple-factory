@@ -2,8 +2,9 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
+import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -116,6 +117,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
       CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
+      CREATE TABLE IF NOT EXISTS quiet_hours (login TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS stats_events (
         id TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, task TEXT NOT NULL, goal TEXT NOT NULL,
         role TEXT, actor TEXT, detail TEXT NOT NULL DEFAULT '{}'
@@ -450,6 +452,27 @@ export class Store {
       "INSERT INTO goal_follows (login, goal, following) VALUES (?, ?, ?) ON CONFLICT (login, goal) DO UPDATE SET following = excluded.following",
       login, goal, following ? 1 : 0,
     );
+  }
+
+  // Quiet hours: each person's own weekly schedule, the same on every device.
+
+  quietHours(login: string): QuietHours | null {
+    const row = this.sql.exec<{ json: string }>("SELECT json FROM quiet_hours WHERE login = ?", login).toArray()[0];
+    return row ? JSON.parse(row.json) : null;
+  }
+
+  /** Saves (or with null, clears) someone's quiet hours; a schedule that isn't valid throws, and nothing is saved. */
+  setQuietHours(login: string, q: QuietHours | null): QuietHours | null {
+    if (q === null) {
+      this.sql.exec("DELETE FROM quiet_hours WHERE login = ?", login);
+      return null;
+    }
+    const tidy = validateQuietHours(q);
+    this.sql.exec(
+      "INSERT INTO quiet_hours (login, json, updated_at) VALUES (?, ?, ?) ON CONFLICT (login) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
+      login, JSON.stringify(tidy), Date.now(),
+    );
+    return tidy;
   }
 
   // Policy

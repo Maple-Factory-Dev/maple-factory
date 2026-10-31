@@ -650,6 +650,7 @@ export class OrgHub extends DurableObject<Env> {
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
+          quietHours: this.store.quietHours(client.member.login),
           intake: this.intake.list(),
           secrets: this.secrets.list(),
           repos: this.store.repos(),
@@ -814,6 +815,16 @@ export class OrgHub extends DurableObject<Env> {
         if (!this.store.goal(msg.id)) return this.send(ws, { type: "error", message: "That goal isn't there any more.", requestId: null });
         this.store.setFollow(client.member.login, msg.id, msg.following);
         this.sendTo(client.member.login, { type: "follows.updated", follows: this.store.follows(client.member.login) });
+        return;
+      }
+      case "quietHours.set": {
+        let quietHours;
+        try {
+          quietHours = this.store.setQuietHours(client.member.login, msg.quietHours ?? null);
+        } catch (e) {
+          return this.send(ws, { type: "error", message: (e as Error).message, requestId: "quietHours.set" });
+        }
+        this.sendTo(client.member.login, { type: "quietHours.updated", quietHours });
         return;
       }
       case "note.delete": {
