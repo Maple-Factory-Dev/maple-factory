@@ -219,6 +219,8 @@ final class FactoryStore {
     func resolveHand(_ id: String, option: String?, note: String) { send(.taskResolveHand(.init(id: id, option: option, note: note))) }
     func comment(_ id: String, text: String) { send(.taskComment(.init(id: id, text: text))) }
     func steer(_ id: String, text: String) { send(.taskSteer(.init(id: id, text: text))) }
+    /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
+    func answerPrompt(_ id: String, choice: Wire.PromptChoice) { send(.taskAnswerPrompt(.init(id: id, choice: choice))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
@@ -291,6 +293,13 @@ final class FactoryStore {
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
+        case .taskAnswerPrompt(let m):
+            // The runner passes the answer to the session, which carries on.
+            guard let worker = feed.task(m.id)?.worker, let mi = feed.machines.firstIndex(where: { $0.id == worker.machine }),
+                  let si = feed.machines[mi].sessions.firstIndex(where: { $0.session.id == worker.session }) else { break }
+            var machine = feed.machines[mi]
+            machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
+            feed.apply(.machineUpdated(.init(machine: machine)))
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
         case .statsGet(let m):

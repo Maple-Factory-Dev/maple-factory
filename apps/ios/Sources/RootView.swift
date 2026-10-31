@@ -319,13 +319,24 @@ struct TaskRow: View {
                 Text(task.id).font(.caption.monospaced()).foregroundStyle(.secondary)
                 if task.hand != nil { Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Theme.warning) }
                 if task.question != nil { Image(systemName: "questionmark.bubble.fill").font(.caption).foregroundStyle(Theme.state(.planning)) }
+                if permission != nil {
+                    Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
+                        .accessibilityLabel("Needs permission")
+                }
                 Spacer()
                 Avatar(login: task.owner, url: store.feed.member(task.owner)?.avatarUrl, size: 18)
             }
             Text(task.title).lineLimit(2)
-            if let waiting = task.waiting { Text(waiting).font(.caption).foregroundStyle(.secondary) }
+            if let permission {
+                Text("Needs permission: \(permission.tool)").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
+            } else if let waiting = task.waiting {
+                Text(waiting).font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
+
+    /// The permission prompt its worker is stopped at, if any.
+    private var permission: PermissionPrompt? { store.feed.workerActivity(for: task.worker)?.permission }
 }
 
 // MARK: - Machines
@@ -392,9 +403,19 @@ struct MachineRows: View {
                         Text(live.session.taskId ?? live.session.agent).font(.subheadline.monospaced())
                         Text(live.session.agent).font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        if let state = live.activity?.state { Text(state.rawValue).font(.caption).foregroundStyle(state == .waiting ? Theme.warning : .secondary) }
+                        if live.activity?.permission != nil {
+                            Label("needs permission", systemImage: "hand.raised.fill").font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.state(.awaitingApproval))
+                                .accessibilityIdentifier("session-needs-permission")
+                        } else if let state = live.activity?.state {
+                            Text(state.rawValue).font(.caption).foregroundStyle(state == .waiting ? Theme.warning : .secondary)
+                        }
                     }
-                    if let message = live.activity?.message { Text(message).font(.caption).foregroundStyle(.secondary) }
+                    if let prompt = live.activity?.permission {
+                        Text("\(prompt.tool): \(prompt.summary)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    } else if let message = live.activity?.message {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             .disabled(live.session.taskId == nil)
