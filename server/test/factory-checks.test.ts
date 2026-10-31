@@ -193,3 +193,29 @@ test("the builder's prompt lists the repo's checks", () => {
   assert.match(p, /- `npm run lint`\n- `lefthook run pre-commit --all-files`/);
   assert.doesNotMatch(builderPrompt(t, null, null), /## Checks/);
 });
+
+test("a finish whose branch doesn't merge into its base types the runner's message, names the files, and counts as a try", async () => {
+  const f = factory();
+  const MERGE: CheckRun = {
+    command: "git merge-tree origin/<base> (does it merge?)", code: 1, timedOut: false, ms: 0,
+    output: "Conflicts with origin/main in:\n  hello.txt\n  src/a.ts\n\nFetch origin/main, merge it into the branch, resolve every conflict, keep the tests passing, then call finish again.",
+  };
+  const message = "The branch doesn't merge into main (conflicts in hello.txt, src/a.ts), so nothing was pushed.";
+  await f.finish();
+  await f.finished({ ok: false, message, checks: [MERGE] });
+  const t = f.task();
+  assert.equal(t.state, "building");
+  assert.equal(t.hand ?? null, null);
+  const [told] = f.typed();
+  assert.ok(told.startsWith(message), told);
+  assert.match(told, /hello\.txt/);
+  assert.doesNotMatch(told, /nothing was committed/);
+  assert.equal(told.match(/call finish again/g)?.length, 1);
+  assert.ok(t.events.some((e) => e.text === "doesn't merge into main: hello.txt, src/a.ts"), JSON.stringify(t.events.map((e) => e.text)));
+  for (let i = 0; i < 2; i++) {
+    await f.finish();
+    await f.finished({ ok: false, message, checks: [MERGE] });
+  }
+  assert.equal(f.task().hand?.reason, "needsInput");
+  assert.match(f.task().hand!.summary, /3 times in a row: its branch doesn't merge into main: hello\.txt, src\/a\.ts/);
+});

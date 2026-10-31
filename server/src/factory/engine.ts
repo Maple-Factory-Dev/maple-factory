@@ -68,6 +68,8 @@ const MERGE_RETRY = "Try the merge again";
 const MERGE_FIX_TRIES = 2;
 /** Finishes in a row the repo's checks can stop before the builder raises a hand instead of trying again. */
 const CHECK_TRIES = 3;
+/** The runner's check for a branch that doesn't merge into origin/<base> (its finish committed, but didn't push). */
+const MERGE_CHECK = "git merge-tree origin/<base> (does it merge?)";
 /** What a task says while its finish runs the repo's checks. */
 const RUNNING_CHECKS = "Running checks…";
 /** What a task says while it's merging, from its countdown running out until it lands. */
@@ -1414,7 +1416,7 @@ export class Engine {
     // A push that was already under way when the task was cancelled (or merged): it stays that way.
     if (task.state === "cancelled" || task.state === "merged") return;
     const failed = msg.ok ? null : msg.checks?.findLast((c) => c.timedOut || c.code !== 0);
-    if (failed) return this.checksFailed(task, failed);
+    if (failed) return this.checksFailed(task, failed, msg.message ?? null, msg.base ?? priv.base ?? "main");
     if (task.liveLog === RUNNING_CHECKS) task.liveLog = null;
     if (!msg.ok) {
       this.raise(task, "builder", "needsInput", `Pushing failed: ${msg.message ?? "no reason given"}.`);
@@ -1442,21 +1444,26 @@ export class Engine {
     this.hooks.waitUntil(this.pump());
   }
 
-  /** A finish one of the repo's checks stopped (nothing committed or pushed): the task keeps building,
+  /** A finish one of the repo's checks stopped (nothing committed or pushed), or its merge check (committed,
+   *  not pushed: the branch doesn't merge into its base): the task keeps building,
    *  and the failure is typed into its builder to fix and finish again. The third in a row, or one with
    *  no builder session to tell, raises a hand instead. */
-  private checksFailed(task: Task, check: CheckRun) {
+  private checksFailed(task: Task, check: CheckRun, message: string | null, base: string) {
     const priv = this.store.private(task.id);
     const tries = (priv.checkFailures ?? 0) + 1;
     this.store.savePrivate(task.id, { ...priv, finishing: false, checkFailures: tries });
     task.liveLog = null;
-    const how = check.timedOut ? "timed out" : check.code == null ? "was killed" : `exited ${check.code}`;
-    this.event(task, "factory", `checks failed: \`${check.command}\` ${how}`);
+    const conflicts = check.command === MERGE_CHECK;
+    const files = check.output.split("\n").filter((l) => l.startsWith("  ")).map((l) => l.trim()).join(", ");
+    const how = conflicts ? `doesn't merge into ${base}: ${files || "conflicts"}` : check.timedOut ? "timed out" : check.code == null ? "was killed" : `exited ${check.code}`;
+    this.event(task, "factory", conflicts ? how : `checks failed: \`${check.command}\` ${how}`);
     const output = check.output.trim() ? `\n\n${check.output.trim()}` : " (no output)";
-    const told = `The check \`${check.command}\` ${how}, so nothing was committed or pushed.${output}\n\nFix it, then call finish again.`;
+    const what = message ?? `The check \`${check.command}\` ${how}, so nothing was committed or pushed.`;
+    // The merge check's output already says what to do.
+    const told = conflicts ? `${what}${output}` : `${what}${output}\n\nFix it, then call finish again.`;
     const hand = (why: string) => {
-      this.raise(task, "builder", "needsInput", `${why}: \`${check.command}\` ${how}.`, [
-        { title: "Retry", detail: "Send it back to fix the check and finish again.", recommended: true },
+      this.raise(task, "builder", "needsInput", conflicts ? `${why}: its branch ${how}.` : `${why}: \`${check.command}\` ${how}.`, [
+        { title: "Retry", detail: conflicts ? "Send it back to merge its base and finish again." : "Send it back to fix the check and finish again.", recommended: true },
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
       ]);
       this.store.savePrivate(task.id, { ...this.store.private(task.id), checkFailures: 0 });
@@ -1468,7 +1475,7 @@ export class Engine {
         if (ok) return;
         const t = this.store.task(task.id);
         if (!t || t.state !== "building") return;
-        this.raise(t, "builder", "needsInput", `The repo's checks stopped its finish and its builder couldn't be told: \`${check.command}\` ${how}.`);
+        this.raise(t, "builder", "needsInput", `The repo's checks stopped its finish and its builder couldn't be told: ${conflicts ? `its branch ${how}` : `\`${check.command}\` ${how}`}.`);
         this.save(t);
       }));
     }
