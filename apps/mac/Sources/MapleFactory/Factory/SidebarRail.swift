@@ -119,6 +119,15 @@ struct SidebarRail: View {
 
             updateItem
 
+            if let status = client.githubStatus {
+                item("GitHub is having issues", detail: GitHubStatusFooter.detail(status)) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.warning)
+                }
+                .onTapGesture { NSWorkspace.shared.open(GitHubStatusFooter.link(status)) }
+            }
+
             item("Settings", detail: "⌘,") {
                 Image(systemName: "gearshape")
                     .font(.system(size: 14))

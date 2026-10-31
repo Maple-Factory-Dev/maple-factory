@@ -107,6 +107,13 @@ struct FactorySidebar: View {
             }
             .scrollIndicators(.never)
 
+            // GitHub's own incidents (the server watches githubstatus.com), so a stuck push has a reason on screen.
+            if let status = client.githubStatus {
+                Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, -12)
+                GitHubStatusFooter(status: status)
+                    .padding(.vertical, 6)
+            }
+
             // Settings, a click away from anywhere; its menu jumps straight to a pane.
             Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, -12)
             SidebarSettingsFooter()
@@ -295,6 +302,47 @@ struct FactorySidebar: View {
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.fillSelected : .clear))
             .contentShape(Rectangle())
+    }
+}
+
+/// GitHub is having issues, as githubstatus.com says: an amber dot, the newest incident (or the components in
+/// trouble), and a click opens the incident on githubstatus.com.
+struct GitHubStatusFooter: View {
+    let status: Wire.GitHubStatus
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Circle().fill(Theme.warning).frame(width: 7, height: 7).frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("GitHub is having issues")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                Text(Self.detail(status))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Theme.textFaint)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture { NSWorkspace.shared.open(Self.link(status)) }
+        .help("\(status.description) — open githubstatus.com")
+    }
+
+    /// The newest incident's name, else the components that aren't operational, else the page's own summary.
+    static func detail(_ status: Wire.GitHubStatus) -> String {
+        if let incident = status.incidents.first { return incident.name }
+        if !status.components.isEmpty { return status.components.joined(separator: ", ") }
+        return status.description
+    }
+
+    static func link(_ status: Wire.GitHubStatus) -> URL {
+        status.incidents.first?.url.flatMap(URL.init(string:)) ?? URL(string: "https://www.githubstatus.com")!
     }
 }
 
