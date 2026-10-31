@@ -5,7 +5,7 @@
 # Launch args are the iPhone app's (-demo, -tab, -goal, -task, -onboardingURL, -onboardingContinue, -devAs),
 # passed as intent extras. On the emulator the Mac is 10.0.2.2: -onboardingURL 10.0.2.2:8788 for the dev stack.
 # AVD picks the emulator (default: a running one, else the first `emulator -list-avds` lists); it boots
-# headless unless WINDOW=1. BUILD=0 skips building; JAVA_HOME defaults to a JDK 17–21 (Gradle 9.2's range).
+# headless unless WINDOW=1, on the host GPU unless GPU says (software GL drops some Compose draws). BUILD=0 skips building; JAVA_HOME defaults to a JDK 17–21 (Gradle 9.2's range).
 set -eu
 unset CDPATH
 
@@ -37,14 +37,19 @@ if [ -z "$serial" ]; then
   [ -n "$avd" ] || { echo "No emulator: make one in Android Studio's Device Manager." >&2; exit 1; }
   window=-no-window
   [ "${WINDOW:-0}" = 1 ] && window=
-  nohup "$SDK/emulator/emulator" -avd "$avd" $window -no-snapshot-save -no-boot-anim >/tmp/maple-emulator.log 2>&1 &
+  nohup "$SDK/emulator/emulator" -avd "$avd" $window -gpu "${GPU:-host}" -no-snapshot-save -no-boot-anim >/tmp/maple-emulator.log 2>&1 &
   "$ADB" wait-for-device
   serial=$("$ADB" devices | awk '/^emulator-[0-9]+/ { print $1; exit }')
 fi
 export ANDROID_SERIAL="$serial"
 until [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 1; done
 
-"$ADB" install -r -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
+# Right after boot the package manager can still turn installs away; try a few times.
+for try in 1 2 3 4 5; do
+  "$ADB" install -r -t app/build/outputs/apk/debug/app-debug.apk 2>&1 | grep -q '^Success' && break
+  [ "$try" = 5 ] && { echo "Couldn't install the app on $serial." >&2; exit 1; }
+  sleep 3
+done
 
 # -key value pairs become string extras: -demo YES → --es demo YES.
 extras=

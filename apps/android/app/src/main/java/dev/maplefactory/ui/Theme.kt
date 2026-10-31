@@ -29,13 +29,14 @@ import dev.maplefactory.wire.TaskState
 /** A color that resolves per appearance, like Theme.swift's `Color(light:dark:)`. */
 class Tone(private val light: Long, private val dark: Long) {
     val color: Color
-        @Composable @ReadOnlyComposable get() = Color(if (isSystemInDarkTheme()) dark else light)
+        @Composable @ReadOnlyComposable get() = rgb(if (isSystemInDarkTheme()) dark else light)
 }
 
-private fun Color(hex: Long) = androidx.compose.ui.graphics.Color(0xFF000000 or hex)
+/** An opaque color from 0xRRGGBB. */
+fun rgb(hex: Long): Color = Color(0xFF000000 or hex)
 
 /** A goal's "#RRGGBB". */
-fun goalColor(hex: String?): Color = Color(hex?.trimStart('#')?.toLongOrNull(16) ?: 0x8A909A)
+fun goalColor(hex: String?): Color = rgb(hex?.trimStart('#')?.toLongOrNull(16) ?: 0x8A909A)
 
 /** The Mac app's palette, as the iPhone app has it. */
 object Maple {
@@ -112,33 +113,37 @@ val InboxEntry.Kind.color: Color
     }
 
 private val light = lightColorScheme(
-    primary = Color(0xD24E26),
-    onPrimary = Color(0xFFFFFF),
-    primaryContainer = Color(0xFBE3DA),
-    onPrimaryContainer = Color(0x5A1D08),
-    secondary = Color(0x6B5E57),
-    background = Color(0xF7F5F2),
-    surface = Color(0xF7F5F2),
-    surfaceContainerLowest = Color(0xFFFFFF),
-    surfaceContainerLow = Color(0xFFFFFF),
-    surfaceContainer = Color(0xF1EEEA),
-    surfaceContainerHigh = Color(0xEBE7E2),
-    error = Color(0xC8474B),
+    primary = rgb(0xD24E26),
+    onPrimary = rgb(0xFFFFFF),
+    primaryContainer = rgb(0xFBE3DA),
+    onPrimaryContainer = rgb(0x5A1D08),
+    secondary = rgb(0x6B5E57),
+    secondaryContainer = rgb(0xFBE3DA),
+    onSecondaryContainer = rgb(0x5A1D08),
+    background = rgb(0xF7F5F2),
+    surface = rgb(0xF7F5F2),
+    surfaceContainerLowest = rgb(0xFFFFFF),
+    surfaceContainerLow = rgb(0xFFFFFF),
+    surfaceContainer = rgb(0xF1EEEA),
+    surfaceContainerHigh = rgb(0xEBE7E2),
+    error = rgb(0xC8474B),
 )
 
 private val dark = darkColorScheme(
-    primary = Color(0xFF7A48),
-    onPrimary = Color(0x2B0C00),
-    primaryContainer = Color(0x5A2412),
-    onPrimaryContainer = Color(0xFFDBCD),
-    secondary = Color(0xB8ABA4),
-    background = Color(0x141312),
-    surface = Color(0x141312),
-    surfaceContainerLowest = Color(0x0F0E0D),
-    surfaceContainerLow = Color(0x1D1B1A),
-    surfaceContainer = Color(0x221F1E),
-    surfaceContainerHigh = Color(0x2B2827),
-    error = Color(0xD9696C),
+    primary = rgb(0xFF7A48),
+    onPrimary = rgb(0x2B0C00),
+    primaryContainer = rgb(0x5A2412),
+    onPrimaryContainer = rgb(0xFFDBCD),
+    secondary = rgb(0xB8ABA4),
+    secondaryContainer = rgb(0x5A2412),
+    onSecondaryContainer = rgb(0xFFDBCD),
+    background = rgb(0x141312),
+    surface = rgb(0x141312),
+    surfaceContainerLowest = rgb(0x0F0E0D),
+    surfaceContainerLow = rgb(0x1D1B1A),
+    surfaceContainer = rgb(0x221F1E),
+    surfaceContainerHigh = rgb(0x2B2827),
+    error = rgb(0xD9696C),
 )
 
 @Composable
