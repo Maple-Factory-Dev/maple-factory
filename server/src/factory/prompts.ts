@@ -142,10 +142,15 @@ ${done}${moving(others)}${comments(task)}${changes(task)}${
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
 For each Done when item, produce real evidence and call \`prove\` (item numbers from 1): paste the command and its output for terminal/tests proofs.
+${ARTIFACTS(task)}
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal. Each becomes a draft in this goal for a person to accept; don't build them yourself. (Proposing from planning closes a task; once it's building, it carries on.)
 If you're stuck on a decision only a person can make, call \`ask\`, end your turn and wait. If you can't meet a proof or the fix grows past the plan, call \`raise_hand\`.
 When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${checks.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
 }
+
+/** What \`share_artifact\` is for: something people look at, not evidence (proofs stay that). */
+const ARTIFACTS = (task: Task) =>
+  `When a picture says it better than words, share it with \`share_artifact\`: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. Save the file (HTML with everything inline and no network, SVG, PNG, PDF, Markdown, CSV…) under ~/.cache/maple-proof/${task.branch ?? "<this task's branch>"}/, never in the worktree. It's optional; proofs stay the evidence for Done when.`;
 
 /** The repo's checks, which a finish runs before anything is committed. */
 function checksSection(checks: string[]): string {
@@ -179,5 +184,6 @@ Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/
 3. Code: bugs, missing cases, risky changes.
 
 Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
-List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.`;
+List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
+${ARTIFACTS(task)}`;
 }

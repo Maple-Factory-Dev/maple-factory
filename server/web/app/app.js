@@ -1103,6 +1103,7 @@ function overview(t) {
     t.autoReview && t.autoReview.rounds.length > 0 && review(t),
     t.pr && pull(t),
     t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
+    (t.artifacts ?? []).length > 0 && [h("h2", {}, "Artifacts"), artifacts(t)],
     t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
       h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
         h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
@@ -1352,6 +1353,69 @@ function attestForm(t, i) {
 
 /** `/attachments/<uuid>/<name>`, the shape the server keeps a proof's file under (attachments.ts). */
 const ATTACHMENT = /^\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[\w.\-]{1,120}$/;
+
+// ---- artifacts: files an agent shared with `share_artifact` (MF-205) ----
+
+/** No network, no frames, no forms: only the page's own inline scripts and styles, and data: images. */
+const ARTIFACT_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:";
+/** The artifact picked on each task's page, by task id. */
+const pickedArtifact = new Map();
+/** Fetched artifact text, by file: they never change (a new version is a new file). */
+const artifactText = new Map();
+
+/** Chips to pick an artifact, above the one picked (the newest by default). */
+function artifacts(t) {
+  const list = t.artifacts;
+  const active = list.find((a) => a.id === pickedArtifact.get(t.id)) ?? list[list.length - 1];
+  const chips = h("div", { class: "artifact-chips" }, list.map((a) => h("button", {
+    class: `artifact-chip${a === active ? " on" : ""}`, title: a.summary ?? a.title,
+    onclick: () => { pickedArtifact.set(t.id, a.id); render(); },
+  }, a.title, a.version > 1 && h("span", { class: "muted mono" }, ` v${a.version}`))));
+  return h("div", { class: "card" }, chips, artifactBody(active),
+    h("div", { class: "artifact-foot" },
+      h("div", {}, active.summary && h("div", {}, active.summary), h("div", { class: "muted" }, `Shared by the ${active.by}${active.version > 1 ? ` · v${active.version}` : ""} · ${kb(active.bytes)}`)),
+      ATTACHMENT.test(active.file) && h("a", { class: "proof-file", href: active.file, download: active.file.split("/").pop() }, "Download")));
+}
+
+const kb = (n) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function artifactBody(a) {
+  if (!ATTACHMENT.test(a.file)) return null;
+  const name = a.file.split("/").pop();
+  const chip = () => h("a", { class: "proof-file", href: a.file, target: "_blank", rel: "noopener noreferrer" }, name, h("span", { class: "muted" }, " ↗"));
+  if (a.kind === "image") {
+    const link = h("a", { class: "proof-img", href: a.file, target: "_blank", rel: "noopener noreferrer", title: "Open full size" },
+      h("img", { src: a.file, alt: a.title, loading: "lazy", onerror: () => link.replaceWith(chip()) }));
+    return link;
+  }
+  if (!["html", "svg", "markdown", "text", "data"].includes(a.kind)) return chip();
+  // Text kinds come in with the session cookie and are drawn here: HTML and SVG in an iframe with
+  // scripts but no same-origin (an opaque origin: no cookies, no factory) and a CSP that blocks the network.
+  const box = h("div", { class: "artifact-view" }, h("div", { class: "muted" }, "Loading…"));
+  const draw = (text) => {
+    box.textContent = "";
+    if (a.kind === "html" || a.kind === "svg") box.append(h("iframe", { class: "artifact-frame", sandbox: "allow-scripts", srcdoc: artifactPage(text, a.kind), title: a.title }));
+    else if (a.kind === "markdown") box.append(markdown(text, h, knownTasks()));
+    else box.append(h("pre", { class: "out" }, text.slice(0, 512 * 1024)));
+  };
+  if (artifactText.has(a.file)) draw(artifactText.get(a.file));
+  else fetch(a.file, { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+    .then((text) => { artifactText.set(a.file, text); draw(text); })
+    .catch(() => { box.textContent = ""; box.append(chip()); });
+  return box;
+}
+
+/** An HTML or SVG artifact as the iframe's page, with the CSP before anything else in it. */
+function artifactPage(text, kind) {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  if (kind === "svg") return `<!doctype html><html><head>${meta}<style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#fff}svg{max-width:100%;max-height:100%}</style></head><body>${text}</body></html>`;
+  // First in the document (after a leading doctype only): the parser puts it in the implicit <head> ahead of
+  // every other tag. Looking for "<head" instead would also match <header>, or a <head> in a comment or script.
+  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(text);
+  const at = doctype ? doctype[0].length : 0;
+  return text.slice(0, at) + meta + text.slice(at);
+}
 
 /** The screenshot or recording the runner uploaded: shown in place, or a chip to open it if it won't load. */
 function proofFile(e) {

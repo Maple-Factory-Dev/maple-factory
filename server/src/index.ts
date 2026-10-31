@@ -2,7 +2,7 @@
 
 import * as Sentry from "@sentry/cloudflare";
 import type { Env } from "./env.ts";
-import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
+import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadArtifact, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
@@ -69,6 +69,8 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     if (path.startsWith("/runner/attachments/") && request.method === "GET") return serveRunnerAttachment(request, env, path.slice("/runner/attachments/".length));
     const proof = /^\/runner\/proof\/([^/]+)$/.exec(path);
     if (proof && request.method === "PUT") return uploadProof(request, env, proof[1]);
+    const artifact = /^\/runner\/artifact\/([^/]+)$/.exec(path);
+    if (artifact && request.method === "PUT") return uploadArtifact(request, env, artifact[1]);
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
     if (path.startsWith("/icon/") && request.method === "GET") return serveIcon(env, path.slice("/icon/".length));
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
