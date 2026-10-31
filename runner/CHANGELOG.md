@@ -1,13 +1,13 @@
-## 0.76.0 — 2026-10-31
-
-Understands the new closed task state, for tasks that finish without code to merge, and closed-task counts in statistics.
-
 # maple-runner changelog
 
 Newest first. A release adds its `## <version> — <date>` section here before running
 `scripts/release-runner.mjs`, which takes that section as the manifest's notes (unless `--notes` is given) and
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
+
+## 0.76.0 — 2026-10-31
+
+Understands the new closed task state, for tasks that finish without code to merge, and closed-task counts in statistics.
 
 ## 0.75.0 — 2026-10-31
 
