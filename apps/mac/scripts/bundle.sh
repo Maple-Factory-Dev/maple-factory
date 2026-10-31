@@ -18,6 +18,8 @@ bin="$(swift build -c "$config" --show-bin-path)"
 version="$(plutil -extract version raw "$here/version.json")"
 build="$(plutil -extract build raw "$here/version.json")"
 updates="${UPDATES_URL:-https://updates.maplefactory.dev}"
+# Crash and error reports go to Maple Factory's Sentry project (ErrorReports.swift); debug builds send none.
+sentry_dsn="$(plutil -extract projects.mac.dsn raw "$root/server/web/sentry.json")"
 
 app="$here/build/Maple Factory.app"
 rm -rf "$app"
@@ -61,6 +63,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${build}</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>MapleSentryDSN</key><string>${sentry_dsn}</string>
   <key>SUFeedURL</key><string>${updates}/appcast.xml</string>
   <key>SUPublicEDKey</key><string>g9Kk8H1vNiqHXzA8sI6+55GCkZ2vc321tJOsbbNDdCY=</string>
   <key>SUEnableAutomaticChecks</key><true/>

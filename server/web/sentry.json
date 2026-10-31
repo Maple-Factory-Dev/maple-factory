@@ -1,0 +1,9 @@
+{
+  "org": "andrea-fomera",
+  "projects": {
+    "server": { "slug": "maple-server", "dsn": "https://8db41f9e31b2d3d20bc734b97dc019fb@o4512348081160192.ingest.us.sentry.io/4512348239233024" },
+    "web": { "slug": "maple-web", "dsn": "https://bc973f1271f85db56221cf4e3a612046@o4512348081160192.ingest.us.sentry.io/4512348239626240" },
+    "runner": { "slug": "maple-runner", "dsn": "https://b1bd593792b9e3979c8dc733913a9274@o4512348081160192.ingest.us.sentry.io/4512348239691776" },
+    "mac": { "slug": "maple-mac", "dsn": "https://4c772bd49d23679dc96e22a0ba52d97c@o4512348081160192.ingest.us.sentry.io/4512348239757312" }
+  }
+}

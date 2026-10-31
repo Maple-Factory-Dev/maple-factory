@@ -13,6 +13,8 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
         // Updates: the app checks maplefactory.dev's appcast (scripts/release.mjs publishes it).
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
+        // Crash and error reports (ErrorReports.swift). The Mac app only: MapleKit stays dependency-free for iOS.
+        .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.32.0"),
     ],
     targets: [
         // Foundation and Security only, so it builds for iOS (scripts/check-ios.sh).
@@ -31,6 +33,7 @@ let package = Package(
                 "MapleKit",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: "Sources/MapleFactory",
             resources: [.process("Resources")],

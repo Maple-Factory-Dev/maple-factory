@@ -409,6 +409,7 @@ import Foundation
             attempt = 0
             status = .live
             org = snapshot.org
+            ErrorReports.tag(org: snapshot.org)
             me = snapshot.me
             machines = snapshot.machines
             ends = snapshot.ended.map { EndRecord(machine: $0.machine, end: $0.end) }

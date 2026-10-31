@@ -1,5 +1,6 @@
 // maple-factory server: one org's factory, in that org's own Cloudflare account.
 
+import * as Sentry from "@sentry/cloudflare";
 import type { Env } from "./env.ts";
 import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
@@ -15,10 +16,18 @@ import { intakeApi, intakeKey, slackCommand } from "./intake-routes.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
 import { handleSetup } from "./setup.ts";
+import sentry from "../web/sentry.json";
+import { sentryDsn, sentryOptions as options } from "./sentry.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
-export { MachineHub } from "./machine-hub.ts";
-export { OrgHub } from "./org-hub.ts";
+import { MachineHub as MachineHubBase } from "./machine-hub.ts";
+import { OrgHub as OrgHubBase } from "./org-hub.ts";
+
+const sentryOptions = (env: Env) => options(env, sentry.projects.server.dsn, SERVER_VERSION);
+
+// The hubs report their errors too; with reports off they get no DSN and the SDK stays idle.
+export const OrgHub = Sentry.instrumentDurableObjectWithSentry((env: Env) => sentryOptions(env) ?? {}, OrgHubBase);
+export const MachineHub = Sentry.instrumentDurableObjectWithSentry((env: Env) => sentryOptions(env) ?? {}, MachineHubBase);
 
 /** Pages people open in a browser. Once the factory has a PUBLIC_URL, these move there from its other
  *  addresses (its workers.dev one), since GitHub sign-in only comes back to that one. */
@@ -26,7 +35,7 @@ const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*)?$/;
 
 const isUpgrade = (request: Request) => request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
-export default {
+export default Sentry.withSentry((env: Env) => sentryOptions(env), {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -40,8 +49,10 @@ export default {
     if (path === "/healthz") {
       // What the apps need before signing in: the protocol, the org, and how to sign in here.
       const signIn = env.DEV_LOGIN && isLocal(request) ? "dev" : authConfigured(env) ? "github" : "unconfigured";
-      return Response.json({ ok: true, version: SERVER_VERSION, protocol: PROTOCOL_VERSION, org: env.GITHUB_ORG || null, signIn, devLogin: signIn === "dev" ? env.DEV_LOGIN : null });
+      return Response.json({ ok: true, version: SERVER_VERSION, protocol: PROTOCOL_VERSION, org: env.GITHUB_ORG || null, signIn, devLogin: signIn === "dev" ? env.DEV_LOGIN : null, sentry: sentryDsn(env, sentry.projects.server.dsn) !== null });
     }
+    // Local dev only: an error on purpose, to see one arrive in Sentry.
+    if (path === "/debug/sentry-test" && env.DEV_LOGIN && isLocal(request)) throw new Error("Maple Factory server: Sentry test error");
 
     // Runners: enroll with a code, then connect with their own token.
     if (path === "/runner/enroll" && request.method === "POST") return enroll(request, env);
@@ -156,4 +167,4 @@ export default {
 
     return text("Not found.", 404);
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env>);

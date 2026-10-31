@@ -320,6 +320,18 @@ function cmdBuild(v) {
     run("codesign", ["--verify", "--strict", join(APP, nested)]);
   }
   ok(`signed ${APP}`);
+  uploadSymbols();
+}
+
+/** The app's debug symbols to Sentry, so its crash reports read as source lines. Only with SENTRY_AUTH_TOKEN
+ *  (in .env.release or the environment): without one the release goes out and its crashes show addresses. */
+function uploadSymbols() {
+  if (!process.env.SENTRY_AUTH_TOKEN) return console.log("  (No SENTRY_AUTH_TOKEN: skipping the dSYM upload to Sentry.)");
+  const sentry = JSON.parse(readFileSync(join(here, "../../server/web/sentry.json"), "utf8"));
+  const dsym = join(here, "build/MapleFactory.dSYM");
+  run("dsymutil", [join(capture("swift", ["build", "-c", "release", "--show-bin-path"]), "MapleFactory"), "-o", dsym]);
+  run("npx", ["-y", "@sentry/cli@3.8.2", "debug-files", "upload", "--org", sentry.org, "--project", sentry.projects.mac.slug, dsym]);
+  ok("dSYMs uploaded to Sentry");
 }
 
 /** Notarizes and staples a .app or .dmg. Both get their own round: the app's ticket is what opens it
