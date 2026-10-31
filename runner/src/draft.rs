@@ -68,7 +68,8 @@ pub async fn run(sessions: Sessions, r: Run) {
         } else if r.repo.is_some() || r.folder.is_some() {
             say(DraftLineKind::Tool, &format!("Fetching {}…", r.repo.as_deref().or(r.folder.as_deref()).unwrap_or("the code")));
             let req = crate::worktrees::Request { name: worktree_name(&r.id)?, base: r.base.clone(), existing: false };
-            let started = crate::tasks::start(&emit, &r.id, r.folder.as_deref().unwrap_or(""), r.repo.as_deref(), &req, &crate::tasks::Places::here(), None).await?;
+            let started =
+                crate::tasks::start(&emit, &r.id, r.folder.as_deref().unwrap_or(""), r.repo.as_deref(), &req, &crate::tasks::Places::here(), None).await?;
             let dir = expand_home(&started.worktree);
             worktree = Some(dir.clone());
             dir
@@ -78,7 +79,9 @@ pub async fn run(sessions: Sessions, r: Run) {
             dir
         };
         say(DraftLineKind::Tool, "Thinking…");
-        tokio::time::timeout(TIMEOUT, ask(&r, &cwd, r.repo.is_some() || r.folder.is_some(), &say)).await.map_err(|_| anyhow!("It took longer than 8 minutes, so it was stopped."))?
+        tokio::time::timeout(TIMEOUT, ask(&r, &cwd, r.repo.is_some() || r.folder.is_some(), &say))
+            .await
+            .map_err(|_| anyhow!("It took longer than 8 minutes, so it was stopped."))?
     };
     let result = tokio::select! {
         r = work => r,
@@ -213,7 +216,9 @@ async fn ask(r: &Run, cwd: &Path, read: bool, say: &(dyn Fn(DraftLineKind, &str)
     }
     match answer {
         Some(a) => Ok(a),
-        None if !status.success() => bail!("{} stopped: {}", agent.label, errors.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no reason given").trim()),
+        None if !status.success() => {
+            bail!("{} stopped: {}", agent.label, errors.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no reason given").trim())
+        }
         None => bail!("{} didn't answer.", agent.label),
     }
 }
@@ -275,7 +280,14 @@ mod tests {
     use super::*;
 
     fn run_on(folder: &Path, agent: &str) -> Run {
-        Run { id: "draft-0b7c1e2a".into(), agent: agent.into(), prompt: "What's here?".into(), repo: None, folder: Some(folder.to_string_lossy().into_owned()), base: None }
+        Run {
+            id: "draft-0b7c1e2a".into(),
+            agent: agent.into(),
+            prompt: "What's here?".into(),
+            repo: None,
+            folder: Some(folder.to_string_lossy().into_owned()),
+            base: None,
+        }
     }
 
     fn git(dir: &Path, args: &[&str]) {
@@ -347,7 +359,8 @@ mod tests {
         let cwd = Path::new("/w/app");
         let read = serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/w/app/lib/session.ts"}}]}});
         assert_eq!(progress(&read, cwd), vec![tool("Reading lib/session.ts")]);
-        let grep = serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Grep", "input": {"pattern": "refreshToken"}}]}});
+        let grep =
+            serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Grep", "input": {"pattern": "refreshToken"}}]}});
         assert_eq!(progress(&grep, cwd), vec![tool("Searching for “refreshToken”")]);
         let codex = serde_json::json!({"type": "item.started", "item": {"type": "command_execution", "command": "rg -n session lib"}});
         assert_eq!(progress(&codex, cwd), vec![tool("Running `rg -n session lib`")]);
@@ -372,9 +385,11 @@ mod tests {
     #[test]
     fn says_what_codex_says_and_reasons() {
         let cwd = Path::new("/w/app");
-        let said = serde_json::json!({"type": "item.completed", "item": {"id": "item_3", "type": "agent_message", "text": "Sessions refresh in lib/session.ts."}});
+        let said =
+            serde_json::json!({"type": "item.completed", "item": {"id": "item_3", "type": "agent_message", "text": "Sessions refresh in lib/session.ts."}});
         assert_eq!(progress(&said, cwd), vec![text("Sessions refresh in lib/session.ts.")]);
-        let reasoned = serde_json::json!({"type": "item.completed", "item": {"id": "item_0", "type": "reasoning", "text": "**Looking for the refresh logic**"}});
+        let reasoned =
+            serde_json::json!({"type": "item.completed", "item": {"id": "item_0", "type": "reasoning", "text": "**Looking for the refresh logic**"}});
         assert_eq!(progress(&reasoned, cwd), vec![text("**Looking for the refresh logic**")]);
         let older = serde_json::json!({"id": "0", "msg": {"type": "agent_message", "message": "Done."}});
         assert_eq!(progress(&older, cwd), vec![text("Done.")]);

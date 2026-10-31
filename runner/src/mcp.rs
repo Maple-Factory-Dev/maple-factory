@@ -138,7 +138,9 @@ pub enum Handled {
     Nothing,
     Reply(Value),
     /// A `tools/list`: ask the factory for this session's tools, then answer with `id`.
-    List { id: Value },
+    List {
+        id: Value,
+    },
     /// A `tools/call` to run, then answer with `id`.
     Call {
         id: Value,

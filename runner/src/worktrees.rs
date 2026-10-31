@@ -1231,7 +1231,10 @@ mod tests {
         sh(&repo, &["push", "--quiet", "origin", "main", "agent/fix"]);
         sh(&repo, &["remote", "set-head", "origin", "main"]);
         // Someone else pushed to the branch: that commit isn't in the PR or in main.
-        let other = sh(&bare, &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", "agent/fix^{tree}", "-p", "agent/fix", "-m", "someone else's push"]);
+        let other = sh(
+            &bare,
+            &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", "agent/fix^{tree}", "-p", "agent/fix", "-m", "someone else's push"],
+        );
         sh(&bare, &["update-ref", "refs/heads/agent/fix", &other]);
         let heads = [head];
         let w = TaskWork { delete_remote: true, ..work(&wts, &repos, true, &heads) };
@@ -1239,7 +1242,11 @@ mod tests {
         let done = remove_task(&[], w).await.unwrap();
         assert!(done.branch_deleted && !wt.exists(), "{}", done.message);
         finish(done.deleting).await;
-        assert!(done.message.ends_with(&format!("kept branch agent/fix on origin (its tip {} isn't in the pull request or main)", &other[..7])), "{}", done.message);
+        assert!(
+            done.message.ends_with(&format!("kept branch agent/fix on origin (its tip {} isn't in the pull request or main)", &other[..7])),
+            "{}",
+            done.message
+        );
         assert_eq!(sh(&bare, &["rev-parse", "agent/fix"]), other);
 
         // That commit merged into main after all: now the leftover goes (the local branch already has).
@@ -1752,7 +1759,16 @@ mod tests {
     }
 
     fn scripts(create: Option<&str>, setup: Option<&str>) -> crate::worktree_scripts::WorktreeScripts {
-        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), preflight: None, preflight_watch: None, setup: setup.map(String::from), checks: None, teardown: None, archive: None, timeout_secs: Some(30) }
+        crate::worktree_scripts::WorktreeScripts {
+            create: create.map(String::from),
+            preflight: None,
+            preflight_watch: None,
+            setup: setup.map(String::from),
+            checks: None,
+            teardown: None,
+            archive: None,
+            timeout_secs: Some(30),
+        }
     }
 
     fn for_task<'a>(s: &'a crate::worktree_scripts::WorktreeScripts, env: &'a [(String, String)]) -> crate::worktree_scripts::ForTask<'a> {
@@ -1812,7 +1828,15 @@ mod tests {
                 lines.lock().unwrap().push(text);
             }
         };
-        let t = crate::worktree_scripts::ForTask { scripts: s, task_id: "MF-12", repo: Some("acme/app"), base: Some("main"), env: &[], emit: Some(&emit), path: None };
+        let t = crate::worktree_scripts::ForTask {
+            scripts: s,
+            task_id: "MF-12",
+            repo: Some("acme/app"),
+            base: Some("main"),
+            env: &[],
+            emit: Some(&emit),
+            path: None,
+        };
         let r = create_with(repo, name, "main", Some(&t)).await;
         (r, lines.into_inner().unwrap())
     }

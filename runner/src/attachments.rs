@@ -39,8 +39,7 @@ impl Link {
 }
 
 fn is_uuid(s: &str) -> bool {
-    s.len() == 36
-        && s.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { matches!(b, b'0'..=b'9' | b'a'..=b'f') })
+    s.len() == 36 && s.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { matches!(b, b'0'..=b'9' | b'a'..=b'f') })
 }
 
 fn name_byte(b: u8) -> bool {
@@ -280,7 +279,11 @@ mod tests {
                 { "name": "layout-crash.log", "link": format!("/attachments/{B}/layout-crash.log"), "error": "404 Not Found: Not found." },
             ])
         );
-        assert!(result["summary"].as_str().unwrap().ends_with("1 attachment saved locally (open each one's path), 1 couldn't be fetched (see its error)"), "{}", result["summary"]);
+        assert!(
+            result["summary"].as_str().unwrap().ends_with("1 attachment saved locally (open each one's path), 1 couldn't be fetched (see its error)"),
+            "{}",
+            result["summary"]
+        );
         assert_eq!(std::fs::read(&path).unwrap(), png);
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         let first = heads.lock().unwrap().clone();

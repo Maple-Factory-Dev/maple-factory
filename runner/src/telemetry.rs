@@ -108,11 +108,7 @@ mod tests {
 
     #[test]
     fn scrub_drops_the_host_and_home() {
-        let event = Event {
-            server_name: Some("ada-mbp".into()),
-            message: Some("couldn't read /Users/ada/Projects/x on ada-mbp".into()),
-            ..Default::default()
-        };
+        let event = Event { server_name: Some("ada-mbp".into()), message: Some("couldn't read /Users/ada/Projects/x on ada-mbp".into()), ..Default::default() };
         let out = scrub(event, Some("/Users/ada"), Some("ada-mbp")).unwrap();
         assert_eq!(out.server_name, None);
         assert_eq!(out.message.as_deref(), Some("couldn't read ~/Projects/x on <host>"));

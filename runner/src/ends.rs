@@ -36,14 +36,7 @@ const AUTH_SIGNS: &[&str] = &[
 ];
 
 /// Lines agents print when the plan's limit is reached, lowercased.
-const LIMIT_SIGNS: &[&str] = &[
-    "usage limit",
-    "you've hit your limit",
-    "5-hour limit reached",
-    "weekly limit reached",
-    "rate_limit_error",
-    "limit will reset",
-];
+const LIMIT_SIGNS: &[&str] = &["usage limit", "you've hit your limit", "5-hour limit reached", "weekly limit reached", "rate_limit_error", "limit will reset"];
 
 pub fn classify(seen: &Seen) -> (EndCause, Option<String>) {
     if seen.requested {
