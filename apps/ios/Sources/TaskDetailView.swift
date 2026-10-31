@@ -120,17 +120,23 @@ struct TaskDetailView: View {
 struct Card<Content: View>: View {
     let title: String
     let icon: String
+    /// Shown at the header's trailing edge, e.g. a Select toggle.
+    var accessory: AnyView?
     @ViewBuilder let content: Content
 
-    init(_ title: String, icon: String, @ViewBuilder content: () -> Content) {
+    init(_ title: String, icon: String, accessory: AnyView? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
         self.icon = icon
+        self.accessory = accessory
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: icon).font(.headline)
+            HStack {
+                Label(title, systemImage: icon).font(.headline)
+                if let accessory { Spacer(); accessory }
+            }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -421,15 +427,87 @@ struct WebView: UIViewRepresentable {
 // MARK: - Review
 
 struct ReviewSection: View {
+    @Environment(FactoryStore.self) private var store
     let task: Wire.Task
 
+    /// Picking findings to turn into follow-up tasks.
+    @State private var selecting = false
+    @State private var picked: Set<String> = []
+    @State private var followUps: FollowUpBatch?
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 18) { sections }
+            .sheet(item: $followUps) { batch in
+                FollowUpSheet(task: task, drafts: batch.drafts) {
+                    selecting = false
+                    picked = []
+                }
+            }
+    }
+
+    private var selectToggle: some View {
+        Button(selecting ? "Done" : "Select") {
+            selecting.toggle()
+            if !selecting { picked = [] }
+        }
+        .font(.subheadline.weight(.medium))
+        .accessibilityIdentifier("findings-select")
+    }
+
+    private func findingRow(_ finding: Wire.Finding, pickable: Bool, followedBy: String?) -> some View {
+        let on = picked.contains(finding.id)
+        return HStack(alignment: .top, spacing: 10) {
+            if pickable {
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(on ? Color.accentColor : .secondary)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(finding.severity.rawValue).font(.caption2.weight(.bold)).foregroundStyle(finding.severity == .blocker ? Theme.danger : Theme.warning)
+                    Text(finding.kind.rawValue).font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(finding.status == .fixed ? "Fixed in round \(finding.fixedIn ?? 0)" : finding.status.rawValue).font(.caption2).foregroundStyle(finding.status == .fixed ? Theme.approve : .secondary)
+                }
+                Text(finding.text).font(.callout).strikethrough(finding.status == .fixed, color: .secondary)
+                if let file = finding.file { Text(file).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                if let followedBy {
+                    Label("Follow-up: \(followedBy)", systemImage: "arrowshape.turn.up.right")
+                        .font(.caption.weight(.medium)).foregroundStyle(Theme.state(.drafting))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Follow-up: \(followedBy)")
+                        .accessibilityIdentifier("finding-followed-\(finding.id)")
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard pickable else { return }
+            if on { picked.remove(finding.id) } else if picked.count < FactoryStore.maxFollowUps { picked.insert(finding.id) }
+        }
+        .accessibilityElement(children: pickable ? .combine : .contain)
+        .accessibilityAddTraits(pickable ? [.isButton] : [])
+        .accessibilityAddTraits(on ? [.isSelected] : [])
+        .accessibilityIdentifier(pickable ? "finding-pick-\(finding.id)" : "finding-\(finding.id)")
+    }
+
+    @ViewBuilder private var sections: some View {
+        let block = FactoryStore.followUpBlock(task, feed: store.feed)
+        let followable = Set(FactoryStore.followableFindings(task, feed: store.feed).map(\.id))
+        let followed = FactoryStore.followedUp(store.feed)
         if let review = task.autoReview {
             Card("Automatic review", icon: "sparkle.magnifyingglass") {
                 if let round = review.rounds.last {
-                    Label("Round \(round.number) of \(review.maxRounds): \(round.verdict.rawValue)", systemImage: round.verdict == .passed ? "checkmark.seal.fill" : "arrow.triangle.2.circlepath")
+                    Label("Round \(round.number) of \(review.maxRounds): \(round.verdict == .inProgress ? "reviewing…" : round.verdict.rawValue)",
+                          systemImage: round.verdict == .passed ? "checkmark.seal.fill" : "arrow.triangle.2.circlepath")
                         .foregroundStyle(round.verdict == .passed ? Theme.approve : Theme.warning)
                         .font(.subheadline.weight(.medium))
+                        .accessibilityIdentifier("review-round")
+                    if let focus = round.focus {
+                        Label("\(round.by ?? "Someone") asked it to look at: \(focus)", systemImage: "eye")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("review-round-focus")
+                    }
                 }
                 Text(review.summary).font(.callout)
                 ForEach(review.ask + review.proofs, id: \.text) { check in
@@ -438,24 +516,38 @@ struct ReviewSection: View {
                 }
             }
             if !review.findings.isEmpty {
-                Card("Findings", icon: "ladybug") {
+                let canSelect = block == nil && !followable.isEmpty
+                Card("Findings", icon: "ladybug", accessory: canSelect ? AnyView(selectToggle) : nil) {
                     ForEach(review.findings, id: \.id) { finding in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Text(finding.severity.rawValue).font(.caption2.weight(.bold)).foregroundStyle(finding.severity == .blocker ? Theme.danger : Theme.warning)
-                                Text(finding.kind.rawValue).font(.caption2).foregroundStyle(.secondary)
-                                Spacer()
-                                Text(finding.status == .fixed ? "Fixed in round \(finding.fixedIn ?? 0)" : finding.status.rawValue).font(.caption2).foregroundStyle(finding.status == .fixed ? Theme.approve : .secondary)
-                            }
-                            Text(finding.text).font(.callout).strikethrough(finding.status == .fixed, color: .secondary)
-                            if let file = finding.file { Text(file).font(.caption.monospaced()).foregroundStyle(.secondary) }
-                        }
+                        findingRow(finding, pickable: selecting && followable.contains(finding.id), followedBy: followed["\(task.id)#\(finding.id)"])
                         Divider()
                     }
+                    if selecting && canSelect {
+                        Button {
+                            let drafts = review.findings.filter { picked.contains($0.id) }.map(FollowUpDraft.init(finding:))
+                            followUps = FollowUpBatch(drafts: drafts)
+                        } label: {
+                            Label("Make \(picked.count) follow-up task\(picked.count == 1 ? "" : "s")", systemImage: "arrowshape.turn.up.right")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(picked.isEmpty)
+                        .accessibilityIdentifier("make-follow-ups")
+                    }
                 }
+                .onChange(of: followable) { picked.formIntersection(followable) }
             }
         } else {
             ContentUnavailableView("No review yet", systemImage: "eye", description: Text("The review agent reads the change once it's pushed."))
+        }
+        if block == nil {
+            Button {
+                followUps = FollowUpBatch(drafts: [FollowUpDraft(finding: nil)])
+            } label: {
+                Label("Follow-up from a note…", systemImage: "square.and.pencil").font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("follow-up-note")
         }
         if let pr = task.pr {
             Card("Pull request #\(pr.number)", icon: "arrow.triangle.pull") {
@@ -642,6 +734,16 @@ struct ActionBar: View {
                     action("Request changes", "arrow.uturn.left") {
                         compose = Compose(title: "Request changes", placeholder: "What should the builder change?", send: "Request") { store.steer(task.id, text: $0) }
                     }
+                    // Another automated-review round with your focus, once the last one is in (the Mac's ReviewActions).
+                    if task.autoReview?.rounds.isEmpty == false {
+                        let running = task.autoReview?.rounds.last?.verdict == .inProgress
+                        action(running ? "Reviewing…" : "Request review…", "eye", enabled: FactoryStore.canRequestReview(task, feed: store.feed)) {
+                            compose = Compose(title: "Request a review of \(task.id)", placeholder: "What should it look for? e.g. check security", send: "Send") { [store, task] in
+                                store.requestReview(task.id, focus: $0)
+                            }
+                        }
+                        .accessibilityIdentifier("request-review")
+                    }
                 }
                 if task.state == .building || task.state == .planning {
                     action("Steer", "arrow.triangle.turn.up.right.diamond") {
@@ -658,18 +760,21 @@ struct ActionBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
+        .accessibilityIdentifier("action-bar")
         .background(.bar)
     }
 
     @ViewBuilder
-    private func action(_ title: String, _ icon: String, prominent: Bool = false, _ perform: @escaping () -> Void) -> some View {
+    private func action(_ title: String, _ icon: String, prominent: Bool = false, enabled: Bool = true, _ perform: @escaping () -> Void) -> some View {
         if prominent {
             Button(action: perform) { Label(title, systemImage: icon).font(.subheadline.weight(.semibold)) }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.approve)
+                .disabled(!enabled)
         } else {
             Button(action: perform) { Label(title, systemImage: icon).font(.subheadline) }
                 .buttonStyle(.bordered)
+                .disabled(!enabled)
         }
     }
 }
@@ -702,5 +807,89 @@ struct ComposeSheet: View {
                 .onAppear { focused = true }
         }
         .presentationDetents([.medium])
+    }
+}
+
+// MARK: - Follow-ups
+
+/// One draft task to make from a finding, or from a note when `finding` is nil.
+struct FollowUpDraft: Identifiable {
+    let id = UUID()
+    let finding: Wire.Finding?
+    var title: String
+    var note = ""
+
+    /// Its title starts as the finding's first line, at most 120 characters (the server's cap).
+    init(finding: Wire.Finding?) {
+        self.finding = finding
+        let line = finding?.text.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? ""
+        title = String(line.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+    }
+
+    /// A note-only follow-up needs a brief as well as a title, as the server requires.
+    var isReady: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (finding != nil || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    var item: Wire.FollowUpItem {
+        .init(finding: finding?.id, title: title.trimmingCharacters(in: .whitespacesAndNewlines), brief: note.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
+struct FollowUpBatch: Identifiable {
+    let id = UUID()
+    let drafts: [FollowUpDraft]
+}
+
+/// Edit each follow-up's title and note, then Make sends them as one `task.followUp`. A refusal, or the
+/// toast saying where they went, shows in the notice banner.
+struct FollowUpSheet: View {
+    @Environment(FactoryStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let task: Wire.Task
+    @State var drafts: [FollowUpDraft]
+    let onSent: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                ForEach(Array($drafts.enumerated()), id: \.element.id) { index, $draft in
+                    Section {
+                        TextField("Title", text: $draft.title, axis: .vertical)
+                            .lineLimit(1...3)
+                            .accessibilityIdentifier("follow-up-title-\(index)")
+                        TextField(draft.finding == nil ? "What should it do?" : "Note (optional)", text: $draft.note, axis: .vertical)
+                            .lineLimit(2...6)
+                            .accessibilityIdentifier("follow-up-brief-\(index)")
+                    } header: {
+                        if let finding = draft.finding {
+                            Text("\(finding.severity.rawValue) \(finding.kind.rawValue) · \(finding.id)")
+                        } else {
+                            Text("From a note")
+                        }
+                    } footer: {
+                        if let finding = draft.finding { Text(finding.text).lineLimit(3) }
+                    }
+                }
+                Section {
+                    Text("They're made as drafts in \(store.feed.goal(task.goal)?.name ?? "the goal"), linked back to \(task.id).")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(drafts.count == 1 ? "Follow-up of \(task.id)" : "\(drafts.count) follow-ups of \(task.id)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Make") {
+                        store.followUp(task.id, items: drafts.map(\.item))
+                        onSent()
+                        dismiss()
+                    }
+                    .disabled(drafts.isEmpty || !drafts.allSatisfy(\.isReady))
+                }
+            }
+        }
     }
 }
