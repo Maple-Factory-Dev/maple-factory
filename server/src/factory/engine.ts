@@ -1856,7 +1856,7 @@ export class Engine {
     this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt }, by);
     task.state = "merged";
     task.pr.state = "merged";
-    this.event(task, "factory", `merged into ${task.pr.base} (${msg.commit?.slice(0, 7) ?? ""})`);
+    this.event(task, "factory", `merged into ${task.pr.base}${msg.commit ? ` (${msg.commit.slice(0, 7)})` : ""}`);
     // The runner's merge (no GitHub App) deleted the branch on origin, or says why not.
     const branch = msg.branch ? branchNote(task.pr.branch, msg.branch) : null;
     if (branch) this.event(task, "factory", branch.text);
