@@ -2973,8 +2973,26 @@ export class Engine {
   }
 
   /** A machine that's back can still be running sessions the factory ended while it was away
-   *  (its task moved elsewhere); those stop now. */
-  reap(machine: Machine) {
+   *  (its task moved elsewhere); those stop now. And one that just came back (`reconnected`) without a
+   *  task's session, e.g. after a restart, lost it: the task starts again, as for any `tmuxLost` end. Only on
+   *  a reconnect, since a session can take a while (fetch, worktree) to show up in the machine's list. */
+  async reap(machine: Machine, reconnected = false) {
+    if (reconnected) {
+      const listed = new Set(machine.sessions.map((s) => s.session.id));
+      const lost = this.store.tasks().filter((t) => {
+        const w = t.worker;
+        return w && w.machine === machine.id && !listed.has(w.session) && Date.now() - w.startedAt > REAP_AFTER_MS && this.store.session(w.session)?.ended == null;
+      });
+      for (const task of lost) {
+        await this.ended({
+          id: task.worker!.session,
+          cause: "tmuxLost",
+          detail: `It was gone when ${machine.name} reconnected; the machine likely restarted.`,
+          at: Date.now(),
+          lastOutput: [],
+        });
+      }
+    }
     for (const { session } of machine.sessions) {
       if (!session.taskId || this.reaped.has(session.id)) continue;
       const s = this.store.session(session.id);
