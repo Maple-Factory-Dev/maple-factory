@@ -2354,6 +2354,7 @@ final class AppState {
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
+            case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             // The Changes tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.

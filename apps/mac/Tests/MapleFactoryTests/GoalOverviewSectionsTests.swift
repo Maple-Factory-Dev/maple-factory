@@ -126,3 +126,37 @@ struct GoalOverviewSectionsTests {
         #expect(Sections.steps(building)?.total == 3)
     }
 }
+
+/// Which Overview sections are folded, as @AppStorage keeps it.
+struct OverviewCollapseTests {
+    @Test func defaultCollapsesOnlyLanded() {
+        let collapse = OverviewCollapse(raw: OverviewCollapse.defaultRaw)
+        #expect(collapse.collapsed == [.landed])
+        #expect(collapse == OverviewCollapse())
+        for section in OverviewSection.allCases where section != .landed { #expect(!collapse.isCollapsed(section)) }
+    }
+
+    @Test func togglingRoundTripsThroughTheStoredString() {
+        let raw = OverviewCollapse(raw: OverviewCollapse.defaultRaw).toggling(.drafts).raw
+        #expect(raw == "drafts,landed")
+        let reread = OverviewCollapse(raw: raw)
+        #expect(reread.isCollapsed(.drafts))
+        #expect(reread.isCollapsed(.landed))
+        let back = reread.toggling(.drafts).toggling(.landed).raw
+        #expect(back == "")
+        #expect(OverviewCollapse(raw: back).collapsed.isEmpty)
+    }
+
+    @Test func unknownAndEmptyKeysAreIgnored() {
+        let collapse = OverviewCollapse(raw: "queue,,bogus, inMotion ,")
+        #expect(collapse.collapsed == [.queue, .inMotion])
+        #expect(OverviewCollapse(raw: "").collapsed.isEmpty)
+    }
+
+    @Test func togglingOneSectionLeavesTheOthersAlone() {
+        let start = OverviewCollapse(collapsed: [.queue, .landed])
+        let next = start.toggling(.needsYou)
+        #expect(next.collapsed == [.queue, .landed, .needsYou])
+        #expect(next.toggling(.queue).collapsed == [.landed, .needsYou])
+    }
+}
