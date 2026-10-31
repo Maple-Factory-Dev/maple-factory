@@ -89,6 +89,10 @@ export const enums: Record<string, Enum> = {
   CheckVerdict: { values: { met: "Met.", partial: "Partly met.", missed: "Missed." } },
   FindingKind: { values: { scope: "Not what was asked.", proof: "Proof isn't real or enough.", code: "Code problem.", risk: "Risk." } },
   Severity: { values: { blocker: "Must fix.", major: "Should fix.", minor: "Nice to fix." } },
+  Priority: {
+    doc: "How soon a task should be done.",
+    values: { p0: "Do it right away.", p1: "Next.", p2: "Soon.", p3: "When there's room." },
+  },
   FindingStatus: { values: { open: "Open.", fixed: "Fixed (see fixedIn).", disputed: "The builder disagrees." } },
   HandReason: {
     values: {
@@ -499,6 +503,11 @@ export const structs: Record<string, Struct> = {
     fields: { version: "string", how: "string" },
     fieldDocs: { how: "One sentence: merge the update pull request in the factory's repo, or run `maple update`." },
   },
+  FollowUpItem: {
+    doc: "One draft for task.followUp to make.",
+    fields: { finding: "string?", title: "string", brief: "string", priority: "Priority?" },
+    fieldDocs: { finding: "The review finding it follows up (f3); none: a free-form note about the task.", brief: "What to do; the finding's text is quoted ahead of it." },
+  },
   FollowUp: {
     doc: "Part of the work that belongs in another of the goal's repos: a task of its own once the plan is approved.",
     fields: { repo: "string", title: "string", brief: "string", task: "string?" },
@@ -574,6 +583,8 @@ export const structs: Record<string, Struct> = {
       startAt: "u64?",
       force: "bool?",
       effort: "string?",
+      priority: "Priority?",
+      followUpOf: "string?",
       mergeAt: "u64?",
       mergeForecast: "MergeForecast?",
     },
@@ -590,6 +601,8 @@ export const structs: Record<string, Struct> = {
       after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
       splitFrom: "The task it was split off from to stay inside the PR budget.",
       scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
+      priority: "How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).",
+      followUpOf: "What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
@@ -1243,16 +1256,22 @@ export const unions: Record<string, Union> = {
         fields: { goal: "string", upTo: "RiskLevel?", note: "string?" },
       },
       "task.create": {
-        fields: { goal: "string", title: "string", brief: "string", shareable: "bool", plan: "bool", tickets: "TicketLink[]", agent: "string?", intake: "string?", repo: "string?", after: "string[]?", effort: "string?" },
+        fields: { goal: "string", title: "string", brief: "string", shareable: "bool", plan: "bool", tickets: "TicketLink[]", agent: "string?", intake: "string?", repo: "string?", after: "string[]?", effort: "string?", priority: "Priority?" },
         fieldDocs: { plan: "Send it to planning now; otherwise it stays a draft.", intake: "The request it was composed from, which then tracks it." },
       },
       "task.edit": {
-        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?" },
+        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?", priority: "Priority?", clearPriority: "bool?" },
         fieldDocs: {
           effort: "Put it in this effort; an empty string takes it out.",
+          priority: "Set its priority; refused once it's merged or cancelled. Setting a queued task to P0 moves it to the front of the queue.",
+          clearPriority: "Take its priority off.",
           agent: "claude or codex; refused once it's merged or cancelled. Takes effect from its next session.",
           model: "The model its next sessions use; an empty string goes back to the agent's default.",
         },
+      },
+      "task.followUp": {
+        doc: "Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused.",
+        fields: { id: "string", items: "FollowUpItem[]" },
       },
       "task.assign": {
         doc: "Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).",
