@@ -158,7 +158,14 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
       return orgHub(env).fetch(`https://org/stats${url.search}`);
     }
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
-    if (diff && request.method === "GET") return orgHub(env).fetch(`https://org/diff?task=${diff[1]}`);
+    if (diff && request.method === "GET") {
+      // ?commit=<sha>: that one commit's patch, from the Changes tab's picker.
+      const commit = url.searchParams.get("commit");
+      if (commit != null && !/^[0-9a-f]{7,64}$/.test(commit)) return text("That isn't a commit.", 400);
+      return orgHub(env).fetch(`https://org/diff?task=${diff[1]}${commit ? `&commit=${commit}` : ""}`);
+    }
+    const commits = /^\/api\/tasks\/([\w-]+)\/commits$/.exec(path);
+    if (commits && request.method === "GET") return orgHub(env).fetch(`https://org/commits?task=${commits[1]}`);
     const threads = /^\/api\/tasks\/([\w-]+)\/threads$/.exec(path);
     if (threads && request.method === "GET") return orgHub(env).fetch(`https://org/threads?task=${threads[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);
