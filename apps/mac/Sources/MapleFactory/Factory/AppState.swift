@@ -240,7 +240,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "onboardingStep", "goaltasks"]
+                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -401,6 +401,7 @@ final class AppState {
         task.after = FactoryData.seedAfter[task.id] ?? []
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
+        task.artifacts = FactoryData.seedArtifacts[task.id] ?? []
         if task.id == "ATL-160" {
             task.intakeID = "req-sso"
             task.comments.append(Comment(author: FactoryData.dana,

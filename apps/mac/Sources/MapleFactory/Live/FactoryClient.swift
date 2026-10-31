@@ -332,6 +332,9 @@ import Foundation
         var request = URLRequest(url: Self.websocketURL(server, path: "/client/connect"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
+        // The snapshot carries every task the factory has had, so it outgrows URLSession's 1 MiB default
+        // ("Message too long") as a factory gets used.
+        socket.maximumMessageSize = 64 << 20
         self.socket = socket
         lastHeard = Date()
         socket.resume()

@@ -75,6 +75,10 @@ export const FindingStatusValues: readonly FindingStatus[] = ["open","fixed","di
 export type HandReason = "reviewLoop" | "proofBurden" | "needsInput" | "overBudget" | "sessionEnded" | "mergeFailed";
 export const HandReasonValues: readonly HandReason[] = ["reviewLoop","proofBurden","needsInput","overBudget","sessionEnded","mergeFailed"];
 
+/** What an agent shared on a task, which decides how the apps show it. */
+export type ArtifactKind = "html" | "image" | "svg" | "pdf" | "markdown" | "text" | "data";
+export const ArtifactKindValues: readonly ArtifactKind[] = ["html","image","svg","pdf","markdown","text","data"];
+
 export type MockupStatus = "proposed" | "approved" | "changesRequested";
 export const MockupStatusValues: readonly MockupStatus[] = ["proposed","approved","changesRequested"];
 
@@ -553,6 +557,23 @@ export interface Mockup {
   differences: string[];
 }
 
+/** A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version. */
+export interface Artifact {
+  id: string;
+  title: string;
+  kind: ArtifactKind;
+  summary?: string | null;
+  /** Its upload's link, /attachments/<id>/<name> (members fetch it there). */
+  file: string;
+  mime: string;
+  bytes: number;
+  /** The role of the agent that shared it. */
+  by: string;
+  at: number;
+  /** 1 for the first share, one more each time the same title is shared again. */
+  version: number;
+}
+
 export interface TicketLink {
   system: string;
   key: string;
@@ -752,6 +773,8 @@ export interface Task {
   risk?: Risk | null;
   autoReview?: AutoReview | null;
   mockups: Mockup[];
+  /** Files its agents shared: charts, images, pages. Empty on older tasks. */
+  artifacts: Artifact[];
   tickets: TicketLink[];
   shareable: boolean;
   /** claude or codex: what builds it. */
