@@ -1432,11 +1432,58 @@ function proofFile(e) {
   return link;
 }
 
+const AGENT_ROLES = ["planner", "builder", "reviewer"];
+/** Comment threads that have a Reply box open, by root id. */
+const replying = new Set();
+
+/** Comments grouped into threads: each root with its replies, oldest first, placed at its latest word.
+ *  A reply whose root isn't there any more shows as a root of its own. */
+function threads(comments) {
+  const ids = new Set(comments.map((c) => c.id));
+  const rootOf = (c) => (c.replyTo && ids.has(c.replyTo) ? c.replyTo : c.id);
+  const byRoot = new Map();
+  for (const c of comments) {
+    const r = rootOf(c);
+    if (!byRoot.has(r)) byRoot.set(r, { root: null, replies: [] });
+    if (r === c.id) byRoot.get(r).root = c;
+    else byRoot.get(r).replies.push(c);
+  }
+  return [...byRoot.values()].filter((th) => th.root).map((th) => {
+    th.replies.sort((a, b) => a.at - b.at);
+    th.at = Math.max(th.root.at, ...th.replies.map((c) => c.at));
+    return th;
+  });
+}
+
+function commentBody(t, c, known) {
+  const agent = AGENT_ROLES.includes(c.author);
+  return [
+    h("div", { class: "row" },
+      agent && h("span", { class: `agent-avatar ${c.author}`, title: `${name(c.author)} (${agentTitle(t.agent) || "agent"})` }, agentIcon(t.agent) ?? c.author[0].toUpperCase()),
+      h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))),
+    markdown(c.text, h, known),
+  ];
+}
+
+/** A comment and its replies, nested, with a Reply link that opens a box under them. */
+function thread(t, th, known) {
+  const root = th.root.id;
+  const open = replying.has(root);
+  const toggle = (e) => { e.preventDefault(); open ? replying.delete(root) : replying.add(root); render(); };
+  return h("div", { class: "comment thread" },
+    commentBody(t, th.root, known),
+    th.replies.length > 0 && h("div", { class: "replies" }, th.replies.map((c) => h("div", { class: `reply${AGENT_ROLES.includes(c.author) ? " by-agent" : ""}` }, commentBody(t, c, known)))),
+    open
+      ? h("div", { class: "reply-box" }, compose(t, `reply:${root}`, "Reply…", "Reply", (text) => { send({ type: "task.comment", id: t.id, text, replyTo: root }); }),
+          h("button", { class: "link faint small", onclick: toggle }, "Cancel"))
+      : h("button", { class: "link reply-link", onclick: toggle }, th.replies.length ? `Reply · ${th.replies.length}` : "Reply"));
+}
+
 function timeline(t) {
   const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...threads(t.comments).map((th) => ({ at: th.at, el: thread(t, th, known) })),
     ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
