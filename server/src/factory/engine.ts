@@ -19,6 +19,8 @@ import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from 
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
 import { Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
+import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
+import { threadAddress } from "../slack.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, validPolicy } from "./policy.ts";
@@ -53,6 +55,8 @@ type Hooks = {
   waitUntil(p: Promise<unknown>): void;
   /** Call `pollCI`, `mergeDue` and `pump` again in about `ms`: for CI that webhooks may never report (a local server), auto-merge countdowns and scheduled tasks. */
   wakeIn(ms: number): void;
+  /** Slack's bot token, and where to note what Slack refused: for @Maple. */
+  slack?: { token(): Promise<string | null>; problem(text: string): void };
 };
 
 /** What a runner says while Claude Code waits on its folder-trust prompt (runner/src/trust.rs). */
@@ -107,6 +111,8 @@ export class Engine {
   private drafts: Drafts;
   private scout: Scout;
   private setup: RepoSetup;
+  /** @Maple's asks in Slack. */
+  readonly slack: SlackAsks;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.drafts = new Drafts(store, {
@@ -123,6 +129,15 @@ export class Engine {
       paused: (m) => this.store.settings(m.id).paused,
       toRunner: (machine, command) => this.toRunner(machine, command),
       make: (goal, by, picks, shown, made) => this.scouted(goal, by, picks, shown, made),
+    });
+    this.slack = new SlackAsks(store, {
+      machines: () => hooks.machines(),
+      hasAgent: (m, agent) => this.hasAgent(m, agent),
+      paused: (m) => this.store.settings(m.id).paused,
+      toRunner: (machine, command) => this.toRunner(machine, command),
+      token: async () => (await hooks.slack?.token()) ?? null,
+      problem: (text) => hooks.slack?.problem(text),
+      make: (ask, proposal, by, channel) => this.fromSlack(ask, proposal, by, channel),
     });
     this.setup = new RepoSetup(store, {
       broadcast: (message) => hooks.broadcast(message),
@@ -966,6 +981,26 @@ export class Engine {
     }
   }
 
+  /** Create task on @Maple's proposal in Slack: a request for the thread (so it hears about the plan and the merge),
+   *  and the task in the proposed goal, its thread's files linked in its brief, sent to planning. */
+  private async fromSlack(ask: Ask, proposal: Proposal, by: string, channel: string | null): Promise<Task> {
+    const goal = this.store.goal(proposal.goal);
+    if (!goal) fail("its goal isn't there any more.");
+    if (goal!.archived) fail(`${goal!.name} is archived.`);
+    const transcript = ask.thread.map((l) => `${l.author}: ${l.text}`).join("\n\n");
+    const request = this.intake.create({ source: "slack", channel: channel ? `#${channel}` : null, requester: ask.requester, title: proposal.title, text: transcript || ask.question, replyUrl: threadAddress(ask.channel, ask.threadTs, ask.id) });
+    const files = ask.attachments.map((f) => `- [${f.name}](${f.path})`).join("\n");
+    const checks = proposal.doneWhen.map((d) => `- ${d}`).join("\n");
+    const brief = [proposal.brief, files && `## Attachments\n${files}`, checks && `## Done when\n${checks}`].filter(Boolean).join("\n\n");
+    const task = this.newTask(goal!, ask.owner, { title: proposal.title, brief, tickets: [], shareable: true, agent: ask.agent, model: null, intake: request.id, repo: null, after: [], effort: null });
+    task.comments.push(await this.comment(ask.requester, transcript || ask.question, { via: sourceTitle(request) }));
+    this.event(task, "factory", `created from Slack${channel ? ` (#${channel})` : ""} by ${by}`);
+    await audit(this.env, `slack:${by}`, "task.created", task.id, { title: task.title, slack: ask.id });
+    await this.startPlanning(task, by);
+    this.intake.accepted(request, this.store.task(task.id) ?? task, "created", by);
+    return this.store.task(task.id) ?? task;
+  }
+
   /** A plan just got its approvals: it builds, and its other repos' parts become tasks that wait on it. */
   private async approved(task: Task, why: string) {
     task.state = "building";
@@ -1156,11 +1191,12 @@ export class Engine {
       case "draft.progress":
         // A Scout run only reports what it picked, at the end; a setup run shows what it's reading.
         if (msg.id.startsWith(SETUP_PREFIX)) this.setup.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
-        else if (!msg.id.startsWith(SCOUT_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
+        else if (!msg.id.startsWith(SCOUT_PREFIX) && !msg.id.startsWith(SLACK_PREFIX)) this.drafts.progress(msg.id, machine, msg.text, msg.kind ?? "tool");
         return null;
       case "draft.done":
         if (msg.id.startsWith(SCOUT_PREFIX)) await this.scout.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         else if (msg.id.startsWith(SETUP_PREFIX)) this.setup.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
+        else if (msg.id.startsWith(SLACK_PREFIX)) await this.slack.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         else await this.drafts.done(msg.id, machine, msg.output ?? null, msg.error ?? null);
         return null;
       case "session.opened": {
@@ -1279,21 +1315,23 @@ export class Engine {
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
         const draft = this.drafts.forRun(msg.taskId, machine), scouting = this.scout.forRun(msg.taskId, machine), setup = this.setup.forRun(msg.taskId, machine);
-        if (draft || scouting || setup) {
+        const asking = this.slack.forRun(msg.taskId, machine);
+        if (draft || scouting || setup || asking) {
           // Draft with AI and Scout read their goal's code, Set up with AI its repo's: a fetch of one of those repos, nothing more.
           const full = `${msg.owner}/${msg.repo}`;
-          const mayFetch = scouting ? this.scout.mayFetch(msg.taskId, machine, full)
+          const mayFetch = asking ? this.slack.mayFetch(msg.taskId, machine, full)
+            : scouting ? this.scout.mayFetch(msg.taskId, machine, full)
             : setup ? this.setup.mayFetch(msg.taskId, machine, full)
             : this.drafts.mayFetch(msg.taskId, machine, full);
           if (msg.purpose !== "fetch" || !mayFetch) {
-            const goalId = scouting?.run.goal ?? draft?.draft.goal ?? null;
+            const goalId = asking?.goal ?? scouting?.run.goal ?? draft?.draft.goal ?? null;
             const goal = goalId ? this.store.goal(goalId) : null;
             const repos = goal ? goalRepos(goal) : [];
             const theirs = setup ? setup.run.repo
               : repos.length ? `${goal!.name}'s repos (${repos.join(", ")})`
               : goal?.folder ? `${goal.name}'s folder (${goal.folder})` : "its goal's repos";
             const what = msg.purpose !== "fetch" ? `can only fetch, not push, ${full}` : `can't fetch ${full}: it reads ${theirs}`;
-            return await reply(null, `${scouting ? "Scout" : setup ? "Set up with AI" : "Draft with AI"} ${what}.`, "api"), null;
+            return await reply(null, `${asking ? "@Maple" : scouting ? "Scout" : setup ? "Set up with AI" : "Draft with AI"} ${what}.`, "api"), null;
           }
           try {
             await reply((await repoToken(app, msg.owner, msg.repo, PERMISSIONS.fetch)).token, null, null);
@@ -1953,6 +1991,7 @@ export class Engine {
         for (const c of task.changes) if (c.status !== "applied") c.status = "applied";
         task.state = "awaitingApproval";
         this.event(task, "planner", task.planVersion > 1 ? `revised the plan (v${task.planVersion})` : "wrote the plan");
+        this.intake.forTask(task, `${task.id}'s plan${task.planVersion > 1 ? ` (v${task.planVersion})` : ""} is ready: ${task.plan.length} step${task.plan.length === 1 ? "" : "s"}, waiting for a member to approve it.`);
         this.closeWorker(task, "done");
         return { summary: `Plan v${task.planVersion} submitted for approval. Your work here is done; end your turn.` };
       }
