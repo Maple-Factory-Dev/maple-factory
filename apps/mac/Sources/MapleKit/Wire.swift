@@ -1136,6 +1136,54 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum RiskFactorSource: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// The planner's own read of the change.
+        case planner
+        /// A risk check that matched: a path check against the diff's files, or a rule the planner cited.
+        case check
+        /// The change's size against the PR budget.
+        case size
+        /// A goal's acceptance of risk up to a level.
+        case acceptance
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RiskFactorSource] = [.planner, .check, .size, .acceptance]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "planner": self = .planner
+            case "check": self = .check
+            case "size": self = .size
+            case "acceptance": self = .acceptance
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .planner: "planner"
+            case .check: "check"
+            case .size: "size"
+            case .acceptance: "acceptance"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RiskFactorSource, b: RiskFactorSource) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum IntegrationKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Slack's /maple slash command.
         case slack
@@ -2514,15 +2562,38 @@ public enum Wire {
         }
     }
 
+    /// One reason a change has the risk level it has.
+    public struct RiskFactor: Codable, Hashable, Sendable {
+        public var source: RiskFactorSource
+        /// What set or raised the level, e.g. the check's name.
+        public var label: String
+        public var level: RiskLevel
+        /// Why: the planner's reasons, the rule's text or the budget it went over.
+        public var detail: String?
+        /// For a path check, the diff's files that matched it.
+        public var files: [String]?
+
+        public init(source: RiskFactorSource, label: String, level: RiskLevel, detail: String? = nil, files: [String]? = nil) {
+            self.source = source
+            self.label = label
+            self.level = level
+            self.detail = detail
+            self.files = files
+        }
+    }
+
     public struct Risk: Codable, Hashable, Sendable {
         public var level: RiskLevel
         public var reasons: [String]
         public var areas: [String]
+        /// Set by the server from the org's risk policy: every reason behind the level, highest first.
+        public var factors: [RiskFactor]?
 
-        public init(level: RiskLevel, reasons: [String] = [], areas: [String] = []) {
+        public init(level: RiskLevel, reasons: [String] = [], areas: [String] = [], factors: [RiskFactor]? = nil) {
             self.level = level
             self.reasons = reasons
             self.areas = areas
+            self.factors = factors
         }
 
         public init(from decoder: Decoder) throws {
@@ -2530,6 +2601,7 @@ public enum Wire {
             level = try c.decode(RiskLevel.self, forKey: .level)
             reasons = try c.decodeIfPresent([String].self, forKey: .reasons) ?? []
             areas = try c.decodeIfPresent([String].self, forKey: .areas) ?? []
+            factors = try c.decodeIfPresent([RiskFactor].self, forKey: .factors)
         }
     }
 
@@ -2794,18 +2866,22 @@ public enum Wire {
         }
     }
 
-    /// Code that raises a change's risk when touched.
+    /// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).
     public struct SensitiveArea: Codable, Hashable, Sendable {
         public var name: String
+        /// Globs matched against the diff's files. May be empty for a rule check.
         public var paths: [String]
         public var level: RiskLevel
         public var enabled: Bool
+        /// A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies.
+        public var rule: String?
 
-        public init(name: String, paths: [String] = [], level: RiskLevel, enabled: Bool) {
+        public init(name: String, paths: [String] = [], level: RiskLevel, enabled: Bool, rule: String? = nil) {
             self.name = name
             self.paths = paths
             self.level = level
             self.enabled = enabled
+            self.rule = rule
         }
 
         public init(from decoder: Decoder) throws {
@@ -2814,6 +2890,7 @@ public enum Wire {
             paths = try c.decodeIfPresent([String].self, forKey: .paths) ?? []
             level = try c.decode(RiskLevel.self, forKey: .level)
             enabled = try c.decode(Bool.self, forKey: .enabled)
+            rule = try c.decodeIfPresent(String.self, forKey: .rule)
         }
     }
 
