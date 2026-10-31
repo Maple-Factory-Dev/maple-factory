@@ -61,7 +61,7 @@ pub fn classify(seen: &Seen) -> (EndCause, Option<String>) {
         }
         return (EndCause::Signaled, Some(name));
     }
-    if let Some(slept) = seen.slept
+    if let Some(slept)   =   seen.slept
         && (seen.vanished || seen.status.is_some_and(|s| s != 0))
     {
         return (EndCause::MachineSlept, Some(format!("the machine slept for {} just before", minutes(slept))));
