@@ -77,6 +77,12 @@ enum DemoData {
                 ]
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-studio", session: "s1", startedAt: ago(25))
                 t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory", "Only the last one"], role: .builder, at: ago(9))
+                t.doneWhen = [
+                    .init(text: "FeedCache round-trips a snapshot", proof: .tests, status: .proven,
+                          evidence: .init(kind: .tests, summary: "FeedCacheTests: 4 passed", command: "xcodebuild test -only-testing:MapleFactoryTests/FeedCacheTests", passed: 4, failed: 0, by: "builder", at: ago(15))),
+                    .init(text: "The inbox opens with no network, showing the cached tasks", proof: .screenshot, status: .pending),
+                    .init(text: "Signing out leaves no cache file behind", proof: .terminal, status: .pending),
+                ]
                 t.approvals = [me]
             },
             task("APP-16", goal: "g-app", title: "Crash reports with Sentry", state: .building, updated: 2) { t in
