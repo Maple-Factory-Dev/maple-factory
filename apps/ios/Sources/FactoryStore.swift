@@ -219,6 +219,8 @@ final class FactoryStore {
     func resolveHand(_ id: String, option: String?, note: String) { send(.taskResolveHand(.init(id: id, option: option, note: note))) }
     func comment(_ id: String, text: String) { send(.taskComment(.init(id: id, text: text))) }
     func steer(_ id: String, text: String) { send(.taskSteer(.init(id: id, text: text))) }
+    /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
+    func answerPrompt(_ id: String, choice: Wire.PromptChoice) { send(.taskAnswerPrompt(.init(id: id, choice: choice))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
     /// Sends a draft to planning, or picks up a backlog task.
@@ -230,6 +232,17 @@ final class FactoryStore {
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
     /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
     func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
+
+    /// Starts a task in `goal`: handed to a planner now (`plan`), or kept as a draft. An empty brief
+    /// sends the title as the brief, like the Mac's composer; `repo` counts only when it's one of the goal's.
+    func createTask(goal: Wire.Goal, title: String, brief: String, repo: String?, priority: Wire.Priority?, plan: Bool) {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
+        send(.taskCreate(.init(goal: goal.id, title: title, brief: brief.isEmpty ? title : brief, shareable: false, plan: plan,
+                               repo: repo.flatMap { goal.repos.contains($0) ? $0 : nil }, priority: priority)))
+        notice = .toast(plan ? "Sent to planning" : "Saved as a draft", taskId: nil)
+    }
 
     /// Tells the factory which task you're looking at, so others see you there.
     func viewing(_ id: String?) { send(.presence(.init(viewing: id))) }
@@ -316,8 +329,23 @@ final class FactoryStore {
                 rank = (line.map(\.draftOrderRank).max() ?? 0) + 1
             }
             update(m.id) { $0.draftRank = rank }
+        case .taskAnswerPrompt(let m):
+            // The runner passes the answer to the session, which carries on.
+            guard let worker = feed.task(m.id)?.worker, let mi = feed.machines.firstIndex(where: { $0.id == worker.machine }),
+                  let si = feed.machines[mi].sessions.firstIndex(where: { $0.session.id == worker.session }) else { break }
+            var machine = feed.machines[mi]
+            machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
+            feed.apply(.machineUpdated(.init(machine: machine)))
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
+        case .taskCreate(let m):
+            guard let goal = feed.goal(m.goal) else { return }
+            let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
+            let task = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id, title: m.title, state: m.plan ? .planning : .drafting, owner: me,
+                                 brief: m.brief, createdAt: DemoData.now, updatedAt: DemoData.now, planVersion: 0, approvalsNeeded: 1, reviewsNeeded: 1,
+                                 events: [.init(who: me, text: "created the task", at: DemoData.now)],
+                                 shareable: m.shareable, agent: m.agent ?? "claude", repo: m.repo, priority: m.priority)
+            feed.apply(.taskUpdated(.init(task: task)))
         case .statsGet(let m):
             stats = DemoData.stats(days: Int(m.days))
         default:

@@ -1,8 +1,9 @@
 import MapleKit
 import SwiftUI
 
-/// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings` and `-task <id>`
-/// open a screen directly, for screenshots; `-stats YES` (with `-statsDays N`) opens Statistics.
+/// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
+/// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
+/// `-stats YES` (with `-statsDays N`) opens Statistics.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
 /// machine on Machines.
 struct RootView: View {
@@ -225,6 +226,7 @@ struct InboxRow: View {
 struct GoalsView: View {
     @Environment(FactoryStore.self) private var store
     @State private var search = ""
+    @State private var composing = false
 
     var body: some View {
         let goals = store.feed.activeGoals.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.prefix.localizedCaseInsensitiveContains(search) }
@@ -242,6 +244,25 @@ struct GoalsView: View {
         .navigationTitle("Goals")
         .searchable(text: $search)
         .refreshable { await store.refresh() }
+        .toolbar {
+            if defaultGoal != nil { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
+        }
+        .sheet(isPresented: $composing) { if let goal = defaultGoal { NewTaskView(goal: goal.id) } }
+    }
+
+    /// Where a new task from here starts: the first goal you follow, else the first goal.
+    private var defaultGoal: Wire.Goal? {
+        store.feed.activeGoals.first { store.feed.following($0) } ?? store.feed.activeGoals.first
+    }
+}
+
+/// Opens the New task sheet.
+struct NewTaskButton: View {
+    @Binding var composing: Bool
+
+    var body: some View {
+        Button { composing = true } label: { Label("New task", systemImage: "square.and.pencil") }
+            .accessibilityIdentifier("newTask")
     }
 }
 
@@ -272,6 +293,8 @@ struct GoalRow: View {
 
 struct GoalView: View {
     @Environment(FactoryStore.self) private var store
+    /// `-newTask YES` opens the New task sheet, for screenshots.
+    @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
     let id: String
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .cancelled]
@@ -366,6 +389,10 @@ struct GoalView: View {
             .environment(\.editMode, $editMode)
             .navigationTitle(goal.name)
             .refreshable { await store.refresh() }
+            .toolbar {
+                if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
+            }
+            .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
         } else {
             ContentUnavailableView("Goal not found", systemImage: "flag.slash")
         }
@@ -382,13 +409,24 @@ struct TaskRow: View {
                 Text(task.id).font(.caption.monospaced()).foregroundStyle(.secondary)
                 if task.hand != nil { Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Theme.warning) }
                 if task.question != nil { Image(systemName: "questionmark.bubble.fill").font(.caption).foregroundStyle(Theme.state(.planning)) }
+                if permission != nil {
+                    Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
+                        .accessibilityLabel("Needs permission")
+                }
                 Spacer()
                 Avatar(login: task.owner, url: store.feed.member(task.owner)?.avatarUrl, size: 18)
             }
             Text(task.title).lineLimit(2)
-            if let waiting = task.waiting { Text(waiting).font(.caption).foregroundStyle(.secondary) }
+            if let permission {
+                Text("Needs permission: \(permission.tool)").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
+            } else if let waiting = task.waiting {
+                Text(waiting).font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
+
+    /// The permission prompt its worker is stopped at, if any.
+    private var permission: PermissionPrompt? { store.feed.workerActivity(for: task.worker)?.permission }
 }
 
 // MARK: - Machines
@@ -455,9 +493,19 @@ struct MachineRows: View {
                         Text(live.session.taskId ?? live.session.agent).font(.subheadline.monospaced())
                         Text(live.session.agent).font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        if let state = live.activity?.state { Text(state.rawValue).font(.caption).foregroundStyle(state == .waiting ? Theme.warning : .secondary) }
+                        if live.activity?.permission != nil {
+                            Label("needs permission", systemImage: "hand.raised.fill").font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.state(.awaitingApproval))
+                                .accessibilityIdentifier("session-needs-permission")
+                        } else if let state = live.activity?.state {
+                            Text(state.rawValue).font(.caption).foregroundStyle(state == .waiting ? Theme.warning : .secondary)
+                        }
                     }
-                    if let message = live.activity?.message { Text(message).font(.caption).foregroundStyle(.secondary) }
+                    if let prompt = live.activity?.permission {
+                        Text("\(prompt.tool): \(prompt.summary)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    } else if let message = live.activity?.message {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             .disabled(live.session.taskId == nil)
