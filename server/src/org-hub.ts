@@ -217,7 +217,7 @@ export class OrgHub extends DurableObject<Env> {
         this.broadcast({ type: "machine.updated", machine: this.withSettings(machine) });
         // Coming online, or a session ending, can free a slot for waiting tasks.
         // So can a pause running out, so health reports retry whatever's waiting.
-        if (machine.online) this.engine.reap(machine);
+        if (machine.online) await this.engine.reap(machine, !before?.online);
         // Its running @Maple asks won't be answered now: their threads hear it.
         if (before?.online && !machine.online) await this.engine.slack.machineGone(machine.id, machine.name);
         if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || this.engine.waiting())) await this.engine.pump();
