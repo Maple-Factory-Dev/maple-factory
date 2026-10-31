@@ -33,6 +33,9 @@ struct MapleFactoryApp: App {
         _state = State(initialValue: state)
         AppDelegate.client = client
         if Headless.isOn { AppDelegate.headless = (state, client) }
+        #if PERF_REPRO
+        PerfRepro.start(state)
+        #endif
     }
 
     var body: some Scene {

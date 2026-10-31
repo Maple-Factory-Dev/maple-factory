@@ -306,8 +306,9 @@ struct BoardColumns: View {
             }
         }
         .animation(.snappy, value: state.boardHidesEmptyColumns)
+        // Columns coming and going animate. Cards moving within them animate only when a person drops one
+        // (withAnimation there): animating every reorder a live update brings re-laid out whole columns.
         .animation(.snappy, value: columns.map(\.id))
-        .animation(.snappy, value: columns.map { $0.tasks.map(\.id) })
     }
 
     /// An empty column shrinks to a slim rail, so the columns with cards get the room.
@@ -367,7 +368,7 @@ struct BoardColumns: View {
         }
         .dropDestination(for: String.self) { ids, _ in
             guard let id = ids.first, isDraft(id) else { return false }
-            state.rankDraft(id, before: nil)
+            withAnimation(.snappy) { state.rankDraft(id, before: nil) }
             return true
         } isTargeted: { draftsTargeted = $0 }
     }
@@ -398,7 +399,7 @@ struct BoardColumns: View {
         }
         .dropDestination(for: String.self) { ids, _ in
             guard let id = ids.first, state.tasks.contains(where: { $0.id == id }) else { return false }
-            state.moveToBottom(id)
+            withAnimation(.snappy) { state.moveToBottom(id) }
             return true
         } isTargeted: { queueTargeted = $0 }
     }
@@ -421,15 +422,75 @@ struct BoardColumns: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
 
-            // A column hugs its cards until they outgrow the window, then scrolls on its own.
-            ViewThatFits(in: .vertical) {
-                VStack(spacing: 8) { content }
-                ScrollView { VStack(spacing: 8) { content }.padding(.trailing, 6) }.scrollIndicators(.automatic)
-            }
+            ColumnCards { content }
         }
         .padding(8)
         .frame(width: 240, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.columnBG))
+    }
+}
+
+/// A column's cards: as tall as they are until they outgrow the window, then scrolling on their own.
+/// Lazy, so a long queue builds and lays out only the cards in view. (It was a ViewThatFits of a VStack
+/// and a ScrollView of one, which built every card twice and measured all of them on each update: with
+/// a hundred-odd tasks, the multi-second main-thread stalls of MAPLE-MAC-3/4/5.)
+private struct ColumnCards<Content: View>: View {
+    @ViewBuilder let content: Content
+    /// The cards' height, once measured: the column hugs it.
+    @State private var height: CGFloat?
+    @State private var scrolls = false
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) { content }
+                .padding(.trailing, scrolls ? 6 : 0)
+        }
+        .scrollIndicators(.automatic)
+        .scrollBounceBehavior(.basedOnSize)
+        // A card's viewer badge sits over its top edge: unclipped while the column fits, as a VStack was.
+        .scrollClipDisabled(!scrolls)
+        .onScrollGeometryChange(for: Size.self) { Size(content: $0.contentSize.height, container: $0.containerSize.height) } action: { _, size in
+            if height != size.content { height = size.content }
+            let over = size.content > size.container + 0.5
+            if scrolls != over { scrolls = over }
+        }
+        .frame(maxHeight: height ?? .infinity, alignment: .top)
+    }
+
+    private struct Size: Equatable {
+        let content: CGFloat, container: CGFloat
+    }
+}
+
+extension View {
+    /// A task row's Cancel… and Rename… alerts and its Schedule… popover, each in the view graph only
+    /// while it's up. On every card they cost each board update and layout pass three presentations a card.
+    func taskPresentations(task: FactoryTask, confirmCancel: Binding<Bool>, rename: Binding<Bool>, scheduling: Binding<Bool>) -> some View {
+        background {
+            if confirmCancel.wrappedValue {
+                WhilePresented(isPresented: confirmCancel) { Color.clear.cancelTaskConfirmation(task: task, isPresented: $0) }
+            }
+            if rename.wrappedValue {
+                WhilePresented(isPresented: rename) { Color.clear.renameTask(task: task, isPresented: $0) }
+            }
+            if scheduling.wrappedValue {
+                WhilePresented(isPresented: scheduling) { Color.clear.popover(isPresented: $0, arrowEdge: .trailing) { SchedulePopover(task: task) } }
+            }
+        }
+    }
+}
+
+/// A presentation added once its flag is already on: it presents on appearing (so the presenter's own
+/// onChange sees false → true, as Rename… needs to fill in the title), and dismissing it clears the flag.
+private struct WhilePresented<Presenter: View>: View {
+    @Binding var isPresented: Bool
+    @ViewBuilder let presenter: (Binding<Bool>) -> Presenter
+    @State private var shown = false
+
+    var body: some View {
+        presenter($shown)
+            .onAppear { shown = true }
+            .onChange(of: shown) { _, now in if !now { isPresented = false } }
     }
 }
 
@@ -462,11 +523,9 @@ private struct BoardCard: View {
             .contextMenu {
                 TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
             }
-            .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
-            .renameTask(task: task, isPresented: $rename)
-            .popover(isPresented: Binding(get: { scheduling || state.schedulingTask == task.id },
-                                          set: { if !$0 { scheduling = false; state.schedulingTask = nil } }),
-                     arrowEdge: .trailing) { SchedulePopover(task: task) }
+            .taskPresentations(task: task, confirmCancel: $confirmCancel, rename: $rename,
+                               scheduling: Binding(get: { scheduling || state.schedulingTask == task.id },
+                                                   set: { if !$0 { scheduling = false; state.schedulingTask = nil } }))
             // Where a dropped card lands: a line above this one.
             .overlay(alignment: .top) {
                 if targeted {
@@ -483,9 +542,9 @@ private struct BoardCard: View {
                         case .draftAhead:
                             let dropped = state.task(id)
                             guard dropped.id == id, dropped.state == .drafting, !dropped.queued, dropped.goal == task.goal else { return false }
-                            if id != task.id { state.rankDraft(id, before: task.id) }
+                            if id != task.id { withAnimation(.snappy) { state.rankDraft(id, before: task.id) } }
                         case .queueAhead:
-                            if id != task.id { state.queue(id, before: task.id) }
+                            if id != task.id { withAnimation(.snappy) { state.queue(id, before: task.id) } }
                         }
                         return true
                     } isTargeted: { targeted = $0 }
