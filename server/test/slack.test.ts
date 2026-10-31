@@ -1,6 +1,6 @@
 // @Maple in Slack, through the Worker's handlers (slack.ts) and the engine on a node:sqlite store (as
 // scout.test.ts does): signatures and timestamps, url_verification, retries, a mention answered in its
-// thread by a runner's agent, the proposed task's Create task, a channel's goals, and the manifest.
+// thread by a runner's agent, the proposed task's Create task, a channel's goals, /maple's thread, and the manifest.
 // Slack's Web API and its files are a mocked fetch; OrgHub is a fake that routes to the engine.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -113,7 +113,7 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
   };
   const posts = () => calls.filter((c) => c.url.endsWith("/chat.postMessage")).map((c) => c.body);
   const updates = () => calls.filter((c) => c.url.endsWith("/chat.update")).map((c) => c.body);
-  return { store, engine, env, sent, r2, events, calls, posts, updates, ctx, settle, restore: () => (globalThis.fetch = realFetch) };
+  return { store, engine, intake, env, sent, r2, events, calls, posts, updates, ctx, settle, restore: () => (globalThis.fetch = realFetch) };
 }
 
 /** A request signed as Slack signs them (`v0:<timestamp>:<body>`). */
@@ -659,22 +659,59 @@ test("parseAnswer: a proposal only in one of the channel's goals, by id, name or
   assert.equal(parseAnswer('thinking… {"nope": 1}', goals), null);
 });
 
-// ---- The slash command still works ----
+// ---- The slash command ----
 
-test("/maple still makes a request and answers in the channel; a bad signature is refused", async () => {
+const command = (f: { secret?: string; at?: number } = {}) =>
+  signed("/integrations/slack/command", new URLSearchParams({ text: "the export button times out", channel_id: "C1", channel_name: "support", user_name: "dana", response_url: "https://hooks.slack.com/commands/T1/1/abc" }).toString(), { ...f, type: "application/x-www-form-urlencoded" });
+
+test("/maple posts the ask in the channel and the request's replies go in its thread; a bad signature is refused", async () => {
   const f = factory();
   try {
-    const form = new URLSearchParams({ text: "the export button times out", channel_name: "support", user_name: "dana", response_url: "https://hooks.slack.com/commands/T1/1/abc" }).toString();
-    const res = await slackCommand(signed("/integrations/slack/command", form, { type: "application/x-www-form-urlencoded" }), f.env);
-    assert.deepEqual(await res.json(), { response_type: "in_channel", text: "Got it: REQ-1 is in the factory's requests. I'll post here when someone picks it up." });
+    const res = await slackCommand(command(), f.env);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "", "no second message from Slack");
+    const [root, got] = f.posts();
+    assert.deepEqual([root.channel, root.thread_ts, root.text], ["C1", undefined, "*dana* asked: the export button times out"]);
+    assert.deepEqual([got.channel, got.thread_ts, got.text], ["C1", "100.0", "Got it: REQ-1 is in the factory's requests. I'll post updates in this thread."]);
     const [request] = f.store.intake();
     assert.deepEqual([request.source, request.channel, request.requester, request.title], ["slack", "#support", "dana", "the export button times out"]);
-    assert.equal((await slackCommand(signed("/integrations/slack/command", form, { secret: "wrong", type: "application/x-www-form-urlencoded" }), f.env)).status, 401);
-    assert.equal((await slackCommand(signed("/integrations/slack/command", form, { at: 1, type: "application/x-www-form-urlencoded" }), f.env)).status, 401);
+    assert.equal(f.store.intakeReplyUrl(request.id), "slack:C1|100.0|command");
+
+    f.intake.accepted(request, { id: "WEB-1", state: "planning" } as never, "created", "Andrea");
+    await f.settle();
+    const accepted = f.posts()[2];
+    assert.deepEqual([accepted.channel, accepted.thread_ts], ["C1", "100.0"]);
+    assert.match(accepted.text, /^Andrea is tracking this as WEB-1/);
+
+    assert.equal((await slackCommand(command({ secret: "wrong" }), f.env)).status, 401);
+    assert.equal((await slackCommand(command({ at: 1 }), f.env)).status, 401);
   } finally {
     f.restore();
   }
 });
+
+for (const [why, config, refused] of [
+  ["with no bot token", { signingSecret: SECRET }, null],
+  ["when the bot isn't in the channel", undefined, "not_in_channel"],
+] as const) {
+  test(`/maple still makes a request and answers through response_url ${why}`, async () => {
+    const f = factory({ config });
+    const mocked = globalThis.fetch;
+    if (refused) globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input).endsWith("/chat.postMessage") ? (await mocked(input, init), Response.json({ ok: false, error: refused })) : mocked(input, init)) as typeof fetch;
+    try {
+      const res = await slackCommand(command(), f.env);
+      assert.deepEqual(await res.json(), { response_type: "in_channel", text: "Got it: REQ-1 is in the factory's requests. I'll post here when someone picks it up." });
+      const [request] = f.store.intake();
+      assert.equal(request.requester, "dana");
+      assert.equal(f.store.intakeReplyUrl(request.id), "https://hooks.slack.com/commands/T1/1/abc");
+      assert.equal(f.posts().length, refused ? 1 : 0, refused ? "tried the channel once" : "no bot token, no post");
+      if (refused) assert.ok(f.events.some((e) => e?.includes("not_in_channel")), "shows in Settings › Integrations");
+    } finally {
+      f.restore();
+    }
+  });
+}
 
 // ---- Setup ----
 
