@@ -202,6 +202,7 @@ struct InboxRow: View {
 struct GoalsView: View {
     @Environment(FactoryStore.self) private var store
     @State private var search = ""
+    @State private var composing = false
 
     var body: some View {
         let goals = store.feed.activeGoals.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.prefix.localizedCaseInsensitiveContains(search) }
@@ -219,6 +220,25 @@ struct GoalsView: View {
         .navigationTitle("Goals")
         .searchable(text: $search)
         .refreshable { await store.refresh() }
+        .toolbar {
+            if defaultGoal != nil { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
+        }
+        .sheet(isPresented: $composing) { if let goal = defaultGoal { NewTaskView(goal: goal.id) } }
+    }
+
+    /// Where a new task from here starts: the first goal you follow, else the first goal.
+    private var defaultGoal: Wire.Goal? {
+        store.feed.activeGoals.first { store.feed.following($0) } ?? store.feed.activeGoals.first
+    }
+}
+
+/// Opens the New task sheet.
+struct NewTaskButton: View {
+    @Binding var composing: Bool
+
+    var body: some View {
+        Button { composing = true } label: { Label("New task", systemImage: "square.and.pencil") }
+            .accessibilityIdentifier("newTask")
     }
 }
 
@@ -249,6 +269,7 @@ struct GoalRow: View {
 
 struct GoalView: View {
     @Environment(FactoryStore.self) private var store
+    @State private var composing = false
     let id: String
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .cancelled]
@@ -280,6 +301,10 @@ struct GoalView: View {
             }
             .navigationTitle(goal.name)
             .refreshable { await store.refresh() }
+            .toolbar {
+                if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
+            }
+            .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
         } else {
             ContentUnavailableView("Goal not found", systemImage: "flag.slash")
         }
