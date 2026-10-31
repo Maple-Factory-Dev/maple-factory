@@ -2290,6 +2290,11 @@ final class AppState {
                 for _ in 0..<300 where client?.connectors == nil { try? await Task.sleep(for: .milliseconds(100)) }
                 try? await Task.sleep(for: .seconds(1))
                 NotificationCenter.default.post(name: ConnectorSettings.demoEdit, object: nil, userInfo: ["name": parts[1]])
+            // Settings → Integrations with one open on its fields: `integration:linear`. Waits for them as `connector:` does.
+            case "integration":
+                for _ in 0..<300 where client?.integrations == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .seconds(1))
+                NotificationCenter.default.post(name: IntegrationSettings.demoOpen, object: parts[1])
             // A video proof's play button on screen, clicked: `play:video`.
             case "play": NotificationCenter.default.post(name: VideoProof.demoPlay, object: nil)
             // The first screenshot or video proof on screen, shown large (`lightbox:open`, or `lightbox:image` / `lightbox:video`
