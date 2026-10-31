@@ -281,7 +281,9 @@ export async function mergePullRequest(app: GitHubApp, owner: string, repo: stri
   // GitHub works out whether a pull request can merge in the background after each push, and says
   // 405 "not mergeable" until it has: so a 405 soon after a push gets a few more tries.
   let res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
-  for (let attempt = 1; res.status === 405 && attempt <= MERGE_RETRIES; attempt++) {
+  // A branch that merges only through its merge queue says 405 too, and always will: no retries for that.
+  const queueOnly = async (r: Response) => /merge queue/i.test(await r.clone().text().catch(() => ""));
+  for (let attempt = 1; res.status === 405 && attempt <= MERGE_RETRIES && !(await queueOnly(res)); attempt++) {
     await new Promise((r) => setTimeout(r, attempt * MERGE_RETRY_MS));
     res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
   }
@@ -289,6 +291,49 @@ export async function mergePullRequest(app: GitHubApp, owner: string, repo: stri
   const j = (await res.json().catch(() => ({}))) as { merged?: boolean; sha?: string; message?: string };
   if (j.merged === false) throw new GitHubError("api", `GitHub didn't merge pull request #${number}${j.message ? `: ${j.message}` : ""}.`, 405);
   return { sha: typeof j.sha === "string" ? j.sha : null };
+}
+
+/** Whether `branch` requires a merge queue: a `merge_queue` rule among the rules that apply to it. A 404
+ *  (no rules, or a branch the rules API doesn't know) is no. */
+export async function mergeQueueRequired(app: GitHubApp, owner: string, repo: string, branch: string): Promise<boolean> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/rules/branches/${branch.split("/").map(seg).join("/")}?per_page=100`, auth);
+  if (res.status === 404) return false;
+  if (!res.ok) throw await failure(res, `read the rules on ${branch}`);
+  const rules = (await res.json().catch(() => [])) as { type?: string }[];
+  return Array.isArray(rules) && rules.some((r) => r?.type === "merge_queue");
+}
+
+const PR_ID_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } }
+}`;
+
+const ENQUEUE_MUTATION = `mutation($id: ID!, $head: GitObjectID) {
+  enqueuePullRequest(input: { pullRequestId: $id, expectedHeadOid: $head }) { mergeQueueEntry { position state } }
+}`;
+
+/** Adds a pull request to its base branch's merge queue (GraphQL: REST can't), pinned to `headSha`, so
+ *  GitHub refuses if the head moved. GitHub merges it later; the pull_request webhook says when. */
+export async function enqueuePullRequest(app: GitHubApp, owner: string, repo: string, number: number, headSha: string | null): Promise<{ position: number | null }> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const graphql = async (query: string, variables: Record<string, unknown>, what: string) => {
+    const res = await call(app, "POST", "/graphql", auth, { query, variables });
+    if (!res.ok) throw await failure(res, what);
+    const j = (await res.json()) as { data?: any; errors?: { message: string }[] };
+    if (j.errors?.length) throw new GitHubError("api", `GitHub refused to ${what} (${j.errors.map((e) => e.message).join("; ")}).`);
+    return j.data;
+  };
+  const found = await graphql(PR_ID_QUERY, { owner, repo, number }, `find pull request #${number}`);
+  const id = found?.repository?.pullRequest?.id;
+  if (typeof id !== "string") throw new GitHubError("api", `GitHub didn't return pull request #${number}.`);
+  const done = await graphql(ENQUEUE_MUTATION, { id, head: headSha }, `add pull request #${number} to the merge queue`);
+  const position = done?.enqueuePullRequest?.mergeQueueEntry?.position;
+  return { position: typeof position === "number" ? position : null };
+}
+
+/** GitHub's refusal of a direct merge on a branch that merges only through its merge queue. */
+export function needsMergeQueue(e: unknown): boolean {
+  return e instanceof GitHubError && e.status === 405 && /merge queue/i.test(e.message);
 }
 
 /** Where a pull request stands on GitHub now, and its merge commit once merged. */

@@ -196,6 +196,9 @@ test("a GitHub merge that never answers lands on the next alarm once GitHub says
     assert.equal(typeof f.store.private("MF-1").mergeStartedAt, "number");
     assert.ok(f.wakes.includes(3 * 60_000), "the hub wakes to check on it");
     f.pending.length = 0; // the merge call that never answers
+    // Wait for that call to reach GitHub (after its token and the merge-queue rules): one still on its way
+    // when this test ends would land in the next test's stubbed GitHub.
+    for (const until = Date.now() + 5_000; !gh.calls.includes("PUT /repos/acme/app/pulls/7/merge") && Date.now() < until; ) await new Promise((r) => setTimeout(r, 5));
 
     // Not quiet long enough: nothing changes, and the hub wakes again for it.
     await f.engine.mergeDue();
@@ -367,4 +370,190 @@ test("a late answer that it merged wins over the watchdog's hand; a late failure
   const n = task.events.length;
   await f.merged();
   assert.equal(f.store.task("MF-1")!.events.length, n);
+});
+
+// GitHub's merge queue: a base branch that requires one gets the pull request added to the queue
+// (GraphQL enqueuePullRequest, pinned to the reviewed head) instead of a squash-merge, and the task waits
+// "In merge queue…" for the pull_request webhook, or the longer queue timeout's look-up.
+
+/** A stubbed GitHub whose main requires a merge queue (`rules`), or refuses a direct merge for one (`refuse`). */
+function queuedGitHub(pr: () => Record<string, unknown>, { rules = true, refuse = true } = {}) {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const env = { DB, GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }), GITHUB_API_URL: "http://localhost:1" };
+  const calls: string[] = [];
+  const graphql: Record<string, unknown>[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+    const path = new URL(url).pathname;
+    const method = init.method ?? "GET";
+    calls.push(`${method} ${path}`);
+    if (path === "/repos/acme/app/installation") return Response.json({ id: 9 });
+    if (path === "/app/installations/9/access_tokens") return Response.json({ token: "t", expires_at: "" });
+    if (path === "/repos/acme/app/rules/branches/main") return rules ? Response.json([{ type: "pull_request" }, { type: "merge_queue", parameters: {} }]) : Response.json({ message: "Not Found" }, { status: 404 });
+    if (method === "PUT" && path === "/repos/acme/app/pulls/7/merge") {
+      return refuse ? Response.json({ message: "Repository rule violations found\n\nChanges must be made through the merge queue" }, { status: 405 }) : Response.json({ merged: true, sha: "d".repeat(40) });
+    }
+    if (method === "POST" && path === "/graphql") {
+      const body = JSON.parse(String(init.body));
+      graphql.push(body);
+      if (/enqueuePullRequest/.test(body.query)) return Response.json({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 2, state: "QUEUED" } } } });
+      return Response.json({ data: { repository: { pullRequest: { id: "PR_7" } } } });
+    }
+    if (method === "GET" && path === "/repos/acme/app/pulls/7") return Response.json(pr());
+    if (path === `/repos/acme/app/git/ref/heads/${BRANCH}`) return Response.json({ object: { sha: HEAD } });
+    if (method === "DELETE" && path === `/repos/acme/app/git/refs/heads/${BRANCH}`) return new Response(null, { status: 204 });
+    return Response.json({ message: "Not Found" }, { status: 404 });
+  }) as typeof fetch;
+  return { env, calls, graphql, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+test("a base branch that requires a merge queue gets the pull request enqueued at its head, not merged; it waits In merge queue… until GitHub merges it", async () => {
+  const gh = queuedGitHub(() => ({ state: "open", merged: false }));
+  try {
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    await f.settle();
+    assert.ok(gh.calls.includes("GET /repos/acme/app/rules/branches/main"));
+    assert.ok(!gh.calls.includes("PUT /repos/acme/app/pulls/7/merge"), "no squash-merge");
+    const enqueue = gh.graphql.find((g) => /enqueuePullRequest/.test(String(g.query)))!;
+    assert.deepEqual(enqueue.variables, { id: "PR_7", head: HEAD });
+    let task = f.store.task("MF-1")!;
+    assert.equal(task.state, "reviewing");
+    assert.equal(task.liveLog, "In merge queue…");
+    assert.equal(f.store.private("MF-1").merging, true);
+    assert.equal(f.store.private("MF-1").queued, true);
+    assert.ok(f.events().includes("added pull request #7 to GitHub's merge queue (position 2)"));
+    assert.ok(f.wakes.includes(60 * 60_000), "the hub wakes after the queue's longer timeout");
+
+    // A Merge click while it's queued changes nothing; nor does a save.
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    await f.engine.command({ type: "task.comment", id: "MF-1", text: "queued?" } as never, ME);
+    assert.equal(gh.graphql.filter((g) => /enqueuePullRequest/.test(String(g.query))).length, 1);
+    assert.equal(f.store.task("MF-1")!.liveLog, "In merge queue…");
+
+    // A merge call's timeout isn't the queue's: 4 min in, it's still waiting and GitHub isn't asked.
+    const back = later(4 * 60_000);
+    try {
+      await f.engine.mergeDue();
+    } finally {
+      back();
+    }
+    assert.equal(f.store.private("MF-1").merging, true);
+    assert.ok(!gh.calls.includes("GET /repos/acme/app/pulls/7"));
+
+    // The enqueued webhook for its own enqueue adds nothing; the closed one lands it.
+    await f.engine.fromGitHub({ owner: "acme", repo: "app", number: 7, enqueued: true });
+    await f.engine.fromGitHub({ owner: "acme", repo: "app", number: 7, closed: true, merged: true });
+    await f.settle();
+    task = f.store.task("MF-1")!;
+    assert.equal(task.state, "merged");
+    assert.equal(task.liveLog, null);
+    assert.equal(f.store.private("MF-1").queued, false);
+    assert.ok(!f.events().some((e) => e === "pull request #7 was added to GitHub's merge queue"));
+    assert.ok(f.events().includes("merged into main"));
+  } finally {
+    gh.restore();
+  }
+});
+
+test("a queued merge with no answer is looked up after the queue timeout: merged lands it, still open asks a person", async () => {
+  let pr: Record<string, unknown> = { state: "open", merged: false };
+  const gh = queuedGitHub(() => pr);
+  try {
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    await f.settle();
+    assert.equal(f.store.private("MF-1").queued, true);
+    let back = later(61 * 60_000);
+    try {
+      await f.engine.mergeDue();
+    } finally {
+      back();
+    }
+    assert.ok(gh.calls.includes("GET /repos/acme/app/pulls/7"));
+    let task = f.store.task("MF-1")!;
+    assert.equal(task.state, "reviewing");
+    assert.equal(task.liveLog, null);
+    assert.equal(f.store.private("MF-1").merging, false);
+    assert.equal(f.store.private("MF-1").queued, false);
+    assert.equal(task.hand?.reason, "mergeFailed");
+    assert.equal(task.hand!.summary, "It's been in GitHub's merge queue for 61 min and hasn't merged; its pull request is still open.");
+    assert.deepEqual(task.hand!.options.map((o) => [o.title, o.recommended]), [["Try the merge again", true], ["Send it back to fix", false], ["Cancel it", false]]);
+    assert.ok(f.events().includes("has been in GitHub's merge queue for 61 min without merging"));
+
+    // Try the merge again queues it afresh; this time GitHub says it merged when looked up.
+    await f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Try the merge again", note: "" } as never, ME);
+    await f.settle();
+    assert.equal(f.store.task("MF-1")!.liveLog, "In merge queue…");
+    assert.equal(gh.graphql.filter((g) => /enqueuePullRequest/.test(String(g.query))).length, 2);
+    pr = { state: "closed", merged: true, merge_commit_sha: "e".repeat(40) };
+    back = later(62 * 60_000);
+    try {
+      await f.engine.mergeDue();
+      await f.settle();
+    } finally {
+      back();
+    }
+    task = f.store.task("MF-1")!;
+    assert.equal(task.state, "merged");
+    assert.equal(task.hand ?? null, null);
+    assert.ok(f.events().includes("merged into main (eeeeeee)"));
+  } finally {
+    gh.restore();
+  }
+});
+
+test("GitHub taking a queued pull request out of the queue raises the didn't-merge hand with its reason; leaving because it merged doesn't", async () => {
+  const gh = queuedGitHub(() => ({ state: "open", merged: false }));
+  try {
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    await f.settle();
+    await f.engine.fromGitHub({ owner: "acme", repo: "app", number: 7, dequeued: true, reason: "MERGE" });
+    assert.equal(f.store.task("MF-1")!.liveLog, "In merge queue…");
+    assert.equal(f.store.task("MF-1")!.hand ?? null, null);
+
+    await f.engine.fromGitHub({ owner: "acme", repo: "app", number: 7, dequeued: true, reason: "CI_FAILURE" });
+    const task = f.store.task("MF-1")!;
+    assert.equal(task.state, "reviewing");
+    assert.equal(task.liveLog, null);
+    assert.equal(f.store.private("MF-1").merging, false);
+    assert.equal(f.store.private("MF-1").queued, false);
+    assert.equal(task.hand?.reason, "mergeFailed");
+    assert.equal(task.hand!.summary, "GitHub took it out of the merge queue: the checks on its merge group failed.");
+    assert.deepEqual(task.hand!.options.map((o) => [o.title, o.recommended]), [["Send it back to fix", true], ["Try the merge again", false], ["Cancel it", false]]);
+    assert.ok(f.events().includes("GitHub took pull request #7 out of the merge queue: the checks on its merge group failed"));
+    // Not a merge-fix try, and not sent back to a builder on its own.
+    assert.equal(f.store.private("MF-1").mergeFixes ?? 0, 0);
+    assert.equal(task.worker ?? null, null);
+  } finally {
+    gh.restore();
+  }
+});
+
+test("a direct merge GitHub refuses for its merge queue (rules unreadable) is enqueued instead; a repo without one squash-merges", async () => {
+  const gh = queuedGitHub(() => ({ state: "open", merged: false }), { rules: false });
+  try {
+    const f = factory(gh.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    await f.settle();
+    // Refused once, with no retries: the queue's refusal won't change.
+    assert.equal(gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length, 1);
+    assert.equal(f.store.task("MF-1")!.liveLog, "In merge queue…");
+    assert.equal(f.store.private("MF-1").queued, true);
+  } finally {
+    gh.restore();
+  }
+  const plain = queuedGitHub(() => ({ state: "open", merged: false }), { rules: false, refuse: false });
+  try {
+    const f = factory(plain.env, { gh: { owner: "acme", repo: "app" }, merging: false, mergeBy: null }, READY);
+    await f.engine.command({ type: "task.merge", id: "MF-1" }, ME);
+    await f.settle();
+    assert.equal(f.store.task("MF-1")!.state, "merged");
+    assert.equal(plain.graphql.length, 0);
+    assert.ok(f.events().includes("merged into main (ddddddd)"));
+    assert.ok(!f.events().some((e) => /merge queue/.test(e)));
+  } finally {
+    plain.restore();
+  }
 });

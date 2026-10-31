@@ -21,6 +21,8 @@ export interface TaskPrivate {
   merging?: boolean;
   /** When that merge was sent, so one that never answers is noticed (none on a merge from before this was kept). */
   mergeStartedAt?: number | null;
+  /** That merge is waiting in GitHub's merge queue (the base branch requires one), not a merge call. */
+  queued?: boolean;
   /// Who started the last merge ("factory" for an auto-merge), for its stats.
   mergeBy?: string | null;
   /** The head it was last noted as waiting for a person to merge (autoMerges off), so it's said once per head. */

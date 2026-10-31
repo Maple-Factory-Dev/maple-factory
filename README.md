@@ -326,6 +326,15 @@ The app needs Contents, Pull requests, Checks and Actions (read & write) and Com
 webhook events Check run, Check suite, Status and Pull request. `server/test/e2e-github.mjs` runs the
 whole path against `server/test/fake-github.mjs`.
 
+**Merge queues.** When a pull request's base branch requires a merge queue (a `merge_queue` rule in its
+rulesets, read from `/repos/{owner}/{repo}/rules/branches/{base}`), the factory adds the pull request to
+the queue (GraphQL `enqueuePullRequest`, pinned to the head that was reviewed) instead of squash-merging
+it. A direct merge GitHub refuses "through the merge queue" is queued the same way. The task says
+"In merge queue…" until the Pull request webhook says it merged. If GitHub takes it out of the queue
+(`dequeued`: failed checks on the merge group, a conflict, someone removed it), the task stays in review
+with a "didn't merge" hand giving GitHub's reason. A queued task with no word after an hour is looked up
+on GitHub: if it merged, it lands; if not, a person is asked. `server/test/e2e-merge-queue.mjs` covers it.
+
 ### Repos in another GitHub org
 
 Repos come from the app's installations on the factory's own account (`GITHUB_ORG`) and on any other

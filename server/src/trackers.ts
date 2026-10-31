@@ -199,7 +199,11 @@ export async function githubWebhook(request: Request, env: Env): Promise<Respons
     kind === "check_run" ? { sha: e.check_run?.head_sha }
     : kind === "check_suite" ? { sha: e.check_suite?.head_sha }
     : kind === "status" ? { sha: e.sha }
-    : kind === "pull_request" ? { number: e.number, sha: e.pull_request?.head?.sha, closed: e.action === "closed", merged: e.pull_request?.merged === true }
+    : kind === "pull_request" ? {
+        number: e.number, sha: e.pull_request?.head?.sha, closed: e.action === "closed", merged: e.pull_request?.merged === true,
+        // In and out of the base branch's merge queue; a dequeue says why (CI_FAILURE, MERGE_CONFLICT, MANUAL…).
+        enqueued: e.action === "enqueued", dequeued: e.action === "dequeued", reason: typeof e.reason === "string" ? e.reason : null,
+      }
     : null;
   if (!event) return new Response(null, { status: 204 });
   await orgHub(env).fetch("https://org/github", { method: "POST", body: JSON.stringify({ owner, repo, ...event }) });
