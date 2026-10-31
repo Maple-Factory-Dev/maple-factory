@@ -469,6 +469,8 @@ struct ReviewSection: View {
                 if let followedBy {
                     Label("Follow-up: \(followedBy)", systemImage: "arrowshape.turn.up.right")
                         .font(.caption.weight(.medium)).foregroundStyle(Theme.state(.drafting))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Follow-up: \(followedBy)")
                         .accessibilityIdentifier("finding-followed-\(finding.id)")
                 }
             }
