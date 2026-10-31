@@ -108,22 +108,29 @@ struct StatePill: View {
 
 /// A member's GitHub avatar, or their initial.
 struct Avatar: View {
+    @Environment(FactoryStore.self) private var store
     let login: String
     var url: String? = nil
     var size: CGFloat = 22
 
     var body: some View {
-        AsyncImage(url: url.flatMap(URL.init(string:)) ?? URL(string: "https://github.com/\(login).png?size=\(Int(size * 3))")) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
-            Text(login.prefix(1).uppercased())
-                .font(.system(size: size * 0.5, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.accent.gradient)
+        Group {
+            if let link = (url ?? store.feed.member(login)?.avatarUrl).flatMap(URL.init(string:)) {
+                AsyncImage(url: link) { $0.resizable().scaledToFill() } placeholder: { initial }
+            } else {
+                initial
+            }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+    }
+
+    private var initial: some View {
+        Text(login.prefix(1).uppercased())
+            .font(.system(size: size * 0.5, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.accent.gradient)
     }
 }
 

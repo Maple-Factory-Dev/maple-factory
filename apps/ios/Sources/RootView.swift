@@ -379,11 +379,14 @@ struct MachineRows: View {
     }
 
     private func gauge(_ title: String, _ value: Double) -> some View {
-        Gauge(value: min(max(value, 0), 1)) { Text(title) } currentValueLabel: { Text("\(Int(value * 100))%") }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .tint(value > 0.85 ? Theme.danger : Theme.accent)
-            .scaleEffect(0.8)
-            .frame(maxWidth: .infinity)
+        VStack(spacing: 2) {
+            Gauge(value: min(max(value, 0), 1)) { Text(title) } currentValueLabel: { Text("\(Int(value * 100))%") }
+                .gaugeStyle(.accessoryCircularCapacity)
+                .tint(value > 0.85 ? Theme.danger : Theme.accent)
+                .scaleEffect(0.8)
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

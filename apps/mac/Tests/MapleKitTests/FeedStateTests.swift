@@ -63,6 +63,8 @@ struct FeedStateTests {
         var state = FeedState()
         state.apply(try decode(snapshot))
         #expect(state.inbox(for: "andrea").map(\.kind) == [.approval])
+        // An approval is yours to give, whoever owns the task.
+        #expect(state.inbox(for: "sam").map(\.assignee) == ["sam"])
 
         // Once you've approved it, it leaves your inbox.
         state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-1", state: "awaitingApproval", extra: #","approvals":["andrea"]"#))}"#))

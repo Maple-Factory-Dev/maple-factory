@@ -117,7 +117,7 @@ public struct FeedState: Sendable {
         var entries: [InboxEntry] = []
         for task in tasks where task.state != .merged && task.state != .cancelled {
             if task.state == .awaitingApproval && !task.approvals.contains(login) {
-                entries.append(InboxEntry(kind: .approval, task: task.id, assignee: task.owner, message: "Plan v\(task.planVersion) is ready for your approval", at: task.updatedAt))
+                entries.append(InboxEntry(kind: .approval, task: task.id, assignee: login, message: "Plan v\(task.planVersion) is ready for your approval", at: task.updatedAt))
             }
             if let hand = task.hand {
                 entries.append(InboxEntry(kind: .hand, task: task.id, assignee: hand.assignee, message: hand.summary, at: hand.at))
