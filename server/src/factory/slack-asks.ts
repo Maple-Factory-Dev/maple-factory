@@ -252,18 +252,24 @@ export class SlackAsks {
     if (token) await updateMessage(token, channel, ts, said, blocks).catch((e) => this.deps.problem((e as Error).message));
   }
 
-  /** Maple joined a channel, or someone mentioned it with `goals`: asks which goals the channel works on. */
-  async picker(channel: string) {
+  /** Maple joined a channel (a message of its own), or someone mentioned it with `goals` (a reply in their thread, if they're in one): asks which goals the channel works on. */
+  async picker(channel: string, threadTs?: string) {
     const active = this.store.goals().filter((g) => !g.archived);
     const options = [{ text: { type: "plain_text", text: "Any goal" }, value: ANY }, ...active.slice(0, 99).map((g) => ({ text: { type: "plain_text", text: g.name.slice(0, 75) }, value: g.id }))];
     const blocks: Blocks = [
-      { type: "section", text: { type: "mrkdwn", text: "Which goals should I work on here? I'll answer from their code and propose tasks in them." } },
-      { type: "actions", elements: [{ type: "multi_static_select", action_id: "goals.pick", placeholder: { type: "plain_text", text: "Pick goals" }, options }] },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: "Which goals should I work on here? I'll answer from their code and propose tasks in them." },
+        accessory: { type: "multi_static_select", action_id: "goals.pick", placeholder: { type: "plain_text", text: "Pick goals" }, options },
+      },
     ];
     const token = await this.deps.token();
     if (!token) return;
-    // Not in a thread: a message of its own in the channel.
-    await postMessage(token, channel, null, "Which goals should I work on here?", blocks).catch((e) => this.deps.problem((e as Error).message));
+    await postMessage(token, channel, threadTs ?? null, "Which goals should I work on here?", blocks).catch(async (e) => {
+      const why = (e as Error).message;
+      this.deps.problem(why);
+      if (threadTs) await this.post(channel, threadTs, `I couldn't show the goal picker here: ${why}`);
+    });
     const channels = this.channels();
     if (!channels.includes(channel)) this.store.set("slack:channels", JSON.stringify([...channels, channel]));
   }
