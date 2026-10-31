@@ -1414,7 +1414,7 @@ mod tests {
         let root = tmp(tag);
         let (bare, work) = (root.join("origin.git"), root.join("work"));
         std::fs::create_dir_all(&work).unwrap();
-        sh(&root, &["init", "--quiet", "--bare", bare.to_str().unwrap()]);
+        sh(&root, &["init", "--quiet", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
         sh(&work, &["init", "--quiet", "-b", "main"]);
         for (k, v) in [("user.name", "Test Person"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")] {
             sh(&work, &["config", k, v]);

@@ -1371,9 +1371,17 @@ mod tests {
         let wts = wt.to_string_lossy().into_owned();
         sh(&repo, &["merge", "--quiet", "--ff-only", "agent/fix"]);
         std::fs::write(wt.join("new.txt"), "untracked\n").unwrap();
+        // Enough to delete that git can't finish before the timer's first tick, even on a busy machine.
+        for d in 0..20 {
+            let dir = wt.join(format!("junk/{d}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            for f in 0..200 {
+                std::fs::write(dir.join(f.to_string()), "x").unwrap();
+            }
+        }
         NO_RENAME.lock().unwrap().push(canonical(&wt));
         // Out of time: killed partway, and the message says Force remove finishes it.
-        let err = take_away(&repo, &wt, true, &wts, Duration::from_nanos(1)).await.unwrap_err().to_string();
+        let err = take_away(&repo, &wt, true, &wts, Duration::ZERO).await.unwrap_err().to_string();
         assert!(err.contains("may be partly deleted") && err.contains("Force remove will finish it"), "{err}");
         // `git worktree remove --force`, with time to finish: no background delete.
         let (done, deleting) = remove_checked(&nobody(), &wts, true).await.unwrap();
