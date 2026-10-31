@@ -301,19 +301,19 @@ all need setting again. See server/README.md.
 
 ## Error reports
 
-Every factory's server, web app, runner and Mac app report errors and crashes to Maple Factory's Sentry
-(the `andrea-fomera` org: `maple-server`, `maple-web`, `maple-runner`, `maple-mac`), with nothing to set
+Every factory's server, web app, runner, Mac app and iOS app report errors and crashes to Maple Factory's Sentry
+(the `andrea-fomera` org: `maple-server`, `maple-web`, `maple-runner`, `maple-mac`, `maple-ios`), with nothing to set
 up. The DSNs are in `server/web/sentry.json`. They're public ingest keys, built into every release. No
 Sentry auth token is committed: the Mac release uploads dSYMs only when `SENTRY_AUTH_TOKEN` is in
 `.env.release`.
 
 **What's sent:** an error's message and stack trace, crashes and panics, the component's version
-(`maple-server@0.51.0`, `maple-runner@…`, `maple-mac@…`), the OS, and the factory's GitHub org login as the
+(`maple-server@0.51.0`, `maple-runner@…`, `maple-mac@…`, `maple-ios@…`), the OS, and the factory's GitHub org login as the
 `org` tag.
 
 **What's never sent:** code, diffs, prompts or terminal output; tokens, secrets or cookies; request bodies,
 query strings or Authorization headers; the signed-in person; the machine's hostname (the runner also
-writes `~` for paths under your home). The Mac app's events carry Sentry's anonymous install ID. The runner sends only `error!` logs and panics, and the web and Mac
+writes `~` for paths under your home). The Mac and iOS apps' events carry Sentry's anonymous install ID; the iOS app sends no screenshots or view hierarchy. The runner sends only `error!` logs and panics, and the web and Mac
 apps send no console, click or network breadcrumbs.
 
 The SDKs tell Sentry not to take the user's IP address from the connection. Sentry can still store a
@@ -328,10 +328,11 @@ the Sentry org (ours, or yours if you redirect reports).
 | Web app | follows the server: off when the server's reports are (`/healthz` says `sentry: false`) | — |
 | Runner | `MAPLE_TELEMETRY=off` in its environment (the service's too) | build it yourself; dev builds report nothing |
 | Mac app | `MAPLE_TELEMETRY=off`, or `defaults write dev.maplefactory.app MapleTelemetry off` | — |
+| iOS app | launch with `-MapleTelemetry off` (the setting of that name) | — |
 
-Debug builds of the runner and Mac app never report. To check a setup, send a test error with `GET
+Debug builds of the runner, Mac app and iOS app never report. To check a setup, send a test error with `GET
 /debug/sentry-test` on a local `wrangler dev` (signed in with `DEV_LOGIN`), `maple-runner sentry-test`, or
-by opening the Mac app with `-sentryTest YES`.
+by opening the Mac app (or a Release build of the iOS app) with `-sentryTest YES`.
 
 ## How sessions end
 

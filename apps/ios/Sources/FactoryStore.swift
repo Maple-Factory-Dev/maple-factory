@@ -187,9 +187,10 @@ final class FactoryStore {
 
     /// One message from the feed.
     func apply(_ message: Wire.ServerToClient) {
-        if case .snapshot = message {
+        if case .snapshot(let snapshot) = message {
             attempt = 0
             status = .live
+            ErrorReports.tag(org: snapshot.org)
         }
         if let notice = feed.apply(message) { self.notice = notice }
     }
