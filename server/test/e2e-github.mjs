@@ -6,7 +6,8 @@
 // Checks: the runner fetches and pushes with app tokens, the PR opens on GitHub, auto-merge waits for
 // CI, a failed check blocks it until it's run again, it counts down (a short MERGE_GRACE_MS) and the merge is GitHub's squash and deletes the
 // task's branch on GitHub (but not one that moved after the merge), and a cancelled task's PR is
-// closed with a comment. Each check links to its job on GitHub; `task.checkLog` reads a failed job's log
+// closed with a comment. A pull request's body links an attachment in the brief at the factory on a
+// private repo, and names it with a link to the task's page on a public one. Each check links to its job on GitHub; `task.checkLog` reads a failed job's log
 // (the failing step marked) for the asker alone, and `task.rerunCheck` asks GitHub for that one job again.
 
 import { execFileSync } from "node:child_process";
@@ -22,6 +23,7 @@ let errors = [];
 let errorIds = [];
 let poke = null;
 let checkLogs = [];
+let repos = null;
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.type === "snapshot") { goals = m.goals; for (const t of m.tasks) tasks.set(t.id, t); }
@@ -29,6 +31,7 @@ feed.onmessage = (e) => {
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
   if (m.type === "error") errors.push(m.message), errorIds.push(m.requestId ?? null);
   if (m.type === "checkLog") checkLogs.push(m);
+  if (m.type === "repos.updated") repos = m.repos;
   poke?.();
 };
 const send = (m) => feed.send(JSON.stringify(m));
@@ -54,12 +57,33 @@ send({ type: "goal.save", goal: { id: "", name: `GitHub ${prefix}`, prefix, colo
 const goal = await wait("goal", () => goals.find((g) => g.prefix === prefix));
 step(`goal ${goal.name} on ${folder} (origin github.com/acme/greeter)`);
 
-send({ type: "task.create", goal: goal.id, title: "Say hello on GitHub", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+// A screenshot in the brief, and acme/greeter public on GitHub: its pull request mustn't show a factory link.
+const upload = await fetch(`${base}/api/attachments?name=shot.png`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "image/png" }, body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) });
+const shot = (await upload.json()).path;
+if (upload.status !== 201 || !/^\/attachments\/[0-9a-f-]{36}\/shot\.png$/.test(shot ?? "")) throw new Error(`uploading shot.png: ${upload.status} ${shot}`);
+const visibility = async (isPrivate) => {
+  await fetch(`${gh}/_private`, { method: "POST", body: JSON.stringify({ owner: "acme", repo: "greeter", private: isPrivate }) });
+  repos = null;
+  send({ type: "repos.refresh" });
+  await wait(`acme/greeter ${isPrivate ? "private" : "public"}`, () => repos?.find((r) => r.name === "acme/greeter" && r.isPrivate === isPrivate));
+};
+/** The body the factory POSTed to GitHub for the pull request from `branch`. */
+const pullBody = async (branch) => (await fake()).log.find((l) => l.method === "POST" && l.path === "/repos/acme/greeter/pulls" && l.body.head === branch)?.body.body ?? "";
+const factoryUrl = base.replace(/\/+$/, "");
+await visibility(false);
+step(`uploaded ${shot}; acme/greeter is public on GitHub`);
+
+send({ type: "task.create", goal: goal.id, title: "Say hello on GitHub", brief: `Add hello.txt with a greeting.\n\n![shot.png](${shot})`, shareable: false, plan: true, tickets: [], agent: "scripted" });
 const id = `${prefix}-1`;
 await wait("plan", () => tasks.get(id)?.state === "awaitingApproval", 60000);
 send({ type: "task.approvePlan", id });
 let t = await wait("pull request", () => tasks.get(id)?.pr?.url && tasks.get(id), 90000);
 step(`opened ${t.pr.url} from ${t.pr.branch}`);
+let body = await pullBody(t.pr.branch);
+const named = `shot.png (attached in Maple Factory: [${id}](${factoryUrl}/t/${id}))`;
+if (!body.includes(named) || body.includes("/attachments/")) throw new Error(`public repo's PR body: ${JSON.stringify(body)}`);
+step(`public repo: the PR body says "${named}" and has no /attachments/ link`);
+console.log(body.split("\n").map((l) => `    | ${l}`).join("\n"));
 let log = await fake();
 const grants = log.log.filter((l) => l.path.endsWith("/access_tokens")).map((l) => JSON.stringify(l.body.permissions));
 if (!grants.includes('{"contents":"read"}') || !grants.includes('{"contents":"write"}')) throw new Error(`tokens asked for: ${grants.join(" ")}`);
@@ -97,12 +121,18 @@ if (deleted !== `deleted branch ${t.pr.branch} on GitHub`) throw new Error(`afte
 if (branchOnGitHub(t.pr.branch)) throw new Error(`${t.pr.branch} is still on GitHub`);
 step(`${deleted}, and the remote has no ${t.pr.branch} now`);
 
-// A cancelled task's pull request closes on GitHub.
-send({ type: "task.create", goal: goal.id, title: "Wave on GitHub", brief: "Add hello.txt with a greeting.", shareable: false, plan: true, tickets: [], agent: "scripted" });
+// A cancelled task's pull request closes on GitHub. acme/greeter is private again, so its body links the screenshot.
+await visibility(true);
+send({ type: "task.create", goal: goal.id, title: "Wave on GitHub", brief: `Add hello.txt with a greeting.\n\n![shot.png](${shot})`, shareable: false, plan: true, tickets: [], agent: "scripted" });
 const id2 = `${prefix}-2`;
 await wait("plan 2", () => tasks.get(id2)?.state === "awaitingApproval", 60000);
 send({ type: "task.approvePlan", id: id2 });
 const t2 = await wait("pull request 2", () => tasks.get(id2)?.pr?.url && tasks.get(id2), 90000);
+body = await pullBody(t2.pr.branch);
+const linked = `[shot.png](${factoryUrl}${shot})`;
+if (!body.includes(linked) || body.includes("](/attachments/")) throw new Error(`private repo's PR body: ${JSON.stringify(body)}`);
+step(`private repo: the PR body links ${linked}`);
+console.log(body.split("\n").map((l) => `    | ${l}`).join("\n"));
 send({ type: "task.cancel", id: id2 });
 for (let i = 0; i < 20; i++) {
   log = await fake();

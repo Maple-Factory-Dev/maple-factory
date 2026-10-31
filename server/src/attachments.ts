@@ -115,3 +115,23 @@ export async function uploadProof(request: Request, env: Env, task: string): Pro
 
 /** Whether `key` is a stored attachment's link, `/attachments/<uuid>/<name>`. */
 export const isAttachmentKey = (key: unknown): key is string => typeof key === "string" && key.startsWith("/attachments/") && LINK.test(key.slice("/attachments/".length));
+
+/** An attachment in Markdown: a `![name](/attachments/…)` embed or `[name](/attachments/…)` link, or a
+ *  bare `/attachments/<uuid>/<name>` (not one inside an absolute URL; a name never ends in a dot). */
+const IN_MARKDOWN = /(!?)\[([^\]\n]*)\]\(\/attachments\/([^)\s]*)\)|(?<![\w/:.\-])\/attachments\/([0-9a-f-]{36}\/[\w.\-]*[\w\-])/g;
+
+/** A pull request body's attachment links, which are relative to the factory and so broken on GitHub.
+ *  In a private repo each becomes a plain link to the factory's copy (GitHub can't embed it: the file is
+ *  members-only and GitHub's image proxy has no session). In a public repo, the file's name and a link to
+ *  the task's page, which says nothing about the task to outsiders. With no `base`, just the name. */
+export function pullAttachments(markdown: string, opts: { base?: string | null; isPrivate: boolean; taskId: string }): string {
+  const base = (opts.base ?? "").replace(/\/+$/, "");
+  return markdown.replace(IN_MARKDOWN, (all, _bang, alt: string | undefined, linked: string | undefined, bare: string | undefined) => {
+    const m = LINK.exec(linked ?? bare ?? "");
+    if (!m) return all;
+    const name = alt?.trim() || m[2];
+    if (!base) return `${name} (attached in Maple Factory)`;
+    if (opts.isPrivate) return `[${name}](${base}/attachments/${m[1]}/${m[2]})`;
+    return `${name} (attached in Maple Factory: [${opts.taskId}](${base}/t/${encodeURIComponent(opts.taskId)}))`;
+  });
+}
