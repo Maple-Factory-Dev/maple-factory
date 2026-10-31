@@ -60,4 +60,43 @@ struct GoalEditorTests {
         // Each role reads its own text.
         #expect(PromptLayers(role: .planner, org: org, goal: goal).status == .notSet)
     }
+
+    // MARK: Leaving the editor (MF-140)
+
+    /// A sidebar, palette or link move closes the editor, New or Edit, instead of leaving it over the page.
+    @MainActor @Test(arguments: [MachineSheet.new, .edit("g1")])
+    func goingToAPageClosesTheEditor(sheet: MachineSheet) {
+        let state = AppState()
+        state.goalSheet = sheet
+        state.goalPrefill = Wire.NewGoalIdea(name: "Idea", summary: "", repos: [])
+        state.destination = .inbox
+        #expect(state.goalSheet == nil)
+        #expect(state.goalPrefill == nil)
+
+        // Clicking the page already on screen counts too.
+        state.goalSheet = sheet
+        state.destination = .inbox
+        #expect(state.goalSheet == nil)
+    }
+
+    @MainActor @Test(arguments: [MachineSheet.new, .edit("g1")])
+    func openingATaskClosesTheEditor(sheet: MachineSheet) {
+        let state = AppState()
+        state.goalSheet = sheet
+        state.openFocus("ONB-19")
+        #expect(state.goalSheet == nil)
+        #expect(state.focusedTask == "ONB-19")
+
+        state.goalSheet = sheet
+        state.openFullView("ONB-19")
+        #expect(state.goalSheet == nil)
+    }
+
+    @MainActor @Test func openingTheEditorLeavesThePage() {
+        let state = AppState()
+        state.destination = .inbox
+        state.goalSheet = .new
+        #expect(state.destination == .inbox)
+        #expect(state.goalSheet == .new)
+    }
 }
