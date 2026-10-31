@@ -56,7 +56,8 @@ function factory(role: "builder" | "reviewer" = "builder") {
     while (pending.length) await pending.shift();
     return reply;
   };
-  const others = () => store.tasks().filter((t) => t.id !== "MF-1") as Task[];
+  // By id: drafts made in the same millisecond come back from store.tasks() in either order.
+  const others = () => (store.tasks().filter((t) => t.id !== "MF-1") as Task[]).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
   return { store, propose, others, toasts, audits };
 }
 
