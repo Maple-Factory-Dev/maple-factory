@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { inQuietHours, quietUntil, validateQuietHours } from "../src/quiet-hours.ts";
 import { Store } from "../src/factory/store.ts";
+import { inQuietHours as webInQuietHours } from "../web/app/quiet-hours.js";
 import type { QuietHours } from "../src/wire.ts";
 
 const fixture = JSON.parse(readFileSync(new URL("../../protocol/quiet-hours-cases.json", import.meta.url), "utf8")) as {
@@ -18,6 +19,7 @@ for (const c of fixture.cases) {
     const q = fixture.schedules[c.schedule];
     const at = Date.parse(c.at);
     assert.equal(inQuietHours(q, at), c.until !== null);
+    assert.equal(webInQuietHours(q, at), c.until !== null, "the web app's port agrees");
     const until = quietUntil(q, at);
     assert.equal(until === null ? null : new Date(until).toISOString().replace(".000Z", "Z"), c.until);
   });
