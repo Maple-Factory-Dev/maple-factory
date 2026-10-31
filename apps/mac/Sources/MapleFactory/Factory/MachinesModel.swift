@@ -226,6 +226,11 @@ extension FactoryData {
         "BIL-91": "Stripe hardening", "BIL-85": "Stripe hardening",
     ]
 
+    /// Tasks that build only once others merge: the Login revamp lands in order.
+    static let seedAfter: [String: [String]] = [
+        "ATL-152": ["ATL-149", "ATL-163"],
+    ]
+
     static let seedShareable: Set<String> = [
         "ATL-144", "ATL-149", "ATL-150", "ATL-158", "ATL-160", "BIL-93", "BIL-95", "DOC-5", "DOC-7", "ONB-21", "ONB-24",
     ]

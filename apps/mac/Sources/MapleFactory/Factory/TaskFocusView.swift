@@ -432,6 +432,25 @@ struct TaskFocusView: View {
             }
     }
 
+    /// What it waits on can change until a builder starts on it.
+    private var afterEditable: Bool {
+        switch task.state {
+        case .drafting, .planning, .awaitingApproval, .backlog: true
+        // Live, every planned build has a progress; the mockup's only once it's under way.
+        case .building: task.worker == nil && task.diff == nil && task.pushed == nil && (appState.isLive || task.progress == nil)
+        default: false
+        }
+    }
+
+    /// "Waiting for MF-201 and MF-202 to merge", while a planned or approved task waits on others.
+    private var waitingOnText: String? {
+        guard [.awaitingApproval, .backlog, .building].contains(task.state), task.worker == nil else { return nil }
+        let open = task.after.filter { id in appState.tasks.first { $0.id == id }.map { !$0.state.isFinished || $0.state == .cancelled } ?? false }
+        guard !open.isEmpty else { return nil }
+        let names = open.count == 1 ? open[0] : open.dropLast().joined(separator: ", ") + " and " + open.last!
+        return "Waiting for \(names) to merge"
+    }
+
     private var touchedFiles: [String] {
         var seen = Set<String>()
         return task.plan.map(\.file).filter { !$0.isEmpty && seen.insert($0).inserted }
@@ -450,16 +469,21 @@ struct TaskFocusView: View {
             if let repo = task.repo {
                 detailRow("Repo") { Text(repo).font(.system(size: 12, design: .monospaced)) }
             }
-            if !task.after.isEmpty {
-                detailRow("Builds on") {
-                    HStack(spacing: 6) {
-                        ForEach(task.after, id: \.self) { id in
-                            Text(id)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(appState.task(id).state == .merged ? Theme.State.merged : Theme.accent)
-                                .onTapGesture { appState.openFocus(id) }
-                                .help(appState.task(id).state == .merged ? "\(id) is merged" : "It builds once \(id) merges")
-                        }
+            if !task.after.isEmpty || afterEditable {
+                detailRow("Builds on") { BuildsOnChips(task: task, editable: afterEditable) }
+            }
+            if let waitingOn = waitingOnText {
+                detailRow("Waiting") { Text(waitingOn).foregroundStyle(Theme.State.awaitingApproval).lineLimit(2) }
+            }
+            let blocks = appState.blocked(by: task.id)
+            if !blocks.isEmpty {
+                detailRow("Blocks") {
+                    FlowChips(ids: blocks.map(\.id)) { id in
+                        Text(id)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                            .onTapGesture { appState.openFocus(id) }
+                            .help("\(id) · \(appState.task(id).title) builds once \(task.id) merges")
                     }
                 }
             }
@@ -729,3 +753,88 @@ struct StageTrack: View {
         }
     }
 }
+
+/// The tasks one waits on, as chips: × takes one off, Add… picks another of its goal's open tasks.
+private struct BuildsOnChips: View {
+    @Environment(AppState.self) private var appState
+    let task: FactoryTask
+    let editable: Bool
+
+    var body: some View {
+        FlowChips(ids: task.after + (editable ? ["+"] : [])) { id in
+            if id == "+" { addMenu } else { chip(id) }
+        }
+    }
+
+    private func chip(_ id: String) -> some View {
+        let dep = appState.tasks.first { $0.id == id }
+        let merged = dep?.state == .merged || dep?.state == .closed
+        let cancelled = dep?.state == .cancelled
+        return HStack(spacing: 3) {
+            Text(id)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .strikethrough(cancelled)
+                .foregroundStyle(merged ? Theme.State.merged : cancelled ? Theme.State.cancelled : Theme.accent)
+                .onTapGesture { appState.openFocus(id) }
+            if editable {
+                Button { appState.setAfter(task.id, task.after.filter { $0 != id }) } label: {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textMuted)
+                .help("Stop waiting on \(id)")
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Theme.fill))
+        .help(dep.map { "\($0.title) · " + (merged ? "merged" : cancelled ? "cancelled: take it off so this can build" : "it builds once \(id) merges") } ?? id)
+    }
+
+    private var candidates: [FactoryTask] {
+        appState.tasks
+            .filter { $0.goal == task.goal && $0.id != task.id && !$0.state.isFinished && !task.after.contains($0.id) && !waitsOn($0.id, task.id) }
+            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+    }
+
+    /// Whether `id` already waits (directly or not) on `target`, so adding it would make a loop.
+    private func waitsOn(_ id: String, _ target: String) -> Bool {
+        var seen = Set<String>(), stack = [id]
+        while let next = stack.popLast() {
+            if next == target { return true }
+            guard seen.insert(next).inserted else { continue }
+            stack += appState.tasks.first { $0.id == next }?.after ?? []
+        }
+        return false
+    }
+
+    private var addMenu: some View {
+        Menu {
+            let options = candidates
+            if options.isEmpty { Text("No other open tasks in this goal") }
+            ForEach(options, id: \.id) { other in
+                Button("\(other.id) · \(other.title)") { appState.setAfter(task.id, task.after + [other.id]) }
+            }
+        } label: {
+            Text("Add…").font(.system(size: 12))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(Theme.textMuted)
+        .help("Wait for another task to merge before this one builds")
+    }
+}
+
+/// Chips laid out left to right, wrapping onto more lines when they don't fit.
+private struct FlowChips<Chip: View>: View {
+    let ids: [String]
+    @ViewBuilder let chip: (String) -> Chip
+
+    var body: some View {
+        FlowLayout(spacing: 5) {
+            ForEach(ids, id: \.self) { chip($0) }
+        }
+    }
+}
+
