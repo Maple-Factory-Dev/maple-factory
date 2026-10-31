@@ -5,7 +5,7 @@
 
 import type { Env } from "./env.ts";
 import type { Member } from "./wire.ts";
-import { audit, orgHub, text } from "./util.ts";
+import { audit, orgHub, readCapped, text } from "./util.ts";
 
 export const MAX_ICON = 2 * 1024 * 1024;
 
@@ -29,11 +29,9 @@ async function swap(env: Env, id: string | null): Promise<string | null> {
 /** PUT /api/icon: admins only; the body is a PNG, JPEG or WebP of at most 2 MB. */
 export async function upload(request: Request, env: Env, me: Member): Promise<Response> {
   if (me.role !== "admin") return text("Only admins can change the factory's icon.", 403);
-  const said = Number(request.headers.get("content-length") ?? "0");
-  if (said > MAX_ICON) return text(`The icon can be up to ${MAX_ICON / 1024 / 1024} MB.`, 400);
-  const body = new Uint8Array(await request.arrayBuffer());
+  const body = await readCapped(request, MAX_ICON);
+  if (!body) return text(`The icon can be up to ${MAX_ICON / 1024 / 1024} MB.`, 413);
   if (!body.byteLength) return text("The image is empty.", 400);
-  if (body.byteLength > MAX_ICON) return text(`The icon can be up to ${MAX_ICON / 1024 / 1024} MB.`, 400);
   const mime = sniffIcon(body);
   if (!mime) return text("The icon is a PNG, JPEG or WebP image.", 400);
   const id = crypto.randomUUID();

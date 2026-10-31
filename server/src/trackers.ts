@@ -5,7 +5,7 @@
 
 import type { Env } from "./env.ts";
 import type { TicketLink } from "./wire.ts";
-import { orgHub, text } from "./util.ts";
+import { orgHub, sameText, text } from "./util.ts";
 import { verifyWebhook } from "./github.ts";
 import { integrationAccess, integrationConfig, integrationEvent, type IntegrationAccess } from "./integrations/registry.ts";
 
@@ -16,13 +16,6 @@ const enc = new TextEncoder();
 async function hmacHex(secret: string, message: string) {
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(message)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function sameText(a: string, b: string) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 const newRequest = (env: Env, body: unknown) => orgHub(env).fetch("https://org/intake", { method: "POST", body: JSON.stringify(body) });

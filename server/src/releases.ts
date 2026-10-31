@@ -11,8 +11,9 @@ import type { Env } from "./env.ts";
 
 export const DEFAULT_FEED = "https://maplefactory.dev/releases";
 
-/** Paths under the feed: lowercase words, dots and slashes, never `..`. */
-const SAFE_PATH = /^(?!.*\.\.)[\w.\-/]+$/;
+/** Paths under the feed: lowercase words, dots and slashes, never `..`. The bucket also keeps attachments
+ *  and the icon, which only their own routes serve (members only, sandboxed), so those are never releases. */
+const SAFE_PATH = /^(?!.*\.\.)(?!(attachments|icon)\/)[\w.\-/]+$/;
 
 /** The channel's manifest in the feed: stable is `latest.json`, beta is `beta.json` (same signature scheme). */
 function feedPath(path: string, channel: string | undefined): string {
@@ -25,7 +26,9 @@ export async function release(env: Env, path: string): Promise<Response | null> 
   if (!SAFE_PATH.test(path)) return null;
   const object = await env.RELEASES.get(path);
   if (object) {
-    return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", etag: object.httpEtag } });
+    return new Response(object.body, {
+      headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", etag: object.httpEtag, "x-content-type-options": "nosniff" },
+    });
   }
   const feed = (env.RELEASE_FEED || DEFAULT_FEED).replace(/\/+$/, "");
   if (feed === "off") return null;
@@ -35,7 +38,7 @@ export async function release(env: Env, path: string): Promise<Response | null> 
     cf: { cacheEverything: true, cacheTtl: manifest ? 300 : 86_400 },
   } as RequestInit);
   if (!res.ok) return null;
-  const headers = new Headers({ "content-type": res.headers.get("content-type") ?? "application/octet-stream" });
+  const headers = new Headers({ "content-type": res.headers.get("content-type") ?? "application/octet-stream", "x-content-type-options": "nosniff" });
   const etag = res.headers.get("etag");
   if (etag) headers.set("etag", etag);
   return new Response(res.body, { headers });

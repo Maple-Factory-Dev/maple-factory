@@ -63,10 +63,20 @@ const traversal = await fetch(`${base}/attachments/${att.path.split("/")[2]}/..%
 check(traversal.status === 400, `'..' in a fetched path is refused (${traversal.status})`);
 const big = await upload("big.bin", Buffer.alloc(25 * 1024 * 1024 + 1));
 check(big.status === 413, `a file over 25 MB is refused (${big.status})`);
+// Chunked, so no content-length to refuse it by: it's cut off at the limit (util.ts readCapped).
+const chunks = async function* () { for (let i = 0; i < 30; i++) yield Buffer.alloc(1024 * 1024); };
+const chunked = await fetch(`${base}/api/attachments?name=chunked.bin`, { method: "POST", headers: member, body: chunks(), duplex: "half" }).catch((e) => ({ status: `error ${e.cause?.code ?? e.message}` }));
+check(chunked.status === 413, `a file over 25 MB without content-length is refused (${chunked.status})`);
 const empty = await upload("empty.png", Buffer.alloc(0));
 check(empty.status === 400, `an empty file is refused (${empty.status})`);
 const missing = await fetch(`${base}/attachments/00000000-0000-4000-8000-000000000000/nope.png`, { headers: member });
 check(missing.status === 404, `an attachment that isn't there is 404 (${missing.status})`);
+
+// /releases/ shares the bucket, but never serves an attachment (it would, without signing in or a sandbox).
+for (const p of [att.path, html.path]) {
+  const r = await fetch(`${base}/releases${p}`);
+  check(r.status === 404, `/releases${p.slice(0, 22)}… isn't served (${r.status})`);
+}
 
 // Anonymous, where DEV_LOGIN doesn't sign everyone in.
 if (outside) {

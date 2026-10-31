@@ -7,6 +7,7 @@ import type { Member } from "./wire.ts";
 import { authConfigured } from "./auth.ts";
 import { SERVER_VERSION } from "./version.ts";
 import type { ServerUpdate } from "./wire.ts";
+import { html as htmlResponse } from "./util.ts";
 
 export const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -274,5 +275,5 @@ export function page(title: string, body: string, opts: PageOptions = {}): Respo
 </div>
 <footer>maple-server ${escape(SERVER_VERSION)} · <a href="https://maplefactory.dev">maplefactory.dev</a></footer>
 </body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return htmlResponse(html);
 }

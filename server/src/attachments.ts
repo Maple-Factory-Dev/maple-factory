@@ -6,7 +6,7 @@
 import type { Env } from "./env.ts";
 import { authenticateRunner, MACHINE_ID } from "./machines.ts";
 import type { Member } from "./wire.ts";
-import { audit, text } from "./util.ts";
+import { audit, readCapped, text } from "./util.ts";
 
 export const MAX_ATTACHMENT = 25 * 1024 * 1024;
 
@@ -29,10 +29,8 @@ export function storedName(raw: string): string | null {
 export async function upload(request: Request, env: Env, me: Member): Promise<Response> {
   const name = storedName(new URL(request.url).searchParams.get("name") ?? "");
   if (!name) return text("Give the file a name without folders or '..'.", 400);
-  const said = Number(request.headers.get("content-length") ?? "0");
-  if (said > MAX_ATTACHMENT) return text(`Attachments can be up to ${MAX_ATTACHMENT / 1024 / 1024} MB.`, 413);
-  const body = await request.arrayBuffer();
-  if (body.byteLength > MAX_ATTACHMENT) return text(`Attachments can be up to ${MAX_ATTACHMENT / 1024 / 1024} MB.`, 413);
+  const body = await readCapped(request, MAX_ATTACHMENT);
+  if (!body) return text(`Attachments can be up to ${MAX_ATTACHMENT / 1024 / 1024} MB.`, 413);
   if (!body.byteLength) return text("The file is empty.", 400);
   const mime = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase() || "application/octet-stream";
   const id = crypto.randomUUID();
@@ -102,9 +100,8 @@ export async function uploadProof(request: Request, env: Env, task: string): Pro
   if (!TASK_ID.test(task)) return text("Not a task.", 400);
   const name = storedName(url.searchParams.get("name") ?? "");
   if (!name) return text("Give the file a name without folders or '..'.", 400);
-  const said = Number(request.headers.get("content-length") ?? "0");
-  if (said > MAX_PROOF_VIDEO) return text(`A proof file is at most ${MAX_PROOF_VIDEO / 1024 / 1024} MB.`, 413);
-  const body = new Uint8Array(await request.arrayBuffer());
+  const body = await readCapped(request, MAX_PROOF_VIDEO);
+  if (!body) return text(`A proof file is at most ${MAX_PROOF_VIDEO / 1024 / 1024} MB.`, 413);
   if (!body.byteLength) return text("The file is empty.", 400);
   const mime = sniffProof(body);
   if (!mime) return text("A proof file is PNG, JPEG, WebP, MP4, MOV, WebM or text.", 415);

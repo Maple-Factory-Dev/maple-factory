@@ -1,0 +1,7 @@
+# The web app and its files, served by Workers Static Assets before the Worker runs: the same headers
+# the Worker's own pages send (PAGE_HEADERS in src/util.ts).
+/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: same-origin

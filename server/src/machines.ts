@@ -3,7 +3,7 @@
 import type { Env } from "./env.ts";
 import { revoked } from "./auth.ts";
 import type { Machine, Member } from "./wire.ts";
-import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sha256, text } from "./util.ts";
+import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sameText, sha256, text } from "./util.ts";
 
 export const MACHINE_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CODE_TTL = 15 * 60 * 1000;
@@ -100,7 +100,7 @@ export async function authenticateRunner(env: Env, id: string, request: Request)
   const row = await env.DB.prepare(
     "SELECT t.token_hash, m.revoked_at, m.last_seen FROM machines t LEFT JOIN members m ON m.login = t.owner WHERE t.id = ?",
   ).bind(id).first<{ token_hash: string; revoked_at: number | null; last_seen: number | null }>();
-  return !!row && row.token_hash === (await sha256(token)) && !revoked(row);
+  return !!row && sameText(row.token_hash, await sha256(token)) && !revoked(row);
 }
 
 /** DELETE /api/machines/:id: forgets a machine and cuts it off. Its owner or an admin. */
