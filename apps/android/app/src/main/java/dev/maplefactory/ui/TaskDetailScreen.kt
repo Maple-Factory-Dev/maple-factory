@@ -142,7 +142,9 @@ fun TaskDetailScreen(store: FactoryStore, id: String) {
     }
 
     if (task == null) {
-        if (store.feed.hasSnapshot) EmptyState("Task not found", Icons.Filled.Cancel) else Loading()
+        // One the snapshot left out (finished over 14 days ago) is asked for, and shows when it comes.
+        LaunchedEffect(id, store.feed.hasSnapshot) { store.fetchTask(id) }
+        if (store.feed.hasSnapshot && id !in store.feed.fetching) EmptyState("Task not found", Icons.Filled.Cancel) else Loading()
         return
     }
 
