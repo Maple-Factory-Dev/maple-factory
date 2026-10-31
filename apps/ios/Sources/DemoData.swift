@@ -1,0 +1,184 @@
+import Foundation
+import MapleKit
+
+/// Sample goals, tasks and machines for the demo (`-demo YES`, or Try the demo when signed out), so
+/// every screen renders with no server.
+enum DemoData {
+    static var now: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
+    private static func ago(_ minutes: Double) -> UInt64 { now - UInt64(minutes * 60_000) }
+
+    static let me = "andrea"
+
+    static func feed() -> FeedState {
+        var feed = FeedState()
+        feed.org = "acme"
+        feed.name = "Acme"
+        feed.me = Wire.Member(login: me, name: "Andrea", role: "admin", teams: ["mobile"])
+        feed.members = [
+            feed.me!,
+            Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
+            Wire.Member(login: "kit", name: "Kit Okafor", role: "member", teams: ["platform"]),
+        ]
+        feed.goals = [
+            Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app"], team: "mobile"),
+            Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),
+            Wire.Goal(id: "g-web", name: "Billing", prefix: "BIL", color: "#14A866", summary: "Usage-based plans and invoices.", lead: "sam", repo: "acme/web", repos: ["acme/web"]),
+        ]
+        feed.tasks = tasks()
+        feed.machines = machines()
+        feed.runnerLatest = "0.65.0"
+        feed.serverVersion = "0.51.0"
+        feed.hasSnapshot = true
+        return feed
+    }
+
+    private static func task(_ id: String, goal: String, title: String, state: Wire.TaskState, owner: String = me, updated: Double,
+                             _ configure: (inout Wire.Task) -> Void = { _ in }) -> Wire.Task {
+        var task = Wire.Task(id: id, goal: goal, title: title, state: state, owner: owner, brief: "", createdAt: ago(updated + 600), updatedAt: ago(updated),
+                             planVersion: 1, approvalsNeeded: 1, reviewsNeeded: 1, shareable: false, agent: "claude", model: "opus")
+        configure(&task)
+        return task
+    }
+
+    private static func tasks() -> [Wire.Task] {
+        [
+            task("APP-14", goal: "g-app", title: "Push notifications when a plan needs your approval", state: .awaitingApproval, owner: "sam", updated: 4) { t in
+                t.brief = "When a plan is ready, the people who need to approve it should get a push notification on their phone, with Approve right there in the notification."
+                t.planVersion = 2
+                t.planSummary = "Register for APNs, store each member's device tokens on the server, and send a notification with an Approve action when a task enters awaitingApproval."
+                t.plan = [
+                    .init(text: "Register for remote notifications on sign-in and send the device token to POST /api/devices", file: "apps/ios/Sources/Notifications.swift", added: false),
+                    .init(text: "Store device tokens per member in D1, removed on sign-out", file: "server/src/devices.ts", added: false),
+                    .init(text: "Send an APNs push with an APPROVE category when a task's plan awaits a member's approval", file: "server/src/push.ts", added: true),
+                    .init(text: "Handle the Approve action by sending task.approvePlan, without opening the app", file: "apps/ios/Sources/Notifications.swift", added: false, from: "Open the task when the notification is tapped"),
+                ]
+                t.doneWhen = [
+                    .init(text: "A plan awaiting approval sends a push to each approver's phone", proof: .screenshot, status: .pending),
+                    .init(text: "Approve from the notification moves the task to building", proof: .video, status: .pending),
+                    .init(text: "Server tests cover token storage and removal", proof: .tests, status: .pending),
+                ]
+                t.risk = .init(level: .medium, reasons: ["Touches sign-in", "New server table"], areas: ["auth"])
+                t.footprint = .init(files: 6, lines: 240, estimated: true)
+                t.mockups = [.init(id: "m1", title: "The notification", kind: "screen", html: mockupHTML, status: .proposed, version: 1)]
+                t.events = [
+                    .init(who: "sam", text: "created the task", at: ago(70)),
+                    .init(who: "planner", text: "wrote plan v1", at: ago(50)),
+                    .init(who: me, text: "asked the planner to handle the Approve action in the background", at: ago(30)),
+                    .init(who: "planner", text: "wrote plan v2", at: ago(4)),
+                ]
+                t.comments = [.init(id: "c1", author: "sam", text: "@andrea can you take a look before standup?", at: ago(3), mentions: [me])]
+            },
+            task("APP-12", goal: "g-app", title: "Offline cache for the inbox", state: .building, updated: 9) { t in
+                t.brief = "Keep the last snapshot on disk so the inbox opens instantly, even on a plane."
+                t.plan = [
+                    .init(text: "Persist the last snapshot as JSON in Application Support", file: "apps/ios/Sources/FeedCache.swift", progress: .done, added: false),
+                    .init(text: "Show the cached inbox while the socket connects", file: "apps/ios/Sources/RootView.swift", progress: .active, added: false),
+                    .init(text: "Clear the cache on sign-out", file: "apps/ios/Sources/FactoryStore.swift", progress: .pending, added: false),
+                ]
+                t.worker = .init(role: .builder, agent: "claude", machine: "m-studio", session: "s1", startedAt: ago(25))
+                t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory", "Only the last one"], role: .builder, at: ago(9))
+                t.approvals = [me]
+            },
+            task("API-31", goal: "g-api", title: "Rate limit API tokens per org", state: .reviewing, owner: "kit", updated: 18) { t in
+                t.brief = "Each org gets 600 requests a minute across its tokens; over that, 429 with Retry-After."
+                t.plan = [
+                    .init(text: "A sliding-window counter per org in a Durable Object", file: "server/src/ratelimit.ts", progress: .done, added: false),
+                    .init(text: "Answer 429 with Retry-After over the limit", file: "server/src/api.ts", progress: .done, added: false),
+                ]
+                t.diff = .init(added: 86, removed: 12, files: ["server/src/ratelimit.ts", "server/src/api.ts"])
+                t.pr = .init(number: 412, url: "https://github.com/acme/api/pull/412", state: .open, branch: "agent/api-31", base: "main",
+                             checks: [.init(name: "test", status: .passed, duration: "1m 12s", required: true), .init(name: "lint", status: .passed, duration: "18s", required: true)])
+                t.autoReview = .init(maxRounds: 3, rounds: [.init(number: 1, verdict: .changesRequested, found: 2, at: ago(40)), .init(number: 2, verdict: .passed, found: 0, at: ago(20))],
+                                     summary: "The limiter is correct under concurrency; both findings from round 1 are fixed.",
+                                     ask: [.init(text: "600 requests a minute per org", verdict: .met)],
+                                     proofs: [.init(text: "Tests pass", verdict: .met)],
+                                     findings: [
+                                        .init(id: "f1", kind: .code, severity: .major, text: "The window resets on every deploy because the counter lives in memory.", file: "server/src/ratelimit.ts", raisedIn: 1, status: .fixed, fixedIn: 2),
+                                        .init(id: "f2", kind: .code, severity: .minor, text: "Retry-After was in milliseconds; it should be seconds.", file: "server/src/api.ts", raisedIn: 1, status: .fixed, fixedIn: 2),
+                                     ])
+                t.doneWhen = [.init(text: "Server tests cover the limit and Retry-After", proof: .tests, status: .proven,
+                                    evidence: .init(kind: .tests, summary: "14 tests pass", command: "npm test -- ratelimit", output: ["✓ allows 600 a minute", "✓ answers 429 with Retry-After: 12", "Tests: 14 passed"], passed: 14, failed: 0, by: "builder", at: ago(22)))]
+                t.mergeAt = now + 8 * 60_000
+            },
+            task("BIL-7", goal: "g-web", title: "Invoice PDFs with line items", state: .building, owner: "sam", updated: 35) { t in
+                t.brief = "Render each invoice as a PDF with its usage line items."
+                t.hand = .init(reason: .needsInput, summary: "Stripe's invoice API doesn't return usage line items for metered prices. Build them from our own usage table instead?", at: ago(35), assignee: me,
+                               options: [.init(title: "Use our usage table", detail: "Matches what customers see in the app.", recommended: true),
+                                         .init(title: "Wait for Stripe's line items", detail: "Simpler, but needs their beta.", recommended: false)])
+                t.worker = .init(role: .builder, agent: "codex", machine: "m-mini", session: "s3", startedAt: ago(50))
+            },
+            task("API-29", goal: "g-api", title: "Token scopes: read, write and admin", state: .reviewing, owner: "kit", updated: 60) { t in
+                t.brief = "Tokens carry scopes; write endpoints refuse read tokens."
+                t.pr = .init(number: 405, state: .open, branch: "agent/api-29", base: "main",
+                             checks: [.init(name: "test", status: .failed, duration: "58s", required: true), .init(name: "lint", status: .passed, duration: "14s", required: true)])
+                t.autoReview = .init(maxRounds: 3, rounds: [.init(number: 1, verdict: .passed, found: 0, at: ago(70))], summary: "Looks right.")
+                t.diff = .init(added: 140, removed: 31, files: ["server/src/tokens.ts"])
+            },
+            task("APP-9", goal: "g-app", title: "Sign in with GitHub's device flow", state: .merged, updated: 60 * 26) { t in
+                t.brief = "Sign in on the phone with a code, like the Mac app."
+            },
+            task("BIL-5", goal: "g-web", title: "Plans page", state: .planning, owner: "sam", updated: 3),
+            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120),
+            task("API-33", goal: "g-api", title: "Webhooks for task events", state: .backlog, owner: "kit", updated: 300),
+        ]
+    }
+
+    private static func machines() -> [Wire.Machine] {
+        let gig: UInt64 = 1_073_741_824
+        let agents = [Wire.AgentInstall(name: "claude", version: "2.4.1", loggedIn: true), Wire.AgentInstall(name: "codex", version: "0.61.0", loggedIn: true)]
+        return [
+            Wire.Machine(id: "m-studio", name: "Andrea's Mac Studio", owner: me, online: true, version: "0.65.0", os: "macOS 27.0",
+                         health: .init(cpu: 0.42, cores: 24, load1: 6.2, memUsed: 41 * gig, memTotal: 96 * gig, diskUsed: 610 * gig, diskTotal: 2000 * gig, uptime: 86400 * 3, agents: agents),
+                         sessions: [.init(session: .init(id: "s1", agent: "claude", cwd: "~/maple/worktrees/app-12", startedAt: ago(25), taskId: "APP-12"),
+                                          activity: .init(state: .waiting, message: "Asked a question", at: ago(9)))],
+                         capacity: 4),
+            Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
+                         health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),
+                         sessions: [.init(session: .init(id: "s3", agent: "codex", cwd: "~/maple/worktrees/bil-7", startedAt: ago(50), taskId: "BIL-7"),
+                                          activity: .init(state: .waiting, message: "Raised a hand", at: ago(35)))],
+                         capacity: 2),
+            Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0"),
+        ]
+    }
+
+    static func diff(for id: String) -> [DiffFile] {
+        DiffFile.parse("""
+        diff --git a/server/src/ratelimit.ts b/server/src/ratelimit.ts
+        new file mode 100644
+        --- /dev/null
+        +++ b/server/src/ratelimit.ts
+        @@ -0,0 +1,9 @@
+        +// A sliding window per org, kept in a Durable Object so deploys don't reset it.
+        +export class RateLimiter {
+        +  constructor(private state: DurableObjectState) {}
+        +
+        +  async take(limit = 600): Promise<number | null> {
+        +    const used = (await this.state.storage.get<number>("used")) ?? 0;
+        +    if (used >= limit) return 12;
+        +    await this.state.storage.put("used", used + 1);
+        +    return null;
+        diff --git a/server/src/api.ts b/server/src/api.ts
+        --- a/server/src/api.ts
+        +++ b/server/src/api.ts
+        @@ -40,6 +40,9 @@ export async function api(request: Request, env: Env) {
+           const token = await authenticate(request, env);
+           if (!token) return new Response("Unauthorized", { status: 401 });
+        -  return route(request, env, token);
+        +  const wait = await limiter(env, token.org).take();
+        +  if (wait !== null) return new Response("Too many requests", { status: 429, headers: { "Retry-After": String(wait) } });
+        +  return route(request, env, token);
+         }
+        """)
+    }
+
+    private static let mockupHTML = """
+    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0;font:15px -apple-system;background:linear-gradient(160deg,#3b2a5a,#d24e26);height:100vh;display:flex;align-items:flex-start;justify-content:center;padding-top:40px}
+    .n{background:rgba(255,255,255,.82);backdrop-filter:blur(20px);border-radius:22px;padding:14px 16px;width:86%;box-shadow:0 8px 30px rgba(0,0,0,.2)}
+    .h{display:flex;gap:8px;align-items:center;font-size:12px;color:#555}.i{width:20px;height:20px;border-radius:5px;background:#d24e26}
+    b{display:block;margin:6px 0 2px}.a{display:flex;gap:8px;margin-top:12px}.a div{flex:1;text-align:center;padding:9px;border-radius:12px;background:#fff;font-weight:600}
+    .a .p{background:#1f883d;color:#fff}
+    </style></head><body><div class="n"><div class="h"><div class="i"></div>MAPLE FACTORY · now</div>
+    <b>APP-14 plan is ready</b>Push notifications when a plan needs your approval<div class="a"><div class="p">Approve</div><div>Open</div></div></div></body></html>
+    """
+}
