@@ -221,25 +221,27 @@ final class FactoryStore {
     func steer(_ id: String, text: String) { send(.taskSteer(.init(id: id, text: text))) }
     /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
     func answerPrompt(_ id: String, choice: Wire.PromptChoice) { send(.taskAnswerPrompt(.init(id: id, choice: choice))) }
+    /// Signs off a Done when item yourself (index from 0), with an optional note on why.
+    func checkedIt(_ id: String, item: Int, note: String) {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        send(.taskCheckedIt(.init(id: id, item: UInt32(item), note: note.isEmpty ? nil : note)))
+    }
+    /// Asks the planner to change one of its mockups.
+    func requestMockupChange(_ id: String, mockup: String, text: String) { send(.taskMockupChange(.init(id: id, mockup: mockup, text: text))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
     func cancel(_ id: String) {
         send(.taskCancel(.init(id: id)))
         notice = .toast("Cancelled \(id)", taskId: id)
     }
 
+    /// Sends a draft to planning, or picks up a backlog task.
+    func plan(_ id: String) { send(.taskPlan(.init(id: id))) }
+    /// Parks a draft (or a plan waiting for approval) in the backlog.
+    func sendToBacklog(_ id: String) { send(.taskBacklog(.init(id: id))) }
+    /// Moves a draft ahead of `before` ("top": first; nil: last) in its goal's drafts.
+    func rankDraft(_ id: String, before: String?) { send(.taskRankDraft(.init(id: id, before: before))) }
+
     // MARK: Task actions (the … menu)
-
-    /// Sends a draft, or a backlog task, to planning.
-    func plan(_ id: String) {
-        send(.taskPlan(.init(id: id)))
-        notice = .toast("Sent \(id) to planning", taskId: id)
-    }
-
-    /// Parks a draft or a plan waiting for approval: nothing runs on it until someone picks it up.
-    func backlog(_ id: String) {
-        send(.taskBacklog(.init(id: id)))
-        notice = .toast("Sent \(id) to the backlog", taskId: id)
-    }
 
     /// Whether you can give `task` to someone else: its owner or an admin can. Anyone can take a task over.
     func canReassign(_ task: Wire.Task) -> Bool { task.owner == me || isAdmin }
@@ -376,6 +378,25 @@ final class FactoryStore {
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
+        case .taskPlan(let m):
+            guard let state = feed.task(m.id)?.state, state == .drafting || state == .backlog else { return }
+            update(m.id) { $0.state = .planning; $0.events.append(.init(who: me, text: "sent it to planning", at: DemoData.now)) }
+            notice = .toast("Sent to planning", taskId: m.id)
+        case .taskBacklog(let m):
+            guard let state = feed.task(m.id)?.state, state == .drafting || state == .awaitingApproval else { return }
+            update(m.id) { $0.state = .backlog; $0.approvals = []; $0.waiting = nil; $0.events.append(.init(who: me, text: "sent it to the backlog", at: DemoData.now)) }
+            notice = .toast("Sent to the backlog", taskId: m.id)
+        case .taskRankDraft(let m):
+            guard let task = feed.task(m.id) else { return }
+            let line = feed.tasks(in: task.goal).filter { $0.state == .drafting && $0.id != m.id }.sorted(by: Wire.Task.draftOrder)
+            let target = m.before == "top" ? line.first : line.first { $0.id == m.before }
+            let rank: Double
+            if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+                rank = at > 0 ? (line[at - 1].draftOrderRank + target.draftOrderRank) / 2 : target.draftOrderRank - 1000
+            } else {
+                rank = (line.map(\.draftOrderRank).max() ?? 0) + 1
+            }
+            update(m.id) { $0.draftRank = rank }
         case .taskAnswerPrompt(let m):
             // The runner passes the answer to the session, which carries on.
             guard let worker = feed.task(m.id)?.worker, let mi = feed.machines.firstIndex(where: { $0.id == worker.machine }),
@@ -383,6 +404,28 @@ final class FactoryStore {
             var machine = feed.machines[mi]
             machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
             feed.apply(.machineUpdated(.init(machine: machine)))
+        case .taskCheckedIt(let m):
+            // As the server does: the item is proven by your word, with the note as its reason.
+            guard let task = feed.task(m.id), task.doneWhen.indices.contains(Int(m.item)) else { break }
+            let item = task.doneWhen[Int(m.item)]
+            let reason = m.note
+            update(m.id) {
+                $0.doneWhen[Int(m.item)].status = .proven
+                $0.doneWhen[Int(m.item)].evidence = .init(kind: item.proof, summary: "Attested by \(me)\(reason.map { ": \($0)" } ?? "")", by: me, at: DemoData.now, attested: true, reason: reason)
+                $0.events.append(.init(who: me, text: "attested \"\(item.text)\"\(reason.map { ": \($0)" } ?? "")", at: DemoData.now))
+            }
+            notice = .toast("Marked as checked", taskId: m.id)
+        case .taskMockupChange(let m):
+            // As the server does: the mockup waits on a new version, the change is queued for the
+            // planner, and a plan waiting for approval goes back to planning.
+            guard let mockup = feed.task(m.id)?.mockups.first(where: { $0.id == m.mockup }) else { break }
+            update(m.id) {
+                if let i = $0.mockups.firstIndex(where: { $0.id == m.mockup }) { $0.mockups[i].status = .changesRequested }
+                $0.changes.append(.init(id: "C\($0.changes.count + 1)", author: me, text: m.text, at: DemoData.now, anchor: "Mockup: \(mockup.title)", status: .queued))
+                $0.events.append(.init(who: me, text: "asked for a change to the \"\(mockup.title)\" mockup", at: DemoData.now))
+                if $0.state == .awaitingApproval { $0.approvals = []; $0.state = .planning }
+            }
+            notice = .toast("Change requested: the planner will post a new version", taskId: m.id)
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
         case .taskCreate(let m):
@@ -393,15 +436,6 @@ final class FactoryStore {
                                  events: [.init(who: me, text: "created the task", at: DemoData.now)],
                                  shareable: m.shareable, agent: m.agent ?? "claude", repo: m.repo, priority: m.priority)
             feed.apply(.taskUpdated(.init(task: task)))
-        case .taskPlan(let m):
-            update(m.id) { $0.state = .planning; $0.events.append(.init(who: me, text: "sent it to planning", at: DemoData.now)) }
-        case .taskBacklog(let m):
-            update(m.id) { task in
-                guard task.state == .drafting || task.state == .awaitingApproval else { return }
-                task.state = .backlog
-                task.approvals = []
-                task.events.append(.init(who: me, text: "sent it to the backlog", at: DemoData.now))
-            }
         case .taskAssign(let m):
             update(m.id) { task in
                 if task.hand?.assignee == task.owner { task.hand?.assignee = m.owner }
@@ -441,5 +475,15 @@ final class FactoryStore {
         default:
             break
         }
+    }
+}
+
+extension Wire.Task {
+    /// Where a draft sits in its goal's drafts: its rank, or when it was made, as the factory orders them.
+    var draftOrderRank: Double { draftRank ?? Double(createdAt) }
+
+    /// A goal's drafts, first first.
+    static func draftOrder(_ a: Wire.Task, _ b: Wire.Task) -> Bool {
+        (a.draftOrderRank, a.id) < (b.draftOrderRank, b.id)
     }
 }

@@ -34,7 +34,7 @@ struct TaskActionsMenu: View {
                         Button { store.plan(task.id) } label: { Label(task.plan.isEmpty ? "Send to planning" : "Plan again", systemImage: "paperplane") }
                     }
                     if task.state == .drafting || task.state == .awaitingApproval {
-                        Button { store.backlog(task.id) } label: { Label("Send to backlog", systemImage: Wire.TaskState.backlog.icon) }
+                        Button { store.sendToBacklog(task.id) } label: { Label("Send to backlog", systemImage: Wire.TaskState.backlog.icon) }
                     }
                     Button(role: .destructive) { confirmCancel = true } label: { Label("Cancel task…", systemImage: "xmark.circle") }
                 }
