@@ -3034,6 +3034,51 @@ public enum Wire {
         }
     }
 
+    /// One commit on a task's branch (`origin/<base>..HEAD`), with its own line counts and patch.
+    public struct DiffCommit: Codable, Hashable, Sendable {
+        public var sha: String
+        public var subject: String
+        /// The rest of its message after the subject, when there is one.
+        public var body: String?
+        public var author: String
+        /// When it was committed, in ms since the epoch.
+        public var at: UInt64
+        public var added: UInt32
+        public var removed: UInt32
+        public var files: [DiffStat]
+        /// Its own unified patch; empty when the branch's commits ran past the total cap.
+        public var patch: String
+        /// Its patch was cut, or left out for the total cap.
+        public var truncated: Bool
+
+        public init(sha: String, subject: String, body: String? = nil, author: String, at: UInt64, added: UInt32, removed: UInt32, files: [DiffStat] = [], patch: String, truncated: Bool) {
+            self.sha = sha
+            self.subject = subject
+            self.body = body
+            self.author = author
+            self.at = at
+            self.added = added
+            self.removed = removed
+            self.files = files
+            self.patch = patch
+            self.truncated = truncated
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sha = try c.decode(String.self, forKey: .sha)
+            subject = try c.decode(String.self, forKey: .subject)
+            body = try c.decodeIfPresent(String.self, forKey: .body)
+            author = try c.decode(String.self, forKey: .author)
+            at = try c.decode(UInt64.self, forKey: .at)
+            added = try c.decode(UInt32.self, forKey: .added)
+            removed = try c.decode(UInt32.self, forKey: .removed)
+            files = try c.decodeIfPresent([DiffStat].self, forKey: .files) ?? []
+            patch = try c.decode(String.self, forKey: .patch)
+            truncated = try c.decode(Bool.self, forKey: .truncated)
+        }
+    }
+
     /// A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.
     public struct ReviewNote: Codable, Hashable, Sendable {
         public var path: String
@@ -4043,14 +4088,17 @@ public enum Wire {
         public var patch: String
         public var truncated: Bool
         public var message: String?
+        /// The branch's commits, oldest first; none from runners that predate it.
+        public var commits: [DiffCommit]?
 
-        public init(taskId: String, ok: Bool, files: [DiffStat] = [], patch: String, truncated: Bool, message: String? = nil) {
+        public init(taskId: String, ok: Bool, files: [DiffStat] = [], patch: String, truncated: Bool, message: String? = nil, commits: [DiffCommit]? = nil) {
             self.taskId = taskId
             self.ok = ok
             self.files = files
             self.patch = patch
             self.truncated = truncated
             self.message = message
+            self.commits = commits
         }
 
         public init(from decoder: Decoder) throws {
@@ -4061,6 +4109,7 @@ public enum Wire {
             patch = try c.decode(String.self, forKey: .patch)
             truncated = try c.decode(Bool.self, forKey: .truncated)
             message = try c.decodeIfPresent(String.self, forKey: .message)
+            commits = try c.decodeIfPresent([DiffCommit].self, forKey: .commits)
         }
     }
 

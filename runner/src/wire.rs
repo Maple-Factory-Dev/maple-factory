@@ -1524,6 +1524,28 @@ pub struct DiffStat {
     pub removed: u32,
 }
 
+/// One commit on a task's branch (`origin/<base>..HEAD`), with its own line counts and patch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffCommit {
+    pub sha: String,
+    pub subject: String,
+    /// The rest of its message after the subject, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    pub author: String,
+    /// When it was committed, in ms since the epoch.
+    pub at: u64,
+    pub added: u32,
+    pub removed: u32,
+    #[serde(default)]
+    pub files: Vec<DiffStat>,
+    /// Its own unified patch; empty when the branch's commits ran past the total cap.
+    pub patch: String,
+    /// Its patch was cut, or left out for the total cap.
+    pub truncated: bool,
+}
+
 /// A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2165,6 +2187,9 @@ pub enum RunnerMessage {
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// The branch's commits, oldest first; none from runners that predate it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commits: Option<Vec<DiffCommit>>,
     },
     #[serde(rename = "task.merged")]
     TaskMerged {
