@@ -122,3 +122,12 @@ test("beforeSend drops events once a stored off is filled in after the SDK start
   await applySettings(env, true);
   assert.equal(options.beforeSend!({ message: "after" } as ErrorEvent, {}), null);
 });
+
+test("a stored off isn't mistaken for a Worker var when each request wraps env afresh (withSentry)", async () => {
+  const env = { DB: fakeDb({ SENTRY_DSN: "off" }) } as Env;
+  const wrap = () => new Proxy(env, {});
+  await applySettings(wrap(), true);
+  assert.equal(setInWorker(wrap(), "SENTRY_DSN"), false);
+  await deleteSetting(wrap(), "SENTRY_DSN");
+  assert.equal(sentryDsn(wrap(), BUILT_IN), BUILT_IN);
+});
