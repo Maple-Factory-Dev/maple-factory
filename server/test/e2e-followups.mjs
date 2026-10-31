@@ -27,10 +27,12 @@ const feed = new WebSocket(`${ws}/client/connect`, { headers: { authorization: `
 const tasks = new Map();
 let goals = [];
 let snapshot = false;
+let policy = null;
 const errors = [];
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
-  if (m.type === "snapshot") { goals = m.goals; snapshot = true; for (const t of m.tasks) tasks.set(t.id, t); }
+  if (m.type === "policy.updated") policy = m.policy;
+  if (m.type === "snapshot") { goals = m.goals; policy = m.policy; snapshot = true; for (const t of m.tasks) tasks.set(t.id, t); }
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
   if (m.type === "error") errors.push(m.message);
@@ -100,6 +102,10 @@ runner.onmessage = async (e) => {
   if (m.type === "task.merge") return toHub({ type: "task.merged", taskId: m.taskId, ok: true, commit: "fedcba9", message: null });
 };
 await sleep(500);
+
+// A low-risk change needs one person's approval here, so there's an Approve changes to click.
+send({ type: "policy.save", policy: { ...policy, finalReviews: { ...policy.finalReviews, low: 1 } } });
+await until("one review for low risk", () => policy.finalReviews.low === 1);
 
 const prefix = `FU${String(Date.now()).slice(-4)}`;
 send({ type: "goal.save", goal: { id: "", name: mode === "serve" ? "Greeting page" : `Follow-ups ${prefix}`, prefix, color: "#2EA043", summary: "A friendly greeting.", lead: "", repos: [], folder: "/tmp/followups-e2e/repo", base: null } });

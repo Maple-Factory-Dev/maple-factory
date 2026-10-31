@@ -663,7 +663,7 @@ function priorityLine(t) {
   const open = t.state !== "merged" && t.state !== "cancelled";
   const from = t.followUpOf && h("span", {}, " · Follow-up of ", h("a", { href: `#/t/${t.followUpOf.split("#")[0]}` }, t.followUpOf));
   if (!open) return (t.priority || from) && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Priority: ", t.priority ? t.priority.toUpperCase() : "none", from);
-  return h("div", { class: "muted row", style: "font-size:13px;margin-top:4px;gap:6px" }, "Priority",
+  return h("div", { class: "muted row prio-line", style: "font-size:13px;margin-top:4px;gap:6px" }, "Priority",
     prioritySelect(t.priority, (p) => send(p ? { type: "task.edit", id: t.id, priority: p } : { type: "task.edit", id: t.id, clearPriority: true }), { title: "How soon it should be done; a P0 goes to the front of the queue" }),
     from);
 }
@@ -787,7 +787,7 @@ function decisions(t) {
     const passed = t.autoReview?.rounds.at(-1)?.verdict === "passed";
     const failing = t.pr?.checks?.some((c) => c.status === "failed");
     const pending = t.pr?.checks?.some((c) => c.status !== "passed" && c.status !== "failed");
-    if (passed && t.reviews.length < t.reviewsNeeded) {
+    if (approvable(t)) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
         t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
@@ -1002,15 +1002,17 @@ function review(t) {
   const last = r.rounds.at(-1);
   const verdict = { passed: ["Passed", "ok"], changesRequested: ["Asked for changes", "wait"], escalated: ["Handed to a person", "bad"], inProgress: ["Reviewing…", "muted"] }[last.verdict];
   const open = r.findings.filter((f) => f.status === "open");
+  const follow = followUpCard(t);
   return [h("h2", {}, "Automated review"), h("div", { class: "card" },
     h("div", { class: "row" }, h("b", {}, `Round ${last.number} of ${r.maxRounds}`), h("span", { class: verdict[1] }, verdict[0])),
     r.summary && h("p", { style: "margin:8px 0" }, r.summary),
     [...r.ask.map((c) => ["Asked", c]), ...r.proofs.map((c) => ["Proof", c])].map(([kind, c]) => h("div", { class: "check" },
       h("span", { class: `mark ${c.verdict === "met" ? "ok" : c.verdict === "notMet" ? "bad" : "wait"}` }, c.verdict === "met" ? "✓" : c.verdict === "notMet" ? "✕" : "•"),
       h("div", {}, h("span", { class: "muted" }, `${kind}: `), c.text, c.note && h("div", { class: "muted" }, c.note)))),
-    open.length > 0 && [h("h2", { style: "margin-top:14px" }, `Open findings · ${open.length}`), open.map((f) => h("div", { class: "check" },
+    // In review or merged, the follow-ups list below shows them, with what to follow up.
+    open.length > 0 && !follow && [h("h2", { style: "margin-top:14px" }, `Open findings · ${open.length}`), open.map((f) => h("div", { class: "check" },
       h("span", { class: "mark bad" }, "!"), h("div", {}, f.text, f.file && h("div", { class: "mono muted" }, f.file))))]),
-    followUpCard(t)];
+    follow];
 }
 
 // ---- follow-ups: a task's leftover findings (or a note) as drafts in its goal ----
@@ -1037,6 +1039,8 @@ function sendFollowUps(t) {
   return true;
 }
 
+const approvable = (t) => t.state === "reviewing" && t.autoReview?.rounds.at(-1)?.verdict === "passed" && t.reviews.length < t.reviewsNeeded;
+
 function followUpCard(t) {
   if (t.state !== "reviewing" && t.state !== "merged") return null;
   const left = (t.autoReview?.findings ?? []).filter((f) => f.status !== "fixed");
@@ -1054,7 +1058,8 @@ function followUpCard(t) {
           prioritySelect(p.picked.get(f.id), (v) => { p.picked.set(f.id, v); }, { "aria-label": "Its priority" }))));
   });
   const ticked = p.picked.size + (p.title.trim() ? 1 : 0);
-  const approving = t.state === "reviewing";
+  // Approve changes sends them, where it's there to click.
+  const approving = approvable(t) && !t.reviews.includes(state.me?.login);
   return [h("h2", { style: "margin-top:14px" }, "Follow-ups"),
     h("p", { class: "muted", style: "margin:0 0 6px;font-size:13px" }, approving
       ? "Tick what to follow up: each becomes a draft in the goal when you approve the changes."
