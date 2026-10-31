@@ -204,7 +204,6 @@ final class FactoryStore {
     // MARK: Actions
 
     func approvePlan(_ id: String) { send(.taskApprovePlan(.init(id: id))) }
-    func requestChanges(_ id: String, text: String) { send(.taskReview(.init(id: id, summary: text))) }
     func approveChanges(_ id: String) { send(.taskApproveChanges(.init(id: id))) }
     func merge(_ id: String) { send(.taskMerge(.init(id: id))) }
     func holdMerge(_ id: String) { send(.taskHoldMerge(.init(id: id))) }
@@ -280,9 +279,6 @@ final class FactoryStore {
             update(m.id) { $0.hand = nil; $0.events.append(.init(who: me, text: "resolved the hand: \(m.option ?? m.note)", at: DemoData.now)) }
         case .taskComment(let m):
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
-        case .taskReview(let m):
-            update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.summary ?? "", at: DemoData.now, status: .queued)) }
-            notice = .toast("Changes requested", taskId: m.id)
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
         case .goalFollow(let m):

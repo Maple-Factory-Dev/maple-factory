@@ -77,6 +77,29 @@ struct FeedStateTests {
         #expect(kinds == [.hand, .mention])
     }
 
+    /// Like the Mac inbox: a task in review waits on you only once its automatic review passed.
+    @Test func reviewWaitsForTheAutomaticReview() throws {
+        var state = FeedState()
+        state.apply(try decode(snapshot))
+        state.apply(try decode(#"{"type":"task.removed","id":"MF-1"}"#))
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-2", state: "reviewing"))}"#))
+        #expect(state.inbox(for: "andrea").isEmpty)
+
+        let review = { (verdict: String) in
+            #","autoReview":{"maxRounds":3,"rounds":[{"number":1,"verdict":"\#(verdict)","found":0,"at":4}],"summary":"","ask":[],"proofs":[],"findings":[]}"#
+        }
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-2", state: "reviewing", extra: review("changesRequested")))}"#))
+        #expect(state.inbox(for: "andrea").isEmpty)
+
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-2", state: "reviewing", extra: review("passed")))}"#))
+        let entries = state.inbox(for: "andrea")
+        #expect(entries.map(\.kind) == [.review])
+        #expect(entries.first?.message == "Passed automatic review; ready for yours")
+        // Once you've approved the changes, it leaves your inbox.
+        state.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-2", state: "reviewing", extra: review("passed") + #","reviews":["andrea"]"#))}"#))
+        #expect(state.inbox(for: "andrea").isEmpty)
+    }
+
     @Test func notices() throws {
         var state = FeedState()
         #expect(state.apply(try decode(#"{"type":"toast","text":"Merged","taskId":"MF-1"}"#)) == .toast("Merged", taskId: "MF-1"))

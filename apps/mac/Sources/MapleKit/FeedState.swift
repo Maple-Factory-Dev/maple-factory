@@ -125,8 +125,8 @@ public struct FeedState: Sendable {
             if let question = task.question {
                 entries.append(InboxEntry(kind: .question, task: task.id, assignee: task.owner, message: question.text, at: question.at))
             }
-            if task.state == .reviewing, !task.reviews.contains(login), task.autoReview.map({ $0.rounds.last?.verdict == .passed }) ?? true {
-                entries.append(InboxEntry(kind: .review, task: task.id, assignee: task.owner, message: task.mergeAt != nil ? "Merging soon unless someone holds it" : "Ready for your review", at: task.updatedAt))
+            if task.state == .reviewing, !task.reviews.contains(login), task.autoReview?.rounds.last?.verdict == .passed {
+                entries.append(InboxEntry(kind: .review, task: task.id, assignee: task.owner, message: "Passed automatic review; ready for yours", at: task.updatedAt))
             }
             if task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
                 entries.append(InboxEntry(kind: .failing, task: task.id, assignee: task.owner, message: "Checks are failing", at: task.updatedAt))

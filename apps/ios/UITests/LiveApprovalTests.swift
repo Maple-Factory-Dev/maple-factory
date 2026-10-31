@@ -3,10 +3,12 @@ import XCTest
 /// Against a live factory (scripts/dev-stack.sh): signs in with the onboarding flags, opens the first
 /// plan awaiting approval from the inbox and approves it, then waits for the task to start building.
 ///   MAPLE_FACTORY=localhost:8788 xcodebuild test -scheme "Maple Factory" -only-testing:MapleFactoryUITests …
-/// Skipped without MAPLE_FACTORY (set it with TEST_RUNNER_MAPLE_FACTORY when running through xcodebuild).
+/// Skipped (XCTSkip) without MAPLE_FACTORY (set it with TEST_RUNNER_MAPLE_FACTORY when running through xcodebuild).
 final class LiveApprovalTests: XCTestCase {
     func testApprovePlanFromTheInbox() throws {
-        let factory = try XCTUnwrap(ProcessInfo.processInfo.environment["MAPLE_FACTORY"], "set MAPLE_FACTORY to a dev factory")
+        guard let factory = ProcessInfo.processInfo.environment["MAPLE_FACTORY"] else {
+            throw XCTSkip("set MAPLE_FACTORY to a dev factory")
+        }
         let app = XCUIApplication()
         app.launchArguments = ["-onboardingURL", factory, "-onboardingContinue", "YES"]
         app.launch()

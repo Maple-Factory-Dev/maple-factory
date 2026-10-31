@@ -517,11 +517,11 @@ struct ActionBar: View {
                     if task.mergeAt != nil {
                         action("Hold merge", "pause.circle") { store.holdMerge(task.id) }
                     }
-                    if approved || task.reviews.contains(me) {
+                    if approved {
                         action("Merge", "arrow.triangle.merge", prominent: task.reviews.contains(me)) { store.merge(task.id) }
                     }
                     action("Request changes", "arrow.uturn.left") {
-                        compose = Compose(title: "Request changes", placeholder: "What should the builder change?", send: "Request") { store.requestChanges(task.id, text: $0) }
+                        compose = Compose(title: "Request changes", placeholder: "What should the builder change?", send: "Request") { store.steer(task.id, text: $0) }
                     }
                 }
                 if task.state == .building || task.state == .planning {
