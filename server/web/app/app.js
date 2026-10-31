@@ -984,12 +984,12 @@ function riskCard(risk) {
   return [h("h2", {}, `Risk · ${risk.level}`), h("div", { class: "card" },
     h("div", { class: "muted", style: "font-size:13px;margin-bottom:4px" }, "Why this risk"),
     factors.length
-      ? factors.map((f) => h("div", { class: "check risk-factor" },
+      ? h("div", {}, factors.map((f) => h("div", { class: "check risk-factor" },
         h("span", { class: `dot risk-dot-${f.level}`, title: f.level }),
         h("div", { style: "flex:1;min-width:0" },
           h("div", {}, h("b", {}, f.label), " ", h("span", { class: "lvl" }, f.level)),
           f.detail && h("div", { class: "muted" }, f.detail),
-          (f.files ?? []).length > 0 && h("div", { class: "mono muted" }, f.files.join(", ")))))
+          (f.files ?? []).length > 0 && h("div", { class: "mono muted" }, f.files.join(", "))))))
       : h("div", { class: "muted" }, risk.reasons.join("; ") || "The planner's read.")),
   ];
 }
