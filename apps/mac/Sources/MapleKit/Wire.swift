@@ -123,11 +123,13 @@ public enum Wire {
         case merged
         /// Stopped.
         case cancelled
+        /// Finished without code to merge, e.g. its planner proposed tasks instead of a plan.
+        case closed
         /// A value this build doesn't know yet; newer servers may send them.
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged, .cancelled]
+        public static let allCases: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged, .cancelled, .closed]
 
         public init(rawValue: String) {
             switch rawValue {
@@ -139,6 +141,7 @@ public enum Wire {
             case "reviewing": self = .reviewing
             case "merged": self = .merged
             case "cancelled": self = .cancelled
+            case "closed": self = .closed
             default: self = .other(rawValue)
             }
         }
@@ -153,6 +156,7 @@ public enum Wire {
             case .reviewing: "reviewing"
             case .merged: "merged"
             case .cancelled: "cancelled"
+            case .closed: "closed"
             case .other(let value): value
             }
         }
@@ -2910,7 +2914,7 @@ public enum Wire {
         public var scoutedFrom: String?
         /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
         public var repo: String?
-        /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
+        /// Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged.
         public var after: [String]
         public var followUps: [FollowUp]
         /// Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt.
@@ -3785,6 +3789,8 @@ public enum Wire {
         public var merged: UInt32
         public var autoMerged: UInt32
         public var cancelled: UInt32
+        /// Tasks that finished with nothing to merge. None from a factory before it had the closed state.
+        public var closed: UInt32?
         public var created: UInt32
         public var tasksTouched: UInt32
         public var handsRaised: UInt32
@@ -3810,10 +3816,11 @@ public enum Wire {
         public var reviewRoundsPerMerge: Double?
         public var steersPerTask: Double?
 
-        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
+        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, closed: UInt32? = nil, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
             self.merged = merged
             self.autoMerged = autoMerged
             self.cancelled = cancelled
+            self.closed = closed
             self.created = created
             self.tasksTouched = tasksTouched
             self.handsRaised = handsRaised
@@ -4237,6 +4244,7 @@ public enum Wire {
         }
     }
 
+    /// How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed).
     public struct RunnerMessageUpdateStatus: Codable, Hashable, Sendable {
         public var state: String
         public var version: String?
@@ -4728,6 +4736,15 @@ public enum Wire {
         }
     }
 
+    public struct ServerToRunnerRunnerUpdate: Codable, Hashable, Sendable {
+        /// Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before.
+        public var version: String?
+
+        public init(version: String? = nil) {
+            self.version = version
+        }
+    }
+
     /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
     public struct ServerToRunnerAgentLogin: Codable, Hashable, Sendable {
         public var agent: String
@@ -4952,7 +4969,7 @@ public enum Wire {
         case sessionResize(ServerToRunnerSessionResize)
         case sessionKill(ServerToRunnerSessionKill)
         case sessionReplay(ServerToRunnerSessionReplay)
-        case runnerUpdate
+        case runnerUpdate(ServerToRunnerRunnerUpdate)
         case agentLogin(ServerToRunnerAgentLogin)
         case runnerRestart
         case mcpResponse(ServerToRunnerMcpResponse)
@@ -4978,7 +4995,7 @@ public enum Wire {
             case "session.resize": self = .sessionResize(try ServerToRunnerSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ServerToRunnerSessionKill(from: decoder))
             case "session.replay": self = .sessionReplay(try ServerToRunnerSessionReplay(from: decoder))
-            case "runner.update": self = .runnerUpdate
+            case "runner.update": self = .runnerUpdate(try ServerToRunnerRunnerUpdate(from: decoder))
             case "agent.login": self = .agentLogin(try ServerToRunnerAgentLogin(from: decoder))
             case "runner.restart": self = .runnerRestart
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
@@ -5011,8 +5028,9 @@ public enum Wire {
             case .sessionReplay(let body):
                 try c.encode("session.replay", forKey: .type)
                 try body.encode(to: encoder)
-            case .runnerUpdate:
+            case .runnerUpdate(let body):
                 try c.encode("runner.update", forKey: .type)
+                try body.encode(to: encoder)
             case .agentLogin(let body):
                 try c.encode("agent.login", forKey: .type)
                 try body.encode(to: encoder)
@@ -5323,9 +5341,12 @@ public enum Wire {
     /// Its owner or an admin: update its runner to the latest release now.
     public struct ClientMessageMachineUpdate: Codable, Hashable, Sendable {
         public var machine: String
+        /// The release the person was shown; a newer one isn't installed without asking again.
+        public var version: String?
 
-        public init(machine: String) {
+        public init(machine: String, version: String? = nil) {
             self.machine = machine
+            self.version = version
         }
     }
 
@@ -5578,8 +5599,10 @@ public enum Wire {
         public var priority: Priority?
         /// Take its priority off.
         public var clearPriority: Bool?
+        /// Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop.
+        public var after: [String]?
 
-        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil, priority: Priority? = nil, clearPriority: Bool? = nil) {
+        public init(id: String, title: String? = nil, brief: String? = nil, shareable: Bool? = nil, repo: String? = nil, effort: String? = nil, agent: String? = nil, model: String? = nil, priority: Priority? = nil, clearPriority: Bool? = nil, after: [String]? = nil) {
             self.id = id
             self.title = title
             self.brief = brief
@@ -5590,6 +5613,7 @@ public enum Wire {
             self.model = model
             self.priority = priority
             self.clearPriority = clearPriority
+            self.after = after
         }
     }
 

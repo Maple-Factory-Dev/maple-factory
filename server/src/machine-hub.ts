@@ -312,6 +312,18 @@ export class MachineHub extends DurableObject<Env> {
         await this.env.DB.prepare("UPDATE machines SET hostname = ?, os = ?, arch = ?, version = ?, last_seen = ? WHERE id = ?")
           .bind(msg.hostname, msg.os, msg.arch, msg.version, Date.now(), msg.runnerId).run();
         for (const end of msg.ended) await this.recordEnd(msg.runnerId, end, machine.sessions);
+        // A session the hub had that the runner neither lists nor reports ended went with a restart (the
+        // runner's record of recent ends lives in memory): end it, so the factory can start its task again.
+        const listed = new Set([...msg.sessions.map((s) => s.session.id), ...msg.ended.map((e) => e.id)]);
+        for (const gone of machine.sessions.filter((s) => !listed.has(s.session.id))) {
+          await this.recordEnd(msg.runnerId, {
+            id: gone.session.id,
+            cause: "tmuxLost",
+            detail: `It was gone when ${msg.hostname} reconnected; the machine likely restarted.`,
+            at: this.now(),
+            lastOutput: [],
+          }, machine.sessions);
+        }
         await this.publish({
           ...machine,
           id: msg.runnerId,

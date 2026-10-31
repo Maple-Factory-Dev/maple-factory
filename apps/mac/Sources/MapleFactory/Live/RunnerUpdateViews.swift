@@ -79,7 +79,7 @@ struct RunnerUpdateRow: View {
     }
 
     private func update() {
-        client.send(.machineUpdate(.init(machine: machine.id)))
+        client.updateRunner(machine)
     }
 
     /// This Mac's runner log, where an update's steps and errors are.

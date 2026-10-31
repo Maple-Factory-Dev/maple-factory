@@ -7,8 +7,8 @@ export type EndCause = "exited" | "killed" | "signaled" | "outOfMemory" | "machi
 export const EndCauseValues: readonly EndCause[] = ["exited","killed","signaled","outOfMemory","machineSlept","tmuxLost","runnerUpdated","authExpired","usageLimit","unknown"];
 
 /** Where a task is in the loop. */
-export type TaskState = "drafting" | "planning" | "awaitingApproval" | "backlog" | "building" | "reviewing" | "merged" | "cancelled";
-export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","backlog","building","reviewing","merged","cancelled"];
+export type TaskState = "drafting" | "planning" | "awaitingApproval" | "backlog" | "building" | "reviewing" | "merged" | "cancelled" | "closed";
+export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","backlog","building","reviewing","merged","cancelled","closed"];
 
 /** What a factory session is for. */
 export type Role = "planner" | "builder" | "reviewer";
@@ -767,7 +767,7 @@ export interface Task {
   scoutedFrom?: string | null;
   /** Which of its goal's repos it changes; none: the goal's `repo` (or its folder). */
   repo?: string | null;
-  /** Tasks that must merge before it starts building, e.g. the API change a web change uses. */
+  /** Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged. */
   after: string[];
   followUps: FollowUp[];
   /** Its place in the queue for sessions: lower starts first. None (from an older server): its createdAt. */
@@ -1126,6 +1126,8 @@ export interface StatsTotals {
   merged: number;
   autoMerged: number;
   cancelled: number;
+  /** Tasks that finished with nothing to merge. None from a factory before it had the closed state. */
+  closed?: number | null;
   created: number;
   tasksTouched: number;
   handsRaised: number;
@@ -1351,6 +1353,7 @@ export interface RunnerMessage_SessionReplay {
   data: string;
 }
 
+/** How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed). */
 export interface RunnerMessage_UpdateStatus {
   type: "update.status";
   state: string;
@@ -1551,6 +1554,8 @@ export interface ServerToRunner_SessionReplay {
 
 export interface ServerToRunner_RunnerUpdate {
   type: "runner.update";
+  /** Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before. */
+  version?: string | null;
 }
 
 /** Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting. */
@@ -1847,6 +1852,8 @@ export interface ClientMessage_MachineRename {
 export interface ClientMessage_MachineUpdate {
   type: "machine.update";
   machine: string;
+  /** The release the person was shown; a newer one isn't installed without asking again. */
+  version?: string | null;
 }
 
 /** Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that. */
@@ -1998,6 +2005,8 @@ export interface ClientMessage_TaskEdit {
   priority?: Priority | null;
   /** Take its priority off. */
   clearPriority?: boolean | null;
+  /** Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop. */
+  after?: string[] | null;
 }
 
 /** Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused. */

@@ -276,7 +276,7 @@ struct GoalRow: View {
 
     var body: some View {
         let tasks = store.feed.tasks(in: goal.id)
-        let open = tasks.filter { $0.state != .merged && $0.state != .cancelled }
+        let open = tasks.filter { $0.state != .merged && $0.state != .cancelled && $0.state != .closed }
         NavigationLink(value: GoalRoute(id: goal.id)) {
             HStack(spacing: 12) {
                 Text(goal.prefix)
@@ -301,7 +301,64 @@ struct GoalView: View {
     @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
     let id: String
 
-    private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .cancelled]
+    private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .closed, .cancelled]
+
+    /// Edit mode for the Drafts section, where drafts are dragged into order.
+    @State private var editMode: EditMode = .inactive
+    private var editing: Bool { editMode.isEditing }
+
+    /// The goal's drafts in their order: swipe one to planning or the backlog, or Edit to drag them.
+    @ViewBuilder
+    private func draftsSection(_ drafts: [Wire.Task]) -> some View {
+        if !drafts.isEmpty {
+            Section {
+                ForEach(drafts) { task in
+                    NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                        .swipeActions(edge: .trailing) {
+                            if !editing {
+                                Button { store.sendToBacklog(task.id) } label: { Label("Backlog", systemImage: Wire.TaskState.backlog.icon) }
+                                    .tint(Theme.state(.backlog))
+                                planButton(task)
+                            }
+                        }
+                }
+                .onMove { from, to in move(drafts, from: from, to: to) }
+            } header: {
+                HStack {
+                    header(.drafting, drafts.count)
+                    Spacer()
+                    if drafts.count > 1 {
+                        Button(editing ? "Done" : "Edit") {
+                            withAnimation { editMode = editing ? .inactive : .active }
+                        }
+                        .font(.subheadline.weight(editing ? .semibold : .regular))
+                        .textCase(nil)
+                        .accessibilityIdentifier("drafts-edit")
+                    }
+                }
+            }
+            .onChange(of: drafts.count > 1) { _, several in if !several { editMode = .inactive } }
+        }
+    }
+
+    /// Ranks the dragged draft ahead of the one that now follows it ("top" when it lands first).
+    private func move(_ drafts: [Wire.Task], from: IndexSet, to: Int) {
+        guard let index = from.first else { return }
+        var order = drafts
+        order.move(fromOffsets: from, toOffset: to)
+        let id = drafts[index].id
+        guard let at = order.firstIndex(where: { $0.id == id }), order.map(\.id) != drafts.map(\.id) else { return }
+        store.rankDraft(id, before: at == 0 ? "top" : order.indices.contains(at + 1) ? order[at + 1].id : nil)
+    }
+
+    private func planButton(_ task: Wire.Task) -> some View {
+        Button { store.plan(task.id) } label: { Label("Plan", systemImage: Wire.TaskState.planning.icon) }
+            .tint(Theme.state(.planning))
+    }
+
+    private func header(_ stage: Wire.TaskState, _ count: Int) -> some View {
+        Label("\(stage.title) · \(count)", systemImage: stage.icon).foregroundStyle(Theme.state(stage))
+    }
 
     var body: some View {
         if let goal = store.feed.goal(id) {
@@ -315,19 +372,26 @@ struct GoalView: View {
                     if let repo = goal.repo { LabeledContent("Repo", value: repo) }
                     Toggle("Follow", isOn: Binding(get: { store.feed.following(goal) }, set: { store.follow(goal.id, $0) }))
                 }
+                GoalSettingsSection(goal: goal)
                 ForEach(Self.stages, id: \.self) { stage in
                     let staged = tasks.filter { $0.state == stage }
-                    if !staged.isEmpty {
+                    if stage == .drafting {
+                        draftsSection(staged.sorted(by: Wire.Task.draftOrder))
+                    } else if !staged.isEmpty {
                         Section {
                             ForEach(staged) { task in
                                 NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                                    .swipeActions(edge: .trailing) {
+                                        if stage == .backlog, !editing { planButton(task) }
+                                    }
                             }
                         } header: {
-                            Label("\(stage.title) · \(staged.count)", systemImage: stage.icon).foregroundStyle(Theme.state(stage))
+                            header(stage, staged.count)
                         }
                     }
                 }
             }
+            .environment(\.editMode, $editMode)
             .navigationTitle(goal.name)
             .refreshable { await store.refresh() }
             .toolbar {
@@ -395,22 +459,21 @@ struct MachineRows: View {
     @Environment(FactoryStore.self) private var store
     let machine: Wire.Machine
 
+    @State private var renaming = false
+    @State private var nickname = ""
+    @State private var moving: String?
+
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "desktopcomputer").font(.title3).foregroundStyle(machine.online ? Theme.approve : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(machine.name).font(.body.weight(.medium))
-                Text([machine.owner, machine.os, machine.version.map { "runner \($0)" }].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary)
+        header
+            // One dialog for the machine's sessions: Move, from a session's button or swipe.
+            .confirmationDialog("Move \(moving ?? "") off \(machine.name)?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } }),
+                                titleVisibility: .visible, presenting: moving) { id in
+                Button("Move to another machine") { store.moveTask(id) }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("It re-queues first and carries on from its last push.")
             }
-            Spacer()
-            Text(machine.online ? "Online" : machine.lastSeen.map { "Seen \(When.ago($0)) ago" } ?? "Offline")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(machine.online ? Theme.approve : .secondary)
-        }
-        if store.feed.runnerOutdated(machine), let latest = store.feed.runnerLatest {
-            Label("Runner \(latest) is out", systemImage: "arrow.down.circle").font(.caption).foregroundStyle(Theme.warning)
-        }
+        runnerRow
         if let health = machine.health {
             HStack {
                 gauge("CPU", health.cpu)
@@ -428,6 +491,9 @@ struct MachineRows: View {
             }
         }
         ForEach(machine.sessions, id: \.session.id) { live in
+            let movable = live.session.taskId.flatMap { id in
+                FactoryStore.isStuck(machine) && store.canMove(task: id, on: machine) ? id : nil
+            }
             NavigationLink(value: SessionRoute(machine: machine.id, session: live.session.id)) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -449,6 +515,92 @@ struct MachineRows: View {
                     }
                 }
             }
+            .swipeActions(edge: .trailing) {
+                if let movable {
+                    Button("Move to another machine", systemImage: "arrow.uturn.forward") { moving = movable }.tint(Theme.accent)
+                }
+            }
+            if let movable {
+                Button { moving = movable } label: {
+                    Label("Move to another machine", systemImage: "arrow.uturn.forward.circle").font(.subheadline)
+                }
+                .accessibilityIdentifier("move-\(movable)")
+            }
+        }
+    }
+
+    /// Name, owner and runner; long-press to rename it, for its owner or an admin.
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "desktopcomputer").font(.title3).foregroundStyle(machine.online ? Theme.approve : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(machine.name).font(.body.weight(.medium)).accessibilityIdentifier("machine-name-\(machine.id)")
+                Text([machine.owner, machine.os, machine.version.map { "runner \($0)" }].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(machine.online ? "Online" : machine.lastSeen.map { "Seen \(When.ago($0)) ago" } ?? "Offline")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(machine.online ? Theme.approve : .secondary)
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("machine-\(machine.id)")
+        .contextMenu {
+            if store.canManage(machine) {
+                Button("Rename…", systemImage: "pencil") {
+                    nickname = machine.name
+                    renaming = true
+                }
+            }
+        }
+        .alert("Rename \(machine.name)", isPresented: $renaming) {
+            TextField(machine.id, text: $nickname).accessibilityIdentifier("rename-field")
+            Button("Rename") { store.renameMachine(machine, name: nickname) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A nickname everyone sees in place of \(machine.id). Leave it empty to go back to that.")
+        }
+    }
+
+    /// A newer runner, with Update for its owner or an admin, and the update while it runs.
+    @ViewBuilder private var runnerRow: some View {
+        switch RunnerPhase(machine, outdated: store.feed.runnerOutdated(machine) ? store.feed.runnerLatest : nil) {
+        case .current:
+            EmptyView()
+        case .outdated(let latest):
+            HStack {
+                Label("Runner \(latest) is out", systemImage: "arrow.down.circle").font(.caption).foregroundStyle(Theme.warning)
+                Spacer()
+                if store.canManage(machine) {
+                    if !machine.online { Text("Offline").font(.caption2).foregroundStyle(.secondary) }
+                    Button("Update") { store.updateRunner(machine) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(!machine.online)
+                        .accessibilityIdentifier("update-runner-\(machine.id)")
+                }
+            }
+        case .busy(let target):
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(target.map { "Updating to runner \($0)…" } ?? "Updating the runner…").font(.caption).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("runner-updating-\(machine.id)")
+        case .updated(let version):
+            Label("Updated to runner \(version)", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Theme.approve)
+                .accessibilityIdentifier("runner-updated-\(machine.id)")
+        case .failed(let message):
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Couldn't update the runner", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Theme.danger)
+                    if let message { Text(message).font(.caption2).foregroundStyle(.secondary) }
+                }
+                Spacer()
+                if store.canManage(machine) {
+                    Button("Retry") { store.updateRunner(machine) }.buttonStyle(.bordered).controlSize(.small).disabled(!machine.online)
+                }
+            }
         }
     }
 
@@ -461,6 +613,30 @@ struct MachineRows: View {
             Text(title).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Where a machine's runner update is, from `machine.update`: the same reading as the Mac's
+/// FactoryClient.updatePhase, kept here so the Mac and MapleKit don't change.
+enum RunnerPhase: Equatable {
+    case current
+    case outdated(String)
+    /// Checking, installing or restarting, toward this version when known.
+    case busy(String?)
+    case updated(String)
+    case failed(String?)
+
+    /// `outdated`: the newer release, when the machine is behind it.
+    init(_ machine: Wire.Machine, outdated latest: String?) {
+        let behind: RunnerPhase = latest.map { .outdated($0) } ?? .current
+        guard let update = machine.update else { self = behind; return }
+        switch update.state {
+        case .checking, .installing, .restarting: self = .busy(update.target ?? latest)
+        // Offline after "updated" is the machine gone, not the update.
+        case .updated: self = machine.online ? .updated(update.target ?? machine.version ?? "") : behind
+        case .failed: self = .failed(update.message)
+        case .upToDate, .other: self = behind
+        }
     }
 }
 

@@ -34,6 +34,8 @@ enum Theme {
         case .building: Color(light: 0x2F6FEB, dark: 0x6B9BF5)
         case .reviewing: Color(light: 0x0E8FA3, dark: 0x4CC4D6)
         case .merged: Color(light: 0x14A866, dark: 0x3DD68C)
+        // Finished with nothing to merge: a neutral gray, darker than Drafting's.
+        case .closed: Color(light: 0x6B7079, dark: 0xA4AAB4)
         case .cancelled, .other: Color(light: 0xC8474B, dark: 0xD9696C)
         }
     }
@@ -50,6 +52,7 @@ extension Wire.TaskState {
         case .reviewing: "Reviewing"
         case .merged: "Merged"
         case .cancelled: "Cancelled"
+        case .closed: "Closed"
         case .other(let value): value
         }
     }
@@ -63,6 +66,7 @@ extension Wire.TaskState {
         case .building: "hammer"
         case .reviewing: "eye"
         case .merged: "checkmark.circle"
+        case .closed: "circle.badge.checkmark"
         case .cancelled, .other: "xmark.circle"
         }
     }

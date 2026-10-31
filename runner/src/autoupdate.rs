@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use semver::Version;
 use tracing::{info, warn};
 
 use crate::protocol::{Outbound, UpdateState};
@@ -49,7 +50,29 @@ pub fn blocked_reason(explicit_token: bool, installed_copy: bool, installed: &Pa
 enum Outcome {
     UpToDate(String),
     Installed(String),
+    /// The feed offers `latest`, newer than the `asked` release; nothing was installed.
+    Newer { asked: Version, latest: Version },
     Failed(Option<String>, String),
+}
+
+/// Whether the feed's release is the one someone asked for.
+#[derive(Debug, PartialEq)]
+enum Pin {
+    /// Install it: nobody named a version (the timer), or it's the one they named.
+    Install,
+    /// The feed moved on to a newer release since they were shown theirs: ask again.
+    Newer,
+    /// The feed offers something else (older, say after a pulled release): don't install it.
+    Mismatch,
+}
+
+fn pinned(asked: Option<&Version>, latest: &Version) -> Pin {
+    match asked {
+        None => Pin::Install,
+        Some(asked) if asked == latest => Pin::Install,
+        Some(asked) if latest > asked => Pin::Newer,
+        Some(_) => Pin::Mismatch,
+    }
 }
 
 impl AutoUpdate {
@@ -84,7 +107,7 @@ impl AutoUpdate {
             let jitter = (uuid::Uuid::new_v4().as_u128() % 31) as u64;
             tokio::time::sleep(Duration::from_secs(30 + jitter)).await;
             loop {
-                this.run(&sessions, false).await;
+                this.run(&sessions, false, None).await;
                 tokio::time::sleep(CHECK_EVERY).await;
             }
         });
@@ -95,17 +118,17 @@ impl AutoUpdate {
         self.blocked.as_deref()
     }
 
-    /// The hub asked for an update now.
-    pub fn requested(self: &Arc<Self>, sessions: &Sessions) {
+    /// The hub asked for an update now; with `version`, to exactly that release.
+    pub fn requested(self: &Arc<Self>, sessions: &Sessions, version: Option<String>) {
         let (this, sessions) = (self.clone(), sessions.clone());
-        tokio::spawn(async move { this.run(&sessions, true).await });
+        tokio::spawn(async move { this.run(&sessions, true, version).await });
     }
 
     /// One update attempt. Progress goes to the hub when it asked for this; a timed
     /// check only tells it when the runner is about to restart.
-    async fn run(&self, sessions: &Sessions, asked: bool) {
+    async fn run(&self, sessions: &Sessions, requested: bool, version: Option<String>) {
         let report = |state: UpdateState, version: Option<String>, message: Option<String>| {
-            if asked || state == UpdateState::Updating {
+            if requested || state == UpdateState::Updating {
                 sessions.emit(Outbound::RunnerUpdateStatus { state, version, message });
             }
         };
@@ -113,11 +136,15 @@ impl AutoUpdate {
             warn!("not updating: {why}");
             return report(UpdateState::Failed, None, Some(why.clone()));
         }
+        let asked = match version.as_deref().map(|v| Version::parse(v.trim_start_matches('v'))).transpose() {
+            Ok(asked) => asked,
+            Err(e) => return report(UpdateState::Failed, version.clone(), Some(format!("can't update to {}: {e}", version.unwrap_or_default()))),
+        };
         if self.busy.swap(true, Ordering::SeqCst) {
             return report(UpdateState::Failed, None, Some("an update is already in progress".into()));
         }
         report(UpdateState::Checking, None, None);
-        let outcome = self.attempt(|version| report(UpdateState::Installing, Some(version.to_string()), None)).await;
+        let outcome = self.attempt(asked.as_ref(), |version| report(UpdateState::Installing, Some(version.to_string()), None)).await;
         self.busy.store(false, Ordering::SeqCst);
         match outcome {
             Outcome::UpToDate(latest) => {
@@ -132,6 +159,10 @@ impl AutoUpdate {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 std::process::exit(EXIT_UPDATED);
             }
+            Outcome::Newer { asked, latest } => {
+                info!("not installing maple-runner {latest} without confirmation: {asked} was offered");
+                report(UpdateState::Newer, Some(latest.to_string()), Some(format!("runner {latest} came out after {asked} was offered; update again to install it")));
+            }
             Outcome::Failed(version, message) => {
                 warn!("update failed: {message}");
                 report(UpdateState::Failed, version, Some(message));
@@ -140,7 +171,8 @@ impl AutoUpdate {
     }
 
     /// `installing` hears the version before it's downloaded, so the app can say what's coming.
-    async fn attempt(&self, installing: impl Fn(&str)) -> Outcome {
+    /// With `asked`, only that release is installed.
+    async fn attempt(&self, asked: Option<&Version>, installing: impl Fn(&str)) -> Outcome {
         let releases = match self.releases.clone().and_then(|url| Releases::new(url).map_err(|e| format!("{e:#}"))) {
             Ok(releases) => releases,
             Err(e) => return Outcome::Failed(None, e),
@@ -150,6 +182,13 @@ impl AutoUpdate {
             Ok(Check::UpToDate(m)) => Outcome::UpToDate(m.version.to_string()),
             Ok(Check::NoBuild(m, target)) => Outcome::Failed(Some(m.version.to_string()), format!("release {} has no build for {target}", m.version)),
             Ok(Check::Available(m, asset)) => {
+                match (pinned(asked, &m.version), asked) {
+                    (Pin::Install, _) | (_, None) => {}
+                    (Pin::Newer, Some(asked)) => return Outcome::Newer { asked: asked.clone(), latest: m.version.clone() },
+                    (Pin::Mismatch, Some(asked)) => {
+                        return Outcome::Failed(Some(m.version.to_string()), format!("the feed now offers {}, not {asked}", m.version));
+                    }
+                }
                 info!("installing maple-runner {} over {}", m.version, self.exe.display());
                 installing(&m.version.to_string());
                 match releases.install(&m, &asset, &self.exe).await {
@@ -164,6 +203,20 @@ impl AutoUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installs_only_the_version_it_was_asked_for() {
+        let v = |s| Version::parse(s).unwrap();
+        // The one offered is still the latest: install it.
+        assert_eq!(pinned(Some(&v("0.10.0")), &v("0.10.0")), Pin::Install);
+        // A newer one came out since: install nothing, ask again.
+        assert_eq!(pinned(Some(&v("0.10.0")), &v("0.11.0")), Pin::Newer);
+        assert_eq!(pinned(Some(&v("0.10.0")), &v("0.10.1")), Pin::Newer);
+        // The feed went backwards: don't install that either.
+        assert_eq!(pinned(Some(&v("0.10.0")), &v("0.9.0")), Pin::Mismatch);
+        // No version named (the hourly timer, an older hub): the latest, as before.
+        assert_eq!(pinned(None, &v("0.11.0")), Pin::Install);
+    }
 
     #[test]
     fn only_the_installed_service_updates_itself() {

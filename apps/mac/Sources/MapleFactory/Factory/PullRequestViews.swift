@@ -43,7 +43,7 @@ struct PullRequestCard: View {
             .foregroundStyle(Theme.textMuted)
 
             if pr.checks.isEmpty {
-                Text(pr.isLocal ? "No CI: a local repo's change is checked by its proofs and review." : [.merged, .cancelled].contains(task.state) ? "No checks ran on this pull request." : "No checks reported yet.")
+                Text(pr.isLocal ? "No CI: a local repo's change is checked by its proofs and review." : task.state.isFinished ? "No checks ran on this pull request." : "No checks reported yet.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)

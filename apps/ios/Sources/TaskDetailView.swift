@@ -34,6 +34,7 @@ struct TaskDetailView: View {
             }
             .navigationTitle(task.id)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { TaskActionsMenu(task: task) } }
             .safeAreaInset(edge: .bottom) { ActionBar(task: task, compose: $compose) }
             .sheet(item: $compose) { ComposeSheet(compose: $0) }
             .refreshable { await store.refresh() }

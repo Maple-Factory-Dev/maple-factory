@@ -87,7 +87,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "propose_tasks",
-    description: "Propose new tasks for this goal, e.g. work you were asked to find. Each becomes a draft in this goal that a person sends to planning or deletes; nothing runs until they do. Call once with every proposal; don't build them yourself.",
+    description: "Propose new tasks for this goal, e.g. work you were asked to find. Each becomes a draft in this goal that a person sends to planning or deletes; nothing runs until they do. Call once with every proposal; don't build them yourself. When the work has to land in order, give each proposal `after` (what must merge first) and the set a shared `effort`: an approved task then starts building on its own once everything it waits on has merged.",
     inputSchema: obj(
       {
         tasks: list(
@@ -97,6 +97,8 @@ const TOOLS: Tool[] = [
               brief: str("What the task should do and why, for its own planner."),
               repo: str("One of the goal's repos (owner/name). Left out: this task's repo."),
               priority: oneOf(["p0", "p1", "p2", "p3"], "How soon: p0 do it right away, p1 next, p2 soon, p3 when there's room. Use p3 for non-urgent clean-ups. Left out: none."),
+              after: list(str(""), "What must merge before it builds: existing task ids (MF-12), or #n for the n-th proposal in this call (#1 is the first; earlier proposals only). It waits for all of them."),
+              effort: str("A name for the bigger piece of work it belongs to, like an epic; give the same name to every proposal in the set."),
             },
             ["title", "brief"],
           ),

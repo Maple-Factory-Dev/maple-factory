@@ -51,7 +51,7 @@ final class SessionTerminalTests: XCTestCase {
     /// A session someone shared with you to watch: Watching, and no keyboard.
     func testSharedSessionOnlyWatches() {
         app.terminate()
-        app.launchArguments += ["-demoMember", "YES"]
+        app.launchArguments += ["-demoRole", "member"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Machines"].waitForExistence(timeout: 60))
         openSession("BIL-7")

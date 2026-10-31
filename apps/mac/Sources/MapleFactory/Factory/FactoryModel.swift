@@ -1,11 +1,15 @@
 import SwiftUI
 
 enum TaskState: CaseIterable, Identifiable {
-    case drafting, planning, awaitingApproval, backlog, building, reviewing, merged, cancelled
+    case drafting, planning, awaitingApproval, backlog, building, reviewing, merged, cancelled, closed
 
     var id: Self { self }
 
-    /// The happy path a task moves through; `cancelled` can branch off from any of these, and a draft
+    /// Nothing more happens on it: merged, cancelled, or closed with nothing to merge.
+    var isFinished: Bool { self == .merged || self == .cancelled || self == .closed }
+
+    /// The happy path a task moves through; `cancelled` can branch off from any of these, `closed`
+    /// ends one with nothing to merge (its planner proposed tasks instead of a plan), and a draft
     /// or a plan waiting for approval can be parked in `backlog`.
     static let pipeline: [TaskState] = [.drafting, .planning, .awaitingApproval, .backlog, .building, .reviewing, .merged]
 
@@ -24,6 +28,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .reviewing: "Reviewing"
         case .merged: "Merged"
         case .cancelled: "Cancelled"
+        case .closed: "Closed"
         }
     }
 
@@ -37,6 +42,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .reviewing: "eye"
         case .merged: "arrow.triangle.merge"
         case .cancelled: "xmark.circle"
+        case .closed: "checkmark.circle"
         }
     }
 
@@ -51,6 +57,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .reviewing: "Tasks land here once their build is proven and waiting on a review."
         case .merged: "Tasks land here once their branch is merged."
         case .cancelled: "Tasks land here when they're cancelled."
+        case .closed: "Tasks land here when they finish with nothing to merge, like a scan that proposed tasks."
         }
     }
 
@@ -64,6 +71,7 @@ enum TaskState: CaseIterable, Identifiable {
         case .reviewing: Theme.State.reviewing
         case .merged: Theme.State.merged
         case .cancelled: Theme.State.cancelled
+        case .closed: Theme.State.closed
         }
     }
 }

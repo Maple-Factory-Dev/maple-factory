@@ -229,7 +229,74 @@ final class FactoryStore {
     /// Asks the planner to change one of its mockups.
     func requestMockupChange(_ id: String, mockup: String, text: String) { send(.taskMockupChange(.init(id: id, mockup: mockup, text: text))) }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
-    func cancel(_ id: String) { send(.taskCancel(.init(id: id))) }
+    func cancel(_ id: String) {
+        send(.taskCancel(.init(id: id)))
+        notice = .toast("Cancelled \(id)", taskId: id)
+    }
+
+    /// Sends a draft to planning, or picks up a backlog task.
+    func plan(_ id: String) { send(.taskPlan(.init(id: id))) }
+    /// Parks a draft (or a plan waiting for approval) in the backlog.
+    func sendToBacklog(_ id: String) { send(.taskBacklog(.init(id: id))) }
+    /// Moves a draft ahead of `before` ("top": first; nil: last) in its goal's drafts.
+    func rankDraft(_ id: String, before: String?) { send(.taskRankDraft(.init(id: id, before: before))) }
+
+    // MARK: Task actions (the … menu)
+
+    /// Whether you can give `task` to someone else: its owner or an admin can. Anyone can take a task over.
+    func canReassign(_ task: Wire.Task) -> Bool { task.owner == me || isAdmin }
+
+    /// Makes `login` the task's owner: its next sessions prefer their machines, and its open hand is theirs.
+    func assign(_ id: String, to login: String) {
+        guard let task = feed.task(id), task.owner != login else { return }
+        send(.taskAssign(.init(id: id, owner: login)))
+        notice = .toast(login == me ? "You took over \(id)" : "Gave \(id) to \(feed.member(login)?.name ?? login)", taskId: id)
+    }
+
+    /// A new title and brief, trimmed; only what changed is sent, and an empty title is ignored.
+    func edit(_ id: String, title: String, brief: String) {
+        guard let task = feed.task(id) else { return }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newTitle = !title.isEmpty && title != task.title ? title : nil
+        let newBrief = brief != task.brief.trimmingCharacters(in: .whitespacesAndNewlines) ? brief : nil
+        guard newTitle != nil || newBrief != nil else { return }
+        send(.taskEdit(.init(id: id, title: newTitle, brief: newBrief, shareable: nil)))
+        notice = .toast("Saved \(id)", taskId: id)
+    }
+
+    /// The goals `task` can move to (unarchived, not its own), each with why it can't when that goal doesn't work in the task's repo.
+    func moveTargets(_ task: Wire.Task) -> [(goal: Wire.Goal, blocked: String?)] {
+        let from = feed.goal(task.goal)
+        let repo = task.repo ?? from?.repo
+        return feed.goals.filter { $0.archived != true && $0.id != task.goal }.map { goal in
+            let repos = ([goal.repo].compactMap { $0 } + goal.repos).map { $0.lowercased() }
+            if let repo { return (goal, repos.contains(repo.lowercased()) ? nil : "doesn't work in \(repo)") }
+            // A goal on a folder: only to another goal on the same folder.
+            let folder = from?.folder
+            let named = folder.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "its folder"
+            return (goal, repos.isEmpty && folder != nil && goal.folder == folder ? nil : "doesn't work in \(named)")
+        }
+    }
+
+    /// Moves a task to another goal; it keeps its id, branch and pull request.
+    func moveGoal(_ id: String, to goal: Wire.Goal) {
+        guard feed.task(id)?.goal != goal.id else { return }
+        send(.taskMoveGoal(.init(id: id, goal: goal.id)))
+        notice = .toast("Moved \(id) to \(goal.name)", taskId: id)
+    }
+
+    /// To the front of the queue, or the back.
+    func queueTop(_ id: String) {
+        send(.taskQueue(.init(id: id, before: "top")))
+        notice = .toast("Moved \(id) to the top", taskId: id)
+    }
+
+    func queueBottom(_ id: String) {
+        send(.taskQueue(.init(id: id, before: nil)))
+        notice = .toast("Moved \(id) to the bottom", taskId: id)
+    }
+
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
     /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
     func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
@@ -243,6 +310,43 @@ final class FactoryStore {
         send(.taskCreate(.init(goal: goal.id, title: title, brief: brief.isEmpty ? title : brief, shareable: false, plan: plan,
                                repo: repo.flatMap { goal.repos.contains($0) ? $0 : nil }, priority: priority)))
         notice = .toast(plan ? "Sent to planning" : "Saved as a draft", taskId: nil)
+    }
+
+    // MARK: Goals
+
+    /// The goal's lead or an admin: who the server lets change its auto-merge or archive it.
+    func canLead(_ goal: Wire.Goal) -> Bool { feed.canLead(goal, me: feed.me) }
+
+    /// Lets the factory auto-merge the goal's work up to `upTo`, on the record; nil takes it back.
+    func acceptRisk(goal: Wire.Goal, upTo: Wire.RiskLevel?) {
+        send(.goalAcceptRisk(.init(goal: goal.id, upTo: upTo, note: nil)))
+        notice = .toast(upTo.map { "You accepted up to \($0.rawValue) for \(goal.name)" } ?? "Auto-merge off for \(goal.name)", taskId: nil)
+    }
+
+    /// Archives the goal (or brings it back). With unfinished tasks, `unfinished` says what happens to them.
+    func archiveGoal(_ goal: Wire.Goal, archived: Bool, unfinished: Wire.UnfinishedTasks?) {
+        send(.goalArchive(.init(id: goal.id, archived: archived, unfinished: unfinished)))
+        notice = .toast(archived ? "Archived \(goal.name)" : "Unarchived \(goal.name)", taskId: nil)
+    }
+
+    // MARK: Machines
+
+    /// The machine's owner or an admin: who the server lets update or rename it.
+    func canManage(_ machine: Wire.Machine) -> Bool { !me.isEmpty && (machine.owner == me || isAdmin) }
+    /// Moving a task off a stuck machine: its machine's owner, an admin, or the task's own owner.
+    func canMove(task id: String, on machine: Wire.Machine) -> Bool { canManage(machine) || (!me.isEmpty && feed.task(id)?.owner == me) }
+    /// A machine its tasks can be moved off: offline, or paused by its owner.
+    static func isStuck(_ machine: Wire.Machine) -> Bool { !machine.online || machine.settings?.paused == true }
+
+    /// Asks the machine to install the runner release shown (not a newer one out since); `machine.update` on it says how it goes.
+    func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id, version: feed.runnerLatest))) }
+    /// A nickname everyone sees; empty goes back to its id.
+    func renameMachine(_ machine: Wire.Machine, name: String) { send(.machineRename(.init(machine: machine.id, name: name))) }
+    /// Moves a task off its offline or paused machine: it re-queues first and carries on from its last push.
+    func moveTask(_ id: String) {
+        let pushed = feed.task(id)?.pr != nil
+        send(.taskMove(.init(id: id)))
+        notice = .toast("\(id) moves to the next free machine\(pushed ? " · carries on from its last push" : "")", taskId: id)
     }
 
     /// Tells the factory which task you're looking at, so others see you there.
@@ -326,6 +430,25 @@ final class FactoryStore {
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
+        case .taskPlan(let m):
+            guard let state = feed.task(m.id)?.state, state == .drafting || state == .backlog else { return }
+            update(m.id) { $0.state = .planning; $0.events.append(.init(who: me, text: "sent it to planning", at: DemoData.now)) }
+            notice = .toast("Sent to planning", taskId: m.id)
+        case .taskBacklog(let m):
+            guard let state = feed.task(m.id)?.state, state == .drafting || state == .awaitingApproval else { return }
+            update(m.id) { $0.state = .backlog; $0.approvals = []; $0.waiting = nil; $0.events.append(.init(who: me, text: "sent it to the backlog", at: DemoData.now)) }
+            notice = .toast("Sent to the backlog", taskId: m.id)
+        case .taskRankDraft(let m):
+            guard let task = feed.task(m.id) else { return }
+            let line = feed.tasks(in: task.goal).filter { $0.state == .drafting && $0.id != m.id }.sorted(by: Wire.Task.draftOrder)
+            let target = m.before == "top" ? line.first : line.first { $0.id == m.before }
+            let rank: Double
+            if let target, let at = line.firstIndex(where: { $0.id == target.id }) {
+                rank = at > 0 ? (line[at - 1].draftOrderRank + target.draftOrderRank) / 2 : target.draftOrderRank - 1000
+            } else {
+                rank = (line.map(\.draftOrderRank).max() ?? 0) + 1
+            }
+            update(m.id) { $0.draftRank = rank }
         case .taskAnswerPrompt(let m):
             // The runner passes the answer to the session, which carries on.
             guard let worker = feed.task(m.id)?.worker, let mi = feed.machines.firstIndex(where: { $0.id == worker.machine }),
@@ -333,6 +456,31 @@ final class FactoryStore {
             var machine = feed.machines[mi]
             machine.sessions[si].activity = .init(state: .working, message: m.choice == .yes ? "Allowed" : "Denied", at: DemoData.now)
             feed.apply(.machineUpdated(.init(machine: machine)))
+        case .machineUpdate(let m):
+            // Installing, then back on the latest a moment later, as a runner would report it.
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            let target = feed.runnerLatest, from = machine.version
+            machine.update = .init(state: .installing, target: target, from: from, at: DemoData.now)
+            feed.apply(.machineUpdated(.init(machine: machine)))
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(UserDefaults.standard.double(forKey: "demoUpdateSeconds").nonZero ?? 2.5))
+                guard let self, self.status == .demo, var machine = self.feed.machines.first(where: { $0.id == m.machine }) else { return }
+                machine.version = target ?? machine.version
+                machine.update = .init(state: .updated, target: target, from: from, at: DemoData.now)
+                self.feed.apply(.machineUpdated(.init(machine: machine)))
+            }
+        case .machineRename(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            let name = m.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            machine.name = name.isEmpty ? machine.id : name
+            feed.apply(.machineUpdated(.init(machine: machine)))
+        case .taskMove(let m):
+            // The task re-queues: its session leaves the stuck machine.
+            for var machine in feed.machines where machine.sessions.contains(where: { $0.session.taskId == m.id }) {
+                machine.sessions.removeAll { $0.session.taskId == m.id }
+                feed.apply(.machineUpdated(.init(machine: machine)))
+            }
+            update(m.id) { $0.worker = nil; $0.events.append(.init(who: me, text: "moved it to the next free machine", at: DemoData.now)) }
         case .taskCheckedIt(let m):
             // As the server does: the item is proven by your word, with the note as its reason.
             guard let task = feed.task(m.id), task.doneWhen.indices.contains(Int(m.item)) else { break }
@@ -357,6 +505,20 @@ final class FactoryStore {
             notice = .toast("Change requested: the planner will post a new version", taskId: m.id)
         case .goalFollow(let m):
             feed.follows[m.id] = m.following
+        case .goalAcceptRisk(let m):
+            // As the server does: one acceptance per goal, replaced, or removed when taken back.
+            var acceptances = feed.acceptances.filter { $0.goal != m.goal }
+            if let upTo = m.upTo { acceptances.append(.init(goal: m.goal, upTo: upTo, by: me, at: DemoData.now, note: m.note)) }
+            feed.acceptances = acceptances
+        case .goalArchive(let m):
+            guard var goal = feed.goal(m.id) else { break }
+            if m.archived, m.unfinished == .cleanup || m.unfinished == .cancel {
+                for task in feed.unfinishedTasks(in: goal.id) {
+                    update(task.id) { $0.state = .cancelled; $0.worker = nil; $0.events.append(.init(who: me, text: "cancelled it, archiving \(goal.name)", at: DemoData.now)) }
+                }
+            }
+            goal.archived = m.archived ? true : nil
+            feed.apply(.goalUpdated(.init(goal: goal)))
         case .taskCreate(let m):
             guard let goal = feed.goal(m.goal) else { return }
             let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
@@ -365,10 +527,58 @@ final class FactoryStore {
                                  events: [.init(who: me, text: "created the task", at: DemoData.now)],
                                  shareable: m.shareable, agent: m.agent ?? "claude", repo: m.repo, priority: m.priority)
             feed.apply(.taskUpdated(.init(task: task)))
+        case .taskAssign(let m):
+            update(m.id) { task in
+                if task.hand?.assignee == task.owner { task.hand?.assignee = m.owner }
+                task.owner = m.owner
+                task.events.append(.init(who: me, text: m.owner == me ? "took it over" : "assigned it to @\(m.owner)", at: DemoData.now))
+            }
+        case .taskEdit(let m):
+            update(m.id) { task in
+                if let title = m.title { task.title = title }
+                if let brief = m.brief { task.brief = brief }
+                task.events.append(.init(who: me, text: m.title != nil ? "renamed it to \(m.title!)" : "edited the brief", at: DemoData.now))
+            }
+        case .taskMoveGoal(let m):
+            guard let goal = feed.goal(m.goal) else { return }
+            update(m.id) { task in
+                let was = feed.goal(task.goal)?.name ?? task.goal
+                task.goal = goal.id
+                task.effort = nil
+                task.events.append(.init(who: me, text: "moved it from \(was) to \(goal.name)", at: DemoData.now))
+            }
+        case .taskCancel(let m):
+            update(m.id) { task in
+                task.state = .cancelled
+                task.worker = nil
+                task.mergeAt = nil
+                if task.pr?.state == .open || task.pr?.state == .draft { task.pr?.state = .closed }
+                task.events.append(.init(who: me, text: "cancelled it", at: DemoData.now))
+            }
+        case .taskQueue(let m):
+            let ranks = feed.tasks.compactMap(\.queueRank)
+            update(m.id) { task in
+                task.queueRank = m.before == "top" ? (ranks.min() ?? 0) - 1 : (ranks.max() ?? 0) + 1
+                task.events.append(.init(who: me, text: m.before == "top" ? "moved it to the top of the queue" : "moved it to the bottom of the queue", at: DemoData.now))
+            }
         case .statsGet(let m):
             stats = DemoData.stats(days: Int(m.days))
         default:
             break
         }
+    }
+}
+
+private extension Double {
+    var nonZero: Double? { self == 0 ? nil : self }
+}
+
+extension Wire.Task {
+    /// Where a draft sits in its goal's drafts: its rank, or when it was made, as the factory orders them.
+    var draftOrderRank: Double { draftRank ?? Double(createdAt) }
+
+    /// A goal's drafts, first first.
+    static func draftOrder(_ a: Wire.Task, _ b: Wire.Task) -> Bool {
+        (a.draftOrderRank, a.id) < (b.draftOrderRank, b.id)
     }
 }

@@ -3,13 +3,30 @@ import SwiftUI
 /// Work asked for from Slack, Linear and Jira, before it becomes a task.
 struct IntakeView: View {
     @Environment(AppState.self) private var state
+    @AppStorage("intakeFilter") private var filter: IntakeFilter = .all
+    @State private var showingHowTo = false
+    /// The ⓘ button's frame in the window, for a headless shot to hang the popover from.
+    @State private var infoFrame: CGRect = .zero
+
+    /// Headless runs drive the list with `requests:info` (the ⓘ popover), `requests:filter:<name>`, `requests:select:<id>` and `requests:decline:<id>`.
+    static let demo = Notification.Name("IntakeView.demo")
+
+    /// A linked task's state, or nil when this app doesn't know the task. (`state.task(_:)` falls back to the first task.)
+    private func taskState(_ id: String) -> TaskState? { state.tasks.first { $0.id == id }?.state }
+
+    /// The request just acted on that has left the filter, kept in the list until the filter or selection changes.
+    @State private var kept: String?
+
+    private var visible: [IntakeRequest] { IntakeFilter.visible(state.intake, filter: filter, keeping: kept, taskState: taskState) }
+    /// The ids the filter matches, without the kept request.
+    private var matching: [String] { IntakeFilter.visible(state.intake, filter: filter, taskState: taskState).map(\.id) }
 
     var body: some View {
         HStack(spacing: 0) {
             list
                 .frame(width: state.contentWidth < 900 ? 260 : 320)
             Hairline(vertical: true)
-            if let id = state.selectedIntake, let request = state.intakeRequest(id) {
+            if let id = state.selectedIntake, visible.contains(where: { $0.id == id }), let request = state.intakeRequest(id) {
                 IntakeDetail(request: request)
                     .id(request.id)
             } else {
@@ -17,8 +34,34 @@ struct IntakeView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onChange(of: state.intake.map(\.id), initial: true) { _, ids in
-            if !ids.contains(where: { $0 == state.selectedIntake }) { state.selectedIntake = ids.first }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard let parts = note.object as? [String], let what = parts.first else { return }
+            switch what {
+            case "info": showingHowTo = true
+            // `requests:select:<id>` picks a request as a task's linked-request card does.
+            case "select": if parts.count > 1 { state.selectedIntake = parts[1] }
+            case "decline": if parts.count > 1 { state.declineIntake(parts[1]) }
+            case "filter": if parts.count > 1, let pick = IntakeFilter(rawValue: parts[1]) { withAnimation(.snappy(duration: 0.2)) { filter = pick } }
+            default: break
+            }
+        }
+        .onChange(of: showingHowTo) { _, open in if Headless.isOn { Headless.popoverAnchor = open ? infoFrame : nil } }
+        // A selection made elsewhere (a task's linked request) that the filter hides switches the filter to All.
+        .onChange(of: state.selectedIntake, initial: true) { _, id in
+            if id != kept { kept = nil }
+            let shown = filter.revealing(id, in: state.intake, taskState: taskState)
+            if shown != filter { filter = shown }
+            if id.flatMap(state.intakeRequest) == nil { state.selectedIntake = visible.first?.id }
+        }
+        // Changing the filter moves the selection to its first request.
+        .onChange(of: filter) { _, _ in
+            kept = nil
+            if !matching.contains(where: { $0 == state.selectedIntake }) { state.selectedIntake = matching.first }
+        }
+        // A request that leaves the filter because it was acted on stays put until the filter changes.
+        .onChange(of: matching) { _, ids in
+            guard let id = state.selectedIntake, !ids.contains(id) else { return }
+            if state.intakeRequest(id) != nil { kept = id } else { state.selectedIntake = ids.first }
         }
     }
 
@@ -34,30 +77,121 @@ struct IntakeView: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Requests")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(integrations, id: \.name) { integration in
-                        HStack(spacing: 7) {
-                            SourceGlyph(icon: integration.icon, color: integration.color, size: 16)
-                            Text(integration.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
-                            Text(integration.detail).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted).lineLimit(1)
-                        }
+                HStack(spacing: 6) {
+                    Text("Requests")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text("\(state.intake.count)")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textFaint)
+                    Spacer()
+                    Button { showingHowTo.toggle() } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.textMuted)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .help("How requests come in")
+                    .background(GeometryReader { g in Color.clear.onAppear { infoFrame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in infoFrame = f } })
+                    .popover(isPresented: $showingHowTo, arrowEdge: .bottom) { howTo }
                 }
+                filterPills
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
             Hairline()
 
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(state.intake) { request in row(request) }
+            if visible.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(visible) { request in row(request) }
+                    }
+                    .padding(8)
                 }
-                .padding(8)
             }
         }
+    }
+
+    /// The popover behind the ⓘ: where requests come in from, and what becomes of them.
+    private var howTo: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("How requests come in")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(integrations, id: \.name) { integration in
+                    HStack(spacing: 7) {
+                        SourceGlyph(icon: integration.icon, color: integration.color, size: 16)
+                        Text(integration.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
+                        Text(integration.detail).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                    }
+                }
+            }
+            Text("Each request becomes a task with Turn into task, or joins an existing one.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 340, alignment: .leading)
+    }
+
+    private var filterPills: some View {
+        let counts = IntakeFilter.counts(state.intake, taskState: taskState)
+        // Wraps rather than scrolls, so a narrow list never hides a filter.
+        return FlowLayout(spacing: 2, lineSpacing: 4) {
+            Group {
+                ForEach(IntakeFilter.allCases) { option in
+                    let active = filter == option
+                    HStack(spacing: 4) {
+                        Text(option.title)
+                        Text("\(counts[option] ?? 0)")
+                            .foregroundStyle(active ? Theme.textMuted : Theme.textFaint)
+                            .monospacedDigit()
+                    }
+                    .font(.system(size: 11.5, weight: active ? .medium : .regular))
+                    .foregroundStyle(active ? Theme.text : Theme.textMuted)
+                    .padding(.horizontal, 7)
+                    .frame(height: 22)
+                    .background(Capsule().fill(active ? Theme.fillSelected : .clear))
+                    .contentShape(Capsule())
+                    .onTapGesture { withAnimation(.snappy(duration: 0.2)) { filter = option } }
+                    .help(option == .waiting ? "Waiting on requester" : option.title)
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: filter.icon)
+                .font(.system(size: 20))
+                .foregroundStyle(Theme.textFaint)
+            Text(filter.emptyTitle)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.textMuted)
+            if filter != .all {
+                Button("Show all") { withAnimation(.snappy(duration: 0.2)) { filter = .all } }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+    }
+
+    /// The row's status pill: an accepted request shows its task's live state.
+    private func statusPill(_ request: IntakeRequest) -> StatusPill {
+        if case .accepted(let id) = request.status, let task = taskState(id) {
+            return StatusPill(text: "\(id) · \(task.title)", color: task.color)
+        }
+        return StatusPill(text: request.status.title, color: request.status.color)
     }
 
     private func row(_ request: IntakeRequest) -> some View {
@@ -86,7 +220,7 @@ struct IntakeView: View {
                         .foregroundStyle(Theme.textMuted)
                 }
                 Spacer()
-                StatusPill(text: request.status.title, color: request.status.color)
+                statusPill(request)
             }
         }
         .padding(10)

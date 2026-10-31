@@ -557,3 +557,58 @@ test("a direct merge GitHub refuses for its merge queue (rules unreadable) is en
     plain.restore();
   }
 });
+
+/** MF-1 building on `mac`, its session started `age` ms ago; `report` is the machine coming back online with
+ *  the sessions it lists, as the org hub's /machine hands it to `reap`. */
+function building(age: number, restarts = 0) {
+  const mac = { id: "mac", name: "Mac", owner: "me", online: true, sessions: [], usage: [], agents: [{ id: "claude", label: "Claude", takesPrompt: true }] };
+  const f = factory({}, { restarts, merging: false }, { state: "building", pr: null, plan: [{ text: "Do it", done: false }], approvals: ["me"] });
+  (f.engine as unknown as { hooks: { machines: () => Promise<unknown[]> } }).hooks.machines = async () => [mac];
+  f.store.saveGoal({ id: "g", name: "G", prefix: "MF", color: "#000000", summary: "", lead: "me", repos: ["acme/app"], repo: "acme/app" } as never);
+  const session = crypto.randomUUID();
+  f.store.addSession({ id: session, task: "MF-1", role: "builder", machine: "mac", agent: "claude", started: Date.now() - age, ended: null, cause: null, kind: "personal" } as never);
+  const task = f.store.task("MF-1")!;
+  task.worker = { role: "builder", agent: "claude", machine: "mac", session, startedAt: Date.now() - age };
+  f.store.saveTask(task);
+  const report = async (reconnected = true) => {
+    await f.engine.reap(mac as never, reconnected);
+    await f.settle();
+  };
+  const opens = () => f.sent.filter((c) => c.type === "session.open");
+  return { ...f, session, report, opens };
+}
+
+test("a task's session missing from a machine that came back is started again, no Retry", async () => {
+  const { store, session, report, opens, events } = building(60_000);
+  await report();
+  const task = store.task("MF-1")!;
+  assert.equal(store.private("MF-1").restarts, 1);
+  assert.equal(store.session(session)?.cause, "tmuxLost");
+  assert.ok(events().some((e) => e === "its builder ended (tmux went away); starting it again"), events().join("\n"));
+  assert.equal(opens().length, 1);
+  assert.equal(task.worker?.role, "builder");
+  assert.notEqual(task.worker?.session, session);
+  assert.equal(task.hand ?? null, null);
+});
+
+test("a worker still starting (under 30s), or a report that isn't a reconnect, is left alone", async () => {
+  const young = building(5_000);
+  await young.report();
+  assert.equal(young.store.task("MF-1")!.worker?.session, young.session);
+  assert.equal(young.store.private("MF-1").restarts, 0);
+  assert.equal(young.opens().length, 0);
+
+  const steady = building(60_000);
+  await steady.report(false);
+  assert.equal(steady.store.task("MF-1")!.worker?.session, steady.session);
+  assert.equal(steady.opens().length, 0);
+});
+
+test("a third loss raises the keeps-ending hand instead of starting it again", async () => {
+  const { store, report, opens } = building(60_000, 2);
+  await report();
+  const task = store.task("MF-1")!;
+  assert.equal(task.worker, null);
+  assert.match(task.hand?.text ?? JSON.stringify(task.hand), /keeps ending \(tmux went away\)/);
+  assert.equal(opens().length, 0);
+});

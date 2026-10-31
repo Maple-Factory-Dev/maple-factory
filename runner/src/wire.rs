@@ -56,6 +56,8 @@ pub enum TaskState {
     Merged,
     /// Stopped.
     Cancelled,
+    /// Finished without code to merge, e.g. its planner proposed tasks instead of a plan.
+    Closed,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -1466,7 +1468,7 @@ pub struct Task {
     /// Which of its goal's repos it changes; none: the goal's `repo` (or its folder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
-    /// Tasks that must merge before it starts building, e.g. the API change a web change uses.
+    /// Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged.
     #[serde(default)]
     pub after: Vec<String>,
     #[serde(default)]
@@ -1961,6 +1963,9 @@ pub struct StatsTotals {
     pub merged: u32,
     pub auto_merged: u32,
     pub cancelled: u32,
+    /// Tasks that finished with nothing to merge. None from a factory before it had the closed state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed: Option<u32>,
     pub created: u32,
     pub tasks_touched: u32,
     pub hands_raised: u32,
@@ -2245,6 +2250,7 @@ pub enum RunnerMessage {
         /// Base64.
         data: String,
     },
+    /// How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed).
     #[serde(rename = "update.status")]
     UpdateStatus {
         state: String,
@@ -2462,7 +2468,11 @@ pub enum ServerToRunner {
         nonce: String,
     },
     #[serde(rename = "runner.update")]
-    RunnerUpdate,
+    RunnerUpdate {
+        /// Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
     /// Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.
     #[serde(rename = "agent.login")]
     AgentLogin {
@@ -2747,6 +2757,9 @@ pub enum ClientMessage {
     #[serde(rename = "machine.update")]
     MachineUpdate {
         machine: String,
+        /// The release the person was shown; a newer one isn't installed without asking again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
     /// Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.
     #[serde(rename = "machine.agent_login")]
@@ -2901,6 +2914,9 @@ pub enum ClientMessage {
         /// Take its priority off.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clear_priority: Option<bool>,
+        /// Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<Vec<String>>,
     },
     /// Turn a reviewing or merged task's leftover review findings (or a note) into draft tasks in its goal, each linked back by `followUpOf`. Nothing is made if any item is refused.
     #[serde(rename = "task.followUp")]

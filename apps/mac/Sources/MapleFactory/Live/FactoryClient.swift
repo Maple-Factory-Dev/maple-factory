@@ -1256,8 +1256,14 @@ extension FactoryClient {
     func perform(_ action: RunnerAction, on machine: Wire.Machine) {
         switch action {
         case .check: send(.runnerCheck(.init(machine: machine.id)))
-        case .update: send(.machineUpdate(.init(machine: machine.id)))
+        case .update(let version): send(.machineUpdate(.init(machine: machine.id, version: version)))
         }
+    }
+
+    /// Updates a machine's runner to the release the app shows: if a newer one is out by the time the
+    /// runner looks, it installs nothing and the card offers the newer one, so pressing again confirms it.
+    func updateRunner(_ machine: Wire.Machine) {
+        send(.machineUpdate(.init(machine: machine.id, version: runnerLatest)))
     }
 
     /// Where a machine's runner update is, as its card and Settings › Runner show it.

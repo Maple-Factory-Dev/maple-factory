@@ -211,6 +211,7 @@ struct LiveMachinesView: View {
 
 struct LiveMachineCard: View {
     @Environment(FactoryClient.self) private var client
+    @Environment(AppState.self) private var appState: AppState?
     let machine: Wire.Machine
     let onOpen: (String) -> Void
     let onNew: (String) -> Void
@@ -452,10 +453,11 @@ struct LiveMachineCard: View {
                     // Teammates' sessions open only when they're shared with you; the terminal would refuse.
                     let shared = isMine ? nil : live.shares?.first { $0.login == client.me?.login }
                     let openable = isMine || client.me?.role == "admin" || shared != nil
-                    LiveSessionRow(live: live, sharedWithMe: shared, openable: openable)
+                    let task = live.session.taskId.flatMap { id in appState?.tasks.first { $0.id == id } }
+                    LiveSessionRow(live: live, task: task, sharedWithMe: shared, openable: openable)
                         .contentShape(Rectangle())
                         .onTapGesture { if openable { onOpen(live.session.id) } }
-                        .help(openable ? "" : "Only \(machine.owner) or an admin can open it; ask \(machine.owner) to share it with you.")
+                        .help(openable ? (task == nil ? "" : shortPath(live.session.cwd)) : "Only \(machine.owner) or an admin can open it; ask \(machine.owner) to share it with you.")
                 }
             }
         }
@@ -599,35 +601,62 @@ struct AgentLoginPanel: View {
 
 struct LiveSessionRow: View {
     let live: Wire.LiveSession
+    /// The factory task it works on; nil for shells, ad-hoc agents and tasks the factory doesn't list.
+    var task: FactoryTask? = nil
     var sharedWithMe: Wire.SessionShare? = nil
     var openable = true
     @State private var hovering = false
 
+    /// The row's first line (the task's title, or the agent's name without one) and its activity line.
+    static func headline(task: FactoryTask?, live: Wire.LiveSession) -> (title: String, detail: String) {
+        let state = live.activity?.state ?? .idle
+        let detail = live.activity?.message ?? live.activity?.step ?? (live.session.agent == "shell" ? "Interactive shell" : state.title)
+        let title = task.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        return (title.isEmpty ? agentTitle(live.session.agent) : title, detail)
+    }
+
     var body: some View {
         let state = live.activity?.state ?? .idle
+        let headline = Self.headline(task: task, live: live)
+        let titled = task.map { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
         HStack(spacing: 10) {
             Circle().fill(state.color).frame(width: 7, height: 7)
                 .overlay(Circle().stroke(state.color.opacity(0.3), lineWidth: state == .working ? 4 : 0))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    if let task = live.session.taskId {
-                        Text(task)
+                    if let id = live.session.taskId {
+                        Text(id)
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundStyle(Theme.State.building)
                             .padding(.horizontal, 5)
                             .frame(height: 17)
                             .background(RoundedRectangle(cornerRadius: 4).fill(Theme.State.building.opacity(0.12)))
+                            .fixedSize()
+                            // The chip previews its task; a click on it shouldn't also open the terminal,
+                            // and the locked row's tooltip shouldn't cover the card.
+                            .contentShape(Rectangle())
+                            .onTapGesture {}
+                            .help("")
+                            .taskHovercard(id)
                     }
-                    AgentIcon(agent: live.session.agent, size: 13)
-                        .foregroundStyle(Theme.textMuted)
-                    Text(agentTitle(live.session.agent))
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                    Text(shortPath(live.session.cwd))
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(Theme.textMuted)
-                        .lineLimit(1)
-                        .truncationMode(.head)
+                    if titled {
+                        Text(headline.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } else {
+                        AgentIcon(agent: live.session.agent, size: 13)
+                            .foregroundStyle(Theme.textMuted)
+                        Text(headline.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                        Text(shortPath(live.session.cwd))
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Theme.textMuted)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
                     if let sharedWithMe {
                         Text(sharedWithMe.canType ? "Shared with you · can type" : "Shared with you")
                             .font(.system(size: 10.5, weight: .medium))
@@ -639,10 +668,21 @@ struct LiveSessionRow: View {
                             .help("Shared by @\(sharedWithMe.by)")
                     }
                 }
-                Text(live.activity?.message ?? live.activity?.step ?? (live.session.agent == "shell" ? "Interactive shell" : state.title))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(state == .waiting ? Theme.State.awaitingApproval : Theme.textMuted)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    if titled {
+                        AgentIcon(agent: live.session.agent, size: 11)
+                            .foregroundStyle(Theme.textFaint)
+                        Text(agentTitle(live.session.agent))
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Theme.textMuted)
+                            .fixedSize()
+                        Text("·").font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
+                    }
+                    Text(headline.detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(state == .waiting ? Theme.State.awaitingApproval : Theme.textMuted)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 6)
             Text(relative(live.session.startedAt))

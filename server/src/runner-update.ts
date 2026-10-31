@@ -21,6 +21,8 @@ export function fromNotice(prev: MachineUpdate | undefined, msg: { state?: strin
     case "updating": return { state: "restarting", target, from, message: null, at };
     case "up_to_date": return { state: "upToDate", target, from, message: null, at };
     case "failed": return { state: "failed", target, from, message: msg.message ?? null, at };
+    // A newer release than the one asked for: nothing happened, and the hub clears the update instead.
+    case "newer": return null;
   }
   return null;
 }

@@ -39,8 +39,7 @@ struct GoalOverview: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .scrollIndicators(.automatic)
-        .animation(.snappy, value: sections.drafts.map(\.id))
-        .animation(.snappy, value: sections.queued.map(\.id))
+        // Drafts and the queue animate when a person drops a row (withAnimation there), not on each live update.
         .animation(.snappy, value: sections.needsYou.map(\.id))
     }
 
@@ -82,7 +81,7 @@ struct GoalOverview: View {
             }
             .dropDestination(for: String.self) { ids, _ in
                 guard let id = ids.first, state.tasks.contains(where: { $0.id == id }) else { return false }
-                state.moveToBottom(id)
+                withAnimation(.snappy) { state.moveToBottom(id) }
                 return true
             } isTargeted: { queueTargeted = $0 }
 
@@ -94,7 +93,7 @@ struct GoalOverview: View {
             }
             .dropDestination(for: String.self) { ids, _ in
                 guard let id = ids.first, sections.drafts.contains(where: { $0.id == id }) else { return false }
-                state.rankDraft(id, before: nil)
+                withAnimation(.snappy) { state.rankDraft(id, before: nil) }
                 return true
             } isTargeted: { draftsTargeted = $0 }
 
@@ -189,7 +188,8 @@ struct GoalOverview: View {
                 }
                 .padding(.horizontal, 4)
             }
-            VStack(spacing: 0) { rows() }
+            // Lazy within the page's scroll view: a long queue lays out only the rows in view.
+            LazyVStack(spacing: 0) { rows() }
                 .padding(4)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.columnBG))
                 .overlay {
@@ -303,9 +303,7 @@ private struct OverviewRow: View {
             .contextMenu {
                 TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
             }
-            .cancelTaskConfirmation(task: task, isPresented: $confirmCancel)
-            .renameTask(task: task, isPresented: $rename)
-            .popover(isPresented: $scheduling, arrowEdge: .trailing) { SchedulePopover(task: task) }
+            .taskPresentations(task: task, confirmCancel: $confirmCancel, rename: $rename, scheduling: $scheduling)
             .overlay(alignment: .top) {
                 if targeted {
                     Capsule().fill(Theme.State.building).frame(height: 3).offset(y: -2)
@@ -320,9 +318,9 @@ private struct OverviewRow: View {
                     case .draftAhead:
                         let dropped = state.task(id)
                         guard dropped.id == id, dropped.state == .drafting, !dropped.queued, dropped.goal == task.goal else { return false }
-                        if id != task.id { state.rankDraft(id, before: task.id) }
+                        if id != task.id { withAnimation(.snappy) { state.rankDraft(id, before: task.id) } }
                     case .queueAhead:
-                        if id != task.id { state.queue(id, before: task.id) }
+                        if id != task.id { withAnimation(.snappy) { state.queue(id, before: task.id) } }
                     }
                     return true
                 } isTargeted: { targeted = $0 }

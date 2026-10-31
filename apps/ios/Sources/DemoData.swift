@@ -8,13 +8,14 @@ enum DemoData {
     private static func ago(_ minutes: Double) -> UInt64 { now - UInt64(minutes * 60_000) }
 
     static let me = "andrea"
+    /// `-demoRole member` signs the demo in as a plain member, to see what a non-admin sees; admin otherwise.
+    static var role: String { UserDefaults.standard.string(forKey: "demoRole") ?? "admin" }
 
     static func feed() -> FeedState {
         var feed = FeedState()
         feed.org = "acme"
         feed.name = "Acme"
-        // `-demoMember YES`: a member rather than an admin, so sessions shared with you to watch only watch.
-        feed.me = Wire.Member(login: me, name: "Andrea", role: UserDefaults.standard.bool(forKey: "demoMember") ? "member" : "admin", teams: ["mobile"])
+        feed.me = Wire.Member(login: me, name: "Andrea", role: role, teams: ["mobile"])
         feed.members = [
             feed.me!,
             Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
@@ -24,8 +25,13 @@ enum DemoData {
             Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),
             Wire.Goal(id: "g-web", name: "Billing", prefix: "BIL", color: "#14A866", summary: "Usage-based plans and invoices.", lead: "sam", repo: "acme/web", repos: ["acme/web"]),
+            Wire.Goal(id: "g-onb", name: "Onboarding", prefix: "ONB", color: "#8E5BD8", summary: "A first run that gets a new teammate to their first merged task.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/web"], team: "mobile"),
         ]
         feed.tasks = tasks()
+        // Low-risk work merges on its own; Kit let the Public API auto-merge up to low.
+        feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
+                                      autoMerge: ["low": true, "medium": false, "high": false], autoMerges: UserDefaults.standard.string(forKey: "demoAutoMerges") != "off")
+        feed.acceptances = [Wire.RiskAcceptance(goal: "g-api", upTo: .low, by: "kit", at: ago(60 * 24 * 3))]
         feed.machines = machines()
         feed.runnerLatest = "0.65.0"
         feed.serverVersion = "0.51.0"
@@ -133,8 +139,19 @@ enum DemoData {
             task("APP-9", goal: "g-app", title: "Sign in with GitHub's device flow", state: .merged, updated: 60 * 26) { t in
                 t.brief = "Sign in on the phone with a code, like the Mac app."
             },
+            // Both stranded on Kit's MacBook Air, which went offline: Machines offers to move them.
+            task("BIL-8", goal: "g-web", title: "Receipt emails after a payment", state: .building, updated: 300) { t in
+                t.brief = "Email a receipt with the invoice PDF once a payment clears."
+                t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s4", startedAt: ago(320))
+                t.approvals = [me]
+            },
+            task("API-34", goal: "g-api", title: "OpenAPI spec from the routes", state: .building, owner: "kit", updated: 300) { t in
+                t.brief = "Generate an OpenAPI document from the route table."
+                t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s5", startedAt: ago(330))
+            },
             task("BIL-5", goal: "g-web", title: "Plans page", state: .planning, owner: "sam", updated: 3),
             task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120),
+            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90),
             task("API-33", goal: "g-api", title: "Webhooks for task events", state: .backlog, owner: "kit", updated: 300),
         ]
     }
@@ -156,7 +173,11 @@ enum DemoData {
                                           activity: .init(state: .waiting, message: "Raised a hand", at: ago(35)),
                                           shares: [.init(login: me, canType: false, by: "sam", at: ago(40))])],
                          capacity: 2),
-            Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0"),
+            Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0",
+                         sessions: [.init(session: .init(id: "s4", agent: "claude", cwd: "~/maple/worktrees/bil-8", startedAt: ago(320), taskId: "BIL-8"),
+                                          activity: .init(state: .working, message: "Lost contact", at: ago(300))),
+                                    .init(session: .init(id: "s5", agent: "claude", cwd: "~/maple/worktrees/api-34", startedAt: ago(330), taskId: "API-34"),
+                                          activity: .init(state: .working, message: "Lost contact", at: ago(300)))]),
         ]
     }
 

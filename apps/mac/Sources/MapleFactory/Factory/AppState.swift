@@ -97,6 +97,11 @@ final class AppState {
     var boardHidesEmptyColumns: Bool {
         didSet { boardDefaults.set(boardHidesEmptyColumns, forKey: "boardHidesEmptyColumns") }
     }
+    /// Whether a goal's layouts show everyone's tasks or only yours; one choice for every goal,
+    /// kept in the same defaults as the board preference.
+    var goalTaskFilter: GoalTaskFilter {
+        didSet { boardDefaults.set(goalTaskFilter.rawValue, forKey: "goalTaskFilter") }
+    }
     /// A task opened full-screen in place of the board/list/timeline.
     var focusedTask: String? = nil
     /// A live session a maplefactory://session/<machine>/<id> link asked for; Machines opens it.
@@ -235,7 +240,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "onboardingStep"]
+                                        "timelineMerged", "mockview", "onboardingStep", "goaltasks"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -393,6 +398,7 @@ final class AppState {
         task.hand = FactoryData.seedHands[task.id]
         task.shareable = FactoryData.seedShareable.contains(task.id)
         task.effort = FactoryData.seedEfforts[task.id]
+        task.after = FactoryData.seedAfter[task.id] ?? []
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
         if task.id == "ATL-160" {
@@ -505,7 +511,7 @@ final class AppState {
     var archiving: String? = nil
 
     func unfinishedTasks(in goal: String) -> [FactoryTask] {
-        tasks.filter { $0.goal == goal && $0.state != .merged && $0.state != .cancelled }
+        tasks.filter { $0.goal == goal && !$0.state.isFinished }
     }
 
     /// Archives (or brings back) a goal; with unfinished tasks it asks first.
@@ -560,7 +566,7 @@ final class AppState {
     }
 
     func stats(for goal: Goal) -> (merged: Int, total: Int) {
-        let live = tasks(for: goal).filter { $0.state != .cancelled }
+        let live = tasks(for: goal).filter { $0.state != .cancelled && $0.state != .closed }
         return (live.filter { $0.state == .merged }.count, live.count)
     }
 
@@ -1108,14 +1114,14 @@ final class AppState {
             return
         }
         if destination == .myTasks {
-            let mine = tasks.filter { $0.owner.id == FactoryData.me.id && $0.state != .merged && $0.state != .cancelled }
+            let mine = tasks.filter { $0.owner.id == FactoryData.me.id && !$0.state.isFinished }
             if !mine.contains(where: { $0.id == selectedTask }), let first = mine.first { selectedTask = first.id }
             return
         }
         guard case .goal(let name) = destination else { return }
         let goalTasks = tasks.filter { $0.goal == name }
         guard !goalTasks.contains(where: { $0.id == selectedTask }) else { return }
-        if let pick = goalTasks.first(where: { $0.state != .merged && $0.state != .cancelled }) ?? goalTasks.first {
+        if let pick = goalTasks.first(where: { !$0.state.isFinished }) ?? goalTasks.first {
             selectedTask = pick.id
         }
     }
@@ -1280,8 +1286,8 @@ final class AppState {
         }
         // Back to the stage it was in, as the factory does.
         update(id) { task in
-            guard task.state == .cancelled || task.state == .reviewing else { return }
-            if task.state == .cancelled {
+            guard task.state == .cancelled || task.state == .closed || task.state == .reviewing else { return }
+            if task.state == .cancelled || task.state == .closed {
                 if task.pr != nil {
                     task.state = .reviewing
                     if task.pr?.state == .closed { task.pr?.state = .open }
@@ -1367,6 +1373,30 @@ final class AppState {
             }
         }
         showToast(name.isEmpty ? "Took \(id) out of \(was ?? "its effort")" : "Put \(id) in \(name)", icon: "square.stack.3d.up")
+    }
+
+    /// Replace what `id` waits on: it builds only once all of them have merged. The server refuses a
+    /// loop, a cancelled task, or a task that's already building.
+    func setAfter(_ id: String, _ after: [String]) {
+        let was = task(id).after
+        guard after != was else { return }
+        let added = after.filter { !was.contains($0) }, removed = was.filter { !after.contains($0) }
+        if let client, isLive {
+            client.expect(id) { $0.after = after }
+            client.send(.taskEdit(.init(id: id, after: after)))
+        } else {
+            update(id) { task in
+                task.after = after
+                task.activity.insert(ActivityItem(who: FactoryData.me.name,
+                                                  text: after.isEmpty ? "No longer waits on other tasks" : "Now waits on \(after.joined(separator: ", "))", when: "now"), at: 0)
+            }
+        }
+        showToast(added.isEmpty ? "\(id) no longer waits on \(removed.joined(separator: ", "))" : "\(id) now builds after \(added.joined(separator: ", "))", icon: "arrow.triangle.branch")
+    }
+
+    /// The tasks waiting on `id` to merge before they build.
+    func blocked(by id: String) -> [FactoryTask] {
+        tasks.filter { $0.after.contains(id) }.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
     /// Model presets per agent for the task inspector's Model menu; anything else goes in as free text.
@@ -2161,7 +2191,12 @@ final class AppState {
     init(boardDefaults: UserDefaults = AppDefaults) {
         self.boardDefaults = boardDefaults
         boardHidesEmptyColumns = boardDefaults.bool(forKey: "boardHidesEmptyColumns")
+        goalTaskFilter = boardDefaults.string(forKey: "goalTaskFilter").flatMap(GoalTaskFilter.init(rawValue:)) ?? .everyone
         let defaults = AppDefaults
+        // `-goaltasks mine|everyone` starts a screenshot on that filter without saving it.
+        if let filter = defaults.string(forKey: "goaltasks").flatMap(GoalTaskFilter.init(argument:)) {
+            goalTaskFilter = filter
+        }
         if let layout = defaults.string(forKey: "layout").flatMap({ GoalLayout(rawValue: $0.capitalized) }) {
             self.layout = layout
         }
@@ -2251,6 +2286,17 @@ final class AppState {
             case "drafttop": moveDraftToTop(parts[1])
             case "draftbottom": moveDraftToBottom(parts[1])
             case "layout": layout = GoalLayout(rawValue: parts[1].capitalized) ?? layout
+            // A goal with many cards in one column, for the board's paging: `fill:<goal>:<count>:<state>`, owners alternating.
+            case "fill" where parts.count > 3:
+                let seeds = tasks.filter { $0.goal == parts[1] }
+                let state = TaskState.allCases.first { "\($0)" == parts[3] } ?? .merged
+                for n in 0..<(Int(parts[2]) ?? 0) {
+                    var task = FactoryTask(id: "FIL-\(n + 1)", goal: parts[1], title: "Paged card #\(n + 1)", state: state, detail: "")
+                    if let seed = seeds.isEmpty ? nil : seeds[n % seeds.count] { task.owner = seed.owner; task.agent = seed.agent; task.updated = seed.updated }
+                    tasks.append(task)
+                }
+            case "board" where parts[1] == "bottom": NotificationCenter.default.post(name: BoardColumns.demoScroll, object: nil)
+            case "goto": destination = .goal(parts.dropFirst().joined(separator: ":"))
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
                 schedulingTask = nil
@@ -2306,6 +2352,7 @@ final class AppState {
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
+            case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             // The Changes tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
@@ -2446,6 +2493,8 @@ final class AppState {
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // The goal view's Everyone | You switch, through the same persisted preference: `goaltasks:mine|everyone`.
+            case "goaltasks": if let filter = GoalTaskFilter(argument: parts[1]) { goalTaskFilter = filter }
             case "go": destination = Destination(argument: parts[1])
             // The ⌘K palette: `palette:open`, `palette:type:state:reviewing`, `palette:down` (or `up`), `palette:run`, `palette:close`.
             case "palette":
@@ -2492,7 +2541,7 @@ final class AppState {
             // A machine card's runner Update (`runnerupdate:<machine id>`, waiting for it to arrive), its Check, and its What's New sheet.
             case "runnerupdate":
                 for _ in 0..<300 {
-                    if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.send(.machineUpdate(.init(machine: machine.id))); break }
+                    if let machine = client?.machines.first(where: { $0.id == parts[1] && $0.online }) { client?.updateRunner(machine); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             // Its ⋯ › Check for Runner Update (or Update Runner to X, when one's out), as the menu runs it.
@@ -2530,6 +2579,20 @@ final class AppState {
                 acceptances[parts[1]] = RiskAcceptance(autoMergeUpTo: level, acceptedBy: FactoryData.me, when: "just now")
             default: break
             }
+        }
+    }
+}
+
+/// A goal view's Everyone | You switch: every task in the goal, or only the ones you own.
+enum GoalTaskFilter: String, CaseIterable {
+    case everyone = "Everyone", mine = "You"
+
+    /// A launch argument or demo step: `mine`/`you` or `everyone`/`all`.
+    init?(argument: String) {
+        switch argument.lowercased() {
+        case "mine", "you", "me": self = .mine
+        case "everyone", "all": self = .everyone
+        default: return nil
         }
     }
 }

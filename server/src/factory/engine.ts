@@ -111,6 +111,12 @@ const now = () => Date.now();
 const branchName = (task: Task) => task.id.toLowerCase();
 /** A task's id releases its repo's secrets to its machine only in these states. */
 const SECRET_STATES = new Set<Task["state"]>(["planning", "building", "reviewing"]);
+/** Nothing more happens on it: merged, cancelled, or closed with nothing to merge. */
+const isFinished = (state: Task["state"]) => state === "merged" || state === "cancelled" || state === "closed";
+/** A builder has started on it: what it waits on is settled from then on. */
+const buildStarted = (task: Task) => task.worker?.role === "builder" || task.events.some((e) => e.who === "builder");
+/** The most tasks one can wait on. */
+const MAX_AFTER = 10;
 /** Where a review note sits: `path:L12` or `path:L12–18`. */
 const lineAnchor = (n: { path: string; start: number; end: number }) => `${n.path}:L${n.start}${n.end > n.start ? `–${n.end}` : ""}`;
 
@@ -382,7 +388,7 @@ export class Engine {
       case "goal.archive": {
         const goal = this.store.goal(msg.id) ?? fail("That goal isn't there any more.");
         if (member.role !== "admin" && goal.lead !== who) fail(`Only admins or ${goal.lead}, its lead, can archive ${goal.name}.`);
-        const unfinished = this.store.tasks().filter((t) => t.goal === goal.id && t.state !== "merged" && t.state !== "cancelled");
+        const unfinished = this.store.tasks().filter((t) => t.goal === goal.id && !isFinished(t.state));
         if (msg.archived && unfinished.length) {
           const ids = unfinished.map((t) => t.id).join(", ");
           if (!msg.unfinished) fail(`${ids} ${unfinished.length === 1 ? "isn't" : "aren't"} finished; say whether to end ${unfinished.length === 1 ? "it" : "them"} or let ${unfinished.length === 1 ? "it" : "them"} finish.`);
@@ -416,8 +422,7 @@ export class Engine {
         if (goal.archived) fail(`${goal.name} is archived; unarchive it to add tasks.`);
         if (!msg.title.trim()) fail("A task needs a title.");
         const repo = msg.repo ? goalRepos(goal).find((r) => r.toLowerCase() === msg.repo!.toLowerCase()) ?? fail(`${goal.name} doesn't work in ${msg.repo}; add it to the goal's repos first.`) : null;
-        const after = msg.after ?? [];
-        for (const id of after) if (!this.store.task(id)) fail(`There's no task ${id} for it to wait on.`);
+        const after = this.checkAfter(null, msg.after ?? []);
         const request = msg.intake ? this.intake.get(msg.intake) : null;
         const task = this.newTask(goal, who, { title: msg.title.trim(), brief: msg.brief, tickets: msg.tickets, shareable: msg.shareable, agent: msg.agent || "claude", intake: request?.id ?? null, repo, after, effort: effortName(msg.effort), priority: msg.priority ?? null });
         if (request) {
@@ -452,7 +457,7 @@ export class Engine {
         }
         if (msg.agent != null || msg.model != null) {
           // Any state until it's done: the change applies from its next session, and one running keeps going.
-          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; there's nothing left to build.`);
+          if (isFinished(task.state)) fail(`It's ${task.state}; there's nothing left to build.`);
           const agent = msg.agent != null ? msg.agent.trim() : task.agent;
           if (!["claude", "codex"].includes(agent)) fail(`${agent || "That"} isn't an agent the factory runs: claude or codex.`);
           const was = task.model ?? null;
@@ -473,9 +478,17 @@ export class Engine {
           task.effort = effort;
           this.event(task, who, effort ? `put it in effort ${effort}` : `took it out of effort ${was}`);
         }
+        if (msg.after != null) {
+          const after = this.checkAfter(task, msg.after);
+          if (after.join() !== task.after.join()) {
+            if (isFinished(task.state) || task.state === "reviewing" || (task.state === "building" && buildStarted(task))) fail(`It's ${task.state === "building" ? "already building" : task.state}; what it waits on can't change now.`);
+            task.after = after;
+            this.event(task, who, after.length ? `now waits on ${after.join(", ")}` : "no longer waits on other tasks");
+          }
+        }
         const priority = msg.clearPriority ? null : msg.priority;
         if (priority !== undefined && priority !== (task.priority ?? null)) {
-          if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; its priority can't change now.`);
+          if (isFinished(task.state)) fail(`It's ${task.state}; its priority can't change now.`);
           task.priority = priority;
           this.event(task, who, priority ? `set priority ${priority.toUpperCase()}` : "took its priority off");
           if (priority === "p0") this.toFront(task, who);
@@ -486,7 +499,7 @@ export class Engine {
         return;
       }
       case "task.assign": {
-        if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (isFinished(task.state)) fail("It's already finished.");
         const owner = msg.owner.trim().replace(/^@/, "");
         if (owner.toLowerCase() === task.owner.toLowerCase()) fail(`${task.owner} already owns it.`);
         const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === owner.toLowerCase()) ?? fail(`${owner} isn't in the org.`);
@@ -503,7 +516,7 @@ export class Engine {
         return;
       }
       case "task.moveGoal": {
-        if (task.state === "merged" || task.state === "cancelled") fail(`It's ${task.state}; it stays in its goal.`);
+        if (isFinished(task.state)) fail(`It's ${task.state}; it stays in its goal.`);
         if (msg.goal === task.goal) fail("It's already in that goal.");
         const target = this.store.goal(msg.goal) ?? fail("That goal doesn't exist.");
         if (target.archived) fail(`${target.name} is archived; unarchive it first.`);
@@ -741,13 +754,13 @@ export class Engine {
         return;
       }
       case "task.cancel": {
-        if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (isFinished(task.state)) fail("It's already finished.");
         await this.cancel(task, who);
         await this.pump();
         return;
       }
       case "task.queue": {
-        if (task.state === "merged" || task.state === "cancelled") fail("It's already finished.");
+        if (isFinished(task.state)) fail("It's already finished.");
         if (task.state === "backlog") fail("It's in the backlog. Pick it up first: send it to planning, or approve its plan.");
         if (msg.force) {
           if (task.worker || task.hand || task.question) fail("It's already running.");
@@ -820,7 +833,7 @@ export class Engine {
         this.closeWorker(task, "cancelled");
         task.liveLog = null;
         const was = task.state;
-        if (was === "cancelled") {
+        if (was === "cancelled" || was === "closed") {
           // Back to the stage it was in: reviewing what it pushed, building its approved plan, its plan
           // waiting for approval, or planning.
           task.state = task.pr ? "reviewing"
@@ -843,13 +856,13 @@ export class Engine {
         task.question = null;
         task.waiting = null;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
-        this.event(task, who, was === "cancelled" ? `picked it back up (${task.state})` : task.state === "reviewing" ? "ran its review again" : "retried it");
+        this.event(task, who, was === "cancelled" || was === "closed" ? `picked it back up (${task.state})` : task.state === "reviewing" ? "ran its review again" : "retried it");
         this.save(task);
         await this.pump();
         return;
       }
       case "task.move": {
-        if (task.state === "merged" || task.state === "cancelled" || task.state === "drafting" || task.state === "backlog") fail("There's nothing running to move.");
+        if (isFinished(task.state) || task.state === "drafting" || task.state === "backlog") fail("There's nothing running to move.");
         if (!task.machine) fail("It hasn't started on a machine yet.");
         if (this.store.private(task.id).handingOff) fail("It's already being handed off.");
         const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
@@ -1063,9 +1076,33 @@ export class Engine {
     this.event(task, who, "moved it to the top of the queue: it's P0");
   }
 
+  /** The ids `task` (null: one being made) may wait on, deduplicated, or a refusal: a missing or
+   *  cancelled task, itself, more than 10, or a loop back to it through the others' `after` lists. */
+  private checkAfter(task: Task | null, ids: string[]): string[] {
+    const deps = ids.map((id) => id.trim()).filter(Boolean).map((id) => this.store.task(id) ?? this.store.task(id.toUpperCase()) ?? fail(`There's no task ${id} for it to wait on.`));
+    const after = [...new Set(deps.map((d) => d.id))];
+    if (after.length > MAX_AFTER) fail(`A task can wait on at most ${MAX_AFTER} others.`);
+    for (const dep of deps) {
+      if (task && dep.id === task.id) fail(`${task.id} can't wait on itself.`);
+      if (dep.state === "cancelled") fail(`${dep.id} was cancelled; it can't wait on it.`);
+    }
+    if (task) {
+      // Walk what each waits on: reaching the task again would mean neither can ever start.
+      const seen = new Set<string>();
+      const walk = (id: string, path: string[]): void => {
+        if (id === task.id) fail(`That makes a loop: ${[task.id, ...path].join(" → ")}.`);
+        if (seen.has(id)) return;
+        seen.add(id);
+        for (const next of this.store.task(id)?.after ?? []) walk(next, [...path, next]);
+      };
+      for (const id of after) walk(id, [id]);
+    }
+    return after;
+  }
+
   /** A draft made from `source` (proposed by its agent, or a follow-up of it): it takes the source's
    *  agent, model, effort and sharing. Saved. */
-  private draftFrom(goal: Goal, source: Task, owner: string, d: Pick<Task, "title" | "brief" | "repo"> & Partial<Pick<Task, "priority" | "followUpOf">>): Task {
+  private draftFrom(goal: Goal, source: Task, owner: string, d: Pick<Task, "title" | "brief" | "repo"> & Partial<Pick<Task, "priority" | "followUpOf" | "after" | "effort">>): Task {
     return this.newTask(goal, owner, {
       tickets: [],
       shareable: source.shareable,
@@ -1196,7 +1233,7 @@ export class Engine {
     }
     if (role === "builder") {
       // Work that builds on another repo's change starts once that change is in.
-      const before = task.after.map((id) => this.store.task(id)).filter((t): t is Task => !!t && t.state !== "merged");
+      const before = task.after.map((id) => this.store.task(id)).filter((t): t is Task => !!t && t.state !== "merged" && t.state !== "closed");
       const dropped = before.find((t) => t.state === "cancelled");
       if (dropped) return `${dropped.id}, which it builds on, was cancelled. Take it off its "after" list or cancel this too.`;
       if (before.length) return `Waiting for ${before.map((t) => t.id).join(" and ")} to merge first.`;
@@ -1563,7 +1600,7 @@ export class Engine {
     if (task.worker?.session !== end.id) return this.cleanup(task);
     task.worker = null;
     task.liveLog = null;
-    if (planned || task.state === "cancelled" || task.state === "merged") {
+    if (planned || isFinished(task.state)) {
       this.save(task);
       await this.cleanup(task);
       return this.pump();
@@ -1609,7 +1646,7 @@ export class Engine {
     const priv = this.store.private(task.id);
     this.store.savePrivate(task.id, { ...priv, finishing: false });
     // A push that was already under way when the task was cancelled (or merged): it stays that way.
-    if (task.state === "cancelled" || task.state === "merged") return;
+    if (isFinished(task.state)) return;
     const failed = msg.ok ? null : msg.checks?.findLast((c) => c.timedOut || c.code !== 0);
     if (failed) return this.checksFailed(task, failed, msg.message ?? null, msg.base ?? priv.base ?? "main");
     if (task.liveLog === RUNNING_CHECKS) task.liveLog = null;
@@ -1712,7 +1749,7 @@ export class Engine {
   /** Whether a task's CI may still change: checks running, or none yet on a fresh pull request. */
   private ciPending(task: Task): boolean {
     const priv = this.store.private(task.id);
-    if (!priv.gh || !task.pr?.head || task.pr.state !== "open" || task.state === "merged" || task.state === "cancelled") return false;
+    if (!priv.gh || !task.pr?.head || task.pr.state !== "open" || isFinished(task.state)) return false;
     if (task.pr.checks.some((c) => c.status === "queued" || c.status === "running")) return true;
     return task.pr.checks.length === 0 && now() - (priv.prOpenedAt ?? 0) < CI_APPEAR_MS;
   }
@@ -1825,7 +1862,7 @@ export class Engine {
       const gh = this.store.private(task.id).gh;
       if (!gh || `${gh.owner}/${gh.repo}`.toLowerCase() !== repo || !task.pr) continue;
       if (!(event.sha && task.pr.head === event.sha) && !(event.number && task.pr.number === event.number)) continue;
-      if (event.closed && task.state !== "merged" && task.state !== "cancelled") {
+      if (event.closed && !isFinished(task.state)) {
         if (event.merged) this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: null, message: null });
         else {
           task.pr.state = "closed";
@@ -1989,8 +2026,8 @@ export class Engine {
    */
   private async cleanup(task: Task) {
     const priv = this.store.private(task.id);
-    const finished = task.state === "merged" || (task.state === "cancelled" && priv.discard);
-    if (!finished || !task.machine || !priv.worktree || !priv.repoDir || priv.cleaned) return;
+    const done = task.state === "merged" || ((task.state === "cancelled" || task.state === "closed") && priv.discard);
+    if (!done || !task.machine || !priv.worktree || !priv.repoDir || priv.cleaned) return;
     const machine = (await this.hooks.machines()).find((m) => m.id === task.machine);
     if (machine?.sessions.some((s) => s.session.taskId === task.id)) return; // its last end calls this again
     this.store.savePrivate(task.id, { ...priv, cleaned: true });
@@ -2200,23 +2237,43 @@ export class Engine {
         if (asked.length > 20) fail("tasks: at most 20 per call.");
         const repos = goalRepos(goal!);
         // Checked before any is made, so a bad proposal makes none.
-        const picks = asked.map((p) => {
+        const picks = asked.map((p, i) => {
           const named = typeof p.repo === "string" ? p.repo.trim() : "";
           const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `tasks[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
           const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`tasks[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
-          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo, priority };
+          // `#n`: the n-th proposal in this call, made before it; anything else is an existing task.
+          const refs = arr(p.after).map((x) => String(x).trim()).filter(Boolean);
+          const earlier = refs.map((r) => (/^#\d+$/.test(r) ? Number(r.slice(1)) : null));
+          for (const [k, n] of earlier.entries()) if (n != null && (n < 1 || n > i)) fail(`tasks[${i}].after: ${refs[k]} isn't an earlier proposal in this call${n > i ? "; a task can only wait on ones listed before it" : ""}.`);
+          const existing = this.checkAfter(null, refs.filter((_, k) => earlier[k] == null));
+          const effort = p.effort == null ? undefined : effortName(String(p.effort));
+          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
         });
         // Drafts only: nothing plans or builds until a person sends one to planning.
-        const made = picks.map((p) => {
-          const draft = this.draftFrom(goal!, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`, repo: p.repo, priority: p.priority });
-          this.event(draft, s.role, `proposed by ${task.id}`);
+        const made: string[] = [];
+        const lines: string[] = [];
+        for (const p of picks) {
+          const after = [...p.existing, ...p.earlier.map((n) => made[n - 1]!)];
+          const draft = this.draftFrom(goal!, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`, repo: p.repo, priority: p.priority, after, ...(p.effort !== undefined ? { effort: p.effort } : {}) });
+          this.event(draft, s.role, `proposed by ${task.id}${after.length ? `; waits on ${after.join(", ")}` : ""}`);
           this.save(draft);
           this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));
-          return draft.id;
-        });
+          made.push(draft.id);
+          lines.push(`${draft.id} ${draft.title}${after.length ? ` (after ${after.join(", ")})` : ""}${draft.effort ? ` [${draft.effort}]` : ""}`);
+        }
+        // An ordered set reads as a chain: MF-201 → MF-202 → MF-203.
+        const ordered = made.length > 1 && picks.some((p) => p.earlier.length);
+        this.hooks.broadcast({ type: "toast", text: ordered ? `${task.id}'s ${s.role} proposed ${made.join(" → ")}; they're in ${goal!.name}'s drafts, in order.` : `${task.id}'s ${s.role} proposed ${made.length} task${made.length === 1 ? "" : "s"}; they're in ${goal!.name}'s drafts.`, taskId: task.id });
+        if (s.role === "planner" && task.state === "planning") {
+          // A scan-and-propose task: the proposals are its outcome, so it closes with nothing to merge.
+          task.state = "closed";
+          this.event(task, s.role, `closed it: proposed ${made.join(", ")}`);
+          this.stat(task, "closed", { proposed: made.length }, null, s.role);
+          this.closeWorker(task, "done");
+          return { summary: `Proposed as drafts in ${goal!.name}:\n${lines.join("\n")}\nand closed ${task.id}: there's nothing to merge. Your work here is done; end your turn.`, data: { tasks: made } };
+        }
         this.event(task, s.role, `proposed ${made.join(", ")}`);
-        this.hooks.broadcast({ type: "toast", text: `${task.id}'s ${s.role} proposed ${made.length} task${made.length === 1 ? "" : "s"}; they're in ${goal!.name}'s drafts.`, taskId: task.id });
-        return { summary: `Proposed ${made.join(", ")} as drafts in ${goal!.name}. A person sends each to planning or deletes it; don't build them yourself.`, data: { tasks: made } };
+        return { summary: `Proposed as drafts in ${goal!.name}:\n${lines.join("\n")}\nA person sends each to planning or deletes it; don't build them yourself.`, data: { tasks: made } };
       }
 
       case "ask": {
@@ -2406,7 +2463,7 @@ export class Engine {
   private async policyChanged() {
     this.hooks.broadcast({ type: "policy.updated", policy: this.store.policy(), acceptances: this.store.acceptances() });
     for (const task of this.store.tasks()) {
-      if (task.state === "merged" || task.state === "cancelled" || !task.risk) continue;
+      if (isFinished(task.state) || !task.risk) continue;
       const before = `${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}/${JSON.stringify(task.risk.factors)}`;
       this.applyPolicy(task);
       if (`${task.risk.level}/${task.approvalsNeeded}/${task.reviewsNeeded}/${JSON.stringify(task.risk.factors)}` !== before) {
@@ -2918,7 +2975,7 @@ export class Engine {
     if (!task || !priv?.handingOff) return;
     const who = priv.handingOff;
     this.store.savePrivate(task.id, { ...priv, handingOff: null });
-    if (task.state === "cancelled" || task.state === "merged") return;
+    if (isFinished(task.state)) return;
     const nothing = !msg.ok && /nothing to carry/.test(msg.message ?? "");
     if (!msg.ok && !nothing) {
       task.liveLog = null;
@@ -2963,8 +3020,26 @@ export class Engine {
   }
 
   /** A machine that's back can still be running sessions the factory ended while it was away
-   *  (its task moved elsewhere); those stop now. */
-  reap(machine: Machine) {
+   *  (its task moved elsewhere); those stop now. And one that just came back (`reconnected`) without a
+   *  task's session, e.g. after a restart, lost it: the task starts again, as for any `tmuxLost` end. Only on
+   *  a reconnect, since a session can take a while (fetch, worktree) to show up in the machine's list. */
+  async reap(machine: Machine, reconnected = false) {
+    if (reconnected) {
+      const listed = new Set(machine.sessions.map((s) => s.session.id));
+      const lost = this.store.tasks().filter((t) => {
+        const w = t.worker;
+        return w && w.machine === machine.id && !listed.has(w.session) && Date.now() - w.startedAt > REAP_AFTER_MS && this.store.session(w.session)?.ended == null;
+      });
+      for (const task of lost) {
+        await this.ended({
+          id: task.worker!.session,
+          cause: "tmuxLost",
+          detail: `It was gone when ${machine.name} reconnected; the machine likely restarted.`,
+          at: Date.now(),
+          lastOutput: [],
+        });
+      }
+    }
     for (const { session } of machine.sessions) {
       if (!session.taskId || this.reaped.has(session.id)) continue;
       const s = this.store.session(session.id);

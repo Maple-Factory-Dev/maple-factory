@@ -44,6 +44,7 @@ export const enums: Record<string, Enum> = {
       reviewing: "Pushed: the review agent and people are reviewing it.",
       merged: "Merged into its base.",
       cancelled: "Stopped.",
+      closed: "Finished without code to merge, e.g. its planner proposed tasks instead of a plan.",
     },
   },
   Role: {
@@ -649,7 +650,7 @@ export const structs: Record<string, Struct> = {
       draftRank: "Its place among its goal's drafts: lower first. None (from an older server): its createdAt.",
       startAt: "Don't start its next session before this (ms); cleared once that session starts.",
       repo: "Which of its goal's repos it changes; none: the goal's `repo` (or its folder).",
-      after: "Tasks that must merge before it starts building, e.g. the API change a web change uses.",
+      after: "Tasks that must merge before it starts building, e.g. the API change a web change uses. It can wait on several; it builds only once all of them have merged.",
       splitFrom: "The task it was split off from to stay inside the PR budget.",
       scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
       priority: "How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).",
@@ -910,6 +911,7 @@ export const structs: Record<string, Struct> = {
       merged: "u32",
       autoMerged: "u32",
       cancelled: "u32",
+      closed: "u32?",
       created: "u32",
       tasksTouched: "u32",
       handsRaised: "u32",
@@ -936,6 +938,7 @@ export const structs: Record<string, Struct> = {
       answerMedianMs: "How long an agent's question waits for its answer.",
       firstTryApproval: "Plans approved at version 1.",
       handsOpen: "Up right now, whenever they were raised.",
+      closed: "Tasks that finished with nothing to merge. None from a factory before it had the closed state.",
     },
   },
   StatsCount: { fields: { key: "string", count: "u32", medianMs: "u64?" } },
@@ -1063,7 +1066,10 @@ export const unions: Record<string, Union> = {
         fields: { id: "uuid", nonce: "string", data: "string" },
         fieldDocs: { data: "Base64." },
       },
-      "update.status": { fields: { state: "string", version: "string?", message: "string?" } },
+      "update.status": {
+        doc: "How a runner update is going: checking, installing, restarting, upToDate, failed, or newer (the feed has a newer release than the one asked for, so nothing was installed).",
+        fields: { state: "string", version: "string?", message: "string?" },
+      },
       "agent.login_status": { doc: "How an `agent.login` is going.", fields: { status: "AgentLoginStatus" } },
       usage: { doc: "Plan usage readings that changed (all of them again on reconnect).", fields: { agents: "AgentUsage[]" } },
       "session.cost": { doc: "A session's latest spend reading (again on reconnect, and once more just before it ends).", fields: { cost: "SessionCost" } },
@@ -1161,7 +1167,10 @@ export const unions: Record<string, Union> = {
         fields: { id: "uuid", nonce: "string" },
         fieldDocs: { nonce: "Echoed in the reply, so it goes to the viewer that asked." },
       },
-      "runner.update": {},
+      "runner.update": {
+        fields: { version: "string?" },
+        fieldDocs: { version: "Install only this version; if the feed now offers another, install nothing. Omitted: the latest, as before." },
+      },
       "agent.login": {
         doc: "Sign an agent in with a device code (`codex login --device-auth`), or cancel one that's waiting.",
         fields: { agent: "string", cancel: "bool" },
@@ -1270,7 +1279,11 @@ export const unions: Record<string, Union> = {
         doc: "Its owner or an admin: a nickname shown everywhere in place of its id. Empty goes back to the id.",
         fields: { machine: "string", name: "string" },
       },
-      "machine.update": { doc: "Its owner or an admin: update its runner to the latest release now.", fields: { machine: "string" } },
+      "machine.update": {
+        doc: "Its owner or an admin: update its runner to the latest release now.",
+        fields: { machine: "string", version: "string?" },
+        fieldDocs: { version: "The release the person was shown; a newer one isn't installed without asking again." },
+      },
       "machine.agent_login": {
         doc: "Its owner only: sign one of its agents in (answered with `machine.agent_login`), or cancel that.",
         fields: { machine: "string", agent: "string", cancel: "bool?" },
@@ -1319,9 +1332,10 @@ export const unions: Record<string, Union> = {
         fieldDocs: { plan: "Send it to planning now; otherwise it stays a draft.", intake: "The request it was composed from, which then tracks it." },
       },
       "task.edit": {
-        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?", priority: "Priority?", clearPriority: "bool?" },
+        fields: { id: "string", title: "string?", brief: "string?", shareable: "bool?", repo: "string?", effort: "string?", agent: "string?", model: "string?", priority: "Priority?", clearPriority: "bool?", after: "string[]?" },
         fieldDocs: {
           effort: "Put it in this effort; an empty string takes it out.",
+          after: "Replace the tasks it waits on (an empty list clears them). Refused once it's building or later, for a missing or cancelled task, itself, more than 10, or a loop.",
           priority: "Set its priority; refused once it's merged or cancelled. Setting a queued task to P0 moves it to the front of the queue.",
           clearPriority: "Take its priority off.",
           agent: "claude or codex; refused once it's merged or cancelled. Takes effect from its next session.",

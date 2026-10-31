@@ -8,7 +8,7 @@ struct BoardColumnsTests {
     private typealias ID = BoardColumns.Column.ID
     private let order: [ID] = [.task(.drafting), .queued, .task(.planning), .task(.awaitingApproval),
                                .task(.backlog), .task(.building), .task(.reviewing), .pendingMerge,
-                               .task(.merged), .task(.cancelled)]
+                               .task(.merged), .task(.cancelled), .task(.closed)]
 
     private func task(_ id: String, state: TaskState = .building, queued: Bool = false, rank: Double = 0) -> FactoryTask {
         FactoryTask(id: id, title: id, state: state, detail: "", queued: queued, queueRank: rank)
@@ -156,5 +156,48 @@ struct BoardColumnsTests {
         #expect(columns.map(\.id) == [.task(.reviewing), .pendingMerge])
         #expect(columns.first { $0.id == .pendingMerge }?.tasks.map(\.id) == ["MERGING"])
         #expect(columns.flatMap(\.tasks).filter { $0.id == "MERGING" }.count == 1)
+    }
+
+    // MARK: Paging
+
+    @Test(arguments: [(0, 0, 0), (40, 40, 0), (41, 40, 1), (172, 40, 132)])
+    func firstPage(count: Int, shown: Int, remaining: Int) {
+        let tasks = (0..<count).map { task("TASK-\($0)", state: .merged) }
+        let page = BoardColumns.page(tasks, limit: BoardColumns.pageSize)
+        #expect(BoardColumns.pageSize == 40)
+        #expect(page.shown.count == shown)
+        #expect(page.remaining == remaining)
+        #expect(page.shown.map(\.id) == tasks.prefix(shown).map(\.id))
+    }
+
+    @Test func pageKeepsQueueOrder() {
+        let tasks = (0..<60).map { task("Q-\($0)", queued: true, rank: Double(60 - $0)) }
+        let queued = BoardColumns.columns(tasks: tasks, hideEmpty: true) { _ in false }.first { $0.id == .queued }!.tasks
+        let page = BoardColumns.page(queued, limit: BoardColumns.pageSize)
+        #expect(page.shown.map(\.id) == Array(queued.prefix(40)).map(\.id))
+        #expect(page.shown.first?.id == "Q-59")
+        #expect(zip(page.shown, page.shown.dropFirst()).allSatisfy { $0.queueRank < $1.queueRank })
+        #expect(page.remaining == 20)
+    }
+
+    @Test func growsAPageAtATime() {
+        let tasks = (0..<172).map { task("TASK-\($0)", state: .merged) }
+        var limit = BoardColumns.pageSize
+        var seen: [(Int, Int)] = []
+        while true {
+            let page = BoardColumns.page(tasks, limit: limit)
+            seen.append((page.shown.count, page.remaining))
+            if page.remaining == 0 { break }
+            limit = page.shown.count + BoardColumns.pageSize
+        }
+        #expect(seen.map(\.0) == [40, 80, 120, 160, 172])
+        #expect(seen.map(\.1) == [132, 92, 52, 12, 0])
+    }
+
+    @Test func limitPastTheEndShowsEverything() {
+        let tasks = (0..<5).map { task("TASK-\($0)") }
+        #expect(BoardColumns.page(tasks, limit: 500).shown.count == 5)
+        #expect(BoardColumns.page(tasks, limit: 500).remaining == 0)
+        #expect(BoardColumns.page(tasks, limit: -1).shown.isEmpty)
     }
 }

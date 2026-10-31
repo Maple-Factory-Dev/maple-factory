@@ -860,9 +860,9 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
             tokio::spawn(async move { sessions.kill(id).await });
         }
         Inbound::SessionReplay { id, nonce } => sessions.replay(id, nonce),
-        Inbound::RunnerUpdate => {
-            info!("the hub asked for an update");
-            updater.requested(sessions);
+        Inbound::RunnerUpdate { version } => {
+            info!("the hub asked for an update to {}", version.as_deref().unwrap_or("the latest release"));
+            updater.requested(sessions, version);
         }
         Inbound::RunnerRestart => match updater.blocked() {
             // Nothing would start a dev runner again.
