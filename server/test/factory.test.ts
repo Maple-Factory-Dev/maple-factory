@@ -245,17 +245,24 @@ test("a GitHub merge that never answers with its pull request still open stops M
     // Not a merge-fix try, and not sent back to its builder.
     assert.equal(f.store.private("MF-1").mergeFixes ?? 0, 0);
 
+    // Each merge call comes after its token is made, so it can land any time after the command: wait for
+    // the count to reach what's expected rather than a fixed time, which a busy test run can outlast.
+    const merges = () => gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length;
+    const mergesReach = async (n: number) => {
+      for (const until = Date.now() + 5_000; merges() < n && Date.now() < until; ) await new Promise((r) => setTimeout(r, 5));
+    };
+    // The first merge's call, which never answers.
+    await mergesReach(1);
+    assert.equal(merges(), 1);
+
     // Try the merge again: a fresh merge, with a fresh start time.
-    const puts = gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length;
     await f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Try the merge again", note: "" } as never, ME);
     task = f.store.task("MF-1")!;
     assert.equal(task.hand ?? null, null);
     assert.equal(task.liveLog, "Merging…");
     assert.equal(f.store.private("MF-1").merging, true);
-    // The token, then the merge call: wait for it rather than a fixed time, which a busy test run can outlast.
-    const merges = () => gh.calls.filter((c) => c === "PUT /repos/acme/app/pulls/7/merge").length;
-    for (const until = Date.now() + 5_000; merges() <= puts && Date.now() < until; ) await new Promise((r) => setTimeout(r, 5));
-    assert.equal(merges(), puts + 1);
+    await mergesReach(2);
+    assert.equal(merges(), 2);
   } finally {
     gh.restore();
   }
