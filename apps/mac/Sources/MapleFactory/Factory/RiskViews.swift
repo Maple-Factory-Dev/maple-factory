@@ -287,6 +287,26 @@ struct RiskPolicyEditor: View {
                 }
             }
 
+            group("Task budget") {
+                Stepper {
+                    row("Agent time per task", state.policy.taskMinutes == 0 ? "Off" : Self.minutes(state.policy.taskMinutes))
+                } onIncrement: {
+                    state.policy.taskMinutes = Self.stepMinutes(state.policy.taskMinutes, up: true)
+                } onDecrement: {
+                    state.policy.taskMinutes = Self.stepMinutes(state.policy.taskMinutes, up: false)
+                }
+                HStack {
+                    Text("Cost per task").foregroundStyle(Theme.text)
+                    Spacer()
+                    TaskCostField(cost: state.policy.taskCostUsd) { state.policy.taskCostUsd = $0 }
+                }
+                .font(.system(size: 12.5))
+                Text("Past either, the agent is asked to stop and raise a hand; if it doesn't within 10 minutes, the factory raises one for it.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             group("Risk checks") {
                 Text("A change's risk is the highest of the planner's read, each check it trips, and medium over the PR budget. Path checks match the diff's files; the planner cites rules that apply.")
                     .font(.system(size: 11.5))
@@ -432,6 +452,17 @@ struct RiskPolicyEditor: View {
         .font(.system(size: 12.5))
     }
 
+    /// Off, then 15 to 480 minutes in 15-minute steps; a value set elsewhere off the grid snaps to it.
+    static func stepMinutes(_ m: Int, up: Bool) -> Int {
+        if up { return m <= 0 ? 15 : min(480, (m / 15 + 1) * 15) }
+        if m <= 15 { return 0 }
+        return min(480, ((m - 1) / 15) * 15)
+    }
+
+    static func minutes(_ m: Int) -> String {
+        m < 60 ? "\(m) min" : m % 60 == 0 ? "\(m / 60) h" : "\(m / 60) h \(m % 60) min"
+    }
+
     private func countStepper(_ binding: Binding<[RiskLevel: Int]>, _ level: RiskLevel, range: ClosedRange<Int>) -> some View {
         let value = binding.wrappedValue[level, default: 0]
         return HStack(spacing: 6) {
@@ -447,6 +478,38 @@ struct RiskPolicyEditor: View {
         .frame(height: 22)
         .background(RoundedRectangle(cornerRadius: 5).fill(Theme.fill))
         .gridColumnAlignment(.center)
+    }
+}
+
+/// The cost budget in dollars, saved when editing ends; blank is no cost limit.
+private struct TaskCostField: View {
+    let cost: Double?
+    let save: (Double?) -> Void
+    @SwiftUI.State private var text = ""
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("$").foregroundStyle(Theme.textMuted)
+            TextField("No limit", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 80)
+                .onAppear { text = Self.format(cost) }
+                .onChange(of: cost) { _, new in text = Self.format(new) }
+                .onSubmit(commit)
+                .onDisappear(perform: commit)
+        }
+    }
+
+    static func format(_ cost: Double?) -> String {
+        guard let cost else { return "" }
+        return cost == cost.rounded() ? String(Int(cost)) : String(format: "%.2f", cost)
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "$", with: "")
+        let value: Double? = trimmed.isEmpty ? nil : Double(trimmed).map { max(0, $0) }
+        if trimmed.isEmpty || value != nil, value != cost { save(value) } else { text = Self.format(cost) }
     }
 }
 

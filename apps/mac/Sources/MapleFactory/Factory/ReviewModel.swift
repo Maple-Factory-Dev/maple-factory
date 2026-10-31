@@ -110,7 +110,7 @@ struct HandRaise {
             case .reviewLoop: "Review loop exhausted"
             case .proofBurden: "Can't meet the proof"
             case .needsInput: "Needs more input"
-            case .overBudget: "Fix goes over budget"
+            case .overBudget: "Over budget"
             case .sessionEnded: "Its session ended"
             case .mergeFailed: "Didn't merge"
             case .other: "Needs attention"

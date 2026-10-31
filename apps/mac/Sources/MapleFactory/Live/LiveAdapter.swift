@@ -307,6 +307,8 @@ import SwiftUI
         policy.autoFixMerges = p.autoFixMerges ?? true
         policy.autoMerges = p.autoMerges ?? true
         policy.scoutItems = p.scoutItems.map(Int.init) ?? 3
+        policy.taskMinutes = p.taskMinutes.map(Int.init) ?? 60
+        policy.taskCostUsd = p.taskCostUsd
         return policy
     }
 
@@ -319,7 +321,9 @@ import SwiftUI
             autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
             autoFixMerges: policy.autoFixMerges,
             autoMerges: policy.autoMerges,
-            scoutItems: UInt32(policy.scoutItems)
+            scoutItems: UInt32(policy.scoutItems),
+            taskMinutes: UInt32(max(0, policy.taskMinutes)),
+            taskCostUsd: policy.taskCostUsd
         )
     }
 
