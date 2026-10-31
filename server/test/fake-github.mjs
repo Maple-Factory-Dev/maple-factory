@@ -45,7 +45,8 @@
 // leave the org, POST /_role { org, login, role: "admin"|"member" }: their role there changes, and POST /_threads { owner, repo, number, threads: [{ path, line, startLine?, side?: "LEFT"|"RIGHT",
 // resolved?, outdated?, comments: [{ author, body }] }] }, the review threads people left on that pull request, and
 // POST /_queue { owner, repo, branch = "main", then: "merge"|"dequeue"|"hold"|"off", reason?, delayMs? }: that branch requires
-// a merge queue (not with "off"), and what the queue does with each pull request added to it a moment later.
+// a merge queue (not with "off"), and what the queue does with each pull request added to it a moment later, and
+// POST /_private { owner, repo, private: false }: the app's repo list says that repo is public (repos are private until then).
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -86,6 +87,7 @@ const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, co
 const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
 const threads = new Map(); // `${owner}/${repo}#${number}` → [{ path, line, … }]
 const queues = new Map(); // `${owner}/${repo}:${branch}` → { then, reason, delayMs }
+const publicRepos = new Set(); // `${owner}/${repo}`, lower case: the rest are private
 let lastNumber = 0;
 let lastRun = 0;
 
@@ -252,6 +254,11 @@ createServer((req, res) => {
       moveOnMerge.add(`${body.owner}/${body.repo}:${body.branch}`);
       return send(res, 200, {});
     }
+    if (req.method === "POST" && url.pathname === "/_private") {
+      if (body.private === false) publicRepos.add(`${body.owner}/${body.repo}`.toLowerCase());
+      else publicRepos.delete(`${body.owner}/${body.repo}`.toLowerCase());
+      return send(res, 204);
+    }
     if (req.method === "POST" && url.pathname === "/_queue") {
       const key = `${body.owner}/${body.repo}:${body.branch ?? "main"}`.toLowerCase();
       if (body.then === "off") queues.delete(key);
@@ -379,7 +386,7 @@ createServer((req, res) => {
       if (!g) return send(res, 401, { message: "Bad credentials" });
       const page = Number(url.searchParams.get("page") ?? 1);
       const mine = [...installed].filter(([, id]) => id === g.installation).map(([name]) => name);
-      const repositories = (page === 1 ? mine : []).map((name) => ({ full_name: name, default_branch: "main", private: true }));
+      const repositories = (page === 1 ? mine : []).map((name) => ({ full_name: name, default_branch: "main", private: !publicRepos.has(name.toLowerCase()) }));
       return send(res, 200, { total_count: mine.length, repositories });
     }
     if (req.method === "POST" && (m = url.pathname.match(/^\/app\/installations\/(\d+)\/access_tokens$/))) {
