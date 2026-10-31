@@ -1963,6 +1963,7 @@ pub struct StatsTotals {
     pub merged: u32,
     pub auto_merged: u32,
     pub cancelled: u32,
+    pub closed: u32,
     pub created: u32,
     pub tasks_touched: u32,
     pub hands_raised: u32,

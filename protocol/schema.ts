@@ -911,6 +911,7 @@ export const structs: Record<string, Struct> = {
       merged: "u32",
       autoMerged: "u32",
       cancelled: "u32",
+      closed: "u32",
       created: "u32",
       tasksTouched: "u32",
       handsRaised: "u32",

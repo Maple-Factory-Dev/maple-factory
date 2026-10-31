@@ -135,7 +135,7 @@ export class Intake {
     let best: Task | null = null;
     let score = 1;
     for (const task of this.store.tasks()) {
-      if (task.state === "merged" || task.state === "cancelled") continue;
+      if (task.state === "merged" || task.state === "cancelled" || task.state === "closed") continue;
       const s = overlap(asked, words(`${task.title} ${task.brief}`));
       if (s > score) [best, score] = [task, s];
     }

@@ -1126,6 +1126,7 @@ export interface StatsTotals {
   merged: number;
   autoMerged: number;
   cancelled: number;
+  closed: number;
   created: number;
   tasksTouched: number;
   handsRaised: number;

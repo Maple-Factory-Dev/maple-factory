@@ -1726,6 +1726,7 @@ data class StatsTotals(
     val merged: Long,
     val autoMerged: Long,
     val cancelled: Long,
+    val closed: Long,
     val created: Long,
     val tasksTouched: Long,
     val handsRaised: Long,
