@@ -21,7 +21,7 @@ struct LineSelection: Equatable {
 
 /// Turning picked diff lines into review notes, and placing GitHub's review threads on the lines.
 enum DiffReview {
-    /// A file's lines as the Diff tab shows them: each hunk's, one hunk after another.
+    /// A file's lines as the Changes tab shows them: each hunk's, one hunk after another.
     static func rows(_ hunks: [DiffHunk]) -> [DiffLine] { hunks.flatMap(\.lines) }
 
     /// `rows`, split after every row in `breaks` and into runs of at most `limit`, so a long file
@@ -121,7 +121,7 @@ struct DraftNote: Identifiable, Equatable {
     var note: Wire.ReviewNote
 }
 
-/// A task's review in progress: the notes drafted in its Diff tab and a summary. It outlives the tab,
+/// A task's review in progress: the notes drafted in its Changes tab and a summary. It outlives the tab,
 /// so switching to the overview and back keeps them.
 @MainActor @Observable
 final class ReviewDraft {

@@ -7,7 +7,7 @@
 
 import type { Env } from "../env.ts";
 import type {
-  ChangeRequest, CheckRun, ClientMessage, Comment, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   McpConnector, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -1251,6 +1251,7 @@ export class Engine {
         const task = this.store.task(msg.taskId);
         if (!task || !msg.ok) return null;
         this.store.set(`patch:${task.id}`, msg.patch);
+        if (msg.commits) this.saveCommits(task.id, msg.commits);
         task.diff = {
           added: msg.files.reduce((n, f) => n + f.added, 0),
           removed: msg.files.reduce((n, f) => n + f.removed, 0),
@@ -1516,6 +1517,26 @@ export class Engine {
     if (!priv.gh || !task.pr?.head || task.pr.state !== "open" || task.state === "merged" || task.state === "cancelled") return false;
     if (task.pr.checks.some((c) => c.status === "queued" || c.status === "running")) return true;
     return task.pr.checks.length === 0 && now() - (priv.prOpenedAt ?? 0) < CI_APPEAR_MS;
+  }
+
+  /** A task's commits, each patch under `patch:<task>:<sha>` and the list (patches left out) under
+   * `commits:<task>`, in place of the last set: a rebase or amend drops the commits it replaced. */
+  private saveCommits(id: string, commits: DiffCommit[]) {
+    const now = new Set(commits.map((c) => c.sha));
+    for (const old of this.commits(id)) if (!now.has(old.sha)) this.store.delete(`patch:${id}:${old.sha}`);
+    for (const c of commits) this.store.set(`patch:${id}:${c.sha}`, c.patch);
+    this.store.set(`commits:${id}`, JSON.stringify(commits.map((c) => ({ ...c, patch: "" }))));
+  }
+
+  /** A task's commits, oldest first, with empty patches (`GET /api/tasks/:id/commits`); none from older runners. */
+  commits(id: string): DiffCommit[] {
+    const list = this.store.get(`commits:${id}`);
+    return list ? JSON.parse(list) : [];
+  }
+
+  /** A task's whole patch, or one commit's (`GET /api/tasks/:id/diff?commit=<sha>`); null before one came. */
+  patch(id: string, commit?: string | null): string | null {
+    return this.store.get(commit ? `patch:${id}:${commit}` : `patch:${id}`);
   }
 
   /** The review threads on a task's GitHub pull request; none for a local repo or a task without one. */

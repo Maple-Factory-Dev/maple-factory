@@ -688,8 +688,18 @@ export const structs: Record<string, Struct> = {
     fieldDocs: { code: "Its exit code; none: it was killed by a signal or couldn't start.", output: "The end of what it printed (stdout and stderr)." },
   },
   DiffStat: { fields: { path: "string", added: "u32", removed: "u32" } },
+  DiffCommit: {
+    doc: "One commit on a task's branch (`origin/<base>..HEAD`), with its own line counts and patch.",
+    fields: { sha: "string", subject: "string", body: "string?", author: "string", at: "u64", added: "u32", removed: "u32", files: "DiffStat[]", patch: "string", truncated: "bool" },
+    fieldDocs: {
+      at: "When it was committed, in ms since the epoch.",
+      body: "The rest of its message after the subject, when there is one.",
+      patch: "Its own unified patch; empty when the branch's commits ran past the total cap.",
+      truncated: "Its patch was cut, or left out for the total cap.",
+    },
+  },
   ReviewNote: {
-    doc: "A comment on lines of a task's diff, drafted in the Diff tab and sent with the rest of its review.",
+    doc: "A comment on lines of a task's diff, drafted in the Changes tab and sent with the rest of its review.",
     fields: { path: "string", start: "u32", end: "u32", side: "DiffSide", snippet: "string", text: "string" },
     fieldDocs: { start: "First line, numbered on `side`.", end: "Last line (the same as start for one line).", snippet: "The lines it's about, as the diff showed them (with +/-/space prefixes)." },
   },
@@ -1014,7 +1024,8 @@ export const unions: Record<string, Union> = {
       },
       "task.diff": {
         doc: "What a task's branch changes against its base: line counts per file and the unified patch.",
-        fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?" },
+        fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?", commits: "DiffCommit[]?" },
+        fieldDocs: { commits: "The branch's commits, oldest first; none from runners that predate it." },
       },
       "task.merged": {
         fields: { taskId: "string", ok: "bool", commit: "string?", message: "string?", branch: "string?" },

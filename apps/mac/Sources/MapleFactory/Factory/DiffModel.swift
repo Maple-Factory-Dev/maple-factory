@@ -9,6 +9,31 @@ extension FactoryData {
         }
     }
 
+    /// The mockup's commits on a task's branch, oldest first: ATL-141's, a commit per stretch of its plan.
+    static func commits(for taskID: String) -> [DiffCommit] {
+        guard taskID == "ATL-141" else { return [] }
+        let now = Date()
+        return joseCommits.enumerated().map { index, commit in
+            let files = jose.filter { commit.steps.contains($0.step ?? 0) }
+            return DiffCommit(
+                sha: commit.sha, subject: commit.subject, body: commit.body, author: "Maple-2", at: now.addingTimeInterval(Double(index - joseCommits.count) * 1500),
+                added: files.map(\.added).reduce(0, +), removed: files.map(\.removed).reduce(0, +), fileCount: files.count
+            )
+        }
+    }
+
+    /// The files one of the mockup's commits changes.
+    static func diff(for taskID: String, commit sha: String) -> [DiffFile] {
+        guard taskID == "ATL-141", let commit = joseCommits.first(where: { $0.sha == sha }) else { return [] }
+        return jose.filter { commit.steps.contains($0.step ?? 0) }
+    }
+
+    private static let joseCommits: [(sha: String, subject: String, body: String?, steps: Set<Int>)] = [
+        ("3f9c2a1d7e4b8c06a5f1d2e3b4c5a6978e0d1f2a", "Sign and verify tokens with jose", "jose's SignJWT and jwtVerify are async and take the secret as bytes, so the helpers are async now too.", [1]),
+        ("8b41e07c2d9a5f3e1c6b8a7d4e2f0c9b1a3d5e7f", "Await the async token helpers at every call site", "The refresh, login and session routes and the middleware each called them synchronously.", [2]),
+        ("c27d5e9a1b3f8e0d6c4a2b9e7f1d3c5a8b0e2d4f", "Swap jsonwebtoken for jose and update the auth tests", nil, [3, 4]),
+    ]
+
     private static let jose: [DiffFile] = [
         DiffFile(path: "lib/auth/jwt.ts", added: 38, removed: 52, step: 1, hunks: [
             DiffHunk(oldStart: 1, newStart: 1, step: 1, """
