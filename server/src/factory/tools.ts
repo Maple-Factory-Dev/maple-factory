@@ -173,6 +173,7 @@ const scriptsSchema = obj({
   preflight: str("Machine-level setup (runtimes, brew, services), run in the new worktree before setup the first time a machine uses the repo, and again when the command or a watched file changes."),
   preflightWatch: str("Repo-relative files, one per line, that re-run preflight when they change (at most 20). Left out: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml."),
   setup: str("Runs once the worktree exists, before the agent starts: install dependencies, copy .env files, and so on."),
+  checks: str("Commands, one per line (at most 20), that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, `lefthook run pre-commit --all-files`."),
   teardown: str("Runs before the worktree is removed when a finished task is cleaned up."),
   archive: str("Runs in place of the runner's own removal at cleanup. Usually left out."),
   timeoutSecs: { type: "integer", minimum: 1, maximum: 3600, description: "How long each may run (default 600)." },

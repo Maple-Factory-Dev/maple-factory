@@ -1796,7 +1796,7 @@ export class Engine {
     const scripts: WorktreeScripts = { ...(this.store.scriptsFor(repo) ?? {}) };
     if (a.scripts != null) {
       const given = obj(a.scripts);
-      for (const f of ["create", "preflight", "preflightWatch", "setup", "teardown", "archive"] as const) {
+      for (const f of ["create", "preflight", "preflightWatch", "setup", "checks", "teardown", "archive"] as const) {
         if (given[f] !== undefined) scripts[f] = given[f] == null ? null : typeof given[f] === "string" ? given[f] : fail(`scripts.${f} is a command (a string).`);
       }
       if (given.timeoutSecs !== undefined) scripts.timeoutSecs = given.timeoutSecs == null ? null : (given.timeoutSecs as number);
@@ -2665,7 +2665,7 @@ export class Engine {
   }
 }
 
-const SCRIPT_FIELDS = ["create", "preflight", "preflightWatch", "setup", "teardown", "archive", "timeoutSecs"] as const;
+const SCRIPT_FIELDS = ["create", "preflight", "preflightWatch", "setup", "checks", "teardown", "archive", "timeoutSecs"] as const;
 /** A repo's worktree scripts as stored: commands trimmed, blank ones dropped, none when nothing's left. */
 function cleanScripts(s: WorktreeScripts): WorktreeScripts | null {
   const problem = scriptsProblem(s);
