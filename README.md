@@ -345,10 +345,10 @@ the Sentry org (ours, or yours if you redirect reports).
 
 | Component | Off | Your own Sentry |
 | --- | --- | --- |
-| Server | the Worker variable or secret `SENTRY_DSN=off` (for `maple install` factories, `wrangler secret put SENTRY_DSN`, which `maple update` keeps) | `SENTRY_DSN=<your DSN>` |
+| Server | an admin's Settings › General › Send error reports to Maple Factory (web), which stores `SENTRY_DSN=off` in D1; or the Worker variable or secret `SENTRY_DSN=off`, which wins and locks the toggle (for `maple install` factories, `wrangler secret put SENTRY_DSN`, which `maple update` keeps) | `SENTRY_DSN=<your DSN>` |
 | Web app | follows the server: off when the server's reports are (`/healthz` says `sentry: false`) | — |
 | Runner | `MAPLE_TELEMETRY=off` in its environment (the service's too) | build it yourself; dev builds report nothing |
-| Mac app | `MAPLE_TELEMETRY=off`, or `defaults write dev.maplefactory.app MapleTelemetry off` | — |
+| Mac app | Settings › General › Privacy › Send crash and error reports (it writes the `MapleTelemetry` default), `MAPLE_TELEMETRY=off`, or `defaults write dev.maplefactory.app MapleTelemetry off` | — |
 | iOS app | launch with `-MapleTelemetry off` (the setting of that name) | — |
 
 Debug builds of the runner, Mac app and iOS app never report. To check a setup, send a test error with `GET

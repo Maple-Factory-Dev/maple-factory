@@ -246,8 +246,34 @@ struct GeneralSettings: View {
                                detail: "When the factory you're in has an icon (Settings › Appearance), the Dock shows it; switching factories changes it. Off, or for a factory without one, the Dock shows Maple's.",
                                isOn: $dockShowsFactoryIcon)
             }
+            SettingsSection("Privacy") {
+                SettingsToggle("Send crash and error reports",
+                               detail: "Crashes and errors go to Maple Factory's Sentry project with the app's version and your factory's org. Never what you typed, your GitHub account, screenshots or network requests.",
+                               isOn: sendsErrorReports)
+                    .disabled(ErrorReports.forcedOff || Self.debugBuild)
+                if ErrorReports.forcedOff {
+                    SettingsNote("Off: MAPLE_TELEMETRY=off is set in this app's environment.")
+                } else if Self.debugBuild {
+                    SettingsNote("This debug build never sends reports.", systemImage: "hammer")
+                }
+                SettingsBlock {
+                    Link("What's sent, and what never is", destination: URL(string: "https://maplefactory.dev/security#errors")!)
+                        .font(.system(size: 12))
+                }
+            }
         }
     }
+
+    @State private var sendsErrorReportsValue = ErrorReports.enabled
+    private var sendsErrorReports: Binding<Bool> {
+        Binding(get: { sendsErrorReportsValue && !ErrorReports.forcedOff }, set: { sendsErrorReportsValue = $0; ErrorReports.enabled = $0 })
+    }
+
+    #if DEBUG
+    private static let debugBuild = true
+    #else
+    private static let debugBuild = false
+    #endif
 }
 
 /// A pane with nothing to show until there's a factory.

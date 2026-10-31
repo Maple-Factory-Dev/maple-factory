@@ -7,6 +7,7 @@ import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from 
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { remove as removeName, set as setName } from "./name.ts";
+import { get as getErrorReports, set as setErrorReports } from "./error-reports.ts";
 import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
@@ -146,6 +147,9 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     // The factory's display name (src/name.ts).
     if (path === "/api/name" && request.method === "PUT") return setName(request, env, me);
     if (path === "/api/name" && request.method === "DELETE") return removeName(env, me);
+    // Whether the factory sends error reports (src/error-reports.ts).
+    if (path === "/api/error-reports" && request.method === "GET") return getErrorReports(env, sentry.projects.server.dsn);
+    if (path === "/api/error-reports" && request.method === "PUT") return setErrorReports(request, env, me, sentry.projects.server.dsn);
 
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;

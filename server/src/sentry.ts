@@ -52,6 +52,7 @@ export function sentryOptions(env: Env, builtIn: string, version: string): Cloud
     },
     tracesSampleRate: 0,
     initialScope: { tags: { org: env.GITHUB_ORG || "unset" } },
-    beforeSend: (event) => scrub(event),
+    // The SDK may have started before applySettings filled in a stored SENTRY_DSN=off; check again here.
+    beforeSend: (event) => (sentryDsn(env, builtIn) ? scrub(event) : null),
   };
 }

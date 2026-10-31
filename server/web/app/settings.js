@@ -131,6 +131,8 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   const secret = { repo: null, name: "", value: "" };
   let adding = "";
   let nameBusy = false;
+  let errorReports = null; // GET /api/error-reports: { on, locked }, once loaded
+  let errorReportsBusy = false;
 
   /** The form's draft, synced to the server's value for it. */
   const draft = (key, server) => {
@@ -152,9 +154,9 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   const keep = (key, el) => (el.setAttribute("data-keep", `settings:${key}`), el);
   const field = (label, detail, control) => h("label", { class: "set-row" },
     h("span", { class: "set-label" }, h("span", {}, label), detail && h("span", { class: "set-detail" }, detail)), control);
-  const toggle = (label, detail, on, flip) => h("label", { class: "set-row toggle-row" },
+  const toggle = (label, detail, on, flip, disabled = false) => h("label", { class: "set-row toggle-row" },
     h("span", { class: "set-label" }, h("span", {}, label), detail && h("span", { class: "set-detail" }, detail)),
-    h("input", { type: "checkbox", class: "switch", role: "switch", checked: on, onchange: (e) => flip(e.target.checked) }));
+    h("input", { type: "checkbox", class: "switch", role: "switch", checked: on, disabled, onchange: (e) => flip(e.target.checked) }));
   const saveBar = (key, dirty, onSave, onReset, { label = "Save", ready = dirty } = {}) => h("div", { class: "set-actions" },
     h("span", { class: "muted", style: "font-size:13px" }, saving.has(key) ? "Saving…" : dirty ? "Unsaved changes" : ""),
     h("span", { class: "spacer" }),
@@ -188,8 +190,40 @@ export function createSettings({ state, h, send, toast, render, ago }) {
         field("Name", `Shown instead of ${state.org}. Leave it blank to use the org's name.`, input),
         h("div", { class: "set-actions" }, h("span", { class: "spacer" }),
           h("button", { type: "button", class: "btn primary", disabled: !isDirty(d) || nameBusy, onclick: save }, nameBusy ? "Saving…" : "Save"))),
+      errorReportsCard(),
       macOnly("The factory's icon"),
     ];
+  }
+
+  /** Whether the server and web app send crash and error reports (src/error-reports.ts). */
+  function errorReportsCard() {
+    if (!errorReports) {
+      errorReports = { on: true, locked: false, loading: true };
+      fetch("/api/error-reports").then((res) => (res.ok ? res.json() : Promise.reject(new Error()))).then((got) => { errorReports = got; render(); },
+        () => { errorReports = { on: true, locked: false, failed: true }; render(); });
+    }
+    const flip = async (on) => {
+      errorReportsBusy = true;
+      render();
+      try {
+        const res = await fetch("/api/error-reports", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ on }) });
+        if (!res.ok) throw new Error(await res.text());
+        errorReports = await res.json();
+        toast(errorReports.on ? "Error reports are on." : "Error reports are off.");
+      } catch (e) {
+        toast(e.message || "Couldn't change error reports.");
+      }
+      errorReportsBusy = false;
+      render();
+    };
+    const { on, locked, loading, failed } = errorReports;
+    return h("div", { class: "card set-card" },
+      toggle("Send error reports to Maple Factory",
+        "Errors in this factory's server and web app go to Maple Factory's Sentry project, with the server's version and the org. Never what anyone typed or sent: no cookies, credentials, request bodies or query strings.",
+        on, flip, locked || loading || failed || errorReportsBusy),
+      locked && h("p", { class: "set-detail muted", style: "margin:0" }, "Set by the Worker's SENTRY_DSN. Change or remove it there to use this toggle."),
+      failed && h("p", { class: "set-detail muted", style: "margin:0" }, "Couldn't read whether error reports are on."),
+      h("p", { class: "set-detail muted", style: "margin:0" }, h("a", { href: "https://maplefactory.dev/security#errors", target: "_blank", rel: "noopener" }, "What's sent, and what never is")));
   }
 
   function repos() {
