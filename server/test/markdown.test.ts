@@ -178,3 +178,58 @@ test("a taskref renders as a link to the task with its state dot and title", () 
   assert.ok(tree.includes('"title":"Reference tickets"'));
   assert.ok(tree.includes('"class":"dot bg-building"'));
 });
+
+// A pull request body's attachment links (server/src/attachments.ts pullAttachments, engine.ts pullBody).
+import { pullAttachments } from "../src/attachments.ts";
+import { pullBody } from "../src/factory/engine.ts";
+
+const PULL_ID = "130e54d7-e745-4075-ac37-93200aba18cb";
+const shot = `/attachments/${PULL_ID}/shot.png`;
+const brief = `See ![shot.png](${shot}) and [the log](/attachments/${PULL_ID}/run.log), or ${shot}.`;
+const base = "https://factory.example";
+
+test("a private repo's PR body links each attachment at the factory", () => {
+  assert.equal(
+    pullAttachments(brief, { base, isPrivate: true, taskId: "MF-163" }),
+    `See [shot.png](${base}${shot}) and [the log](${base}/attachments/${PULL_ID}/run.log), or [shot.png](${base}${shot}).`,
+  );
+});
+
+test("a public repo's PR body names each attachment and links to the task's page", () => {
+  const out = pullAttachments(brief, { base, isPrivate: false, taskId: "MF-163" });
+  const at = `(attached in Maple Factory: [MF-163](${base}/t/MF-163))`;
+  assert.equal(out, `See shot.png ${at} and the log ${at}, or shot.png ${at}.`);
+  assert.ok(!out.includes("/attachments/"));
+});
+
+test("with no PUBLIC_URL only the file's name is kept", () => {
+  for (const isPrivate of [true, false]) {
+    const out = pullAttachments(brief, { base: undefined, isPrivate, taskId: "MF-163" });
+    assert.equal(out, "See shot.png (attached in Maple Factory) and the log (attached in Maple Factory), or shot.png (attached in Maple Factory).");
+  }
+});
+
+test("absolute and malformed attachment links are left as they are", () => {
+  const kept = [
+    `![shot](https://elsewhere.example${shot})`,
+    `see https://elsewhere.example${shot} there`,
+    "![shot](/attachments/not-a-uuid/shot.png)",
+    "/attachments/not-a-uuid/shot.png",
+    `[x](/attachments/${PULL_ID}/../secret)`,
+  ];
+  for (const md of kept) assert.equal(pullAttachments(md, { base, isPrivate: true, taskId: "MF-163" }), md);
+});
+
+test("pullBody rewrites the brief, the plan and the evidence", () => {
+  const task = {
+    id: "MF-163", owner: "ana", brief: `![shot.png](${shot})`,
+    plan: [{ text: `Match ${shot}` }],
+    doneWhen: [{ text: "Looks right", status: "proven", evidence: { summary: `as in ${shot}` } }],
+  } as any;
+  const priv = pullBody(task, { base, isPrivate: true });
+  assert.equal(priv.split(`[shot.png](${base}${shot})`).length, 4);
+  assert.ok(!priv.includes("(/attachments/"));
+  const pub = pullBody(task, { base, isPrivate: false });
+  assert.ok(!pub.includes("/attachments/"));
+  assert.equal(pub.split(`[MF-163](${base}/t/MF-163)`).length, 4);
+});
