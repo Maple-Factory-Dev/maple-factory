@@ -168,6 +168,7 @@ export class MachineHub extends DurableObject<Env> {
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], [VIEWER, `s:${session}`]);
     pair[1].serializeAttachment(viewer);
+    console.log(`terminal attach: ${viewer.login} on session ${session}${shared ? (viewer.canType ? " (shared, can type)" : " (shared, watching)") : ""}`);
     const cols = Number(url.searchParams.get("cols")) || 0;
     const rows = Number(url.searchParams.get("rows")) || 0;
     if (cols && rows && viewer.canType) this.toRunner({ type: "session.resize", id: session, cols, rows });
@@ -223,7 +224,11 @@ export class MachineHub extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket) {
-    if (!this.ctx.getTags(ws).includes(RUNNER)) return;
+    if (!this.ctx.getTags(ws).includes(RUNNER)) {
+      const viewer = ws.deserializeAttachment() as Viewer | null;
+      if (viewer) console.log(`terminal detach: ${viewer.login} from session ${viewer.session}`);
+      return;
+    }
     // A replaced connection closes after its successor connected; only the last one going is offline.
     if (this.ctx.getWebSockets(RUNNER).some((other) => other !== ws)) return;
     const machine = await this.machine();

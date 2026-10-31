@@ -13,7 +13,8 @@ enum DemoData {
         var feed = FeedState()
         feed.org = "acme"
         feed.name = "Acme"
-        feed.me = Wire.Member(login: me, name: "Andrea", role: "admin", teams: ["mobile"])
+        // `-demoMember YES`: a member rather than an admin, so sessions shared with you to watch only watch.
+        feed.me = Wire.Member(login: me, name: "Andrea", role: UserDefaults.standard.bool(forKey: "demoMember") ? "member" : "admin", teams: ["mobile"])
         feed.members = [
             feed.me!,
             Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
