@@ -264,7 +264,9 @@ impl Service {
                     None => "not loaded".into(),
                 }
             }
-            Manager::Systemd => quiet(&["systemctl", "--user", "is-active", "maple-runner"]).map(|s| s.trim().to_string()).unwrap_or_else(|| "not running".into()),
+            Manager::Systemd => {
+                quiet(&["systemctl", "--user", "is-active", "maple-runner"]).map(|s| s.trim().to_string()).unwrap_or_else(|| "not running".into())
+            }
         };
         let loaded = if matches!(loaded.as_str(), "loaded, running" | "active") { crate::style::ok(loaded) } else { crate::style::warn(loaded) };
         format!("installed ({}), {loaded}", crate::style::accent(self.file.display()))
@@ -400,7 +402,9 @@ impl Service {
         loop {
             let text = match self.manager {
                 Manager::Launchd => log_since(&self.log_file(), mark.offset),
-                Manager::Systemd => quiet(&["journalctl", "--user", "-u", "maple-runner", "--since", &mark.since, "-o", "cat", "--no-pager"]).unwrap_or_default(),
+                Manager::Systemd => {
+                    quiet(&["journalctl", "--user", "-u", "maple-runner", "--since", &mark.since, "-o", "cat", "--no-pager"]).unwrap_or_default()
+                }
             };
             if let Some(id) = connected_as(&text) {
                 return Some(id);

@@ -191,10 +191,15 @@ pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, Str
         format!("{file} is {} MB; a video is at most 25 MB and any other file at most 5 MB. Record a shorter clip.", len / 1024 / 1024)
     })?;
     let kind = sniff(&bytes).ok_or_else(|| {
-        format!("{file} isn't PNG, JPEG, WebP, MP4, MOV, WebM or text. Save screenshots as PNG, recordings as MP4, and output as a .txt file (or pass it as text).")
+        format!(
+            "{file} isn't PNG, JPEG, WebP, MP4, MOV, WebM or text. Save screenshots as PNG, recordings as MP4, and output as a .txt file (or pass it as text)."
+        )
     })?;
     if !kind.starts_with("video/") && bytes.len() as u64 > MAX_FILE {
-        return Err(format!("{file} is {} KB; a file is at most 5 MB. Save a smaller one (a PNG of one screen, or the end of the output).", bytes.len() / 1024));
+        return Err(format!(
+            "{file} is {} KB; a file is at most 5 MB. Save a smaller one (a PNG of one screen, or the end of the output).",
+            bytes.len() / 1024
+        ));
     }
     let name = path.file_name().map(|n| stored_name(&n.to_string_lossy())).unwrap_or_else(|| "evidence".into());
     Ok(Checked { path, name, kind, bytes })
@@ -389,7 +394,9 @@ async fn prepare_with(mut args: Value, tag: &TaskTag, worktree: &Path, home: &Pa
 /// `/runner/artifact/<task>`, and the stored `{key, name, type, bytes}` put in its place.
 pub async fn prepare_artifact(sessions: &Sessions, session: Uuid, args: Value) -> Result<Value, String> {
     let Some((tag, _)) = sessions.task_of(session) else {
-        return Err("share_artifact is for a task's own session, and this session isn't running a task (or it started before this runner could attach files).".into());
+        return Err(
+            "share_artifact is for a task's own session, and this session isn't running a task (or it started before this runner could attach files).".into()
+        );
     };
     prepare_artifact_with(args, &tag, &expand_home("~"), origin()).await
 }
@@ -1374,7 +1381,8 @@ mod tests {
         let (home, dir) = home();
         std::fs::write(dir.join("chart.html"), b"<!doctype html><p>chart</p>").unwrap();
         let tag = TaskTag { id: "MF-205".into(), branch: "agent/cleanup-badge".into() };
-        let (base, req) = server("201 Created", r#"{"key":"/attachments/0f0e0d0c-0b0a-4908-8706-050403020100/chart.html","type":"text/html","bytes":27}"#).await;
+        let (base, req) =
+            server("201 Created", r#"{"key":"/attachments/0f0e0d0c-0b0a-4908-8706-050403020100/chart.html","type":"text/html","bytes":27}"#).await;
         let args = json!({ "title": "Chart", "file": "~/.cache/maple-proof/agent/cleanup-badge/chart.html" });
         let out = prepare_artifact_with(args, &tag, &home, Some((&base, "mini", "aor_mini-token"))).await.unwrap();
         assert_eq!(out["file"]["key"], json!("/attachments/0f0e0d0c-0b0a-4908-8706-050403020100/chart.html"));

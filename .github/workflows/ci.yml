@@ -1,0 +1,128 @@
+# Lightweight checks for the runner and the server. Linux runners only: nothing here needs macOS.
+# The README's "CI" section has the local commands that reproduce each job.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so a new advisory against an unchanged lockfile still shows up.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Which parts changed, so a runner-only change skips the server job and the other way round.
+  # Changes only to apps/mac, apps/ios or docs run nothing heavy.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      runner: ${{ steps.filter.outputs.runner }}
+      server: ${{ steps.filter.outputs.server }}
+      deps: ${{ steps.filter.outputs.deps }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            runner:
+              - "runner/**"
+              - ".github/workflows/ci.yml"
+            server:
+              - "server/**"
+              - "protocol/**"
+              - "installer/**"
+              - "package.json"
+              - "package-lock.json"
+              - ".node-version"
+              - ".github/workflows/ci.yml"
+            deps:
+              - "runner/Cargo.toml"
+              - "runner/Cargo.lock"
+              - "package.json"
+              - "package-lock.json"
+              - "server/package.json"
+              - "installer/package.json"
+              - ".github/workflows/ci.yml"
+
+  rust:
+    name: rust (runner fmt, clippy, tests)
+    needs: changes
+    if: needs.changes.outputs.runner == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runner
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runner
+      - name: Install tmux (the session tests drive real panes)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: cargo test
+        # The secrets tests write under the user's home, so they get a throwaway one. rustup and
+        # cargo stay where the toolchain step put them.
+        run: |
+          export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          cargo test --locked
+
+  server:
+    name: server (protocol, typecheck, tests)
+    needs: changes
+    if: needs.changes.outputs.server == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Generated protocol types are up to date
+        run: npm run gen:check
+      - run: npm run typecheck
+      - name: Unit tests (the e2e-*.mjs scripts need a live stack and aren't run here)
+        run: npm test --workspace server
+
+  security:
+    name: security (cargo audit, npm audit)
+    needs: changes
+    if: needs.changes.outputs.deps == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo audit
+        working-directory: runner
+        run: cargo audit
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - name: npm audit (full report)
+        run: npm audit --omit=dev || true
+      - name: npm audit (fails on critical)
+        # Known high and moderate findings are tracked separately; only critical fails the build for now.
+        run: npm audit --omit=dev --audit-level=critical

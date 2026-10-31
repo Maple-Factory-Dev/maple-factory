@@ -41,7 +41,10 @@ pub fn blocked_reason(explicit_token: bool, installed_copy: bool, installed: &Pa
         return Some("this runner was started with --token/MAPLE_TOKEN (a dev runner); dev runners don't update themselves".into());
     }
     if !installed_copy {
-        return Some(format!("this runner isn't the installed copy ({}); `maple-runner install` sets that up, or use `maple-runner update`", installed.display()));
+        return Some(format!(
+            "this runner isn't the installed copy ({}); `maple-runner install` sets that up, or use `maple-runner update`",
+            installed.display()
+        ));
     }
     None
 }
@@ -51,7 +54,10 @@ enum Outcome {
     UpToDate(String),
     Installed(String),
     /// The feed offers `latest`, newer than the `asked` release; nothing was installed.
-    Newer { asked: Version, latest: Version },
+    Newer {
+        asked: Version,
+        latest: Version,
+    },
     Failed(Option<String>, String),
 }
 
@@ -161,7 +167,11 @@ impl AutoUpdate {
             }
             Outcome::Newer { asked, latest } => {
                 info!("not installing maple-runner {latest} without confirmation: {asked} was offered");
-                report(UpdateState::Newer, Some(latest.to_string()), Some(format!("runner {latest} came out after {asked} was offered; update again to install it")));
+                report(
+                    UpdateState::Newer,
+                    Some(latest.to_string()),
+                    Some(format!("runner {latest} came out after {asked} was offered; update again to install it")),
+                );
             }
             Outcome::Failed(version, message) => {
                 warn!("update failed: {message}");

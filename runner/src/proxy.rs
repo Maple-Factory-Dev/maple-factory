@@ -46,7 +46,8 @@ const HOP_BY_HOP: &[&str] =
 const SHARE_HEADER: &str = "x-maple-share-link";
 /// The control plane's own cookies; never passed to a shared app (the Worker strips them too).
 /// `CF_Authorization` is Cloudflare Access's, when Access guards the share hosts (DEPLOY.md).
-const PRIVATE_COOKIES: &[&str] = &["maple_session", "__Host-maple_session", "maple_oauth", "__Host-maple_oauth", "maple_share", "__Host-maple_share", "CF_Authorization"];
+const PRIVATE_COOKIES: &[&str] =
+    &["maple_session", "__Host-maple_session", "maple_oauth", "__Host-maple_oauth", "maple_share", "__Host-maple_share", "CF_Authorization"];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

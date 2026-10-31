@@ -232,7 +232,12 @@ pub fn connector_args(agent: &str, session_config: Option<&std::path::Path>, con
                             vec![format!("{}={}", key("command"), toml(command)), format!("{}={}", key("args"), list(&mut c.args.iter().cloned()))]
                         } else {
                             // sh -c 'exec env -u V1 "K1=$V1" … "$0" "$@"' <command> <args…>: keys are [A-Za-z0-9_-], safe in quotes.
-                            let renames: Vec<String> = c.env.keys().map(|k| (k, connector_env_name(&c.name, k))).flat_map(|(k, v)| [format!("-u {v}"), format!("\"{k}=${v}\"")]).collect();
+                            let renames: Vec<String> = c
+                                .env
+                                .keys()
+                                .map(|k| (k, connector_env_name(&c.name, k)))
+                                .flat_map(|(k, v)| [format!("-u {v}"), format!("\"{k}=${v}\"")])
+                                .collect();
                             let script = format!(r#"exec env {} "$0" "$@""#, renames.join(" "));
                             let argv = ["-c".to_string(), script, command.clone()].into_iter().chain(c.args.iter().cloned());
                             let vars = c.env.keys().map(|k| connector_env_name(&c.name, k));
@@ -645,10 +650,7 @@ mod tests {
         // Their values go to the pane's env file under those names.
         assert_eq!(
             codex_connector_env(&connectors),
-            [
-                ("MAPLE_MCP_JIRA__JIRA_API_TOKEN".to_string(), "t\"ok\"en".to_string()),
-                ("MAPLE_MCP_DOCS__AUTHORIZATION".to_string(), "Bearer abc".to_string()),
-            ]
+            [("MAPLE_MCP_JIRA__JIRA_API_TOKEN".to_string(), "t\"ok\"en".to_string()), ("MAPLE_MCP_DOCS__AUTHORIZATION".to_string(), "Bearer abc".to_string()),]
         );
         // A stdio connector without secrets runs its command directly.
         let mut plain = connector("plain", McpTransport::Stdio, false);

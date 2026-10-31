@@ -268,9 +268,7 @@ pub fn env_file(id: Uuid, values: &[(String, String)]) -> Result<PathBuf> {
 /// names into its environment, and remove it, before anything else runs: the values are then only in
 /// the pane's processes, not in tmux's session environment where any client of the server can read them.
 pub fn source_first(mut argv: Vec<String>) -> Vec<String> {
-    let prefix = format!(
-        r#"if [ -n "${FILE_ENV}" ]; then set -a; . "${FILE_ENV}"; set +a; rm -f -- "${FILE_ENV}"; fi; unset {FILE_ENV}; "#
-    );
+    let prefix = format!(r#"if [ -n "${FILE_ENV}" ]; then set -a; . "${FILE_ENV}"; set +a; rm -f -- "${FILE_ENV}"; fi; unset {FILE_ENV}; "#);
     if argv.len() > 4 && argv[3] == "-c" {
         argv[4] = format!("{prefix}{}", argv[4]);
         return argv;
@@ -546,11 +544,7 @@ mod tests {
         let path = env_file(id, &values).unwrap();
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-        let out = std::process::Command::new("sh")
-            .args(["-c", r#"set -a; . "$F"; set +a; printf %s "$API_KEY""#])
-            .env("F", &path)
-            .output()
-            .unwrap();
+        let out = std::process::Command::new("sh").args(["-c", r#"set -a; . "$F"; set +a; printf %s "$API_KEY""#]).env("F", &path).output().unwrap();
         assert_eq!(String::from_utf8(out.stdout).unwrap(), values[0].1);
         assert!(!std::fs::read_to_string(&path).unwrap().contains("bad name"));
         std::fs::remove_file(&path).unwrap();
@@ -684,7 +678,9 @@ mod tests {
         assert!(refused["error"].as_str().unwrap().contains("inside a factory session"), "{refused}");
         assert!(serve(&sessions, None, &json!({ "repo": "acme/other" })).await.get("error").is_some());
         // The shell in the session has them: the typed line says `$API_KEY`, only its output has the value.
-        tmux.run(&["send-keys", "-t", &name, r#"echo "got:$API_KEY"; [ "$DB_URL" = "$(printf 'it'"'"'s "p$w\\d"\nline 2 #{x};')" ] && echo db:ok"#, "Enter"]).await.unwrap();
+        tmux.run(&["send-keys", "-t", &name, r#"echo "got:$API_KEY"; [ "$DB_URL" = "$(printf 'it'"'"'s "p$w\\d"\nline 2 #{x};')" ] && echo db:ok"#, "Enter"])
+            .await
+            .unwrap();
         let mut screen = String::new();
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -732,9 +728,11 @@ mod tests {
         sessions.replay(id, "n1".into());
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let replay = loop {
-            match tokio::time::timeout_at(deadline, rx.recv()).await.unwrap().unwrap() {
-                crate::sessions::Event::Text(Outbound::SessionReplay { id: from, data, .. }) if from == id => break data,
-                _ => {}
+            if let crate::sessions::Event::Text(out) = tokio::time::timeout_at(deadline, rx.recv()).await.unwrap().unwrap()
+                && let Outbound::SessionReplay { id: from, data, .. } = *out
+                && from == id
+            {
+                break data;
             }
         };
         use base64::Engine;

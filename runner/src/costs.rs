@@ -159,7 +159,9 @@ pub async fn flush(sessions: &Sessions, info: &SessionInfo) {
 }
 
 fn changed(old: &SessionCost, new: &SessionCost) -> bool {
-    let key = |c: &SessionCost| (c.cost_usd.map(|d| (d * 10_000.0).round() as i64), c.input_tokens, c.output_tokens, c.cache_read_tokens, c.cache_write_tokens, c.model.clone());
+    let key = |c: &SessionCost| {
+        (c.cost_usd.map(|d| (d * 10_000.0).round() as i64), c.input_tokens, c.output_tokens, c.cache_read_tokens, c.cache_write_tokens, c.model.clone())
+    };
     key(old) != key(new)
 }
 
@@ -354,8 +356,15 @@ mod tests {
 
     #[test]
     fn a_lower_reading_never_lowers_a_total() {
-        let first = claude_cost(id(), &json!({ "model": { "id": "m" }, "cost": { "total_cost_usd": 2.0 }, "context_window": { "total_input_tokens": 100, "total_output_tokens": 10 } }), 1).unwrap();
-        let restarted = claude_cost(id(), &json!({ "cost": { "total_cost_usd": 0.1 }, "context_window": { "total_input_tokens": 5, "total_output_tokens": 50 } }), 2).unwrap();
+        let first = claude_cost(
+            id(),
+            &json!({ "model": { "id": "m" }, "cost": { "total_cost_usd": 2.0 }, "context_window": { "total_input_tokens": 100, "total_output_tokens": 10 } }),
+            1,
+        )
+        .unwrap();
+        let restarted =
+            claude_cost(id(), &json!({ "cost": { "total_cost_usd": 0.1 }, "context_window": { "total_input_tokens": 5, "total_output_tokens": 50 } }), 2)
+                .unwrap();
         let m = merge(&first, restarted);
         assert_eq!((m.cost_usd, m.input_tokens, m.output_tokens, m.model.as_deref(), m.observed_at), (Some(2.0), 100, 50, Some("m"), 2));
     }

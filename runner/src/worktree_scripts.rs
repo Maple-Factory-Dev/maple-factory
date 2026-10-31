@@ -138,7 +138,8 @@ pub struct Ran {
     pub phase: Phase,
     pub command: String,
     pub ms: u64,
-    /// The end of its output, scrubbed.
+    /// The end of its output, scrubbed. Only the tests read it today.
+    #[allow(dead_code)]
     pub tail: String,
     /// Why it ran, for preflight.
     pub why: Option<String>,
@@ -341,7 +342,16 @@ mod tests {
     }
 
     fn scripts(setup: &str, timeout: Option<u32>) -> WorktreeScripts {
-        WorktreeScripts { create: None, preflight: None, preflight_watch: None, setup: Some(setup.into()), checks: None, teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
+        WorktreeScripts {
+            create: None,
+            preflight: None,
+            preflight_watch: None,
+            setup: Some(setup.into()),
+            checks: None,
+            teardown: None,
+            archive: Some("  ".into()),
+            timeout_secs: timeout,
+        }
     }
 
     #[tokio::test]
