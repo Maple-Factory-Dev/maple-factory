@@ -509,10 +509,15 @@ export class Engine {
         if (target.archived) fail(`${target.name} is archived; unarchive it first.`);
         const from = this.store.goal(task.goal);
         // The repo it changes stays the same: the target has to work in it.
-        const repo = taskRepo(task, from) ?? fail("It has no repo, so it can't move to another goal.");
-        if (!goalRepos(target).some((r) => r.toLowerCase() === repo.toLowerCase())) fail(`${target.name} doesn't work in ${repo}; add it to the goal's repos first.`);
+        const repo = taskRepo(task, from);
+        if (repo) {
+          if (!goalRepos(target).some((r) => r.toLowerCase() === repo.toLowerCase())) fail(`${target.name} doesn't work in ${repo}; add it to the goal's repos first.`);
+        } else if (goalRepos(target).length || !from?.folder || target.folder !== from.folder) {
+          // A goal on a folder (no repos): only to another goal on the same folder.
+          fail(`${target.name} doesn't work in ${from?.folder ?? "its folder"}.`);
+        }
         const was = task.goal;
-        task.repo ??= repo;
+        if (repo) task.repo ??= repo;
         task.goal = target.id;
         // Efforts belong to one goal.
         task.effort = null;
