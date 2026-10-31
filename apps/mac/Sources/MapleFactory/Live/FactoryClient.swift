@@ -44,6 +44,15 @@ import Foundation
     }
     /// Counts changes to `factoryTasks`: what's worked out from the tasks is cached against it.
     private(set) var tasksRevision = 0
+    /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
+    /// Empty from an older server, which sends every task.
+    private(set) var older: [String: OlderTasks] = [:]
+    /// Goals whose next page of older tasks is on its way.
+    private(set) var loadingOlder: Set<String> = []
+    /// Where each goal's next page of older tasks starts: the last task of its last page.
+    private var olderCursor: [String: (before: UInt64, id: String)] = [:]
+    /// Tasks asked for by ID (`task.get`) that haven't come yet.
+    private var fetching: Set<String> = []
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -287,6 +296,10 @@ import Foundation
         members = []
         goals = []
         tasks = []
+        older = [:]
+        loadingOlder = []
+        olderCursor = [:]
+        fetching = []
         online = []
         intakeRequests = []
         notes = []
@@ -422,6 +435,10 @@ import Foundation
             members = snapshot.members
             goals = snapshot.goals
             tasks = snapshot.tasks
+            older = Self.older(tallies: snapshot.tallies, tasks: snapshot.tasks)
+            loadingOlder = []
+            olderCursor = [:]
+            fetching = []
             FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
             policy = snapshot.policy
             acceptances = snapshot.acceptances
@@ -472,6 +489,10 @@ import Foundation
             guard ended.end.by != "factory" else { break }
             ends.insert(EndRecord(machine: ended.machine, end: ended.end), at: 0)
             if ends.count > 50 { ends.removeLast(ends.count - 50) }
+        case .taskUpdated(let update) where fetching.contains(update.task.id):
+            // A task asked for by ID (`task.get`), maybe one the snapshot left out: no news to tell.
+            fetching.remove(update.task.id)
+            mergeOlder([update.task])
         case .taskUpdated(let update):
             let previous = tasks.first { $0.id == update.task.id }
             defer { notify(was: previous, now: update.task) }
@@ -553,6 +574,13 @@ import Foundation
             policy = update.policy
             acceptances = update.acceptances
             rebuild()
+        case .tasksPage(let page):
+            let goal = page.goal ?? ""
+            loadingOlder.remove(goal)
+            if let last = page.tasks.last { olderCursor[goal] = (last.updatedAt, last.id) }
+            mergeOlder(page.tasks)
+            // The server knows best: none left means none left, whatever the counts drifted to.
+            if !page.more, let id = page.goal { older[id] = OlderTasks() }
         case .stats(let reply):
             stats = reply.summary
         case .checkLog(let reply):
@@ -565,7 +593,9 @@ import Foundation
             self.toast = (toast.text, toast.taskId, Date())
         case .error(let error):
             // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
-            if let id = error.requestId, id.hasPrefix("checkLog:") {
+            if let id = error.requestId, id.hasPrefix("task.get:") {
+                fetching.remove(String(id.dropFirst("task.get:".count)))
+            } else if let id = error.requestId, id.hasPrefix("checkLog:") {
                 let key = String(id.dropFirst("checkLog:".count))
                 if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
             } else {
@@ -883,6 +913,51 @@ import Foundation
 
     /// The goal a view knows by name.
     func goal(named name: String) -> Wire.Goal? { goals.first { $0.name == name } }
+
+    // MARK: Older tasks
+
+    /// What the snapshot left out of each goal: its tally (counted over every task) less the tasks it sent.
+    nonisolated static func older(tallies: [Wire.GoalTally]?, tasks: [Wire.Task]) -> [String: OlderTasks] {
+        guard let tallies else { return [:] }
+        var held: [String: OlderTasks] = [:]
+        for task in tasks { held[task.goal, default: OlderTasks()].count(task.state, by: 1) }
+        var older: [String: OlderTasks] = [:]
+        for tally in tallies {
+            let sent = held[tally.goal] ?? OlderTasks()
+            let finished = Int(tally.merged) + Int(tally.cancelled) + Int(tally.closed)
+            older[tally.goal] = OlderTasks(merged: max(0, Int(tally.merged) - sent.merged), finished: max(0, finished - sent.finished))
+        }
+        return older
+    }
+
+    /// Older tasks from `tasks.page` or `task.get` join the list; one a live update already brought stays as it is.
+    private func mergeOlder(_ page: [Wire.Task]) {
+        let held = Set(tasks.map(\.id))
+        let new = page.filter { !held.contains($0.id) }
+        guard !new.isEmpty else { return }
+        for task in new { older[task.goal]?.count(task.state, by: -1) }
+        tasks.append(contentsOf: new)
+        let viewers = Self.viewers(online, me: me?.login, members: members)
+        factoryTasks.append(contentsOf: new.map { adapt($0, viewers: viewers) })
+    }
+
+    /// Whether `goal` (its id) has finished tasks older than the snapshot's that aren't loaded yet.
+    func hasOlder(goal: String) -> Bool { (older[goal]?.finished ?? 0) > 0 }
+
+    /// The next page of `goal`'s older finished tasks (its id), going back from the oldest one loaded.
+    func loadOlder(goal: String) {
+        guard hasOlder(goal: goal), !loadingOlder.contains(goal) else { return }
+        loadingOlder.insert(goal)
+        let cursor = olderCursor[goal]
+        send(.tasksOlder(.init(goal: goal, before: cursor?.before, beforeId: cursor?.id, limit: 50)))
+    }
+
+    /// A task opened by ID (a link, a reference, `after`, follow-up or split) that isn't loaded: ask for it.
+    func fetchTask(id: String) {
+        guard hasSnapshot, !fetching.contains(id), !tasks.contains(where: { $0.id == id }) else { return }
+        fetching.insert(id)
+        send(.taskGet(.init(id: id)))
+    }
 
     func send(_ message: Wire.ClientMessage) {
         guard let socket, let data = try? JSONEncoder().encode(message), let text = String(data: data, encoding: .utf8) else { return }
@@ -1400,5 +1475,20 @@ extension FactoryClient {
     /// Answers the permission prompt the task's worker is waiting on: Yes or No in its session.
     func answerPrompt(taskID: String, choice: Wire.PromptChoice) {
         send(.taskAnswerPrompt(.init(id: taskID, choice: choice)))
+    }
+}
+
+/// A goal's finished tasks the snapshot left out and that aren't loaded yet.
+struct OlderTasks: Equatable {
+    var merged = 0
+    /// Merged, cancelled and closed.
+    var finished = 0
+
+    mutating func count(_ state: Wire.TaskState, by n: Int) {
+        switch state {
+        case .merged: merged = max(0, merged + n); finished = max(0, finished + n)
+        case .cancelled, .closed: finished = max(0, finished + n)
+        default: break
+        }
     }
 }

@@ -103,7 +103,9 @@ final class AppState {
         didSet { boardDefaults.set(goalTaskFilter.rawValue, forKey: "goalTaskFilter") }
     }
     /// A task opened full-screen in place of the board/list/timeline.
-    var focusedTask: String? = nil
+    var focusedTask: String? = nil {
+        didSet { if let focusedTask, focusedTask != oldValue { loadIfMissing(focusedTask) } }
+    }
     /// A live session a maplefactory://session/<machine>/<id> link asked for; Machines opens it.
     var openingLiveSession: LiveMachinesView.OpenSession? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
@@ -126,7 +128,15 @@ final class AppState {
         return TaskOpening.stored() == .panel && AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
-    var selectedTask = "ATL-147"
+    var selectedTask = "ATL-147" {
+        didSet { if selectedTask != oldValue { loadIfMissing(selectedTask) } }
+    }
+
+    /// A task opened by ID that the snapshot left out (finished over 14 days ago): the factory sends it.
+    private func loadIfMissing(_ id: String) {
+        guard isLive, let client else { return }
+        client.fetchTask(id: id)
+    }
     /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
     var openedTask: String? { showInspector ? selectedTask : nil }
 
@@ -568,7 +578,32 @@ final class AppState {
 
     func stats(for goal: Goal) -> (merged: Int, total: Int) {
         let live = tasks(for: goal).filter { $0.state != .cancelled && $0.state != .closed }
-        return (live.filter { $0.state == .merged }.count, live.count)
+        // Merged tasks the snapshot left out still count (an older server sends every task, and none are left out).
+        let left = olderMerged(in: goal)
+        return (live.filter { $0.state == .merged }.count + left, live.count + left)
+    }
+
+    /// The goal's merged tasks older than the snapshot's window, not loaded yet.
+    func olderMerged(in goal: Goal) -> Int {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return 0 }
+        return client.older[id]?.merged ?? 0
+    }
+
+    /// Whether the goal has finished tasks older than the snapshot's window still to load.
+    func hasOlderTasks(in goal: Goal) -> Bool {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return false }
+        return client.hasOlder(goal: id)
+    }
+
+    func isLoadingOlderTasks(in goal: Goal) -> Bool {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return false }
+        return client.loadingOlder.contains(id)
+    }
+
+    /// The next page of the goal's older finished tasks.
+    func loadOlderTasks(in goal: Goal) {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return }
+        client.loadOlder(goal: id)
     }
 
     func risk(for task: FactoryTask) -> RiskAssessment? {
