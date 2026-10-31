@@ -2358,7 +2358,8 @@ export class Engine {
         if (round.verdict === "passed") {
           this.event(task, "reviewer", `passed round ${round.number}`);
           reviewed();
-          this.hooks.broadcast({ type: "toast", text: `${task.id} passed review; it's ready for yours.`, taskId: task.id });
+          const toast = this.passedToast(task);
+          if (toast) this.hooks.broadcast({ type: "toast", text: toast, taskId: task.id });
           return { summary: "Review in: passed. End your turn now." };
         }
         if (round.number >= review.maxRounds) {
@@ -2383,6 +2384,15 @@ export class Engine {
 
   private assessment(task: Task) {
     return assess(task, this.store.policy(), this.store.acceptances().find((a) => a.goal === task.goal));
+  }
+
+  /** What to say when the automatic review passes, from what happens next: a person's review, an
+   *  auto-merge, or a person's merge. Null when autoMerge() says it instead (auto-merge off org-wide). */
+  private passedToast(task: Task): string | null {
+    if (task.reviews.length < task.reviewsNeeded) return `${task.id} passed review; it's ready for yours.`;
+    if (this.assessment(task).autoMerge) return `${task.id} passed review; it merges on its own once CI is green (Hold it on the task to stop that).`;
+    if (this.store.policy().autoMerges === false) return null;
+    return `${task.id} passed review; it's ready for you to merge.`;
   }
 
   /** The risk level, approvals and reviews the policy gives this task now. */
