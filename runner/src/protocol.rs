@@ -846,10 +846,9 @@ mod tests {
         assert_eq!(serde_json::from_value::<RunnerMessage>(json).unwrap(), caps);
 
         // An older runner's hello has no capabilities.
-        let old: RunnerMessage = serde_json::from_str(
-            r#"{"type":"hello","runnerId":"a","hostname":"a","os":"linux","arch":"x86_64","version":"0.1.0","sessions":[],"ended":[]}"#,
-        )
-        .unwrap();
+        let old: RunnerMessage =
+            serde_json::from_str(r#"{"type":"hello","runnerId":"a","hostname":"a","os":"linux","arch":"x86_64","version":"0.1.0","sessions":[],"ended":[]}"#)
+                .unwrap();
         assert!(matches!(old, RunnerMessage::Hello { capabilities: None, .. }));
     }
 

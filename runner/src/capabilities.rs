@@ -104,13 +104,9 @@ pub fn tags(found: Found) -> Vec<String> {
         "x86_64" => tags.push("x86_64".into()),
         _ => {}
     }
-    for (on, tag) in [
-        (found.xcode, "xcode"),
-        (found.ios_simulator, "ios-simulator"),
-        (found.playwright, "playwright"),
-        (found.docker, "docker"),
-        (found.node, "node"),
-    ] {
+    for (on, tag) in
+        [(found.xcode, "xcode"), (found.ios_simulator, "ios-simulator"), (found.playwright, "playwright"), (found.docker, "docker"), (found.node, "node")]
+    {
         if on {
             tags.push(tag.into());
         }
@@ -145,10 +141,9 @@ fn playwright_dirs() -> Vec<PathBuf> {
 /// Whether `dir` holds a Playwright Chromium (a `chromium-*` or `chromium_headless_shell-*` dir).
 pub fn has_chromium(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else { return false };
-    entries.flatten().any(|e| {
-        e.file_name().to_str().is_some_and(|n| n.starts_with("chromium-") || n.starts_with("chromium_headless_shell-"))
-            && e.path().is_dir()
-    })
+    entries
+        .flatten()
+        .any(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("chromium-") || n.starts_with("chromium_headless_shell-")) && e.path().is_dir())
 }
 
 async fn succeeds(program: &str, args: &[&str]) -> bool {
@@ -160,14 +155,16 @@ async fn output(program: &str, args: &[&str]) -> Option<String> {
 }
 
 async fn run(program: &str, args: &[&str]) -> Option<std::process::Output> {
-    let child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    tokio::time::timeout(PROBE_TIMEOUT, child).await.ok()?.ok()
+    // Its own process group, so a probe that hangs in a grandchild (xcrun hands off to simctl) goes too.
+    let child =
+        Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).process_group(0).kill_on_drop(true).spawn().ok()?;
+    let group = child.id().map(|id| id as i32);
+    let out = tokio::time::timeout(PROBE_TIMEOUT, child.wait_with_output()).await;
+    if let (Err(_), Some(g)) = (&out, group) {
+        // It hung: whatever it started is still in its group, so the whole group goes.
+        unsafe { libc::killpg(g, libc::SIGKILL) };
+    }
+    out.ok()?.ok()
 }
 
 #[cfg(test)]
@@ -210,5 +207,17 @@ mod tests {
         assert!(has_chromium(&dir));
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(!has_chromium(&dir));
+    }
+
+    #[tokio::test]
+    async fn a_hung_probe_takes_its_grandchildren_with_it() {
+        let file = std::env::temp_dir().join(format!("maple-probe-{}", std::process::id()));
+        let script = format!("sleep 60 & echo $! > {}; wait", file.display());
+        assert!(run("sh", &["-c", &script]).await.is_none());
+        let pid: i32 = std::fs::read_to_string(&file).unwrap().trim().parse().unwrap();
+        std::fs::remove_file(&file).ok();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // kill(pid, 0) fails once the grandchild is gone (it's reaped by init, as sh was killed).
+        assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "the backgrounded sleep {pid} outlived the probe");
     }
 }

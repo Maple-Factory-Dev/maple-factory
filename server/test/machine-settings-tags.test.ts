@@ -45,6 +45,11 @@ test("machine.settings saves the owner's tags tidied", async () => {
   await send({ loadCap: 0.5 });
   assert.deepEqual(store.settings("box").extraTags, ["gpu", "big-disk"]);
   assert.deepEqual(store.settings("box").hiddenTags, ["docker"]);
+  // An explicit null keeps them too; only an empty list clears them.
+  await send({ extraTags: null, hiddenTags: null });
+  assert.deepEqual(store.settings("box").extraTags, ["gpu", "big-disk"]);
+  await send({ extraTags: [] });
+  assert.deepEqual(store.settings("box").extraTags, []);
 });
 
 test("machine.settings refuses bad tags and saves nothing", async () => {
