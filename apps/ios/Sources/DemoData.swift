@@ -131,7 +131,7 @@ enum DemoData {
             },
             task("API-29", goal: "g-api", title: "Token scopes: read, write and admin", state: .reviewing, owner: "kit", updated: 60) { t in
                 t.brief = "Tokens carry scopes; write endpoints refuse read tokens."
-                t.pr = .init(number: 405, state: .open, branch: "agent/api-29", base: "main",
+                t.pr = .init(number: 405, url: "https://github.com/acme/api/pull/405", state: .open, branch: "agent/api-29", base: "main",
                              checks: [.init(name: "test", status: .failed, duration: "58s", required: true), .init(name: "lint", status: .passed, duration: "14s", required: true)])
                 t.autoReview = .init(maxRounds: 3, rounds: [.init(number: 1, verdict: .passed, found: 2, at: ago(70))], summary: "Looks right; two things to pick up later.",
                                      findings: [
@@ -296,4 +296,41 @@ enum DemoData {
     </style></head><body><div class="n"><div class="h"><div class="i"></div>MAPLE FACTORY · now</div>
     <b>APP-14 plan is ready</b>Push notifications when a plan needs your approval<div class="a"><div class="p">Approve</div><div>Open</div></div></div></body></html>
     """
+
+    /// A check's log in the demo: a GitHub Actions job, failing at the end when the check failed (the Mac's `CheckLog.sample`).
+    static func checkLog(task: String, check: String, failed: Bool) -> Wire.ServerToClientCheckLog {
+        var lines = [
+            "##[group]Run actions/checkout@v4",
+            "Syncing repository: acme/api",
+            "Determining the checkout info",
+            "##[endgroup]",
+            "##[group]Run actions/setup-node@v4",
+            "Found in cache @ /opt/hostedtoolcache/node/22.11.0/x64",
+            "##[endgroup]",
+            "##[group]Run npm ci",
+            "added 1214 packages, and audited 1215 packages in 21s",
+            "found 0 vulnerabilities",
+            "##[endgroup]",
+            "##[group]Run npm run \(check)",
+            "> api@2.14.0 \(check)",
+        ]
+        lines += (1...14).map { "  \u{1B}[32m✓\u{1B}[0m tokens/scopes.spec.ts › read token reaches GET /v1/items #\($0) (\(80 + $0 * 13)ms)" }
+        if failed {
+            lines += [
+                "  ✗ tokens/scopes.spec.ts › write endpoints refuse read tokens (5012ms)",
+                "",
+                "    Error: expected 403 Forbidden, got 200 OK",
+                "      at tokens/scopes.spec.ts:48:41",
+                "",
+                "##[warning]1 test was retried",
+                "  1 failed, 14 passed (38.2s)",
+                "##[error]Process completed with exit code 1.",
+                "##[endgroup]",
+            ]
+        } else {
+            lines += ["  15 passed (36.9s)", "##[endgroup]"]
+        }
+        return .init(id: task, check: check, url: "https://github.com/acme/api/actions/runs/1/job/\(check)", text: lines.joined(separator: "\n"),
+                     truncated: false, failedStep: failed ? "Process completed with exit code 1." : nil)
+    }
 }

@@ -434,6 +434,8 @@ struct ReviewSection: View {
     @State private var selecting = false
     @State private var picked: Set<String> = []
     @State private var followUps: FollowUpBatch?
+    /// The CI check whose log sheet is open.
+    @State private var checkLogShown: CheckLogRequest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) { sections }
@@ -443,6 +445,13 @@ struct ReviewSection: View {
                     picked = []
                 }
             }
+            .sheet(item: $checkLogShown) { CheckLogSheet(request: $0) }
+    }
+
+    /// Opens the log sheet on one of the pull request's checks and reads its log.
+    private func showLog(_ check: Wire.CICheck) {
+        store.loadCheckLog(task: task.id, check: check.name)
+        checkLogShown = CheckLogRequest(task: task.id, check: check.name)
     }
 
     private var selectToggle: some View {
@@ -553,14 +562,42 @@ struct ReviewSection: View {
             Card("Pull request #\(pr.number)", icon: "arrow.triangle.pull") {
                 Text("\(pr.branch) → \(pr.base) · \(pr.state.rawValue)").font(.footnote.monospaced()).foregroundStyle(.secondary)
                 ForEach(pr.checks, id: \.name) { check in
-                    HStack {
-                        Image(systemName: check.status == .passed ? "checkmark.circle.fill" : check.status == .failed ? "xmark.circle.fill" : "clock")
-                            .foregroundStyle(check.status == .passed ? Theme.approve : check.status == .failed ? Theme.danger : .secondary)
-                        Text(check.name)
-                        Spacer()
-                        Text(check.duration ?? "").font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        showLog(check)
+                    } label: {
+                        HStack {
+                            CheckLogSheet.icon(check.status)
+                            Text(check.name).foregroundStyle(.primary)
+                            Spacer()
+                            Text(check.duration ?? "").font(.caption).foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .font(.callout)
+                        .contentShape(Rectangle())
                     }
-                    .font(.callout)
+                    .buttonStyle(.plain)
+                    .disabled(check.status == .queued || pr.url == nil)
+                    .accessibilityIdentifier("check-\(check.name)")
+                    .accessibilityValue(check.status.rawValue)
+                    .contextMenu {
+                        Button("View log", systemImage: "text.alignleft") { showLog(check) }
+                            .disabled(check.status == .queued || pr.url == nil)
+                        Button("Re-run", systemImage: "arrow.clockwise") { store.rerunCheck(task.id, check: check.name) }
+                            .disabled(!FactoryStore.canRerun(check, pr: pr))
+                        if let url = FactoryStore.githubURL(check, pr: pr) {
+                            Divider()
+                            Link(destination: url) { Label("Open on GitHub", systemImage: "arrow.up.right.square") }
+                        }
+                    }
+                }
+                if pr.checks.contains(where: { $0.status == .failed }), pr.state == .open || pr.state == .draft, pr.url != nil {
+                    Button {
+                        store.rerunFailedChecks(task.id)
+                    } label: {
+                        Label("Rerun failed checks", systemImage: "arrow.clockwise").font(.subheadline)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("rerun-failed-checks")
                 }
                 if let link = pr.url.flatMap(URL.init(string:)) { Link("Open on GitHub", destination: link).font(.callout) }
             }

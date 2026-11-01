@@ -28,6 +28,17 @@ final class FactoryStore {
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
     /// The last `stats` reply, for admins' Statistics (FeedState doesn't keep it).
     private(set) var stats: Wire.StatsSummary?
+    /// CI check logs asked for (`task.checkLog`), keyed `<task>/<check>`. The server never broadcasts or keeps them.
+    private(set) var checkLogs: [String: CheckLogLoad] = [:]
+
+    /// A check log: on its way, there, or refused (expired, or a check from outside GitHub).
+    enum CheckLogLoad: Equatable {
+        case loading
+        case loaded(text: String, truncated: Bool, failedStep: String?, url: URL?)
+        case failed(String)
+    }
+
+    nonisolated static func checkLogKey(task: String, check: String) -> String { "\(task)/\(check)" }
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var generation = 0
@@ -204,6 +215,19 @@ final class FactoryStore {
             ErrorReports.tag(org: snapshot.org)
         }
         if case .stats(let reply) = message { stats = reply.summary }
+        if case .checkLog(let reply) = message {
+            // Only one still asked for: a log forgotten by a re-run stays forgotten.
+            let key = Self.checkLogKey(task: reply.id, check: reply.check)
+            if checkLogs[key] == .loading {
+                checkLogs[key] = .loaded(text: reply.text, truncated: reply.truncated, failedStep: reply.failedStep, url: reply.url.flatMap(URL.init(string:)))
+            }
+        }
+        // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet, not as an error notice.
+        if case .error(let error) = message, let id = error.requestId, id.hasPrefix("checkLog:") {
+            let key = String(id.dropFirst("checkLog:".count))
+            if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
+            return
+        }
         if let notice = feed.apply(message) { self.notice = notice }
     }
 
@@ -255,6 +279,42 @@ final class FactoryStore {
         send(.taskFollowUp(.init(id: id, items: Array(items.prefix(Self.maxFollowUps)))))
     }
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
+
+    /// Reads a CI check's log from GitHub (again); the answer, or a refusal, lands in `checkLogs`.
+    func loadCheckLog(task id: String, check: String) {
+        checkLogs[Self.checkLogKey(task: id, check: check)] = .loading
+        send(.taskCheckLog(.init(id: id, check: check)))
+    }
+
+    func checkLog(task id: String, check: String) -> CheckLogLoad {
+        checkLogs[Self.checkLogKey(task: id, check: check)] ?? .loading
+    }
+
+    /// Runs one of the pull request's checks again; its old log no longer applies.
+    func rerunCheck(_ id: String, check: String) {
+        checkLogs[Self.checkLogKey(task: id, check: check)] = nil
+        send(.taskRerunCheck(.init(id: id, check: check)))
+        notice = .toast("Running \(check) again", taskId: id)
+    }
+
+    /// Runs every failed check on the pull request again.
+    func rerunFailedChecks(_ id: String) {
+        for check in feed.task(id)?.pr?.checks ?? [] where check.status == .failed {
+            checkLogs[Self.checkLogKey(task: id, check: check.name)] = nil
+        }
+        send(.taskRerunChecks(.init(id: id)))
+        notice = .toast("Running \(id)'s failed checks again", taskId: id)
+    }
+
+    /// A finished check on a pull request that's still open, as the Mac decides it.
+    static func canRerun(_ check: Wire.CICheck, pr: Wire.PullRequest) -> Bool {
+        (check.status == .failed || check.status == .passed) && (pr.state == .open || pr.state == .draft) && pr.url != nil
+    }
+
+    /// The check's own run, or the pull request's Checks tab when the server didn't say.
+    static func githubURL(_ check: Wire.CICheck, pr: Wire.PullRequest) -> URL? {
+        check.url.flatMap(URL.init(string:)) ?? pr.url.flatMap { URL(string: $0)?.appending(path: "checks") }
+    }
     func cancel(_ id: String) {
         send(.taskCancel(.init(id: id)))
         notice = .toast("Cancelled \(id)", taskId: id)
@@ -677,8 +737,48 @@ final class FactoryStore {
             }
         case .statsGet(let m):
             stats = DemoData.stats(days: Int(m.days))
+        case .taskCheckLog(let m):
+            let failed = feed.task(m.id)?.pr?.checks.first { $0.name == m.check }?.status == .failed
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(0.4))
+                self.apply(.checkLog(DemoData.checkLog(task: m.id, check: m.check, failed: failed)))
+            }
+        case .taskRerunCheck(let m):
+            demoRerun(m.id, checks: [m.check], text: "re-ran \(m.check)")
+        case .taskRerunChecks(let m):
+            let failed = feed.task(m.id)?.pr?.checks.filter { $0.status == .failed }.map(\.name) ?? []
+            demoRerun(m.id, checks: failed, text: "re-ran the failed checks")
         default:
             break
+        }
+    }
+}
+
+extension FactoryStore {
+    /// The demo's re-run: the checks run, then pass about 2.5 s later.
+    fileprivate func demoRerun(_ id: String, checks names: [String], text: String) {
+        func update(_ change: (inout Wire.Task) -> Void) {
+            guard var task = feed.task(id) else { return }
+            change(&task)
+            task.updatedAt = DemoData.now
+            feed.apply(.taskUpdated(.init(task: task)))
+        }
+        guard !names.isEmpty else { return }
+        update { task in
+            for index in task.pr?.checks.indices ?? 0..<0 where names.contains(task.pr!.checks[index].name) {
+                task.pr!.checks[index].status = .running
+                task.pr!.checks[index].duration = nil
+            }
+            task.events.append(.init(who: me, text: text, at: DemoData.now))
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            update { task in
+                for index in task.pr?.checks.indices ?? 0..<0 where names.contains(task.pr!.checks[index].name) && task.pr!.checks[index].status == .running {
+                    task.pr!.checks[index].status = .passed
+                    task.pr!.checks[index].duration = "1m \(10 + index * 7)s"
+                }
+            }
         }
     }
 }
