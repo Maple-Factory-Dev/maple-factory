@@ -48,11 +48,14 @@ export function capsFor(settings, agent) {
 }
 
 /** The cap (0–1) that applies to one window: 5h gets the session cap, the plain weekly window the weekly one. */
-const capOf = (caps, w) => (w.label === "5h" ? caps.session : w.label === "7d" && !w.name ? caps.weekly : null);
+const capOf = (caps, w) => (w.label === "5h" ? caps.session : isWeek(w) && !w.name ? caps.weekly : null);
+
+/** A weekly window: plain "7d", or a model's own one like "7d:fable". */
+const isWeek = (w) => w.label.startsWith("7d");
 
 /** A window's name for people: "5h", "Week", "Fable week", "Spend". */
 export function windowLabel(w) {
-  const base = w.label === "7d" ? "Week" : w.label === "spend" ? "Spend" : w.label;
+  const base = isWeek(w) ? "Week" : w.label === "spend" ? "Spend" : w.label;
   return w.name ? `${w.name} ${base === "Week" ? "week" : base}` : base;
 }
 

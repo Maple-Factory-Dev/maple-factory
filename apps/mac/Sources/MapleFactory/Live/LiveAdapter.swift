@@ -597,14 +597,17 @@ extension LiveAdapter {
     static func window(_ w: Wire.UsageReading) -> UsageWindow {
         let now = Date()
         let resets = w.resetsAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
-        let minutes = Double(w.windowMinutes ?? (w.label == "5h" ? 300 : w.label == "7d" ? 10080 : 0))
+        // A model's own weekly limit comes as "7d:<model>" with a name, so go by the length, not the exact label.
+        let weekly = w.label.hasPrefix("7d") || w.windowMinutes == 10080
+        let minutes = Double(w.windowMinutes ?? (w.label == "5h" ? 300 : weekly ? 10080 : 0))
         let left = resets.map { max(0, $0.timeIntervalSince(now)) } ?? 0
         let elapsed = minutes > 0 ? min(1, max(0, 1 - left / (minutes * 60))) : 0
-        let label = switch w.label {
+        let length = w.windowMinutes.map(windowSpan) ?? w.label.split(separator: ":").first.map(String.init) ?? w.label
+        let label: String = switch w.label {
         case "5h": "Current session"
-        case "7d": w.name.map { "This week · \($0)" } ?? "This week"
         case "spend": "Spend"
-        default: w.label
+        case _ where weekly: w.name.map { "This week · \($0)" } ?? "This week"
+        default: w.name.map { "\(length) · \($0)" } ?? length
         }
         let resetsIn: String = {
             let h = Int(left) / 3600, m = Int(left) % 3600 / 60
@@ -620,7 +623,12 @@ extension LiveAdapter {
             let dry = now.addingTimeInterval((1 - used) / (used / (elapsed * minutes * 60)))
             return dry < resets ? dry.formatted(date: .omitted, time: .shortened) : nil
         }()
-        return UsageWindow(label: label, span: w.label, used: used, resetsIn: resetsIn, resetsAt: resetsAt, elapsed: elapsed, runsOutAt: runsOut)
+        return UsageWindow(label: label, span: weekly ? "7d" : w.label == "spend" ? w.label : length, used: used, resetsIn: resetsIn, resetsAt: resetsAt, elapsed: elapsed, runsOutAt: runsOut)
+    }
+
+    /// A window's length the way the runner labels it: "30m", "5h", "7d".
+    static func windowSpan(_ minutes: UInt32) -> String {
+        minutes % 1440 == 0 ? "\(minutes / 1440)d" : minutes % 60 == 0 ? "\(minutes / 60)h" : "\(minutes)m"
     }
 }
 
