@@ -1,7 +1,7 @@
 // Which Inbox and Tasks sections are collapsed: toggled, saved in localStorage, and all expanded when storage fails.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { COLLAPSED_KEY, loadCollapsed, toggleCollapsed } from "../web/app/sections.js";
+import { COLLAPSED_KEY, loadCollapsed, sectionOrder, toggleCollapsed } from "../web/app/sections.js";
 
 /** A stand-in for localStorage. */
 function fakeStorage(items: Record<string, string> = {}) {
@@ -54,4 +54,23 @@ test("with no localStorage at all (as in node), the default is everything expand
   const collapsed = loadCollapsed();
   assert.equal(collapsed.size, 0);
   assert.equal(toggleCollapsed(collapsed, "tasks:drafts"), true);
+});
+
+test("sectionOrder: reviewing, merged and closed lead with the summary, Done when and review; brief and plan fold", () => {
+  for (const s of ["reviewing", "merged", "closed"]) {
+    const { order, folded } = sectionOrder(s);
+    assert.deepEqual(order.slice(0, 3), ["summary", "doneWhen", "review"]);
+    assert.ok(order.indexOf("doneWhen") < order.indexOf("brief") && order.indexOf("doneWhen") < order.indexOf("plan"));
+    assert.deepEqual([...folded].sort(), ["brief", "plan"]);
+  }
+});
+
+test("sectionOrder: planning and approval keep the brief first, nothing folded", () => {
+  for (const s of ["drafting", "planning", "awaitingApproval", "backlog"]) {
+    const { order, folded } = sectionOrder(s);
+    assert.equal(order[0], "brief");
+    assert.ok(order.indexOf("plan") < order.indexOf("doneWhen"));
+    assert.ok(!order.includes("summary"));
+    assert.equal(folded.size, 0);
+  }
 });

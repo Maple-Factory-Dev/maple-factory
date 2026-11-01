@@ -613,3 +613,13 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
   .status.live { gap: 0; }
   .tabs { width: auto; }
 }
+
+/* A task page section folded to a line (sectionOrder): the brief and plan once a task has changes. */
+details.fold { margin: 28px 0 10px; }
+details.fold > summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+details.fold > summary::before { content: "›"; color: var(--muted); display: inline-block; transition: transform 0.15s; }
+details.fold[open] > summary::before { transform: rotate(90deg); }
+details.fold > summary .fold-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+details.fold > summary .muted { overflow: hidden; text-overflow: ellipsis; }
+details.fold[open] > .card { margin-top: 10px; }
+.review-summary .row { flex-wrap: wrap; gap: 12px; }
