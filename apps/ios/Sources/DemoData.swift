@@ -185,6 +185,16 @@ enum DemoData {
                 t.brief = "Email a receipt with the invoice PDF once a payment clears."
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s4", startedAt: ago(320))
                 t.approvals = [me]
+                // A draft PR whose CI webhook never came, and a plan over the PR budget: Recheck GitHub and Split.
+                t.plan = [
+                    .init(text: "Render the receipt email from the invoice", file: "web/src/billing/receipt.tsx", progress: .done, added: false),
+                    .init(text: "Attach the invoice PDF", file: "web/src/billing/receipt.ts", progress: .active, added: false),
+                    .init(text: "Send it from the payment webhook", file: "web/src/billing/webhook.ts", progress: .pending, added: false),
+                    .init(text: "Let customers resend a receipt from Billing", file: "web/src/billing/BillingPage.tsx", progress: .pending, added: false),
+                ]
+                t.footprint = .init(files: 44, lines: 900, estimated: true)
+                t.pr = .init(number: 88, url: "https://github.com/acme/web/pull/88", state: .draft, branch: "agent/bil-8", base: "main",
+                             checks: [.init(name: "test", status: .running, required: true), .init(name: "lint", status: .queued, required: true)])
             },
             task("API-34", goal: "g-api", title: "OpenAPI spec from the routes", state: .building, owner: "kit", updated: 300) { t in
                 t.brief = "Generate an OpenAPI document from the route table."

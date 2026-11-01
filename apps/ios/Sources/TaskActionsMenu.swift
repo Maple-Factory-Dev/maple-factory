@@ -4,7 +4,8 @@ import SwiftUI
 /// The task's toolbar `…`: what the Mac's TaskActionButtons offers, gated the same way. Its place in
 /// the queue (Move to top/bottom), what's next (Send to planning, Send to backlog, Cancel task…) and,
 /// while it's open, who has it and what it says (Take it over, Assign…, Edit…, Move to goal…).
-/// Cancel asks first; Assign, Edit and Move to goal open sheets.
+/// Above those, Retry, Recheck GitHub and Split… where the Mac offers them.
+/// Cancel asks first; Assign, Edit, Move to goal and Split open sheets.
 struct TaskActionsMenu: View {
     @Environment(FactoryStore.self) private var store
     let task: Wire.Task
@@ -12,9 +13,18 @@ struct TaskActionsMenu: View {
     @State private var sheet: Sheet?
     @State private var confirmCancel = false
 
-    enum Sheet: String, Identifiable { case assign, edit, move, effort; var id: String { rawValue } }
+    enum Sheet: String, Identifiable { case assign, edit, move, effort, split; var id: String { rawValue } }
 
     private var open: Bool { task.state != .merged && task.state != .cancelled }
+    /// Nothing runs to retry while it waits on its plan's approval, is a draft or sits in the backlog
+    /// (the Mac's TaskActionButtons); a cancelled task picks back up with Retry.
+    private var retryable: Bool {
+        ![.merged, .drafting, .awaitingApproval, .backlog].contains(task.state)
+    }
+    /// A pull request on GitHub (not a local repo's) that hasn't merged: the Mac PR card's Recheck.
+    private var recheckable: Bool { open && task.pr?.url != nil && task.pr?.state != .merged }
+    /// Open with a plan of at least two steps and its PR not merged (the Mac's `plan.count >= split`).
+    private var splittable: Bool { open && task.plan.count >= 2 && task.pr?.state != .merged }
     private var queued: Bool { task.queueRank != nil && (task.state == .planning || task.state == .building) }
 
     var body: some View {
@@ -23,6 +33,19 @@ struct TaskActionsMenu: View {
                 Section {
                     Button { store.queueTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
                     Button { store.queueBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
+                }
+            }
+            if retryable || recheckable || splittable {
+                Section {
+                    if retryable {
+                        Button { store.retryTask(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
+                    }
+                    if recheckable {
+                        Button { store.recheckGitHub(task.id) } label: { Label("Recheck GitHub", systemImage: "arrow.triangle.2.circlepath") }
+                    }
+                    if splittable {
+                        Button { sheet = .split } label: { Label("Split…", systemImage: "square.split.2x1") }
+                    }
                 }
             }
             if open {
@@ -61,6 +84,7 @@ struct TaskActionsMenu: View {
                 case .assign: AssignSheet(task: task)
                 case .edit: EditTaskSheet(task: task)
                 case .move: MoveGoalSheet(task: task)
+                case .split: SplitSheet(task: task)
                 case .effort: EffortSheet(task: task)
                 }
             }
@@ -208,5 +232,60 @@ private struct MoveGoalSheet: View {
         .navigationTitle("Move \(task.id)")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+    }
+}
+
+/// How many tasks to split into, from 2 to the plan's steps (at most 6), starting at what the PR
+/// budget suggests; the list shows which steps each part gets.
+private struct SplitSheet: View {
+    @Environment(FactoryStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let task: Wire.Task
+    @State private var parts = 2
+
+    private var most: Int { max(2, min(task.plan.count, 6)) }
+    private var chunks: [[Wire.PlanStep]] { FactoryStore.splitSteps(task.plan, parts: parts) }
+    private var footer: String {
+        let how = "\(task.id) keeps its first steps; the rest become new tasks that get planned on their own."
+        guard let suggested = store.suggestedSplit(task), let policy = store.feed.policy else { return how }
+        return "Over the PR budget: \(suggested) parts keep each under \(policy.maxFiles) files and \(policy.maxLines) lines. " + how
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Stepper(value: $parts, in: 2...most) {
+                    LabeledContent("Parts", value: "\(parts)")
+                }
+                .accessibilityIdentifier("split-parts")
+                .accessibilityValue("\(parts)")
+            } footer: {
+                Text(footer)
+            }
+            ForEach(Array(chunks.enumerated()), id: \.offset) { index, steps in
+                Section(index == 0 ? "\(task.id) keeps" : "New task \(index)") {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(step.text)
+                            if !step.file.isEmpty { Text(step.file).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear { if let suggested = store.suggestedSplit(task) { parts = min(max(suggested, 2), most) } }
+        .navigationTitle("Split \(task.id)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Split") {
+                    store.split(task.id, into: parts)
+                    dismiss()
+                }
+                .disabled(chunks.count < 2)
+                .accessibilityIdentifier("split-confirm")
+            }
+        }
     }
 }
