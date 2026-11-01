@@ -1620,6 +1620,8 @@ data class RiskPolicy(
     val taskMinutes: Long? = null,
     /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
     val taskCostUsd: Double? = null,
+    /** What a task past its budget does: "ask" raises a hand for a person; "handOff" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask. */
+    val overBudget: String? = null,
     /** The optional risk classifier. None: off. */
     val classifier: RiskClassifier? = null,
 )

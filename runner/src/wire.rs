@@ -1795,6 +1795,9 @@ pub struct RiskPolicy {
     /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_cost_usd: Option<f64>,
+    /// What a task past its budget does: "ask" raises a hand for a person; "handOff" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub over_budget: Option<String>,
     /// The optional risk classifier. None: off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classifier: Option<RiskClassifier>,

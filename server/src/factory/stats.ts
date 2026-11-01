@@ -23,7 +23,8 @@ export type StatKind =
   | "merged" // detail: auto, cycleMs, why (manualReason, or none for the factory's own), level, heldBy
   | "cancelled" // detail: state
   | "closed" // detail: proposed (finished with nothing to merge)
-  | "budget.reached"; // detail: over (time or cost), minutes, costUsd, allowMinutes, allowCostUsd
+  | "budget.reached" // detail: over (time or cost), minutes, costUsd, allowMinutes, allowCostUsd
+  | "budget.handedOff"; // detail: followUp (the draft's id), commit, minutes, costUsd, stepped (the factory stepped in: no hand came)
 
 export interface StatEvent {
   id: string;
