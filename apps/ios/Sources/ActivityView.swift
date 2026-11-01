@@ -5,9 +5,10 @@ struct ActivityRoute: Hashable {}
 
 /// Everything happening across the factory, newest first, like the Mac's Activity page: people approving
 /// and steering, agents planning, proving and reviewing, merges. Each row opens its task.
+/// `-activity YES` opens it; `-activityFilter "My tasks"` (or People, Agents) starts on that filter, for screenshots.
 struct ActivityView: View {
     @Environment(FactoryStore.self) private var store
-    @State private var filter: ActivityEntry.Filter = .everyone
+    @State private var filter = ActivityEntry.Filter(rawValue: UserDefaults.standard.string(forKey: "activityFilter") ?? "") ?? .everyone
     /// How many rows are drawn; "Show 50 more" adds a page, and a new filter starts again at one.
     @State private var shown = ActivityEntry.pageSize
 
