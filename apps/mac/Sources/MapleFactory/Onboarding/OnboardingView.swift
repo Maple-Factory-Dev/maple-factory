@@ -15,6 +15,8 @@ struct OnboardingView: View {
     @State private var device: FactoryClient.DeviceCode?
     @State private var signedIn: FactoryClient.SignInResult?
     @State private var signInTask: Task<Void, Never>?
+    @State private var codeCopied = false
+    @State private var copiedTask: Task<Void, Never>?
     /// Went back to the workspace: anything still in flight lands nowhere.
     @State private var cancelled = false
     /// `-onboardingAuto` and `-onboardingStep` play the scripted demo instead of talking to a server.
@@ -110,6 +112,8 @@ struct OnboardingView: View {
                 signIn()
             }
         }
+        // A new sign-in code never opens already showing "Copied".
+        .onChange(of: device?.userCode) { resetCopied() }
     }
 
     // MARK: Steps
@@ -224,22 +228,44 @@ struct OnboardingView: View {
             }
 
             if step == .authorizing {
-                HStack(spacing: 12) {
-                    ProgressView().controlSize(.small)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Waiting for GitHub…")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.text)
-                        Text("Enter \(device?.userCode ?? "WDJB-MJHT") on github.com/login/device")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Theme.textMuted)
-                            .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        ProgressView().controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Waiting for GitHub…")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                            Text("Enter this code on github.com/login/device")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.textMuted)
+                        }
+                        Spacer()
+                        Text("Open again")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .onTapGesture { if let device { NSWorkspace.shared.open(device.verificationUri) } }
                     }
-                    Spacer()
-                    Text("Open again")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Theme.accent)
-                        .onTapGesture { if let device { NSWorkspace.shared.open(device.verificationUri) } }
+                    HStack(spacing: 12) {
+                        Text(userCode)
+                            .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .fixedSize()
+                        Button {
+                            copyCode(userCode)
+                            showCopied()
+                        } label: {
+                            Label(codeCopied ? "Copied" : "Copy", systemImage: codeCopied ? "checkmark" : "doc.on.doc")
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Copy code")
+                        .accessibilityLabel(codeCopied ? "Code copied" : "Copy code \(userCode)")
+                        Spacer()
+                    }
+                    .padding(.leading, 28)
                 }
                 .padding(14)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.fillSubtle))
@@ -276,6 +302,7 @@ struct OnboardingView: View {
                     .underline()
                     .onTapGesture {
                         signInTask?.cancel()
+                        resetCopied()
                         withAnimation(.snappy) { step = .url; checks = []; error = nil; device = nil }
                     }
             }
@@ -611,6 +638,32 @@ struct OnboardingView: View {
         }
     }
 
+    /// The device code to type on GitHub; the demo shows a placeholder.
+    private var userCode: String { device?.userCode ?? "WDJB-MJHT" }
+
+    /// The one place the sign-in code goes onto the clipboard: the auto-copy in signIn() and the Copy button.
+    private func copyCode(_ code: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+    }
+
+    /// Flips the Copy button to "Copied" for a moment.
+    private func showCopied() {
+        copiedTask?.cancel()
+        withAnimation(.snappy) { codeCopied = true }
+        copiedTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(.snappy) { codeCopied = false }
+        }
+    }
+
+    private func resetCopied() {
+        copiedTask?.cancel()
+        copiedTask = nil
+        codeCopied = false
+    }
+
     private func signIn() {
         guard step == .signIn else { return }
         error = nil
@@ -632,8 +685,7 @@ struct OnboardingView: View {
                     let code = try await FactoryClient.startDeviceFlow(server)
                     device = code
                     withAnimation(.snappy) { step = .authorizing }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(code.userCode, forType: .string)
+                    copyCode(code.userCode)
                     NSWorkspace.shared.open(code.verificationUri)
                     let deadline = Date().addingTimeInterval(TimeInterval(code.expiresIn))
                     while Date() < deadline, !Task.isCancelled {
