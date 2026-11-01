@@ -8,7 +8,12 @@ import type { Env } from "./env.ts";
 /** How long a link code works. */
 export const LINK_MS = 10 * 60_000;
 
-export interface SlackLink { user: string; team: string; linkedAt: number }
+/** A Slack account; `name` and `teamName` are what Slack called them when the code was minted, for showing. */
+export interface SlackAccount { user: string; team: string; name: string | null; teamName: string | null }
+export interface SlackLink extends SlackAccount { linkedAt: number }
+
+type CodeRow = { slack_user: string; slack_team: string; slack_name: string | null; team_name: string | null; expires_at: number };
+const account = (r: Omit<CodeRow, "expires_at">): SlackAccount => ({ user: r.slack_user, team: r.slack_team, name: r.slack_name, teamName: r.team_name });
 
 const tidy = (q: string) => q.replace(/[*_`~]/g, "").replace(/[’‘]/g, "'").replace(/[\s.!?:]+$/, "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -36,19 +41,19 @@ async function sha256(s: string): Promise<string> {
 }
 
 /** A fresh code for this Slack account, good for LINK_MS; only its hash is stored. */
-export async function startLink(env: Env, team: string, user: string, now = Date.now()): Promise<string> {
+export async function startLink(env: Env, team: string, user: string, names: { name?: string | null; teamName?: string | null } = {}, now = Date.now()): Promise<string> {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
   const code = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   await env.DB.prepare("DELETE FROM slack_link_codes WHERE expires_at <= ?").bind(now).run();
-  await env.DB.prepare("INSERT INTO slack_link_codes (hash, slack_user, slack_team, expires_at) VALUES (?, ?, ?, ?)").bind(await sha256(code), user, team, now + LINK_MS).run();
+  await env.DB.prepare("INSERT INTO slack_link_codes (hash, slack_user, slack_team, slack_name, team_name, expires_at) VALUES (?, ?, ?, ?, ?, ?)").bind(await sha256(code), user, team, names.name ?? null, names.teamName ?? null, now + LINK_MS).run();
   return code;
 }
 
 /** The Slack account a code is for, if it's known and not expired; doesn't use it up (the confirm page). */
-export async function peek(env: Env, code: string, now = Date.now()): Promise<{ user: string; team: string } | null> {
+export async function peek(env: Env, code: string, now = Date.now()): Promise<SlackAccount | null> {
   if (!code) return null;
-  const row = await env.DB.prepare("SELECT slack_user, slack_team, expires_at FROM slack_link_codes WHERE hash = ?").bind(await sha256(code)).first<{ slack_user: string; slack_team: string; expires_at: number }>();
-  return row && row.expires_at > now ? { user: row.slack_user, team: row.slack_team } : null;
+  const row = await env.DB.prepare("SELECT * FROM slack_link_codes WHERE hash = ?").bind(await sha256(code)).first<CodeRow>();
+  return row && row.expires_at > now ? account(row) : null;
 }
 
 /** Uses a code up for `login`: the pair replaces any earlier link of that login or of that Slack account. Null when
@@ -56,11 +61,11 @@ export async function peek(env: Env, code: string, now = Date.now()): Promise<{ 
 export async function redeem(env: Env, code: string, login: string, now = Date.now()): Promise<SlackLink | null> {
   if (!code) return null;
   const hash = await sha256(code);
-  const row = await env.DB.prepare("DELETE FROM slack_link_codes WHERE hash = ? RETURNING slack_user, slack_team, expires_at").bind(hash).first<{ slack_user: string; slack_team: string; expires_at: number }>();
+  const row = await env.DB.prepare("DELETE FROM slack_link_codes WHERE hash = ? RETURNING *").bind(hash).first<CodeRow>();
   if (!row || row.expires_at <= now) return null;
   await env.DB.prepare("DELETE FROM slack_links WHERE login = ? OR (slack_team = ? AND slack_user = ?)").bind(login, row.slack_team, row.slack_user).run();
-  await env.DB.prepare("INSERT INTO slack_links (login, slack_user, slack_team, linked_at) VALUES (?, ?, ?, ?)").bind(login, row.slack_user, row.slack_team, now).run();
-  return { user: row.slack_user, team: row.slack_team, linkedAt: now };
+  await env.DB.prepare("INSERT INTO slack_links (login, slack_user, slack_team, slack_name, team_name, linked_at) VALUES (?, ?, ?, ?, ?, ?)").bind(login, row.slack_user, row.slack_team, row.slack_name, row.team_name, now).run();
+  return { ...account(row), linkedAt: now };
 }
 
 /** The member a Slack account is linked to, if any. */
@@ -72,8 +77,8 @@ export async function loginFor(env: Env, team: string, user: string): Promise<st
 
 /** A member's link, if they have one. */
 export async function linkOf(env: Env, login: string): Promise<SlackLink | null> {
-  const row = await env.DB.prepare("SELECT slack_user, slack_team, linked_at FROM slack_links WHERE login = ?").bind(login).first<{ slack_user: string; slack_team: string; linked_at: number }>();
-  return row ? { user: row.slack_user, team: row.slack_team, linkedAt: row.linked_at } : null;
+  const row = await env.DB.prepare("SELECT * FROM slack_links WHERE login = ?").bind(login).first<Omit<CodeRow, "expires_at"> & { linked_at: number }>();
+  return row ? { ...account(row), linkedAt: row.linked_at } : null;
 }
 
 /** Drops a link, by member or by Slack account; the login that was linked, if one was. */

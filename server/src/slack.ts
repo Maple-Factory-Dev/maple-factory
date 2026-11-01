@@ -6,7 +6,8 @@
 import type { Env } from "./env.ts";
 import { integrationConfig, integrationEvent } from "./integrations/registry.ts";
 import { MAX_ATTACHMENT, storedName } from "./attachments.ts";
-import { orgHub, readCapped, sameText, text } from "./util.ts";
+import { audit, orgHub, publicOrigin, readCapped, sameText, text } from "./util.ts";
+import { loginFor, startLink, unlink, wantsLink, wantsUnlink } from "./slack-links.ts";
 
 const enc = new TextEncoder();
 const API = "https://slack.com/api";
@@ -100,6 +101,8 @@ export interface SlackAsk {
   channel: string;
   threadTs: string;
   user: string;
+  /** The factory member the asker linked their Slack account to (`@Maple link`), else null. */
+  login: string | null;
   requester: string;
   question: string;
   thread: ThreadLine[];
@@ -116,7 +119,7 @@ const unmention = (s: string) => s.replace(/<@[A-Z0-9]+(\|[^>]*)?>/g, "").replac
 export async function slackEvents(request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
   const checked = await verified(request, env, "An event");
   if (checked instanceof Response) return checked;
-  const body = JSON.parse(checked.raw) as { type: string; challenge?: string; event_id?: string; event?: SlackEvent; authorizations?: { user_id?: string }[] };
+  const body = JSON.parse(checked.raw) as { type: string; challenge?: string; event_id?: string; team_id?: string; event?: SlackEvent; authorizations?: { user_id?: string; team_id?: string }[] };
   if (body.type === "url_verification") return Response.json({ challenge: body.challenge ?? "" });
   await integrationEvent(env, "slack");
   if (body.type !== "event_callback" || !body.event) return new Response(null, { status: 200 });
@@ -127,7 +130,8 @@ export async function slackEvents(request: Request, env: Env, ctx: { waitUntil(p
   const event = body.event;
   const bot = body.authorizations?.[0]?.user_id ?? null;
   if (event.type === "app_mention" && !event.bot_id && event.user !== bot) {
-    ctx.waitUntil(mentioned(env, checked.slack, event).catch((e) => integrationEvent(env, "slack", `Couldn't answer a mention: ${(e as Error).message}`)));
+    const team = body.team_id ?? body.authorizations?.[0]?.team_id ?? "";
+    ctx.waitUntil(mentioned(env, checked.slack, event, team, request).catch((e) => integrationEvent(env, "slack", `Couldn't answer a mention: ${(e as Error).message}`)));
   }
   if (event.type === "member_joined_channel" && bot && event.user === bot) {
     ctx.waitUntil(orgHub(env).fetch("https://org/slack/joined", { method: "POST", body: JSON.stringify({ channel: event.channel }) }));
@@ -142,7 +146,7 @@ export function wantsGoals(question: string): boolean {
 }
 
 /** A mention: its thread and files read and handed to OrgHub, or `@Maple goals` bringing the picker back. */
-async function mentioned(env: Env, slack: Record<string, string>, event: SlackEvent) {
+async function mentioned(env: Env, slack: Record<string, string>, event: SlackEvent, team: string, request: Request) {
   const token = slack.botToken;
   if (!token) return integrationEvent(env, "slack", "Someone mentioned @Maple, but there's no bot token to answer with: add it in Settings › Integrations.");
   const question = unmention(event.text ?? "");
@@ -150,6 +154,24 @@ async function mentioned(env: Env, slack: Record<string, string>, event: SlackEv
     const asked = { channel: event.channel, ...(event.thread_ts ? { threadTs: event.thread_ts } : {}) };
     await orgHub(env).fetch("https://org/slack/joined", { method: "POST", body: JSON.stringify(asked) });
     return;
+  }
+  const user = event.user ?? "";
+  const whisper = (said: string, blocks?: Blocks) => postEphemeral(token, event.channel, user, event.thread_ts ?? null, said, blocks);
+  if (user && wantsLink(question)) {
+    // Only the asker sees the code; whoever opens it signed in confirms it's them.
+    const [name, teamName] = await Promise.all([userName(token, user), slackApi(token, "auth.test", {}).then((r) => (r.team as string) ?? null, () => null)]);
+    const code = await startLink(env, team, user, { name: name === user ? null : name, teamName });
+    const url = `${publicOrigin(request, env)}/link/slack?code=${encodeURIComponent(code)}`;
+    const said = "Link your Slack account to your factory login so I know who's asking. This link works once, for 10 minutes, and only you can see it.";
+    return whisper(said, [
+      { type: "section", text: { type: "mrkdwn", text: said } },
+      { type: "actions", elements: [{ type: "button", action_id: "slack.link", text: { type: "plain_text", text: "Link my account" }, style: "primary", url }] },
+    ]);
+  }
+  if (user && wantsUnlink(question)) {
+    const was = await unlink(env, { team, user });
+    if (was) await audit(env, `slack:${user}`, "slack.unlinked", was, { team, user });
+    return whisper(was ? `Unlinked: I no longer know you as @${was}. Mention me with \`link\` to link again.` : "Your Slack account isn't linked to a factory member. Mention me with `link` to link it.");
   }
   const threadTs = event.thread_ts ?? event.ts;
   let messages: SlackMessage[] = [event];
@@ -172,7 +194,8 @@ async function mentioned(env: Env, slack: Record<string, string>, event: SlackEv
     const kept = await keepFile(env, token, f).catch(() => null);
     if (kept) attachments.push(kept);
   }
-  const ask: SlackAsk = { channel: event.channel, threadTs, user: event.user ?? "", requester: await nameOf(event), question, thread, attachments };
+  const login = await loginFor(env, team, user).catch(() => null);
+  const ask: SlackAsk = { channel: event.channel, threadTs, user, login, requester: await nameOf(event), question, thread, attachments };
   await orgHub(env).fetch("https://org/slack/ask", { method: "POST", body: JSON.stringify(ask) });
 }
 
@@ -248,6 +271,11 @@ export type Blocks = Record<string, unknown>[];
 /** Posts in a thread (or in the channel, with no `threadTs`); the message's ts. */
 export async function postMessage(token: string, channel: string, threadTs: string | null, said: string, blocks?: Blocks): Promise<string> {
   return (await slackApi(token, "chat.postMessage", { channel, ...(threadTs ? { thread_ts: threadTs } : {}), text: said, ...(blocks ? { blocks } : {}), unfurl_links: false })).ts as string;
+}
+
+/** A message only `user` sees, in the channel or a thread. */
+export async function postEphemeral(token: string, channel: string, user: string, threadTs: string | null, said: string, blocks?: Blocks): Promise<void> {
+  await slackApi(token, "chat.postEphemeral", { channel, user, ...(threadTs ? { thread_ts: threadTs } : {}), text: said, ...(blocks ? { blocks } : {}) });
 }
 
 /** Replaces one of the bot's messages. */
