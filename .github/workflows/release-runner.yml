@@ -1,0 +1,320 @@
+# Releases maple-runner to the feed (maplefactory.dev/releases): the runner tests, a version bump with its
+# CHANGELOG.md section committed to main and tagged runner-v<version>, a native build on each target's own
+# kind of machine, then scripts/release-runner.mjs publish, which signs the manifest and uploads it all.
+# RELEASING.md ("In CI") has the inputs and the secrets it reads.
+name: Release maple-runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        options: [minor, patch]
+        default: minor
+      channel:
+        description: Feed channel (latest.json or beta.json)
+        type: choice
+        options: [stable, beta]
+        default: stable
+      changelog:
+        description: The release's runner/CHANGELOG.md text, when the file has no section for the new version yet
+        type: string
+        default: ""
+  workflow_call:
+    # Callers pass `secrets: inherit`.
+    inputs:
+      bump:
+        type: string
+        default: minor
+      channel:
+        type: string
+        default: stable
+      changelog:
+        type: string
+        default: ""
+    outputs:
+      version:
+        value: ${{ jobs.prepare.outputs.version }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-runner
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      sha: ${{ steps.push.outputs.sha }}
+    env:
+      BUMP: ${{ inputs.bump }}
+      CHANNEL: ${{ inputs.channel }}
+      CHANGELOG_TEXT: ${{ inputs.changelog }}
+    steps:
+      - name: Check the inputs
+        run: |
+          case "$BUMP" in minor|patch) ;; *) echo "::error::bump is minor or patch, not '$BUMP'"; exit 1;; esac
+          case "$CHANNEL" in stable|beta) ;; *) echo "::error::channel is stable or beta, not '$CHANNEL'"; exit 1;; esac
+
+      # The App may push to main past its protection, and push tags.
+      - name: Mint the release App's token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0 # the runner-v tags
+
+      - name: Git identity
+        env:
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runner
+
+      # The loop-releases check for the runner. A failure ends the job here, before anything is bumped.
+      - name: Install tmux (the session tests drive real panes)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+      - name: "Check: cargo test"
+        working-directory: runner
+        # The secrets tests write under the user's home, so they get a throwaway one.
+        run: |
+          export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          cargo test -q --locked
+
+      - name: Bump, changelog and commit
+        id: bump
+        run: |
+          version=$(python3 - <<'PY'
+          import os, re
+          path = "runner/Cargo.toml"
+          text = open(path).read()
+          m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', text, re.M)
+          major, minor, patch = map(int, m.groups())
+          v = f"{major}.{minor + 1}.0" if os.environ["BUMP"] == "minor" else f"{major}.{minor}.{patch + 1}"
+          open(path, "w").write(re.sub(r'^version = "[^"]+"', f'version = "{v}"', text, count=1, flags=re.M))
+          print(v)
+          PY
+          )
+          (cd runner && cargo update -q -p maple-runner --offline)
+
+          # The top section of CHANGELOG.md has to be this version's: already written, or from the input.
+          python3 - "$version" <<'PY'
+          import datetime, os, re, sys
+          v, path = sys.argv[1], "runner/CHANGELOG.md"
+          text = open(path).read()
+          top = re.search(r"^## (\S+)", text, re.M)
+          given = os.environ.get("CHANGELOG_TEXT", "").strip()
+          if top and top.group(1) == v:
+              if given:
+                  print(f"::warning::CHANGELOG.md already has a {v} section; the changelog input is ignored.")
+          elif given:
+              heading = f"## {v} — {datetime.date.today().isoformat()}\n\n{given}\n\n"
+              at = top.start() if top else len(text)
+              open(path, "w").write(text[:at] + heading + text[at:])
+          else:
+              print(f"::error::runner/CHANGELOG.md's top section is {top.group(1) if top else 'missing'}, not {v}: add a '## {v} — <date>' section, or pass the changelog input.")
+              sys.exit(1)
+          PY
+
+          # The commit subject: the section's first sentence.
+          first=$(python3 - "$version" <<'PY'
+          import re, sys
+          text = open("runner/CHANGELOG.md").read()
+          body = re.split(r"^## ", text, flags=re.M)[1].split("\n", 1)[1].strip()
+          sentence = re.split(r"(?<=[.!?])\s", " ".join(body.split()), maxsplit=1)[0]
+          print(sentence if len(sentence) <= 200 else sentence[:197] + "...")
+          PY
+          )
+          git add runner/Cargo.toml runner/Cargo.lock runner/CHANGELOG.md
+          git commit -q -m "Runner ${version}: ${first}"
+          echo "Bumped to ${version}: ${first}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Push the bump to main, and tag it
+        id: push
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          tag="runner-v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "::error::${tag} is already on origin; bump the version"; exit 1
+          fi
+          pushed=
+          for i in 1 2 3; do
+            if git fetch -q origin && git rebase -q origin/main && git push -q origin HEAD:main; then pushed=1; break; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          if [ -z "$pushed" ]; then echo "::error::couldn't push the bump to main after 3 tries"; exit 1; fi
+          git tag -a "$tag" -m "maple-runner ${VERSION}"
+          git push -q origin "$tag"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Pushed $(git log -1 --format='%h %s') and ${tag}."
+
+  build:
+    needs: prepare
+    # The macOS leg reads the Developer ID's secrets; the Linux legs run in the same environment so one
+    # approval lets all three go.
+    environment: release
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            container: ""
+          # rust:1-bullseye has glibc 2.31, as the Docker build from a Mac does, so older distros still run it.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            container: rust:1-bullseye
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            container: rust:1-bullseye
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Rust toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Sentry DSN
+        run: |
+          dsn=$(node -p 'require("./server/web/sentry.json").projects.runner.dsn || ""')
+          if [ -z "$dsn" ]; then echo "::error::server/web/sentry.json has no runner DSN"; exit 1; fi
+          echo "MAPLE_SENTRY_DSN=${dsn}" >> "$GITHUB_ENV"
+
+      - name: Import the Developer ID
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: scripts/ci/import-signing-cert.sh import
+
+      - name: Build
+        env:
+          SIGN_IDENTITY: ${{ runner.os == 'macOS' && vars.SIGN_IDENTITY || '' }}
+        run: |
+          if [ "$RUNNER_OS" = macOS ] && [ -z "$SIGN_IDENTITY" ]; then echo "::error::set the SIGN_IDENTITY variable"; exit 1; fi
+          node scripts/release-runner.mjs build --target "$TARGET" --out dist
+          cat "dist/${TARGET}/maple-runner.sha256"
+
+      - name: Check the signature (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --verify --strict --verbose=2 "dist/${TARGET}/maple-runner" && codesign -dv "dist/${TARGET}/maple-runner" 2>&1 | grep -E '^(Authority|TeamIdentifier)='
+
+      - name: Check the glibc baseline (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          max=$(objdump -T "dist/${TARGET}/maple-runner" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "${TARGET}: max GLIBC_${max}"
+          if [ "$(printf '%s\n2.31\n' "$max" | sort -V | tail -1)" != 2.31 ]; then
+            echo "::error::${TARGET} needs GLIBC_${max}, newer than 2.31"; exit 1
+          fi
+          "dist/${TARGET}/maple-runner" --version
+
+      - name: Remove the Developer ID
+        if: always() && runner.os == 'macOS'
+        run: scripts/ci/import-signing-cert.sh cleanup
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maple-runner-${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci # wrangler, for the uploads
+
+      # Each artifact into dist/<target>/, as `build --out dist` left it.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: maple-runner-*
+          path: dist
+      - name: Lay out dist/<target>
+        run: |
+          for d in dist/maple-runner-*; do mv "$d" "dist/${d#dist/maple-runner-}"; done
+          find dist -type f | sort
+
+      - name: Publish to the feed
+        env:
+          MAPLE_RELEASE_KEY_PEM: ${{ secrets.MAPLE_RELEASE_KEY_PEM }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          args=(publish --from dist --to feed)
+          if [ "$CHANNEL" = beta ]; then args+=(--channel beta); fi
+          node scripts/release-runner.mjs "${args[@]}"
+
+      - name: Check the feed
+        run: |
+          name=latest; if [ "$CHANNEL" = beta ]; then name=beta; fi
+          url="https://maplefactory.dev/releases/maple-runner/${name}.json"
+          for _ in $(seq 1 24); do
+            got=$(curl -fsS "${url}?t=$(date +%s)" | jq -r .version || true)
+            if [ "$got" = "$VERSION" ]; then echo "${url} lists ${VERSION}."; exit 0; fi
+            echo "${url} lists ${got:-nothing} so far; waiting."
+            sleep 5
+          done
+          echo "::error::${url} doesn't list ${VERSION} after 2 minutes"
+          exit 1
+
+      - name: Job summary
+        if: always()
+        run: |
+          name=latest; if [ "$CHANNEL" = beta ]; then name=beta; fi
+          {
+            echo "## maple-runner ${VERSION}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | ${VERSION} |"
+            echo "| Tag | \`runner-v${VERSION}\` |"
+            echo "| Channel | ${CHANNEL} |"
+            echo "| Targets | $(cd dist && find . -mindepth 1 -maxdepth 1 -type d | sed 's|^\./||' | sort | paste -sd ' ' -) |"
+            echo "| Feed | https://maplefactory.dev/releases/maple-runner/${name}.json |"
+          } >> "$GITHUB_STEP_SUMMARY"
