@@ -1004,6 +1004,7 @@ function decisions(t) {
         icon(failing ? "circle-alert" : pending ? "clock" : "git-merge"), failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
     if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, icon("refresh-cw"), "Re-run failed"));
+    if (t.pr?.url && t.pr.state === "open") buttons.push(h("button", { class: "btn", title: "Read the pull request and its CI from GitHub again", onclick: () => send({ type: "task.recheckGitHub", id: t.id }) }, icon("refresh-cw"), "Recheck CI"));
     // One more automated-review round, with this person's focus.
     if (reviewRequestable(t) && !reviewAsks.has(t.id)) {
       buttons.push(h("button", { class: "btn", onclick: () => { reviewAsks.set(t.id, ""); render(); document.querySelector(`[data-keep="${t.id}:review-ask"] textarea`)?.focus(); } }, "Request a review…"));
