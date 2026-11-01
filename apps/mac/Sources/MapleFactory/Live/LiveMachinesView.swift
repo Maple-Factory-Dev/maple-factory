@@ -317,6 +317,8 @@ struct LiveMachineCard: View {
             }
         }
         .sheet(isPresented: $editing) { MachineSettingsSheet(machine: machine) }
+        // `-machineSettings <machine id>` opens its Factory Settings sheet at launch, for screenshots.
+        .onAppear { if AppDefaults.string(forKey: "machineSettings") == machine.id { editing = true } }
     }
 
     /// "Paused" for a full pause; under a new-work pause, how many tasks here are still finishing.
