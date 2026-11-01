@@ -185,25 +185,28 @@ export class Engine {
   readonly slack: SlackAsks;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
+    // Maple's own one-off runs (Draft with AI, Scout, Set up with AI, @Maple in Slack) only stop for an
+    // "Everything" pause; Pause New Work holds back tasks, not these.
+    const stopped = (m: { id: string }) => this.pause(m.id) === "all";
     this.drafts = new Drafts(store, {
       sendTo: (login, message) => hooks.sendTo(login, message),
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       toRunner: (machine, command) => this.toRunner(machine, command),
     });
     this.scout = new Scout(store, {
       broadcast: (message) => hooks.broadcast(message),
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       toRunner: (machine, command) => this.toRunner(machine, command),
       make: (goal, by, picks, shown, made) => this.scouted(goal, by, picks, shown, made),
     });
     this.slack = new SlackAsks(store, {
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       toRunner: (machine, command) => this.toRunner(machine, command),
       token: async () => (await hooks.slack?.token()) ?? null,
       problem: (text) => hooks.slack?.problem(text),
@@ -224,7 +227,7 @@ export class Engine {
       broadcast: (message) => hooks.broadcast(message),
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       isAdmin: (login) => this.isAdmin(login),
       toRunner: (machine, command) => this.toRunner(machine, command),
     });
