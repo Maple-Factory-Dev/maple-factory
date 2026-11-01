@@ -531,6 +531,9 @@ struct MachineRows: View {
     @State private var nickname = ""
     @State private var moving: String?
     @State private var settings = false
+    @State private var newSession = false
+    @State private var sharing: String?
+    @State private var ending: Wire.LiveSession?
 
     var body: some View {
         header
@@ -596,8 +599,16 @@ struct MachineRows: View {
                 }
             }
             .swipeActions(edge: .trailing) {
+                if store.canManage(machine) {
+                    Button("End", systemImage: "stop.fill", role: .destructive) { ending = live }
+                }
                 if let movable {
                     Button("Move to another machine", systemImage: "arrow.uturn.forward") { moving = movable }.tint(Theme.accent)
+                }
+            }
+            .swipeActions(edge: .leading) {
+                if store.canManage(machine) {
+                    Button("Share", systemImage: "person.2.fill") { sharing = live.session.id }.tint(Theme.accent)
                 }
             }
             if let movable {
@@ -607,7 +618,26 @@ struct MachineRows: View {
                 .accessibilityIdentifier("move-\(movable)")
             }
         }
+        if store.canManage(machine) {
+            Button { newSession = true } label: {
+                Label("New session", systemImage: "plus.rectangle.on.rectangle").font(.subheadline)
+            }
+            .accessibilityIdentifier("new-session-\(machine.id)")
+            .sheet(isPresented: $newSession) { NewSessionSheet(machine: machine) }
+            .sheet(item: Binding(get: { sharing.map(SharingID.init) }, set: { sharing = $0?.id })) {
+                SessionShareSheet(machineID: machine.id, sessionID: $0.id)
+            }
+            .confirmationDialog("End \(ending.map(sessionName) ?? "")?", isPresented: Binding(get: { ending != nil }, set: { if !$0 { ending = nil } }),
+                                titleVisibility: .visible, presenting: ending) { live in
+                Button("End session", role: .destructive) { store.killSession(machine: machine.id, id: live.session.id) }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Its terminal closes for everyone watching.")
+            }
+        }
     }
+
+    private struct SharingID: Identifiable { let id: String }
 
     /// Name, owner and runner; long-press to rename it, for its owner or an admin.
     private var header: some View {

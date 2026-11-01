@@ -718,6 +718,26 @@ final class FactoryStore {
         notice = .toast("\(id) moves to the next free machine\(pushed ? " · carries on from its last push" : "")", taskId: id)
     }
 
+    // MARK: Live sessions
+    // The Mac's FactoryClient commands; the server's org-hub lets the machine's owner or an admin (canManage) send them.
+
+    /// Opens a new terminal session on the machine: an agent in a folder, at the Mac's 120×36.
+    func openSession(machine: String, agent: String, cwd: String) {
+        send(.sessionOpen(.init(machine: machine, agent: agent, cwd: cwd, cols: 120, rows: 36)))
+    }
+    /// Ends a session: its terminal closes for everyone watching.
+    func killSession(machine: String, id: String) { send(.sessionKill(.init(machine: machine, id: id))) }
+    /// Who else may open a session's terminal: the whole list, each to watch or to type.
+    func shareSession(machine: String, id: String, shares: [Wire.ShareGrant]) {
+        send(.sessionShare(.init(machine: machine, id: id, shares: shares)))
+    }
+    /// Where a new session can start: home, the goals' folders, then where its sessions already are; no repeats.
+    func folderChoices(for machine: Wire.Machine) -> [String] {
+        var seen = Set<String>()
+        return (["~"] + feed.goals.compactMap(\.folder) + machine.sessions.map(\.session.cwd))
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
     /// Tells the factory which task you're looking at, so others see you there.
     func viewing(_ id: String?) { visibleTask = id; send(.presence(.init(viewing: id))) }
 
@@ -1084,6 +1104,26 @@ final class FactoryStore {
             demoRecheck(m.id)
         case .taskSplit(let m):
             demoSplit(m.id, parts: Int(m.parts))
+        case .sessionOpen(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            let id = "s-\(UUID().uuidString.prefix(6).lowercased())"
+            machine.sessions.append(.init(session: .init(id: id, agent: m.agent, cwd: m.cwd, startedAt: DemoData.now),
+                                          activity: .init(state: .working, message: "Started", at: DemoData.now)))
+            feed.apply(.machineUpdated(.init(machine: machine)))
+        case .sessionKill(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            machine.sessions.removeAll { $0.session.id == m.id }
+            feed.apply(.machineUpdated(.init(machine: machine)))
+        case .sessionShare(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }),
+                  let i = machine.sessions.firstIndex(where: { $0.session.id == m.id }) else { break }
+            let old = machine.sessions[i].shares ?? []
+            machine.sessions[i].shares = m.shares.map { grant in
+                let kept = old.first { $0.login == grant.login }
+                let same = kept?.canType == grant.canType
+                return .init(login: grant.login, canType: grant.canType, by: same ? kept!.by : me, at: same ? kept!.at : DemoData.now)
+            }
+            feed.apply(.machineUpdated(.init(machine: machine)))
         case .recurringSave, .recurringPause, .recurringRunNow, .recurringDelete:
             demoRecurring(message)
         case .pushRegister, .pushDevices:
