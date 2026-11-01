@@ -19,6 +19,11 @@ struct GoalView: View {
     @State private var showAll = UserDefaults.standard.bool(forKey: "allTasks") || UserDefaults.standard.bool(forKey: "loadOlder")
     @State private var editMode: EditMode = .inactive
     @AppStorage("goalOverview.landedOpen") private var landedOpen = false
+    /// Each section's fold, kept across launches and shared by every goal (MF-340).
+    @AppStorage("goalOverview.needsYouOpen") private var needsYouOpen = true
+    @AppStorage("goalOverview.upNextOpen") private var upNextOpen = true
+    @AppStorage("goalOverview.draftsOpen") private var draftsOpen = true
+    @AppStorage("goalOverview.inMotionOpen") private var inMotionOpen = true
     let id: String
 
     var body: some View {
@@ -137,17 +142,19 @@ struct GoalView: View {
 
     private func needsYou(_ waiting: [GoalOverview.Waiting]) -> some View {
         Section {
-            if waiting.isEmpty {
-                Label("Nothing waiting on you", systemImage: "checkmark.circle")
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("needs-you-empty")
-            }
-            ForEach(waiting) { item in
-                NavigationLink(value: TaskRoute(id: item.task.id)) { NeedsYouCard(item: item) }
-                    .accessibilityIdentifier("needs-you-\(item.task.id)")
+            if needsYouOpen {
+                if waiting.isEmpty {
+                    Label("Nothing waiting on you", systemImage: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("needs-you-empty")
+                }
+                ForEach(waiting) { item in
+                    NavigationLink(value: TaskRoute(id: item.task.id)) { NeedsYouCard(item: item) }
+                        .accessibilityIdentifier("needs-you-\(item.task.id)")
+                }
             }
         } header: {
-            SectionTitle(title: "Needs you", count: waiting.count, icon: "person.crop.circle.badge.exclamationmark", tint: Theme.warning)
+            CollapsibleHeader(title: "Needs you", count: waiting.count, icon: "person.crop.circle.badge.exclamationmark", tint: Theme.warning, open: $needsYouOpen, id: "section-needs-you")
         }
     }
 
@@ -155,27 +162,29 @@ struct GoalView: View {
     private func upNext(_ o: GoalOverview) -> some View {
         if !o.queued.isEmpty || !o.planning.isEmpty {
             Section {
-                ForEach(Array(o.queued.enumerated()), id: \.element.id) { index, task in
-                    NavigationLink(value: TaskRoute(id: task.id)) {
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("\(index + 1)")
-                                .font(.caption.weight(.bold).monospacedDigit())
-                                .frame(width: 22, height: 22)
-                                .background(Circle().fill(Color.secondary.opacity(0.15)))
-                            TaskRow(task: task)
+                if upNextOpen {
+                    ForEach(Array(o.queued.enumerated()), id: \.element.id) { index, task in
+                        NavigationLink(value: TaskRoute(id: task.id)) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Text("\(index + 1)")
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .frame(width: 22, height: 22)
+                                    .background(Circle().fill(Color.secondary.opacity(0.15)))
+                                TaskRow(task: task)
+                            }
                         }
                     }
-                }
-                ForEach(o.planning) { task in
-                    NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                    ForEach(o.planning) { task in
+                        NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                    }
                 }
             } header: {
-                SectionTitle(title: "Up next", count: o.upNextCount, icon: "list.number", tint: Theme.accent)
+                CollapsibleHeader(title: "Up next", count: o.upNextCount, icon: "list.number", tint: Theme.accent, open: $upNextOpen, id: "section-up-next")
             } footer: {
                 Text([o.queued.isEmpty ? nil : "\(o.queued.count) queued", o.planning.isEmpty ? nil : "\(o.planning.count) planning"].compactMap { $0 }.joined(separator: " · "))
             }
         }
-        DraftsSection(drafts: o.drafts, editMode: $editMode) { count in
+        DraftsSection(drafts: o.drafts, editMode: $editMode, open: $draftsOpen) { count in
             SectionTitle(title: o.queued.isEmpty && o.planning.isEmpty ? "Up next · Drafts" : "Drafts", count: count, icon: Wire.TaskState.drafting.icon, tint: Theme.state(.drafting))
         }
     }
@@ -184,22 +193,24 @@ struct GoalView: View {
     private func inMotion(_ tasks: [Wire.Task]) -> some View {
         if !tasks.isEmpty {
             Section {
-                ForEach(tasks) { task in
-                    NavigationLink(value: TaskRoute(id: task.id)) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            TaskRow(task: task)
-                            if let steps = GoalOverview.steps(task) {
-                                HStack(spacing: 8) {
-                                    ProgressView(value: Double(steps.done), total: Double(max(steps.total, 1)))
-                                        .tint(Theme.state(task.state))
-                                    Text("\(steps.done) of \(steps.total)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                if inMotionOpen {
+                    ForEach(tasks) { task in
+                        NavigationLink(value: TaskRoute(id: task.id)) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                TaskRow(task: task)
+                                if let steps = GoalOverview.steps(task) {
+                                    HStack(spacing: 8) {
+                                        ProgressView(value: Double(steps.done), total: Double(max(steps.total, 1)))
+                                            .tint(Theme.state(task.state))
+                                        Text("\(steps.done) of \(steps.total)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
                     }
                 }
             } header: {
-                SectionTitle(title: "In motion", count: tasks.count, icon: "bolt.fill", tint: Theme.state(.building))
+                CollapsibleHeader(title: "In motion", count: tasks.count, icon: "bolt.fill", tint: Theme.state(.building), open: $inMotionOpen, id: "section-in-motion")
             }
         }
     }
@@ -214,17 +225,7 @@ struct GoalView: View {
                     }
                 }
             } header: {
-                Button { withAnimation { landedOpen.toggle() } } label: {
-                    HStack {
-                        SectionTitle(title: "Recently landed", count: tasks.count, icon: Wire.TaskState.merged.icon, tint: Theme.state(.merged))
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .rotationEffect(.degrees(landedOpen ? 90 : 0))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("recently-landed")
+                CollapsibleHeader(title: "Recently landed", count: tasks.count, icon: Wire.TaskState.merged.icon, tint: Theme.state(.merged), open: $landedOpen, id: "recently-landed")
             }
         }
     }
@@ -238,6 +239,30 @@ private struct SectionTitle: View {
 
     var body: some View {
         Label("\(title) · \(count)", systemImage: icon).foregroundStyle(tint)
+    }
+}
+
+/// A section title that folds its section: the title and count stay, a chevron turns 90° when open.
+private struct CollapsibleHeader: View {
+    let title: String
+    let count: Int
+    let icon: String
+    let tint: Color
+    @Binding var open: Bool
+    let id: String
+
+    var body: some View {
+        Button { withAnimation { open.toggle() } } label: {
+            HStack {
+                SectionTitle(title: title, count: count, icon: icon, tint: tint)
+                Spacer()
+                FoldChevron(open: open)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+        .accessibilityValue(open ? "expanded" : "collapsed")
     }
 }
 
