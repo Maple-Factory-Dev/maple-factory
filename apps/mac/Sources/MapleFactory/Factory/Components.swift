@@ -7,10 +7,14 @@ struct AgentAvatar: View {
     /// Online only on a phone: a small phone badge stands in for the green dot.
     var mobile = false
 
+    /// People show initials (or their GitHub picture over them); bots show a robot in their role's color.
+    enum Face: Equatable { case initials, robot }
+    static func face(for agent: Agent) -> Face { agent.isHuman ? .initials : .robot }
+
     var body: some View {
         ZStack {
-            Circle().fill(agent.color.opacity(agent.isHuman ? 1 : 0.18))
-            if agent.isHuman {
+            Circle().fill(agent.color.opacity(agent.isHuman ? 1 : 0.24))
+            if Self.face(for: agent) == .initials {
                 Text(agent.initials)
                     .font(.system(size: size * 0.42, weight: .semibold))
                     .foregroundStyle(.white)
@@ -23,9 +27,7 @@ struct AgentAvatar: View {
                     .clipShape(Circle())
                 }
             } else {
-                Image(systemName: "sparkle")
-                    .font(.system(size: size * 0.48, weight: .semibold))
-                    .foregroundStyle(agent.color)
+                RobotFace(color: agent.color, size: size, online: online)
             }
         }
         .frame(width: size, height: size)
