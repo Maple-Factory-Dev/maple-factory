@@ -78,6 +78,8 @@ function loadOlderLink(goal = null) {
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
 let socket = null;
 let retry = 1000;
+/** Set while signing out, so the socket closing doesn't reconnect with the old session. */
+let signingOut = false;
 
 // ---- DOM ----
 
@@ -157,6 +159,7 @@ function connect() {
   socket.onmessage = (e) => receive(JSON.parse(e.data));
   socket.onclose = async () => {
     state.live = false;
+    if (signingOut) return;
     status();
     // Never connected: maybe not signed in.
     if (!opened && (await fetch("/api/me").then((r) => r.status === 401).catch(() => false))) return signIn();
@@ -316,11 +319,73 @@ function status() {
   s.className = `status${state.live ? " live" : ""}`;
 }
 
-function signIn() {
+/** The sign-in screen; `signedOut` just after signing out: say so, and come back to the inbox, not the old page's hash. */
+function signIn({ signedOut = false } = {}) {
+  const next = signedOut ? location.pathname : location.pathname + location.hash;
+  // Not "Reconnecting…": nothing will until they sign in.
+  $("status").replaceChildren("Signed out");
+  $("status").className = "status";
+  for (const a of document.querySelectorAll("[data-nav]")) a.classList.remove("on");
   $("main").replaceChildren(h("div", { class: "signin" },
     h("h1", {}, "Sign in"),
+    signedOut && h("p", { class: "signed-out", role: "status" }, `You've signed out${state.org ? ` of ${state.org}` : ""}.`),
     h("p", { class: "muted" }, "Members of the factory's GitHub organization review and approve work here."),
-    h("p", {}, h("a", { class: "btn primary", href: `/auth/login?next=${encodeURIComponent(location.pathname + location.hash)}` }, "Sign in with GitHub"))));
+    h("p", {}, h("a", { class: "btn primary", href: `/auth/login?next=${encodeURIComponent(next)}` }, "Sign in with GitHub"))));
+}
+
+// ---- the account menu ----
+
+/** The header's avatar and its menu, from state.me (hidden while signed out). */
+function account() {
+  const me = state.me;
+  $("account").hidden = !me;
+  if (!me) return closeAccountMenu();
+  const label = me.name || me.login;
+  const avatar = $("account-avatar");
+  if (avatar.dataset.for !== `${me.login} ${me.avatarUrl ?? ""}`) {
+    avatar.dataset.for = `${me.login} ${me.avatarUrl ?? ""}`;
+    const initial = () => avatar.replaceChildren(label[0].toUpperCase());
+    if (me.avatarUrl) {
+      const img = h("img", { src: me.avatarUrl, alt: "", width: 28, height: 28 });
+      img.onerror = initial;
+      avatar.replaceChildren(img);
+    } else initial();
+  }
+  $("account-btn").setAttribute("aria-label", `Account: ${label}`);
+  $("account-btn").title = label;
+  $("account-name").textContent = label;
+  $("account-login").textContent = `@${me.login}`;
+}
+function openAccountMenu() {
+  $("account-menu").hidden = false;
+  $("account-btn").setAttribute("aria-expanded", "true");
+  $("account-signout").focus();
+}
+function closeAccountMenu(refocus = false) {
+  if ($("account-menu").hidden) return;
+  $("account-menu").hidden = true;
+  $("account-btn").setAttribute("aria-expanded", "false");
+  if (refocus) $("account-btn").focus();
+}
+$("account-btn").addEventListener("click", () => ($("account-menu").hidden ? openAccountMenu() : closeAccountMenu()));
+$("account-signout").addEventListener("click", () => signOut());
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("account-menu").hidden) closeAccountMenu(true); });
+document.addEventListener("pointerdown", (e) => { if (!$("account").contains(e.target)) closeAccountMenu(); });
+
+/** Sign out: the server clears the session cookie; the feed closes without reconnecting and what it sent is forgotten. */
+async function signOut() {
+  closeAccountMenu();
+  const ok = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).then((r) => r.ok).catch(() => false);
+  if (!ok) return toast("Couldn't sign out; try again.");
+  signingOut = true;
+  socket?.close();
+  Object.assign(state, { me: null, members: [], tasks: new Map(), notes: [], machines: [], goals: [], live: false, diffs: new Map(), checkLogs: new Map(), older: older() });
+  account();
+  $("nav-settings").hidden = true;
+  for (const id of ["inbox-count", "machines-count"]) $(id).textContent = "";
+  document.title = "Maple Factory";
+  history.replaceState(null, "", location.pathname);
+  signIn({ signedOut: true });
 }
 
 // ---- what needs you ----
@@ -402,6 +467,7 @@ function render() {
   const r = route();
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === r.nav);
   $("nav-settings").hidden = state.me.role !== "admin";
+  account();
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   $("machines-count").textContent = online() || "";

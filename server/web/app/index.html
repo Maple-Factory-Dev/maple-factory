@@ -20,6 +20,13 @@
   </nav>
   <span class="status" id="status" title="Connection">Connecting…</span>
   <a class="btn primary small new" href="#/new" title="New task" aria-label="New task"><span class="new-icon" data-icon="plus"></span><span class="new-label">New task</span></a>
+  <div class="account" id="account" hidden>
+    <button type="button" class="account-btn" id="account-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" title="Account" aria-label="Account"><span class="account-avatar" id="account-avatar"></span></button>
+    <div class="account-menu" id="account-menu" role="menu" aria-labelledby="account-btn" hidden>
+      <div class="account-who" role="none"><strong id="account-name"></strong><span class="muted" id="account-login"></span></div>
+      <button type="button" class="account-item" role="menuitem" id="account-signout"><span data-icon="log-out"></span>Sign out</button>
+    </div>
+  </div>
 </header>
 <div id="update" class="update-bar" role="status" hidden>
   <span>Maple Factory was updated. Refresh to get the latest version.</span>
