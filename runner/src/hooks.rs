@@ -531,15 +531,12 @@ pub fn menu_options(lines: &[String]) -> Vec<crate::wire::PromptOption> {
     for line in lines {
         let t = line.trim().trim_start_matches(['❯', '>', '›', '│', ' ']).trim();
         let parsed = t.split_once(". ").filter(|(n, _)| !n.is_empty() && n.len() <= 2 && n.chars().all(|c| c.is_ascii_digit()));
-        match parsed {
-            Some((n, label)) => {
-                // A "1." starts a new menu: only the last one on screen counts.
-                if n == "1" {
-                    block.clear();
-                }
-                block.push((n.to_string(), label.trim().to_string()));
+        if let Some((n, label)) = parsed {
+            // A "1." starts a new menu: only the last one on screen counts.
+            if n == "1" {
+                block.clear();
             }
-            None => {}
+            block.push((n.to_string(), label.trim().to_string()));
         }
     }
     let mut out: Vec<PromptOption> = vec![];

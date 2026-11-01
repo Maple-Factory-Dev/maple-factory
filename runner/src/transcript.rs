@@ -4,7 +4,7 @@
 //! protocol/fixtures/session-events/ are the contract. Both formats are internal to their agents, so
 //! anything this doesn't know becomes an `other` event rather than an error: the stream never breaks.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::usage::parse_utc;
@@ -688,7 +688,7 @@ impl Parser {
 /// For tests and debugging: an event as the fixtures write it.
 #[allow(dead_code)]
 pub fn to_json(e: &SessionEvent) -> Value {
-    serde_json::to_value(e).unwrap_or_else(|_| json!(null))
+    serde_json::to_value(e).unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn codex_apply_patch_fills_path_and_diff() {
-        let p = json!({"type":"function_call","name":"apply_patch","call_id":"c1","arguments":"{\"input\":\"*** Begin Patch\\n*** Update File: src/a.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}"});
+        let p = serde_json::json!({"type":"function_call","name":"apply_patch","call_id":"c1","arguments":"{\"input\":\"*** Begin Patch\\n*** Update File: src/a.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}"});
         let call = codex_tool_call(&p, None);
         assert_eq!(call.path.as_deref(), Some("src/a.rs"));
         assert!(call.diff.unwrap().contains("+new"));
