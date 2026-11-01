@@ -620,7 +620,7 @@ import Foundation
                 notice = error.message
             }
         case .pushDevices:
-            // The phone apps' push registrations; the Mac doesn't list them.
+            // Phone push devices: only the iPhone and Android apps register or list them.
             break
         case .unknown:
             break
