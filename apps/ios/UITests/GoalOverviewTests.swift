@@ -87,6 +87,27 @@ final class GoalOverviewTests: XCTestCase {
         snap("goal-overview-dark-2")
     }
 
+    /// MF-339: the Goals list shows each goal as prefix chip, name and counts, with no lead avatar;
+    /// the lead is still on the goal's overview.
+    func testGoalsListRowHasNoLeadAvatar() {
+        XCUIDevice.shared.appearance = .light
+        app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goalOverview.landedOpen", "NO"]
+        app.launch()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Mobile app")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "no Mobile app row in the Goals list")
+        XCTAssertTrue(row.label.contains("open ·"), "the row lost its open/done counts: \(row.label)")
+        XCTAssertFalse(row.label.contains("andrea"), "the row still shows the lead: \(row.label)")
+        XCTAssertFalse(row.descendants(matching: .any)["avatar-andrea"].exists, "the row still has the lead's avatar")
+        XCTAssertFalse(app.descendants(matching: .any)["avatar-andrea"].exists, "a goal row still has the lead's avatar")
+        snap("goals-list-no-lead")
+
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10), "the row didn't open the goal")
+        XCTAssertTrue(app.descendants(matching: .any)["avatar-andrea"].waitForExistence(timeout: 5), "the overview lost the lead's avatar")
+        XCTAssertTrue(app.staticTexts["andrea"].exists, "the overview lost the lead's name")
+        snap("goal-overview-lead")
+    }
+
     private func snap(_ name: String) {
         sleep(1)
         let shot = app.screenshot()

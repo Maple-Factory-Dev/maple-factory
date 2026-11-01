@@ -127,6 +127,9 @@ struct Avatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(login)
+        .accessibilityIdentifier("avatar-\(login)")
     }
 
     private var initial: some View {
