@@ -823,6 +823,36 @@ mod tests {
     }
 
     #[test]
+    fn hello_and_capabilities_round_trip() {
+        use crate::wire::RunnerMessage;
+        let hello = RunnerMessage::Hello {
+            runner_id: "mbp".into(),
+            hostname: "mbp".into(),
+            os: "macos".into(),
+            arch: "aarch64".into(),
+            version: "0.1.0".into(),
+            sessions: vec![],
+            ended: vec![],
+            capabilities: Some(vec!["arm64".into(), "macos".into(), "xcode".into()]),
+        };
+        let json = serde_json::to_value(Outbound::Wire(hello.clone())).unwrap();
+        assert_eq!(json["type"], "hello");
+        assert_eq!(json["capabilities"], serde_json::json!(["arm64", "macos", "xcode"]));
+        assert_eq!(serde_json::from_value::<RunnerMessage>(json).unwrap(), hello);
+
+        let caps = RunnerMessage::Capabilities { capabilities: vec!["docker".into(), "linux".into()] };
+        let json = serde_json::to_value(Outbound::Wire(caps.clone())).unwrap();
+        assert_eq!(json, serde_json::json!({ "type": "capabilities", "capabilities": ["docker", "linux"] }));
+        assert_eq!(serde_json::from_value::<RunnerMessage>(json).unwrap(), caps);
+
+        // An older runner's hello has no capabilities.
+        let old: RunnerMessage =
+            serde_json::from_str(r#"{"type":"hello","runnerId":"a","hostname":"a","os":"linux","arch":"x86_64","version":"0.1.0","sessions":[],"ended":[]}"#)
+                .unwrap();
+        assert!(matches!(old, RunnerMessage::Hello { capabilities: None, .. }));
+    }
+
+    #[test]
     fn session_open_takes_unattended() {
         let msg: Inbound = serde_json::from_str(
             r#"{"type":"session.open","id":"6f1c6a7e-2f6b-4d55-9b1a-2b7f0f6f0a11","agent":"claude","cwd":"","cols":80,"rows":24,"unattended":{"mode":"project","commands":["npm test"]}}"#,

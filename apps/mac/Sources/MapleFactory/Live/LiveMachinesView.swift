@@ -221,6 +221,7 @@ struct LiveMachineCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            MachineTagChips(machine: machine)
             if client.updatePhase(machine) != .current {
                 RunnerUpdateRow(machine: machine, canUpdate: isMine || client.me?.role == "admin") { showingChanges = true }
                     .padding(.horizontal, 10)

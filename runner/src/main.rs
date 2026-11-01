@@ -3,6 +3,7 @@ mod agent_login;
 mod agents;
 mod attachments;
 mod autoupdate;
+mod capabilities;
 mod config;
 mod costs;
 mod draft;
@@ -686,6 +687,8 @@ async fn run(args: Args) -> Result<()> {
     // Notified when an agent signs in, so health checks the agents again straight away.
     let recheck = Arc::new(tokio::sync::Notify::new());
     tokio::spawn(health::report(sessions.clone(), recheck.clone()));
+    capabilities::init().await;
+    tokio::spawn(capabilities::report(sessions.clone()));
     tokio::spawn(git::report(sessions.clone()));
     tokio::spawn(ports::report(sessions.clone()));
     tokio::spawn(worktrees::report(sessions.clone()));
@@ -781,6 +784,7 @@ async fn connect(
         version: update::VERSION.to_string(),
         sessions: live,
         ended: exits,
+        capabilities: Some(capabilities::current()),
     });
     sink.send(Message::text(serde_json::to_string(&hello)?)).await?;
     mcp::set_connected(true);

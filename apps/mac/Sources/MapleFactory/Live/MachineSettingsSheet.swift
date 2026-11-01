@@ -21,6 +21,10 @@ struct MachineSettingsSheet: View {
     /// Caps per agent account, for the agents that report usage here.
     @State private var agentCaps: [String: Wire.AgentCap]
     @State private var teamOnly: Bool
+    /// Detected tags the owner hides, and the ones they added by hand.
+    @State private var hiddenTags: Set<String>
+    @State private var extraTags: [String]
+    @State private var newTag = ""
     @State private var pauseFor: PauseLength = .untilResumed
     @State private var handOff = true
 
@@ -65,6 +69,8 @@ struct MachineSettingsSheet: View {
         }
         _agentCaps = State(initialValue: caps)
         _teamOnly = State(initialValue: s?.capsTeamOnly ?? false)
+        _hiddenTags = State(initialValue: Set(s?.hiddenTags ?? []))
+        _extraTags = State(initialValue: s?.extraTags ?? [])
     }
 
     var body: some View {
@@ -138,6 +144,8 @@ struct MachineSettingsSheet: View {
             }
             summary
 
+            tagsGroup
+
             group("Pause") {
                 Toggle("Pause factory work here", isOn: $paused)
                     .toggleStyle(.switch).controlSize(.small)
@@ -209,12 +217,77 @@ struct MachineSettingsSheet: View {
             sessionCap: sessionCap,
             weeklyCap: weeklyCap,
             agentCaps: machine.usage.isEmpty ? machine.settings?.agentCaps : machine.usage.compactMap { agentCaps[$0.agent] },
-            capsTeamOnly: teamOnly
+            capsTeamOnly: teamOnly,
+            extraTags: extraTags,
+            hiddenTags: hiddenTags.sorted()
         )
         // Only a full pause hands teammates' tasks off; under a new-work pause they finish here.
         let pausing = paused && pauseScope == .everything && !wasFullyPaused
         client.send(.machineSettings(.init(machine: machine.id, settings: settings, handOff: pausing && handOff && !teammates.isEmpty)))
         if embedded { withAnimation { saved = true } } else { dismiss() }
+    }
+
+    /// What the runner detected (click to hide or show one), and the owner's own tags.
+    private var tagsGroup: some View {
+        group("Tags") {
+            let detected = machine.capabilities ?? []
+            if detected.isEmpty {
+                Text("Nothing detected yet: its runner reports tags once it's updated and online.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textFaint)
+            } else {
+                FlowLayout(spacing: 5) {
+                    ForEach(detected, id: \.self) { tag in
+                        Button {
+                            if hiddenTags.contains(tag) { hiddenTags.remove(tag) } else { hiddenTags.insert(tag) }
+                        } label: {
+                            MachineTagChip(tag: tag, hidden: hiddenTags.contains(tag))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if !extraTags.isEmpty {
+                FlowLayout(spacing: 5) {
+                    ForEach(extraTags, id: \.self) { tag in
+                        HStack(spacing: 3) {
+                            MachineTagChip(tag: tag, added: true)
+                            Button { extraTags.removeAll { $0 == tag } } label: {
+                                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.textMuted)
+                            .help("Remove \(tag)")
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("Add a tag, e.g. gpu or big-disk", text: $newTag)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit(addTag)
+                Button("Add", action: addTag).disabled(cleanedTag == nil)
+            }
+            Text("Click a detected tag to hide it. Your own tags use lowercase letters, digits and dashes.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var cleanedTag: String? {
+        let tag = newTag.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !tag.isEmpty, tag.count <= 32, extraTags.count < 20,
+              tag.first.map({ $0.isLetter || $0.isNumber }) == true,
+              tag.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" }) else { return nil }
+        return tag
+    }
+
+    private func addTag() {
+        guard let tag = cleanedTag else { return }
+        if !extraTags.contains(tag) { extraTags.append(tag) }
+        newTag = ""
     }
 
     /// CPU load per core, from the machine's last health report.

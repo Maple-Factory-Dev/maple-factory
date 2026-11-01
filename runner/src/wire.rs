@@ -934,6 +934,12 @@ pub struct MachineSettings {
     /// Caps stop only teammates' work; the owner's own tasks keep running past them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caps_team_only: Option<bool>,
+    /// Tags the owner added by hand (e.g. gpu, big-disk): lowercase a-z, 0-9 and dashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_tags: Option<Vec<String>>,
+    /// Detected capabilities the owner hides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_tags: Option<Vec<String>>,
 }
 
 /// A machine as the apps see it.
@@ -965,6 +971,12 @@ pub struct Machine {
     /// The runner update someone asked for, while it runs and for a few minutes after.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<MachineUpdate>,
+    /// What the runner last detected it can do (macos, linux, arm64, xcode, ios-simulator, playwright, docker, node…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
+    /// The tags shown: capabilities minus the owner's hidden ones, plus their extra ones, sorted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// A runner update in progress on a machine, or how it just ended.
@@ -2894,6 +2906,15 @@ pub enum RunnerMessage {
         /// Sessions that ended since the last connection, causes included.
         #[serde(default)]
         ended: Vec<SessionEnd>,
+        /// Capability tags it detected (macos, linux, arm64, x86_64, xcode, ios-simulator, playwright, docker, node).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<Vec<String>>,
+    },
+    /// The capability tags changed since the hello (detected again on a timer or a health recheck).
+    #[serde(rename = "capabilities")]
+    Capabilities {
+        #[serde(default)]
+        capabilities: Vec<String>,
     },
     #[serde(rename = "health")]
     Health {
