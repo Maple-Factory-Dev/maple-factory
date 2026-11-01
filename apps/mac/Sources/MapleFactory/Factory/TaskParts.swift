@@ -821,14 +821,9 @@ struct ReviewActions: View {
                 }
             }
 
-            if let hold = state.mergeHold(for: task), task.state == .reviewing, !factoryMerging {
-                MergeHoldNotice(hold: hold)
-                DecisionButtons {
-                    PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: false) {}
-                        .help("Merges into \(hold.repo) are on hold")
-                    RequestChangesButton(action: onRequestChanges)
-                }
-            } else if let mergeAt = countdown(gate) {
+            let hold = task.state == .reviewing && !factoryMerging ? state.mergeHold(for: task) : nil
+            if let hold { MergeHoldNotice(hold: hold) }
+            if hold == nil, let mergeAt = countdown(gate) {
                 CountdownMergeButton(number: task.pr?.number ?? 0, mergeAt: mergeAt, from: task.mergeFrom,
                                      holding: state.isInFlight(task.id, .holdMerge),
                                      hold: { state.holdMerge(task.id) }, mergeNow: { state.merge(task.id) })
@@ -870,10 +865,11 @@ struct ReviewActions: View {
                             state.approveChanges(task.id)
                         }
                     } else {
-                        PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: gate.canMerge,
+                        PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: gate.canMerge && hold == nil,
                                       busy: merging, busyTitle: "Merging #\(task.pr?.number ?? 0)…") {
                             state.merge(task.id)
                         }
+                        .help(hold.map { "Merges into \($0.repo) are on hold" } ?? "")
                     }
                     RequestChangesButton(enabled: !approving && !merging, action: onRequestChanges)
                 }
@@ -885,7 +881,7 @@ struct ReviewActions: View {
                 }
             }
 
-            if state.mergeHold(for: task) != nil, task.state == .reviewing {
+            if hold != nil {
                 EmptyView()
             } else if let mergeAt = countdown(gate) {
                 TimelineView(.everySecond(until: mergeAt)) { context in
