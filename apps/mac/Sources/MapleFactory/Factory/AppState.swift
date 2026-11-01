@@ -2675,7 +2675,7 @@ final class AppState {
                     if let client, let machine = client.machines.first(where: { $0.id == parts[1] }) { client.perform(client.runnerAction(machine), on: machine); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-            case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
+            case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1], userInfo: ["all": parts.count > 2 && parts[2] == "all"])
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // `reviews:low:1`: the policy's final reviews for a level; `green:<id>` proves all its Done when items and passes its checks.

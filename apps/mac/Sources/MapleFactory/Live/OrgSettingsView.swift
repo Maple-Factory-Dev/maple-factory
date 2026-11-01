@@ -668,7 +668,7 @@ struct RunnerSettings: View {
                             .disabled(nickname.trimmingCharacters(in: .whitespaces) == machine.name)
                     }
                 }
-                .runnerChanges(machine, isPresented: $showingChanges)
+                .runnerChanges(machine, canUpdate: false, isPresented: $showingChanges)
                 .onAppear { nickname = machine.name == machine.id ? "" : machine.name }
                 .onDisappear { client.clearRunnerCheck(machine.id) }
                 MachineSettingsSheet(machine: machine, embedded: true)

@@ -239,7 +239,7 @@ struct LiveMachineCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
         )
         .opacity(machine.online || client.updatePhase(machine).isBusy ? 1 : 0.8)
-        .runnerChanges(machine, isPresented: $showingChanges)
+        .runnerChanges(machine, canUpdate: isMine || client.me?.role == "admin", isPresented: $showingChanges)
     }
 
     private var header: some View {
