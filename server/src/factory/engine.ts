@@ -12,6 +12,7 @@ import type {
   Classification, McpConnector, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
+import { cleanTags } from "../machines.ts";
 import { isAttachmentKey, pullAttachments } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
@@ -529,7 +530,13 @@ export class Engine {
         if (s.teamSlots > (s.capacity ?? this.capacity(machine))) fail("It can't lend more slots than it has.");
         // Only a full pause hands teammates' tasks off: under a new-work pause they finish here.
         const pausing = s.paused && !s.pauseNew && this.pause(machine.id) !== "all";
-        this.store.saveSettings(machine.id, { ...s, loadCap: Math.min(1, Math.max(0.1, s.loadCap)) });
+        // Tags: an app that doesn't know them sends none, so the saved ones are kept.
+        const saved = this.store.settings(machine.id);
+        const extra = s.extraTags === undefined ? { tags: saved.extraTags ?? [] } : cleanTags(s.extraTags, "Tags");
+        if ("error" in extra) fail(extra.error);
+        const hidden = s.hiddenTags === undefined ? { tags: saved.hiddenTags ?? [] } : cleanTags(s.hiddenTags, "Hidden tags");
+        if ("error" in hidden) fail(hidden.error);
+        this.store.saveSettings(machine.id, { ...s, loadCap: Math.min(1, Math.max(0.1, s.loadCap)), extraTags: extra.tags, hiddenTags: hidden.tags });
         await audit(this.env, who, "machine.settings", machine.id, s);
         if (pausing && msg.handOff) {
           // Teammates' tasks shouldn't wait out the owner's pause: their work goes to other machines.

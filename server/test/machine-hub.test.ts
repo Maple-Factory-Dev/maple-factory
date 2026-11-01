@@ -19,6 +19,8 @@ registerHooks({
 });
 (globalThis as Record<string, unknown>).WebSocketRequestResponsePair = class { constructor(public request: string, public response: string) {} };
 const { MachineHub } = await import("../src/machine-hub.ts");
+const { machineRow, offlineMachine } = await import("../src/machines.ts");
+import { d1 } from "./d1.ts";
 
 function storage() {
   const data = new Map<string, unknown>();
@@ -33,13 +35,13 @@ function storage() {
   };
 }
 
-function hub(opts: { fail?: boolean; revoked?: string[] } = {}) {
+function hub(opts: { fail?: boolean; revoked?: string[]; d1?: D1Database } = {}) {
   const store = storage();
   const posted: Machine[] = [];
   const sent: { url: string; body: unknown }[] = [];
   const db = { queries: 0, fail: opts.fail ?? false };
   const env = {
-    DB: {
+    DB: opts.d1 ?? {
       prepare: () => ({
         bind: (...logins: string[]) => ({
           async all() {
@@ -227,4 +229,24 @@ test("a runner's session.events goes to the org hub's /session-events with the m
   await (instance as unknown as { fromRunner(m: unknown): Promise<void> }).fromRunner(msg);
   assert.deepEqual(sent, [{ url: "https://org/session-events", body: { machine: "m1", msg } }]);
   assert.equal(posted.length, 0);
+});
+
+test("a hello stores its capabilities in D1, a capabilities message updates them, and the offline machine reads them back", async () => {
+  const db = d1();
+  db.sql.exec("INSERT INTO machines (id, owner, token_hash, created_at) VALUES ('mbp', 'owner', 'x', 0)");
+  const { instance, posted } = hub({ d1: db });
+  const fromRunner = (msg: unknown) => (instance as unknown as { fromRunner(m: unknown): Promise<void> }).fromRunner(msg);
+  await fromRunner({ type: "hello", runnerId: "mbp", hostname: "mbp", os: "macos", arch: "aarch64", version: "0.102.0", sessions: [], ended: [], capabilities: ["arm64", "macos", "xcode"] });
+  assert.deepEqual(posted.at(-1)?.capabilities, ["arm64", "macos", "xcode"]);
+  assert.equal((await machineRow({ DB: db } as never, "mbp"))?.capabilities, '["arm64","macos","xcode"]');
+
+  await fromRunner({ type: "capabilities", capabilities: ["arm64", "ios-simulator", "macos", "xcode"] });
+  assert.deepEqual(posted.at(-1)?.capabilities, ["arm64", "ios-simulator", "macos", "xcode"]);
+  const row = await machineRow({ DB: db } as never, "mbp");
+  assert.deepEqual(offlineMachine(row!).capabilities, ["arm64", "ios-simulator", "macos", "xcode"]);
+
+  // An older runner's hello, with none, keeps what was stored.
+  await fromRunner({ type: "hello", runnerId: "mbp", hostname: "mbp", os: "macos", arch: "aarch64", version: "0.100.0", sessions: [], ended: [] });
+  assert.deepEqual(posted.at(-1)?.capabilities, ["arm64", "ios-simulator", "macos", "xcode"]);
+  assert.deepEqual(offlineMachine((await machineRow({ DB: db } as never, "mbp"))!).capabilities, ["arm64", "ios-simulator", "macos", "xcode"]);
 });

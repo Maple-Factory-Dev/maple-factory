@@ -2,7 +2,7 @@
 
 import type { Env } from "./env.ts";
 import { revoked } from "./auth.ts";
-import type { Machine, Member } from "./wire.ts";
+import type { Machine, MachineSettings, Member } from "./wire.ts";
 import { audit, machineHub, orgHub, publicOrigin, randomCode, randomToken, sameText, sha256, text } from "./util.ts";
 
 export const MACHINE_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -19,6 +19,46 @@ export interface MachineRow {
   version: string | null;
   created_at: number;
   last_seen: number | null;
+  capabilities?: string | null;
+}
+
+/** The capability tags stored in a machine row's JSON column; none for a row from before they were reported. */
+export function parseCapabilities(column: string | null | undefined): string[] | null {
+  if (!column) return null;
+  try {
+    const tags = JSON.parse(column);
+    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The tags the apps show: what was detected minus what the owner hid, plus what they added; sorted, once each. */
+export function effectiveTags(capabilities: string[] | null | undefined, settings: Pick<MachineSettings, "extraTags" | "hiddenTags"> | null | undefined): string[] {
+  const hidden = new Set(settings?.hiddenTags ?? []);
+  const tags = new Set((capabilities ?? []).filter((t) => !hidden.has(t)));
+  for (const t of settings?.extraTags ?? []) tags.add(t);
+  return [...tags].sort();
+}
+
+const TAG = /^[a-z0-9][a-z0-9-]*$/;
+const MAX_TAGS = 20;
+const MAX_TAG_LENGTH = 32;
+
+/** An owner's tags tidied (trimmed, lowercase, once each), or why they're refused. */
+export function cleanTags(tags: unknown, what: string): { tags: string[] } | { error: string } {
+  if (tags == null) return { tags: [] };
+  if (!Array.isArray(tags)) return { error: `${what} must be a list of tags.` };
+  const out = new Set<string>();
+  for (const raw of tags) {
+    const tag = String(raw ?? "").trim().toLowerCase();
+    if (!tag) continue;
+    if (tag.length > MAX_TAG_LENGTH) return { error: `“${tag}” is too long: tags are at most ${MAX_TAG_LENGTH} characters.` };
+    if (!TAG.test(tag)) return { error: `“${tag}” isn't a tag: use lowercase letters, digits and dashes, e.g. gpu or big-disk.` };
+    out.add(tag);
+  }
+  if (out.size > MAX_TAGS) return { error: `A machine takes at most ${MAX_TAGS} ${what.toLowerCase()}.` };
+  return { tags: [...out] };
 }
 
 /** A machine as the apps see it when its hub has nothing live to add. */
@@ -34,6 +74,7 @@ export function offlineMachine(row: MachineRow): Machine {
     health: null,
     sessions: [],
     usage: [],
+    capabilities: parseCapabilities(row.capabilities),
   };
 }
 

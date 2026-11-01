@@ -6,7 +6,7 @@ import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task, type RunnerMessage_SessionEvents } from "./wire.ts";
-import { machineRows, offlineMachine } from "./machines.ts";
+import { effectiveTags, machineRows, offlineMachine, parseCapabilities } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
@@ -536,14 +536,20 @@ export class OrgHub extends DurableObject<Env> {
     // Removed machines drop out here: D1 is the list, the hubs only add what's live.
     return rows.map((row) => {
       const reported = live.get(`m:${row.id}`);
-      return this.withSettings(reported ? { ...reported, name: row.name ?? row.id, owner: row.owner } : offlineMachine(row));
+      return this.withSettings(reported ? { ...reported, name: row.name ?? row.id, owner: row.owner, capabilities: reported.capabilities ?? parseCapabilities(row.capabilities) } : offlineMachine(row));
     });
   }
 
   /** A machine with the factory's settings for it, and the capacity they come to. */
   private withSettings(machine: Machine): Machine {
     const settings = this.store.settings(machine.id);
-    return { ...machine, settings, capacity: this.engine.capacity({ ...machine, settings }), update: shown(this.updates.get(machine.id)) };
+    return {
+      ...machine,
+      settings,
+      capacity: this.engine.capacity({ ...machine, settings }),
+      update: shown(this.updates.get(machine.id)),
+      tags: effectiveTags(machine.capabilities, settings),
+    };
   }
 
   private async members(): Promise<Member[]> {

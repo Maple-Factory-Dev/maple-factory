@@ -9,7 +9,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.ts";
 import type { Activity, LiveSession, Machine, RunnerMessage, ServerToRunner, SessionEnd, SessionShare } from "./wire.ts";
 import { revoked, type MemberRow } from "./auth.ts";
-import { offlineMachine, machineRow } from "./machines.ts";
+import { offlineMachine, machineRow, parseCapabilities } from "./machines.ts";
 import { orgHub } from "./util.ts";
 
 interface Viewer {
@@ -309,8 +309,10 @@ export class MachineHub extends DurableObject<Env> {
     switch (msg.type) {
       case "hello": {
         const row = await machineRow(this.env, msg.runnerId);
-        await this.env.DB.prepare("UPDATE machines SET hostname = ?, os = ?, arch = ?, version = ?, last_seen = ? WHERE id = ?")
-          .bind(msg.hostname, msg.os, msg.arch, msg.version, Date.now(), msg.runnerId).run();
+        // An older runner sends no capabilities: keep what was stored.
+        const capabilities = msg.capabilities ?? machine.capabilities ?? parseCapabilities(row?.capabilities);
+        await this.env.DB.prepare("UPDATE machines SET hostname = ?, os = ?, arch = ?, version = ?, last_seen = ?, capabilities = ? WHERE id = ?")
+          .bind(msg.hostname, msg.os, msg.arch, msg.version, Date.now(), capabilities ? JSON.stringify(capabilities) : null, msg.runnerId).run();
         for (const end of msg.ended) await this.recordEnd(msg.runnerId, end, machine.sessions);
         // A session the hub had that the runner neither lists nor reports ended went with a restart (the
         // runner's record of recent ends lives in memory): end it, so the factory can start its task again.
@@ -334,7 +336,13 @@ export class MachineHub extends DurableObject<Env> {
           version: msg.version,
           os: msg.os,
           sessions: msg.sessions,
+          capabilities,
         });
+        return;
+      }
+      case "capabilities": {
+        await this.env.DB.prepare("UPDATE machines SET capabilities = ? WHERE id = ?").bind(JSON.stringify(msg.capabilities), machine.id).run();
+        await this.publish({ ...machine, capabilities: msg.capabilities });
         return;
       }
       case "health":
