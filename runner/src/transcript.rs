@@ -230,7 +230,16 @@ pub fn parse_claude(line: &str, st: &mut ClaudeState) -> Vec<SessionEvent> {
                     if let Some(cmd) = slash_command(text) {
                         out.push(SessionEvent::User { id, session, seq: 0, at, agent: agent.into(), text: cmd });
                     } else if text.starts_with("[Request interrupted") {
-                        out.push(SessionEvent::Turn { id, session, seq: 0, at, agent: agent.into(), state: TurnState::Interrupted, usage: None, message: None });
+                        out.push(SessionEvent::Turn {
+                            id,
+                            session,
+                            seq: 0,
+                            at,
+                            agent: agent.into(),
+                            state: TurnState::Interrupted,
+                            usage: None,
+                            message: None,
+                        });
                     } else if !(text.starts_with("<local-command-") || text.starts_with("<command-message>")) {
                         out.push(SessionEvent::User { id, session, seq: 0, at, agent: agent.into(), text: text.clone() });
                     }
@@ -240,7 +249,16 @@ pub fn parse_claude(line: &str, st: &mut ClaudeState) -> Vec<SessionEvent> {
                     if !texts.is_empty() && !meta {
                         let text = texts.join("\n");
                         if text.starts_with("[Request interrupted") {
-                            out.push(SessionEvent::Turn { id: id.clone(), session, seq: 0, at, agent: agent.into(), state: TurnState::Interrupted, usage: None, message: None });
+                            out.push(SessionEvent::Turn {
+                                id: id.clone(),
+                                session,
+                                seq: 0,
+                                at,
+                                agent: agent.into(),
+                                state: TurnState::Interrupted,
+                                usage: None,
+                                message: None,
+                            });
                         } else {
                             out.push(SessionEvent::User { id: id.clone(), session, seq: 0, at, agent: agent.into(), text });
                         }
@@ -249,7 +267,17 @@ pub fn parse_claude(line: &str, st: &mut ClaudeState) -> Vec<SessionEvent> {
                         let call_id = s(b, "tool_use_id").unwrap_or_default().to_string();
                         let (text, truncated) = cut(&content_text(b.get("content").unwrap_or(&Value::Null)), RESULT_LIMIT);
                         let ok = !b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
-                        out.push(SessionEvent::ToolResult { id: format!("{id}:{call_id}"), session, seq: 0, at, agent: agent.into(), call_id, ok, text, truncated });
+                        out.push(SessionEvent::ToolResult {
+                            id: format!("{id}:{call_id}"),
+                            session,
+                            seq: 0,
+                            at,
+                            agent: agent.into(),
+                            call_id,
+                            ok,
+                            text,
+                            truncated,
+                        });
                     }
                 }
                 _ => {}
@@ -271,7 +299,15 @@ pub fn parse_claude(line: &str, st: &mut ClaudeState) -> Vec<SessionEvent> {
                     Some("text") => {
                         let text = s(b, "text").unwrap_or("");
                         if !text.trim().is_empty() {
-                            out.push(SessionEvent::Assistant { id: block_id(n), session, seq: 0, at, agent: agent.into(), markdown: text.into(), model: model.clone() });
+                            out.push(SessionEvent::Assistant {
+                                id: block_id(n),
+                                session,
+                                seq: 0,
+                                at,
+                                agent: agent.into(),
+                                markdown: text.into(),
+                                model: model.clone(),
+                            });
                         }
                     }
                     Some("thinking") => {
@@ -379,7 +415,9 @@ fn patch_of(text: &str) -> Option<String> {
 }
 
 fn patch_path(patch: &str) -> Option<String> {
-    patch.lines().find_map(|l| ["*** Update File: ", "*** Add File: ", "*** Delete File: "].iter().find_map(|p| l.strip_prefix(p)).map(|p| p.trim().to_string()))
+    patch
+        .lines()
+        .find_map(|l| ["*** Update File: ", "*** Add File: ", "*** Delete File: "].iter().find_map(|p| l.strip_prefix(p)).map(|p| p.trim().to_string()))
 }
 
 /// The `cmd` an exec script passes to `tools.exec_command({cmd: "…"})`.
@@ -429,7 +467,8 @@ fn codex_tool_call(p: &Value, cwd: Option<&str>) -> ToolCallInfo {
     } else {
         exec_cmd(&raw)
     };
-    let summary = summary.or_else(|| path.clone()).or_else(|| raw.lines().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())).unwrap_or_else(|| name.clone());
+    let summary =
+        summary.or_else(|| path.clone()).or_else(|| raw.lines().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())).unwrap_or_else(|| name.clone());
     ToolCallInfo {
         call_id: s(p, "call_id").unwrap_or_default().to_string(),
         name,
@@ -497,7 +536,16 @@ pub fn parse_codex(line: &str, st: &mut CodexState) -> Vec<SessionEvent> {
     if ty == "session_meta" || CODEX_SKIP.contains(&ty) {
         return vec![];
     }
-    let turn = |state: TurnState, usage: Option<TurnUsage>, message: Option<String>| SessionEvent::Turn { id: ordinal_id(), session, seq: 0, at, agent: agent.into(), state, usage, message };
+    let turn = |state: TurnState, usage: Option<TurnUsage>, message: Option<String>| SessionEvent::Turn {
+        id: ordinal_id(),
+        session,
+        seq: 0,
+        at,
+        agent: agent.into(),
+        state,
+        usage,
+        message,
+    };
     match ty {
         "event_msg" => match pty {
             "task_started" => {
@@ -506,7 +554,14 @@ pub fn parse_codex(line: &str, st: &mut CodexState) -> Vec<SessionEvent> {
             }
             "token_count" => {
                 if let Some(last) = p.get("info").and_then(|i| i.get("last_token_usage")) {
-                    let t = st.usage.get_or_insert(TurnUsage { input_tokens: 0, output_tokens: 0, cache_read_tokens: None, cache_write_tokens: None, cost_usd: None, duration_ms: None });
+                    let t = st.usage.get_or_insert(TurnUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
+                        cost_usd: None,
+                        duration_ms: None,
+                    });
                     t.input_tokens += u(last, "input_tokens");
                     t.output_tokens += u(last, "output_tokens");
                     t.cache_read_tokens = nonzero(t.cache_read_tokens.unwrap_or(0) + u(last, "cached_input_tokens"));
@@ -543,7 +598,11 @@ pub fn parse_codex(line: &str, st: &mut CodexState) -> Vec<SessionEvent> {
                 }
             }
             "reasoning" => {
-                let text = p.get("summary").and_then(Value::as_array).map(|a| a.iter().filter_map(|b| s(b, "text")).collect::<Vec<_>>().join("\n\n")).unwrap_or_default();
+                let text = p
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|b| s(b, "text")).collect::<Vec<_>>().join("\n\n"))
+                    .unwrap_or_default();
                 if text.trim().is_empty() { vec![] } else { vec![SessionEvent::Thinking { id: item_id(), session, seq: 0, at, agent: agent.into(), text }] }
             }
             "custom_tool_call" | "function_call" | "local_shell_call" => {
@@ -563,6 +622,7 @@ pub fn parse_codex(line: &str, st: &mut CodexState) -> Vec<SessionEvent> {
 
 // ---- Events in general ----
 
+#[cfg(test)]
 pub fn id_of(e: &SessionEvent) -> &str {
     match e {
         SessionEvent::User { id, .. }
@@ -694,7 +754,11 @@ mod tests {
         assert!(matches!(&events[2], SessionEvent::User { text, .. } if text == "hello"));
 
         let mut st = CodexState::new(session);
-        let lines = [r#"{"timestamp":"2026-10-25T03:15:49.044Z","ordinal":3,"type":"response_item","payload":{"type":"teleport","id":"tp_1"}}"#, "not json", r#"{"timestamp":"2026-10-25T03:15:49.046Z","ordinal":4,"type":"event_msg","payload":{"type":"task_started"}}"#];
+        let lines = [
+            r#"{"timestamp":"2026-10-25T03:15:49.044Z","ordinal":3,"type":"response_item","payload":{"type":"teleport","id":"tp_1"}}"#,
+            "not json",
+            r#"{"timestamp":"2026-10-25T03:15:49.046Z","ordinal":4,"type":"event_msg","payload":{"type":"task_started"}}"#,
+        ];
         let events: Vec<_> = lines.iter().flat_map(|l| parse_codex(l, &mut st)).collect();
         assert_eq!(events.len(), 3);
         assert!(matches!(&events[0], SessionEvent::Other { kind, id, .. } if kind == "response_item/teleport" && id == "tp_1"));

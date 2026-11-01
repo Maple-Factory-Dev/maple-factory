@@ -449,6 +449,31 @@ pub enum Inbound {
     SessionKill { id: Uuid },
     #[serde(rename = "session.replay")]
     SessionReplay { id: Uuid, nonce: String },
+    /// Start (or with `stop`, end) the session's native-view events (events.rs). The server already
+    /// checked the viewer may watch the terminal; the runner trusts its own server connection.
+    #[serde(rename = "session.events.subscribe")]
+    SessionEventsSubscribe {
+        id: Uuid,
+        #[serde(default)]
+        since: Option<u64>,
+        #[serde(default)]
+        epoch: Option<String>,
+        #[serde(default)]
+        limit: Option<u32>,
+        #[serde(default)]
+        stop: Option<bool>,
+        #[serde(default)]
+        nonce: Option<String>,
+    },
+    /// Type into a session from the native composer. The server already checked the viewer may
+    /// type (the terminal share's `canType` rule); no second check here.
+    #[serde(rename = "session.input")]
+    SessionInput {
+        id: Uuid,
+        input: crate::wire::SessionInput,
+        #[serde(default)]
+        by: Option<String>,
+    },
     /// Check for a newer runner now and install it (answered with `runner.update_status`).
     /// With `version`, install only that release (the one the person was shown).
     #[serde(rename = "runner.update")]
@@ -989,6 +1014,15 @@ mod tests {
         assert!(matches!(msg, Inbound::McpResponse { req_id, result: Some(_), error: None } if req_id == "r1"));
         let msg: Inbound = serde_json::from_str(r#"{"type":"mcp.response","reqId":"r2","error":"no"}"#).unwrap();
         assert!(matches!(msg, Inbound::McpResponse { result: None, error: Some(e), .. } if e == "no"));
+        let msg: Inbound =
+            serde_json::from_str(r#"{"type":"session.events.subscribe","id":"6f1c6a7e-2f6b-4d55-9b1a-2b7f0f6f0a11","since":4,"epoch":"e1","nonce":"n1"}"#)
+                .unwrap();
+        assert!(matches!(msg, Inbound::SessionEventsSubscribe { since: Some(4), nonce: Some(_), stop: None, .. }));
+        let msg: Inbound = serde_json::from_str(
+            r#"{"type":"session.input","id":"6f1c6a7e-2f6b-4d55-9b1a-2b7f0f6f0a11","input":{"type":"key","promptId":"prompt-1","key":"1"}}"#,
+        )
+        .unwrap();
+        assert!(matches!(msg, Inbound::SessionInput { input: crate::wire::SessionInput::Key { .. }, .. }));
         let msg: Inbound = serde_json::from_str(r#"{"type":"session.capture","reqId":"c1","id":"6f1c6a7e-2f6b-4d55-9b1a-2b7f0f6f0a11","lines":50}"#).unwrap();
         assert!(matches!(msg, Inbound::SessionCapture { lines: 50, .. }));
         let out = serde_json::to_value(Outbound::SessionCaptured { req_id: "c1".into(), text: "hi".into(), error: None }).unwrap();

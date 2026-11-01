@@ -958,6 +958,18 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
             tokio::spawn(async move { sessions.kill(id).await });
         }
         Inbound::SessionReplay { id, nonce } => sessions.replay(id, nonce),
+        Inbound::SessionEventsSubscribe { id, since, epoch, limit, stop, nonce } => {
+            sessions.subscribe_events(id, since, epoch, limit, stop.unwrap_or(false), nonce);
+        }
+        Inbound::SessionInput { id, input, by } => {
+            let sessions = sessions.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sessions.send_input(id, input).await {
+                    tracing::warn!("session {id}: input from {} refused: {e:#}", by.as_deref().unwrap_or("someone"));
+                    sessions.emit(Outbound::SessionError { id, message: format!("{e:#}") });
+                }
+            });
+        }
         Inbound::RunnerUpdate { version } => {
             info!("the hub asked for an update to {}", version.as_deref().unwrap_or("the latest release"));
             updater.requested(sessions, version);

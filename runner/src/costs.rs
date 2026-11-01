@@ -215,7 +215,7 @@ fn scan_codex(info: &SessionInfo) {
 
 /// The first rollout file (in start order) for a session in `cwd` that started after `started_at`.
 /// Two sessions in one worktree (a builder, then a reviewer) each get their own.
-fn find_rollout(dir: &Path, cwd: &Path, started_at: u64) -> Option<PathBuf> {
+pub fn find_rollout(dir: &Path, cwd: &Path, started_at: u64) -> Option<PathBuf> {
     let since = started_at.saturating_sub(START_SLACK);
     let mut found: Vec<(u64, PathBuf)> = newest_rollouts_since(dir, since)
         .into_iter()

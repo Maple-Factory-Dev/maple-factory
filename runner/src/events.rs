@@ -5,11 +5,11 @@
 
 use std::collections::VecDeque;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use uuid::Uuid;
 
-use crate::transcript::{Parser, id_of, seq_of, set_seq};
+use crate::transcript::{Parser, seq_of, set_seq};
 use crate::wire::{SessionEvent, SessionEventCursor};
 
 /// Events kept for backfill.
@@ -40,6 +40,10 @@ pub struct EventStream {
     /// The prompt showing now (its event id), so a `key` input can be checked against it.
     open_prompt: Option<String>,
     prompts: u64,
+    /// Whether a turn is running (a `turn running` went out since the last done/interrupted/error).
+    pub running: bool,
+    /// The tool call the last PreToolUse named, for the permission prompt that may follow it.
+    pub last_call: Option<String>,
 }
 
 fn inode(meta: &std::fs::Metadata) -> Option<u64> {
@@ -72,11 +76,9 @@ impl EventStream {
             subscribers: 0,
             open_prompt: None,
             prompts: 0,
+            running: false,
+            last_call: None,
         }
-    }
-
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
     }
 
     pub fn next_seq(&self) -> u64 {
@@ -84,10 +86,7 @@ impl EventStream {
     }
 
     pub fn cursor(&self) -> SessionEventCursor {
-        SessionEventCursor {
-            seq: self.next_seq.saturating_sub(1),
-            token: self.path.as_ref().map(|p| format!("{}:{}", p.display(), self.read_offset())),
-        }
+        SessionEventCursor { seq: self.next_seq.saturating_sub(1), token: self.path.as_ref().map(|p| format!("{}:{}", p.display(), self.read_offset())) }
     }
 
     /// Follows the agent to a new transcript (after `/clear`, `/compact`, a resume). Seq keeps
@@ -114,6 +113,9 @@ impl EventStream {
         for mut e in events {
             set_seq(&mut e, self.next_seq);
             self.next_seq += 1;
+            if let SessionEvent::Turn { state, .. } = &e {
+                self.running = *state == crate::wire::TurnState::Running;
+            }
             if let SessionEvent::ToolResult { call_id, .. } = &e
                 && self.open_prompt.as_deref().is_some_and(|p| p.ends_with(&format!(":{call_id}")))
             {
@@ -244,20 +246,19 @@ impl EventStream {
             None => vec![],
         }
     }
-
-    /// Whether an event with this id is already held (hook events can repeat).
-    pub fn holds(&self, id: &str) -> bool {
-        self.ring.iter().rev().take(50).any(|e| id_of(e) == id)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcript::id_of;
     use std::io::Write;
+    use std::path::Path;
 
     fn user(uuid: &str, text: &str) -> String {
-        format!("{{\"type\":\"user\",\"uuid\":\"{uuid}\",\"timestamp\":\"2026-10-16T19:17:31.317Z\",\"message\":{{\"role\":\"user\",\"content\":\"{text}\"}}}}\n")
+        format!(
+            "{{\"type\":\"user\",\"uuid\":\"{uuid}\",\"timestamp\":\"2026-10-16T19:17:31.317Z\",\"message\":{{\"role\":\"user\",\"content\":\"{text}\"}}}}\n"
+        )
     }
 
     fn texts(events: &[SessionEvent]) -> Vec<String> {
@@ -358,7 +359,10 @@ mod tests {
         let opened = s.open_prompt(prompt, Some("toolu_1"));
         assert_eq!(texts(&opened), ["1:prompt-1:toolu_1"]);
         assert_eq!(s.prompt_showing(), Some("prompt-1:toolu_1"));
-        append(&path, "{\"type\":\"user\",\"uuid\":\"r\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"ok\"}]}}\n");
+        append(
+            &path,
+            "{\"type\":\"user\",\"uuid\":\"r\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"ok\"}]}}\n",
+        );
         assert_eq!(texts(&s.poll()), ["2:r:toolu_1", "3:prompt-1:toolu_1:resolved"]);
         assert_eq!(s.prompt_showing(), None);
     }

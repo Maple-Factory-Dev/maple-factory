@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+mod native;
+
 use crate::agents;
 use crate::ends;
 use crate::hooks::{self, Activity, Hooks};
@@ -118,6 +120,8 @@ pub struct Sessions {
     ports: Arc<Mutex<HashMap<Uuid, (u16, u16)>>>,
     /// Adopted sessions whose secrets the hub has to be asked for again (`secrets::recover`).
     refetch: Arc<Mutex<Vec<crate::secrets::Pending>>>,
+    /// Native-view event streams (native.rs), made on the first subscribe or transcript path.
+    streams: Arc<Mutex<HashMap<Uuid, crate::events::EventStream>>>,
 }
 
 impl Sessions {
@@ -132,6 +136,7 @@ impl Sessions {
             hooks: Arc::new(hooks),
             ports: Arc::default(),
             refetch: Arc::default(),
+            streams: Arc::default(),
         };
         // A server that lost its socket while the runner was down still has its sessions.
         if sessions.tmux.recover_socket() {
@@ -612,6 +617,7 @@ impl Sessions {
         let _ = self.tmux.run(&["kill-session", "-t", name]).await;
         self.ports.lock().unwrap().remove(&id);
         self.requested.lock().unwrap().remove(&id);
+        self.streams.lock().unwrap().remove(&id);
         // Its shell removes its secrets file as it starts; this is for one that never did.
         remove_secrets_file(id);
         self.hooks.remove_session_mcp_config(id);
