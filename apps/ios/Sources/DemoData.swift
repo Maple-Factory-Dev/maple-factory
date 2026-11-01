@@ -21,6 +21,7 @@ enum DemoData {
             Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
             Wire.Member(login: "kit", name: "Kit Okafor", role: "member", teams: ["platform"]),
         ]
+        feed.repos = ["acme/app", "acme/push", "acme/api", "acme/web", "acme/docs"].map { Wire.OrgRepo(name: $0, defaultBranch: "main", isPrivate: true, source: .github) }
         feed.goals = [
             Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),

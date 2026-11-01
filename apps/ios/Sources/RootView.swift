@@ -27,7 +27,7 @@ struct RootView: View {
             .tag(Tab.inbox)
 
             NavigationStack(path: $goalsPath) {
-                GoalsView().withTaskDestinations()
+                GoalsView { goalsPath.append(GoalRoute(id: $0.id)) }.withTaskDestinations()
             }
             .tabItem { Label("Goals", systemImage: "flag") }
             .tag(Tab.goals)
@@ -233,8 +233,12 @@ struct InboxRow: View {
 
 struct GoalsView: View {
     @Environment(FactoryStore.self) private var store
+    /// Opens a goal just made with New goal.
+    var openGoal: (Wire.Goal) -> Void = { _ in }
     @State private var search = ""
     @State private var composing = false
+    /// `-newGoal YES` opens the New goal sheet, for screenshots.
+    @State private var creatingGoal = UserDefaults.standard.bool(forKey: "newGoal")
 
     var body: some View {
         let goals = store.feed.activeGoals.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.prefix.localizedCaseInsensitiveContains(search) }
@@ -253,9 +257,14 @@ struct GoalsView: View {
         .searchable(text: $search)
         .refreshable { await store.refresh() }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { creatingGoal = true } label: { Label("New goal", systemImage: "plus") }
+                    .accessibilityIdentifier("newGoal")
+            }
             if defaultGoal != nil { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
         }
         .sheet(isPresented: $composing) { if let goal = defaultGoal { NewTaskView(goal: goal.id) } }
+        .sheet(isPresented: $creatingGoal) { GoalEditorSheet(editing: nil) { openGoal($0) } }
     }
 
     /// Where a new task from here starts: the first goal you follow, else the first goal.
@@ -304,6 +313,8 @@ struct GoalView: View {
     @Environment(FactoryStore.self) private var store
     /// `-newTask YES` opens the New task sheet, for screenshots.
     @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
+    /// `-editGoal YES` opens the Edit goal sheet, for screenshots.
+    @State private var editingGoal = UserDefaults.standard.bool(forKey: "editGoal")
     let id: String
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .closed, .cancelled]
@@ -420,9 +431,16 @@ struct GoalView: View {
             .navigationTitle(goal.name)
             .refreshable { await store.refresh() }
             .toolbar {
+                if store.canLead(goal) {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Edit") { editingGoal = true }
+                            .accessibilityIdentifier("editGoal")
+                    }
+                }
                 if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
             }
             .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
+            .sheet(isPresented: Binding(get: { editingGoal && store.canLead(goal) }, set: { editingGoal = $0 })) { GoalEditorSheet(editing: goal) }
             // `-loadOlder YES` presses Load older once, for screenshots.
             .task { if UserDefaults.standard.bool(forKey: "loadOlder") { store.loadOlder(goal: id) } }
         } else {

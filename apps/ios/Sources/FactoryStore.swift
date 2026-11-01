@@ -32,6 +32,16 @@ final class FactoryStore {
     private(set) var stats: Wire.StatsSummary?
     /// CI check logs asked for (`task.checkLog`), keyed `<task>/<check>`. The server never broadcasts or keeps them.
     private(set) var checkLogs: [String: CheckLogLoad] = [:]
+    /// The goal sent with `goal.save` (GoalEditorSheet): waiting on the server, kept, or refused.
+    private(set) var goalSave: GoalSave?
+
+    /// A goal save's progress. While saving, the goal.updated for it (its id, or a new goal's prefix and
+    /// name) makes it `.saved`; an error makes it `.failed`, shown in the sheet rather than as a notice.
+    enum GoalSave: Equatable {
+        case saving(id: String, prefix: String, name: String)
+        case saved(id: String)
+        case failed(String)
+    }
 
     /// A check log: on its way, there, or refused (expired, or a check from outside GitHub).
     enum CheckLogLoad: Equatable {
@@ -104,6 +114,7 @@ final class FactoryStore {
         feed = FeedState()
         diffs = [:]
         stats = nil
+        goalSave = nil
         status = .signedOut
     }
 
@@ -229,6 +240,15 @@ final class FactoryStore {
             let key = String(id.dropFirst("checkLog:".count))
             if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
             return
+        }
+        if case .saving(let id, let prefix, let name) = goalSave {
+            if case .goalUpdated(let update) = message, id.isEmpty ? update.goal.prefix == prefix && update.goal.name == name : update.goal.id == id {
+                goalSave = .saved(id: update.goal.id)
+            } else if case .error(let error) = message, !(error.requestId ?? "").contains(":") {
+                // Not a task.get or a check log's: the server refusing the goal (a prefix in use).
+                goalSave = .failed(error.message)
+                return
+            }
         }
         if let notice = feed.apply(message) { self.notice = notice }
     }
@@ -508,6 +528,15 @@ final class FactoryStore {
 
     /// The goal's lead or an admin: who the server lets change its auto-merge or archive it.
     func canLead(_ goal: Wire.Goal) -> Bool { feed.canLead(goal, me: feed.me) }
+
+    /// Sends the goal as GoalEditorView.save() on the Mac does; GoalEditorSheet waits on `goalSave`.
+    func saveGoal(_ goal: Wire.Goal) {
+        goalSave = .saving(id: goal.id, prefix: goal.prefix, name: goal.name)
+        send(.goalSave(.init(goal: goal)))
+    }
+
+    /// The sheet's done with it: closed, or gave up waiting (`failure` says why).
+    func endGoalSave(failure: String? = nil) { goalSave = failure.map { .failed($0) } }
 
     /// Lets the factory auto-merge the goal's work up to `upTo`, on the record; nil takes it back.
     func acceptRisk(goal: Wire.Goal, upTo: Wire.RiskLevel?) {
@@ -800,6 +829,15 @@ final class FactoryStore {
             var acceptances = feed.acceptances.filter { $0.goal != m.goal }
             if let upTo = m.upTo { acceptances.append(.init(goal: m.goal, upTo: upTo, by: me, at: DemoData.now, note: m.note)) }
             feed.acceptances = acceptances
+        case .goalSave(let m):
+            // As goal.save does: a prefix another goal uses is refused; a new goal gets an id.
+            var goal = m.goal
+            if feed.goals.contains(where: { $0.prefix == goal.prefix && $0.id != goal.id }) {
+                apply(.error(.init(message: "Another goal already uses \(goal.prefix).")))
+                break
+            }
+            if goal.id.isEmpty { goal.id = "g-\(goal.prefix.lowercased())" }
+            apply(.goalUpdated(.init(goal: goal)))
         case .goalArchive(let m):
             guard var goal = feed.goal(m.id) else { break }
             if m.archived, m.unfinished == .cleanup || m.unfinished == .cancel {
