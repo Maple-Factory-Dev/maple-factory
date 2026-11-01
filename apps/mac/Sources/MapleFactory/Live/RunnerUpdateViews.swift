@@ -234,6 +234,10 @@ struct RunnerChangesSheet: View {
         }
         .frame(width: 560, height: 600)
         .background(Theme.editorBG)
+        // `whatsnew:<id>:all` while it's open turns Show all on.
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoOpen)) { note in
+            if note.object as? String == machine.id, note.userInfo?["all"] as? Bool == true { showAll = true }
+        }
     }
 
     private var header: some View {
