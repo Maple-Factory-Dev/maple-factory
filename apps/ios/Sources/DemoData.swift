@@ -164,6 +164,23 @@ enum DemoData {
     private static func machines() -> [Wire.Machine] {
         let gig: UInt64 = 1_073_741_824
         let agents = [Wire.AgentInstall(name: "claude", version: "2.4.1", loggedIn: true), Wire.AgentInstall(name: "codex", version: "0.61.0", loggedIn: true)]
+        // The Studio and the Mini share one Claude Code account (the Mini read it last); Kit's Air has its own.
+        // `-demoUsage none` leaves every machine without readings, for Usage's empty state.
+        let noUsage = UserDefaults.standard.string(forKey: "demoUsage") == "none"
+        func ahead(_ minutes: Double) -> UInt64 { now + UInt64(minutes * 60_000) }
+        let team = Wire.UsageAccountRef(id: "acct-team", name: "Acme team")
+        func claude(observed: UInt64) -> Wire.AgentUsage {
+            Wire.AgentUsage(agent: "claude", windows: [
+                .init(label: "5h", usedPercent: 82, windowMinutes: 300, resetsAt: ahead(48)),
+                .init(label: "7d", usedPercent: 63, windowMinutes: 10080, resetsAt: ahead(60 * 82)),
+                .init(label: "7d", usedPercent: 5, windowMinutes: 10080, resetsAt: ahead(60 * 82), name: "Fable"),
+            ], plan: "max", observedAt: observed, source: "statusline", account: team)
+        }
+        let codex = Wire.AgentUsage(agent: "codex", windows: [.init(label: "7d", usedPercent: 8, windowMinutes: 10080, resetsAt: ahead(60 * 166))],
+                                    plan: "prolite", observedAt: ago(12), source: "codex", resetCredits: 2, account: .init(id: "acct-sam-codex", name: "Sam · personal"))
+        let kit = Wire.AgentUsage(agent: "claude", windows: [.init(label: "5h", usedPercent: 31, windowMinutes: 300, resetsAt: ahead(20)),
+                                                             .init(label: "7d", usedPercent: 44, windowMinutes: 10080, resetsAt: ahead(60 * 40))],
+                                  plan: "pro", observedAt: ago(60 * 5), source: "statusline", account: .init(id: "acct-kit", name: "Kit · personal"))
         return [
             Wire.Machine(id: "m-studio", name: "Andrea's Mac Studio", owner: me, online: true, version: "0.65.0", os: "macOS 27.0",
                          health: .init(cpu: 0.42, cores: 24, load1: 6.2, memUsed: 41 * gig, memTotal: 96 * gig, diskUsed: 610 * gig, diskTotal: 2000 * gig, uptime: 86400 * 3, agents: agents),
@@ -171,18 +188,19 @@ enum DemoData {
                                           activity: .init(state: .waiting, message: "Asked a question", at: ago(9))),
                                     .init(session: .init(id: "s2", agent: "claude", cwd: "~/maple/worktrees/app-16", startedAt: ago(6), taskId: "APP-16"),
                                           activity: .init(state: .waiting, message: "Claude needs your permission to use Bash", question: permissionQuestion, at: ago(2)))],
-                         capacity: 4),
+                         capacity: 4, usage: noUsage ? [] : [claude(observed: ago(9))]),
             Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
                          health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),
                          sessions: [.init(session: .init(id: "s3", agent: "codex", cwd: "~/maple/worktrees/bil-7", startedAt: ago(50), taskId: "BIL-7"),
                                           activity: .init(state: .waiting, message: "Raised a hand", at: ago(35)),
                                           shares: [.init(login: me, canType: false, by: "sam", at: ago(40))])],
-                         capacity: 2),
+                         capacity: 2, usage: noUsage ? [] : [claude(observed: ago(4)), codex]),
             Wire.Machine(id: "m-air", name: "Kit's MacBook Air", owner: "kit", online: false, lastSeen: ago(60 * 5), version: "0.65.0", os: "macOS 27.0",
                          sessions: [.init(session: .init(id: "s4", agent: "claude", cwd: "~/maple/worktrees/bil-8", startedAt: ago(320), taskId: "BIL-8"),
                                           activity: .init(state: .working, message: "Lost contact", at: ago(300))),
                                     .init(session: .init(id: "s5", agent: "claude", cwd: "~/maple/worktrees/api-34", startedAt: ago(330), taskId: "API-34"),
-                                          activity: .init(state: .working, message: "Lost contact", at: ago(300)))]),
+                                          activity: .init(state: .working, message: "Lost contact", at: ago(300)))],
+                         usage: noUsage ? [] : [kit]),
         ]
     }
 
