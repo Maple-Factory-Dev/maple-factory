@@ -77,6 +77,9 @@ struct RiskPolicy {
     var taskMinutes = 60
     /// Dollars of agent work a task gets before it asks for a hand; nil is no cost limit.
     var taskCostUsd: Double?
+    /// Past its budget, a task raises a hand (false), or hands off: pushes its work, files a draft follow-up for
+    /// a person to review and reinvest in, and is cancelled (true).
+    var handOffOverBudget = false
     /// The reviewer grades each built change against this prompt; it can raise the risk and ask for a person's review.
     var classifierEnabled = false
     var classifierPrompt = ""

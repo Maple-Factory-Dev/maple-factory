@@ -24,6 +24,7 @@ export const DEFAULT_POLICY: RiskPolicy = {
   scoutItems: 3,
   taskMinutes: DEFAULT_TASK_MINUTES,
   taskCostUsd: null,
+  overBudget: "ask",
 };
 
 const ORDER: RiskLevel[] = ["low", "medium", "high"];
@@ -38,6 +39,8 @@ export interface Assessment {
   approvals: number;
   reviews: number;
   autoMerge: boolean;
+  /// The risk classifier asked for a person to review it.
+  humanReview: boolean;
   /// Set when a goal's acceptance is what lets it merge without people.
   accepted: boolean;
 }
@@ -123,6 +126,7 @@ export function assess(task: Task, policy: RiskPolicy, acceptance: RiskAcceptanc
     reviews: accepted ? 0 : Math.max(policy.finalReviews[level] ?? 1, human ? 1 : 0),
     // Off for the whole org beats both the level's checkbox and a goal's acceptance; so does the classifier asking for a person.
     autoMerge: !human && policy.autoMerges !== false && (accepted || (policy.autoMerge[level] ?? false)),
+    humanReview: human,
     accepted,
   };
 }
@@ -134,6 +138,7 @@ export function validPolicy(p: RiskPolicy): string | null {
     return "A task's time budget is 5 to 1440 minutes, or 0 for none.";
   }
   if (p.taskCostUsd != null && !(Number.isFinite(p.taskCostUsd) && p.taskCostUsd >= 0)) return "A task's cost budget can't be below $0.";
+  if (p.overBudget != null && !OVER_BUDGET_MODES.includes(p.overBudget as OverBudgetMode)) return "A task over its budget either asks or hands off.";
   for (const level of ORDER) {
     if (!(p.planApprovals[level] >= 0) || !(p.finalReviews[level] >= 0)) return `Say how many approvals and reviews ${level} risk needs.`;
   }
@@ -149,6 +154,11 @@ export function validPolicy(p: RiskPolicy): string | null {
   }
   return null;
 }
+
+/** What a task past its budget does: raise a hand (ask), or push its work and file a follow-up (handOff). */
+export type OverBudgetMode = "ask" | "handOff";
+const OVER_BUDGET_MODES: OverBudgetMode[] = ["ask", "handOff"];
+export const overBudgetMode = (policy: RiskPolicy): OverBudgetMode => (policy.overBudget === "handOff" ? "handOff" : "ask");
 
 /** What a task has used of its budget (policy.taskMinutes and taskCostUsd), from its sessions and their costs. */
 export interface BudgetUse {

@@ -6,6 +6,18 @@ struct AgentAvatar: View {
     var online = false
     /// Online only on a phone: a small phone badge stands in for the green dot.
     var mobile = false
+    /// Circle everywhere by default; the sidebar's People rows use a rounded square.
+    var shape: AvatarShape = .circle
+
+    enum AvatarShape: Equatable { case circle, roundedSquare }
+    /// Corner radius of the rounded-square shape, as a share of the avatar's size.
+    static let squareCornerRatio: CGFloat = 0.28
+
+    private var clip: AnyShape {
+        shape == .roundedSquare
+            ? AnyShape(RoundedRectangle(cornerRadius: size * Self.squareCornerRatio, style: .continuous))
+            : AnyShape(Circle())
+    }
 
     /// People show initials (or their GitHub picture over them); bots show a robot in their role's color.
     enum Face: Equatable { case initials, robot }
@@ -13,7 +25,7 @@ struct AgentAvatar: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(agent.color.opacity(agent.isHuman ? 1 : 0.24))
+            clip.fill(agent.color.opacity(agent.isHuman ? 1 : 0.24))
             if Self.face(for: agent) == .initials {
                 Text(agent.initials)
                     .font(.system(size: size * 0.42, weight: .semibold))
@@ -24,7 +36,7 @@ struct AgentAvatar: View {
                     } placeholder: {
                         Color.clear
                     }
-                    .clipShape(Circle())
+                    .clipShape(clip)
                 }
             } else {
                 RobotFace(color: agent.color, size: size, online: online)

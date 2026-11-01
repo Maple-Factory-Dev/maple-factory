@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
-/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage.
+/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage; `-activity YES` opens Activity.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
 /// terminal on Machines.
 struct RootView: View {
@@ -42,7 +42,10 @@ struct RootView: View {
         }
         .overlay(alignment: .top) { NoticeBanner() }
         .onAppear {
-            if UserDefaults.standard.bool(forKey: "usage") {
+            if UserDefaults.standard.bool(forKey: "activity") {
+                tab = .inbox
+                inboxPath.append(ActivityRoute())
+            } else if UserDefaults.standard.bool(forKey: "usage") {
                 tab = .settings
                 settingsPath.append(UsageRoute())
             } else if let id = UserDefaults.standard.string(forKey: "task"), store.feed.task(id) != nil {
@@ -91,6 +94,7 @@ extension View {
         navigationDestination(for: TaskRoute.self) { TaskDetailView(id: $0.id) }
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
             .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
+            .navigationDestination(for: ActivityRoute.self) { _ in ActivityView() }
     }
 }
 
@@ -156,17 +160,25 @@ struct InboxView: View {
 
     private var entries: [InboxEntry] {
         store.feed.inbox(for: store.me).filter { entry in
-            (!mineOnly || entry.assignee == store.me)
-                && (search.isEmpty || matches(entry))
+            !mineOnly || entry.assignee == store.me
         }
     }
 
-    private func matches(_ entry: InboxEntry) -> Bool {
-        let task = store.feed.task(entry.task)
-        return [entry.task, entry.message, task?.title ?? ""].contains { $0.localizedCaseInsensitiveContains(search) }
+    var body: some View {
+        Group { if search.isEmpty { list } else { SearchResults(query: search) } }
+            .navigationTitle("Inbox")
+            .searchable(text: $search, prompt: "Tasks and goals")
+            .refreshable { await store.refresh() }
+            .overlay { if !store.feed.hasSnapshot { ProgressView() } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(value: ActivityRoute()) { Label("Activity", systemImage: "clock.arrow.circlepath") }
+                        .accessibilityIdentifier("inbox.activity")
+                }
+            }
     }
 
-    var body: some View {
+    private var list: some View {
         List {
             Section {
                 ConnectionBar()
@@ -198,10 +210,6 @@ struct InboxView: View {
                 }
             }
         }
-        .navigationTitle("Inbox")
-        .searchable(text: $search, prompt: "Tasks, people, messages")
-        .refreshable { await store.refresh() }
-        .overlay { if !store.feed.hasSnapshot { ProgressView() } }
     }
 }
 
@@ -241,20 +249,9 @@ struct GoalsView: View {
     @State private var creatingGoal = UserDefaults.standard.bool(forKey: "newGoal")
 
     var body: some View {
-        let goals = store.feed.activeGoals.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.prefix.localizedCaseInsensitiveContains(search) }
-        let following = goals.filter { store.feed.following($0) }
-        let others = goals.filter { !store.feed.following($0) }
-        List {
-            Section { ConnectionBar() }.listRowBackground(Color.clear)
-            if !following.isEmpty {
-                Section("Following") { ForEach(following) { GoalRow(goal: $0) } }
-            }
-            if !others.isEmpty {
-                Section("Other goals") { ForEach(others) { GoalRow(goal: $0) } }
-            }
-        }
+        Group { if search.isEmpty { list } else { SearchResults(query: search) } }
         .navigationTitle("Goals")
-        .searchable(text: $search)
+        .searchable(text: $search, prompt: "Tasks and goals")
         .refreshable { await store.refresh() }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -265,6 +262,21 @@ struct GoalsView: View {
         }
         .sheet(isPresented: $composing) { if let goal = defaultGoal { NewTaskView(goal: goal.id) } }
         .sheet(isPresented: $creatingGoal) { GoalEditorSheet(editing: nil) { openGoal($0) } }
+    }
+
+    private var list: some View {
+        let goals = store.feed.activeGoals
+        let following = goals.filter { store.feed.following($0) }
+        let others = goals.filter { !store.feed.following($0) }
+        return List {
+            Section { ConnectionBar() }.listRowBackground(Color.clear)
+            if !following.isEmpty {
+                Section("Following") { ForEach(following) { GoalRow(goal: $0) } }
+            }
+            if !others.isEmpty {
+                Section("Other goals") { ForEach(others) { GoalRow(goal: $0) } }
+            }
+        }
     }
 
     /// Where a new task from here starts: the first goal you follow, else the first goal.

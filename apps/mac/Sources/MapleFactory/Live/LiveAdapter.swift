@@ -325,6 +325,7 @@ import SwiftUI
         policy.scoutItems = p.scoutItems.map(Int.init) ?? 3
         policy.taskMinutes = p.taskMinutes.map(Int.init) ?? 60
         policy.taskCostUsd = p.taskCostUsd
+        policy.handOffOverBudget = p.overBudget == "handOff"
         policy.classifierEnabled = p.classifier?.enabled ?? false
         policy.classifierPrompt = p.classifier?.prompt ?? ""
         return policy
@@ -342,6 +343,7 @@ import SwiftUI
             scoutItems: UInt32(policy.scoutItems),
             taskMinutes: UInt32(max(0, policy.taskMinutes)),
             taskCostUsd: policy.taskCostUsd,
+            overBudget: policy.handOffOverBudget ? "handOff" : "ask",
             classifier: policy.classifierEnabled || !policy.classifierPrompt.isEmpty
                 ? Wire.RiskClassifier(enabled: policy.classifierEnabled, prompt: policy.classifierPrompt) : nil
         )

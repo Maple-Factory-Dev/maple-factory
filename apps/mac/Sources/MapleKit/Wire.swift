@@ -2310,6 +2310,8 @@ public enum Wire {
         public var paused: Bool
         /// When a pause ends on its own; none: until resumed.
         public var pausedUntil: UInt64?
+        /// With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review.
+        public var pauseNew: Bool?
         /// Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.
         public var sessionCap: Double?
         /// The same for its weekly window.
@@ -2319,13 +2321,14 @@ public enum Wire {
         /// Caps stop only teammates' work; the owner's own tasks keep running past them.
         public var capsTeamOnly: Bool?
 
-        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil) {
+        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, pauseNew: Bool? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil) {
             self.capacity = capacity
             self.teamSlots = teamSlots
             self.lendIdle = lendIdle
             self.loadCap = loadCap
             self.paused = paused
             self.pausedUntil = pausedUntil
+            self.pauseNew = pauseNew
             self.sessionCap = sessionCap
             self.weeklyCap = weeklyCap
             self.agentCaps = agentCaps
@@ -3143,6 +3146,25 @@ public enum Wire {
         }
     }
 
+    /// A hold on merges into one repo (an incident freeze across every goal): the factory starts no merges into it until someone lifts it.
+    public struct MergeHold: Codable, Hashable, Sendable {
+        /// GitHub owner/name.
+        public var repo: String
+        /// Why, shown on every held task's merge card.
+        public var reason: String
+        /// Who put it on.
+        public var by: String
+        /// When (ms).
+        public var at: UInt64
+
+        public init(repo: String, reason: String, by: String, at: UInt64) {
+            self.repo = repo
+            self.reason = reason
+            self.by = by
+            self.at = at
+        }
+    }
+
     /// A newer maple-server than the factory runs, and how this factory gets it.
     public struct ServerUpdate: Codable, Hashable, Sendable {
         public var version: String
@@ -3604,10 +3626,12 @@ public enum Wire {
         public var taskMinutes: UInt32?
         /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
         public var taskCostUsd: Double?
+        /// What a task past its budget does: "ask" raises a hand for a person; "handOff" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask.
+        public var overBudget: String?
         /// The optional risk classifier. None: off.
         public var classifier: RiskClassifier?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, classifier: RiskClassifier? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, overBudget: String? = nil, classifier: RiskClassifier? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -3619,6 +3643,7 @@ public enum Wire {
             self.scoutItems = scoutItems
             self.taskMinutes = taskMinutes
             self.taskCostUsd = taskCostUsd
+            self.overBudget = overBudget
             self.classifier = classifier
         }
 
@@ -3635,6 +3660,7 @@ public enum Wire {
             scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
             taskMinutes = try c.decodeIfPresent(UInt32.self, forKey: .taskMinutes)
             taskCostUsd = try c.decodeIfPresent(Double.self, forKey: .taskCostUsd)
+            overBudget = try c.decodeIfPresent(String.self, forKey: .overBudget)
             classifier = try c.decodeIfPresent(RiskClassifier.self, forKey: .classifier)
         }
     }
@@ -4706,6 +4732,58 @@ public enum Wire {
         }
     }
 
+    /// A merge a person made, and why the factory didn't make it.
+    public struct StatsManualMergeRow: Codable, Hashable, Sendable {
+        public var task: String
+        public var title: String
+        public var at: UInt64
+        /// Who merged it; none for a merge made on GitHub.
+        public var by: String?
+        /// autoMergeOff, classifier, risk, held, mergedFirst, github or unknown.
+        public var reason: String
+        /// Its risk level, when that's the reason.
+        public var level: String?
+        /// Change requests and review requests people sent while it was in review; 0 means merged as is.
+        public var changes: UInt32
+
+        public init(task: String, title: String, at: UInt64, by: String? = nil, reason: String, level: String? = nil, changes: UInt32) {
+            self.task = task
+            self.title = title
+            self.at = at
+            self.by = by
+            self.reason = reason
+            self.level = level
+            self.changes = changes
+        }
+    }
+
+    /// The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes.
+    public struct StatsManualMerges: Codable, Hashable, Sendable {
+        public var total: UInt32
+        public var asIs: UInt32
+        public var withChanges: UInt32
+        public var byReason: [StatsCount]
+        /// Newest first, up to 20.
+        public var recent: [StatsManualMergeRow]
+
+        public init(total: UInt32, asIs: UInt32, withChanges: UInt32, byReason: [StatsCount] = [], recent: [StatsManualMergeRow] = []) {
+            self.total = total
+            self.asIs = asIs
+            self.withChanges = withChanges
+            self.byReason = byReason
+            self.recent = recent
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            total = try c.decode(UInt32.self, forKey: .total)
+            asIs = try c.decode(UInt32.self, forKey: .asIs)
+            withChanges = try c.decode(UInt32.self, forKey: .withChanges)
+            byReason = try c.decodeIfPresent([StatsCount].self, forKey: .byReason) ?? []
+            recent = try c.decodeIfPresent([StatsManualMergeRow].self, forKey: .recent) ?? []
+        }
+    }
+
     /// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
     public struct GoalTally: Codable, Hashable, Sendable {
         public var goal: String
@@ -4837,8 +4915,10 @@ public enum Wire {
         public var costByAgent: [StatsCostRow]
         /// The findings breakdown; none from a server older than it.
         public var findings: StatsFindings?
+        /// Merges people made, by reason; none from a server older than it.
+        public var manualMerges: StatsManualMerges?
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil, manualMerges: StatsManualMerges? = nil) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -4859,6 +4939,7 @@ public enum Wire {
             self.costByRole = costByRole
             self.costByAgent = costByAgent
             self.findings = findings
+            self.manualMerges = manualMerges
         }
 
         public init(from decoder: Decoder) throws {
@@ -4883,6 +4964,7 @@ public enum Wire {
             costByRole = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByRole) ?? []
             costByAgent = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByAgent) ?? []
             findings = try c.decodeIfPresent(StatsFindings.self, forKey: .findings)
+            manualMerges = try c.decodeIfPresent(StatsManualMerges.self, forKey: .manualMerges)
         }
     }
 
@@ -6823,6 +6905,28 @@ public enum Wire {
         }
     }
 
+    /// Any member: hold merges into a repo across every goal (an incident freeze). Auto-merge countdowns stop and a person's Merge is refused until it's lifted.
+    public struct ClientMessageReposHoldMerges: Codable, Hashable, Sendable {
+        /// GitHub owner/name, one of the factory's repos.
+        public var repo: String
+        /// Why, at most 200 characters.
+        public var reason: String
+
+        public init(repo: String, reason: String) {
+            self.repo = repo
+            self.reason = reason
+        }
+    }
+
+    /// Any member: lift a repo's merge hold. Its reviewing tasks are checked again, so the ones waiting merge on their own.
+    public struct ClientMessageReposReleaseMerges: Codable, Hashable, Sendable {
+        public var repo: String
+
+        public init(repo: String) {
+            self.repo = repo
+        }
+    }
+
     /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     public struct ClientMessageReposScriptsSet: Codable, Hashable, Sendable {
         public var repo: String
@@ -7382,6 +7486,8 @@ public enum Wire {
         case reposOwnersSet(ClientMessageReposOwnersSet)
         case secretsSet(ClientMessageSecretsSet)
         case secretsDelete(ClientMessageSecretsDelete)
+        case reposHoldMerges(ClientMessageReposHoldMerges)
+        case reposReleaseMerges(ClientMessageReposReleaseMerges)
         case reposScriptsSet(ClientMessageReposScriptsSet)
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
@@ -7478,6 +7584,8 @@ public enum Wire {
             case "repos.owners.set": self = .reposOwnersSet(try ClientMessageReposOwnersSet(from: decoder))
             case "secrets.set": self = .secretsSet(try ClientMessageSecretsSet(from: decoder))
             case "secrets.delete": self = .secretsDelete(try ClientMessageSecretsDelete(from: decoder))
+            case "repos.holdMerges": self = .reposHoldMerges(try ClientMessageReposHoldMerges(from: decoder))
+            case "repos.releaseMerges": self = .reposReleaseMerges(try ClientMessageReposReleaseMerges(from: decoder))
             case "repos.scripts.set": self = .reposScriptsSet(try ClientMessageReposScriptsSet(from: decoder))
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
@@ -7672,6 +7780,12 @@ public enum Wire {
             case .secretsDelete(let body):
                 try c.encode("secrets.delete", forKey: .type)
                 try body.encode(to: encoder)
+            case .reposHoldMerges(let body):
+                try c.encode("repos.holdMerges", forKey: .type)
+                try body.encode(to: encoder)
+            case .reposReleaseMerges(let body):
+                try c.encode("repos.releaseMerges", forKey: .type)
+                try body.encode(to: encoder)
             case .reposScriptsSet(let body):
                 try c.encode("repos.scripts.set", forKey: .type)
                 try body.encode(to: encoder)
@@ -7820,6 +7934,8 @@ public enum Wire {
         public var repos: [OrgRepo]
         /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
         public var repoOwners: [String]?
+        /// The repos whose merges are on hold. None: none, or an older server.
+        public var mergeHolds: [MergeHold]?
         /// The factory's GitHub App. None: no app, or an older server.
         public var githubApp: GitHubAppInfo?
         /// Every repo's secrets, names and who changed them only.
@@ -7848,7 +7964,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -7870,6 +7986,7 @@ public enum Wire {
             self.intake = intake
             self.repos = repos
             self.repoOwners = repoOwners
+            self.mergeHolds = mergeHolds
             self.githubApp = githubApp
             self.secrets = secrets
             self.scripts = scripts
@@ -7909,6 +8026,7 @@ public enum Wire {
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
+            mergeHolds = try c.decodeIfPresent([MergeHold].self, forKey: .mergeHolds)
             githubApp = try c.decodeIfPresent(GitHubAppInfo.self, forKey: .githubApp)
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
@@ -8198,6 +8316,20 @@ public enum Wire {
         }
     }
 
+    /// Every merge hold again, after one was put on or lifted.
+    public struct ServerToClientMergeHoldsUpdated: Codable, Hashable, Sendable {
+        public var holds: [MergeHold]
+
+        public init(holds: [MergeHold] = []) {
+            self.holds = holds
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            holds = try c.decodeIfPresent([MergeHold].self, forKey: .holds) ?? []
+        }
+    }
+
     /// Every repo's secrets again (names only), after one changed.
     public struct ServerToClientSecretsUpdated: Codable, Hashable, Sendable {
         public var secrets: [RepoSecret]
@@ -8400,6 +8532,7 @@ public enum Wire {
         case iconUpdated(ServerToClientIconUpdated)
         case nameUpdated(ServerToClientNameUpdated)
         case reposUpdated(ServerToClientReposUpdated)
+        case mergeHoldsUpdated(ServerToClientMergeHoldsUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
         case githubStatus(ServerToClientGithubStatus)
@@ -8446,6 +8579,7 @@ public enum Wire {
             case "icon.updated": self = .iconUpdated(try ServerToClientIconUpdated(from: decoder))
             case "name.updated": self = .nameUpdated(try ServerToClientNameUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
+            case "mergeHolds.updated": self = .mergeHoldsUpdated(try ServerToClientMergeHoldsUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
             case "github.status": self = .githubStatus(try ServerToClientGithubStatus(from: decoder))
@@ -8542,6 +8676,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .reposUpdated(let body):
                 try c.encode("repos.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .mergeHoldsUpdated(let body):
+                try c.encode("mergeHolds.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .secretsUpdated(let body):
                 try c.encode("secrets.updated", forKey: .type)

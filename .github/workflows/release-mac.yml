@@ -1,0 +1,274 @@
+# Releases Maple Factory.app the way a hand release does (RELEASING.md): swift build and swift test, then
+# apps/mac/scripts/release.mjs new / build / notarize / dmg / sign / appcast / publish, one stage per step.
+# Only once the live appcast lists the new version first does it commit apps/mac/releases/<v> and
+# version.json to main as "Mac app <v> released: …" and push the mac-v<v> tag on that commit.
+# RELEASING.md ("In CI") has the inputs and the secrets it reads.
+name: Release the Mac app
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release (blank = patch + 1 of apps/mac/version.json)
+        type: string
+        default: ""
+      channel:
+        description: Appcast channel (a beta is tagged <sparkle:channel>beta</sparkle:channel>)
+        type: choice
+        options: [beta, stable]
+        default: beta
+      notes:
+        description: The release notes' markdown (blank = Added/Changed/Fixed from the commits since the last mac-v tag)
+        type: string
+        default: ""
+      ref:
+        description: The commit to build (blank = main); a runner release's sha, so the bundled runner is that one
+        type: string
+        default: ""
+  workflow_call:
+    # Callers pass `secrets: inherit`, and release-runner.yml's `sha` output as `ref` when both run in one round.
+    inputs:
+      version:
+        type: string
+        default: ""
+      channel:
+        type: string
+        default: beta
+      notes:
+        type: string
+        default: ""
+      ref:
+        type: string
+        default: ""
+    outputs:
+      version:
+        value: ${{ jobs.release.outputs.version }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-mac
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    environment: release
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      NOTES_TEXT: ${{ inputs.notes }}
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_REF: ${{ inputs.ref || 'main' }}
+      UPDATES_URL: ${{ vars.UPDATES_URL }}
+    steps:
+      - name: Check the inputs
+        run: |
+          case "$CHANNEL" in stable|beta) ;; *) echo "::error::channel is stable or beta, not '$CHANNEL'"; exit 1;; esac
+          if [ -n "$INPUT_VERSION" ] && ! [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version is <major>.<minor>.<patch>, not '$INPUT_VERSION'"; exit 1
+          fi
+          if [ -z "$UPDATES_URL" ]; then echo "::error::set the UPDATES_URL variable"; exit 1; fi
+
+      # The App may push to main past its protection, and push tags.
+      - name: Mint the release App's token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app.outputs.token }}
+          ref: ${{ inputs.ref || 'main' }}
+          fetch-depth: 0 # the mac-v tags, for the notes and the version check
+
+      - name: Git identity
+        env:
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+      - name: The version
+        id: version
+        run: |
+          # The commit step rebases onto main and pushes past its protection,
+          # so only release a commit main already has.
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::ref '${INPUT_REF}' ($(git rev-parse --short HEAD)) isn't on main; release from a commit already on main"; exit 1
+          fi
+          v="$INPUT_VERSION"
+          if [ -z "$v" ]; then
+            v=$(node -p 'const [a, b, c] = require("./apps/mac/version.json").version.split(".").map(Number); [a, b, c + 1].join(".")')
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/mac-v${v}" >/dev/null; then
+            echo "::error::mac-v${v} is already on origin; pick another version"; exit 1
+          fi
+          if [ -e "apps/mac/releases/${v}" ]; then echo "::error::apps/mac/releases/${v} already exists"; exit 1; fi
+          echo "Releasing ${v} (${CHANNEL}) from $(git log -1 --format='%h %s')"
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${v}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      # bundle.sh cargo-builds the runner it puts in Contents/Helpers.
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Import the Developer ID
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: scripts/ci/import-signing-cert.sh import
+
+      - name: "Check: swift build"
+        working-directory: apps/mac
+        run: swift build
+
+      - name: "Check: swift test"
+        working-directory: apps/mac
+        run: swift test
+
+      - name: "Stage: new"
+        run: node apps/mac/scripts/release.mjs new "$VERSION" --channel "$CHANNEL"
+
+      - name: "Stage: notes"
+        run: |
+          args=("$VERSION")
+          if [ -n "$NOTES_TEXT" ]; then
+            printf '%s\n' "$NOTES_TEXT" > "$RUNNER_TEMP/notes.md"
+            args+=(--notes-file "$RUNNER_TEMP/notes.md")
+          fi
+          node scripts/ci/mac-release-notes.mjs "${args[@]}"
+          echo "::group::apps/mac/releases/${VERSION}/notes.md"; cat "apps/mac/releases/${VERSION}/notes.md"; echo "::endgroup::"
+
+      # The tag waits for the appcast check: it goes on the commit that records this release.
+      - name: "Stage: build"
+        env:
+          SIGN_IDENTITY: ${{ vars.SIGN_IDENTITY }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$SIGN_IDENTITY" ]; then echo "::error::set the SIGN_IDENTITY variable"; exit 1; fi
+          node apps/mac/scripts/release.mjs build "$VERSION" --yes --no-tag
+
+      - name: "Stage: notarize"
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+        run: node apps/mac/scripts/release.mjs notarize "$VERSION" --yes
+
+      - name: "Stage: dmg"
+        env:
+          SIGN_IDENTITY: ${{ vars.SIGN_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+        run: node apps/mac/scripts/release.mjs dmg "$VERSION" --yes
+
+      - name: "Stage: sign"
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: node apps/mac/scripts/release.mjs sign "$VERSION" --yes
+
+      - name: "Stage: appcast"
+        run: node apps/mac/scripts/release.mjs appcast --yes
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maple-factory-${{ steps.version.outputs.version }}-dmg
+          path: apps/mac/build/updates-site/releases/${{ steps.version.outputs.version }}/Maple-Factory-${{ steps.version.outputs.version }}.dmg
+          if-no-files-found: error
+
+      - name: "Stage: publish"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: node apps/mac/scripts/release.mjs publish --yes
+
+      - name: Check the appcast lists it first
+        run: |
+          url="${UPDATES_URL%/}/appcast.xml"
+          for _ in $(seq 1 24); do
+            first=$(curl -fsS "${url}?x=${RANDOM}" | python3 -c '
+          import re, sys
+          item = re.search(r"<item>(.*?)</item>", sys.stdin.read(), re.S)
+          m = item and re.search(r"<sparkle:shortVersionString>([^<]+)<", item.group(1))
+          print(m.group(1) if m else "")' || true)
+            if [ "$first" = "$VERSION" ]; then echo "${url} lists ${VERSION} first."; exit 0; fi
+            echo "${url} lists ${first:-nothing} first so far; waiting."
+            sleep 5
+          done
+          echo "::error::${url} doesn't list ${VERSION} first after 2 minutes"
+          exit 1
+
+      - name: Commit the release and push it to main
+        id: push
+        run: |
+          first=$(python3 - "apps/mac/releases/${VERSION}/notes.md" <<'PY'
+          import re, sys
+          body = open(sys.argv[1]).read().split("\n---", 1)[-1]
+          m = re.search(r"^\s*-\s+(.+)$", body, re.M)
+          s = re.sub(r"[*_`]", "", m.group(1)).strip() if m else "a new build"
+          s = s.rstrip(".")
+          s = s[0].lower() + s[1:] if s[:1].isupper() and not s[1:2].isupper() else s
+          print(s if len(s) <= 160 else s[:157] + "...")
+          PY
+          )
+          git add "apps/mac/releases/${VERSION}" apps/mac/version.json
+          git commit -q -m "Mac app ${VERSION} released: ${first}"
+          pushed=
+          for i in 1 2 3; do
+            if git fetch -q origin && git rebase -q origin/main && git push -q origin HEAD:main; then pushed=1; break; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          if [ -z "$pushed" ]; then
+            echo "::error::${VERSION} is published (the appcast lists it) but isn't recorded on main or tagged: couldn't push the release commit after 3 tries. Commit apps/mac/releases/${VERSION} and apps/mac/version.json by hand (the maple-factory-${VERSION}-dmg artifact has the DMG) and push mac-v${VERSION}, or the next run will pick ${VERSION} again."
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Pushed $(git log -1 --format='%h %s')."
+
+      - name: Tag mac-v${{ steps.version.outputs.version }}
+        run: |
+          tag="mac-v${VERSION}"
+          git tag -a "$tag" -m "Maple Factory ${VERSION}"
+          git push -q origin "$tag"
+          echo "Pushed ${tag} at $(git rev-parse --short HEAD)."
+
+      - name: Remove the Developer ID
+        if: always()
+        run: scripts/ci/import-signing-cert.sh cleanup
+
+      - name: Job summary
+        if: always() && steps.version.outputs.version != ''
+        run: |
+          base="${UPDATES_URL%/}"
+          {
+            echo "## Maple Factory ${VERSION}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | ${VERSION} |"
+            echo "| Channel | ${CHANNEL} |"
+            echo "| Tag | \`mac-v${VERSION}\` |"
+            echo "| Commit | ${{ steps.push.outputs.sha || '(not pushed)' }} |"
+            echo "| DMG | ${base}/releases/${VERSION}/Maple-Factory-${VERSION}.dmg |"
+            echo "| Appcast | ${base}/appcast.xml |"
+          } >> "$GITHUB_STEP_SUMMARY"

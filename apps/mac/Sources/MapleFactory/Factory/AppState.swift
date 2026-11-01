@@ -89,8 +89,13 @@ final class AppState {
     /// This factory's last page has been reopened (or there was none), so a move now is the person's to remember.
     /// Until then the mock's starting goal, or the inbox a factory switch lands on, would overwrite it.
     var pageRestored = false
+    /// Which layout a goal opens on; one choice for every goal, like goalTaskFilter, kept in the
+    /// same defaults so a relaunch reopens the goal on the layout you left it on.
     var layout: GoalLayout = .board {
-        didSet { focusedTask = nil }
+        didSet {
+            focusedTask = nil
+            boardDefaults.set(layout.rawValue, forKey: "goalLayout")
+        }
     }
     /// The goal Timeline hides merged tasks until this is on; it's one choice for every goal.
     var timelineShowsMerged = AppDefaults.bool(forKey: "timelineShowsMerged") {
@@ -1626,6 +1631,12 @@ final class AppState {
         }
     }
 
+    /// The hold on merges into the task's repo (an incident freeze), live only.
+    func mergeHold(for task: FactoryTask) -> Wire.MergeHold? {
+        guard let client, isLive else { return nil }
+        return client.mergeHold(for: task.repo ?? client.goal(named: task.goal)?.repo)
+    }
+
     // MARK: Goal
 
     /// The goals `id` can move to (unarchived, not its own), each with why it can't when its goal doesn't work in the task's repo.
@@ -2382,6 +2393,8 @@ final class AppState {
         self.boardDefaults = boardDefaults
         boardHidesEmptyColumns = boardDefaults.bool(forKey: "boardHidesEmptyColumns")
         goalTaskFilter = boardDefaults.string(forKey: "goalTaskFilter").flatMap(GoalTaskFilter.init(rawValue:)) ?? .everyone
+        // Set in init, so didSet doesn't run: the `-layout` override below isn't saved.
+        layout = boardDefaults.string(forKey: "goalLayout").flatMap(GoalLayout.init(rawValue:)) ?? .board
         let defaults = AppDefaults
         // `-goaltasks mine|everyone` starts a screenshot on that filter without saving it.
         if let filter = defaults.string(forKey: "goaltasks").flatMap(GoalTaskFilter.init(argument:)) {
@@ -2572,8 +2585,10 @@ final class AppState {
             case "native": NotificationCenter.default.post(name: NativeSessionView.demo, object: Array(parts.dropFirst()).map { String($0) })
             // A press on one of the Risk policy editor's sign-off steppers (with `-window riskpolicy`):
             // `riskstep:approvals:low:-` (row approvals or reviews, a level, + or -).
+            // Follow or unfollow a goal, as its header star would: `follow:Auth overhaul:off`.
+            case "follow": setFollowing(FactoryData.goal(named: parts[1]), parts.count > 2 ? parts[2] != "off" : true)
             case "riskstep": NotificationCenter.default.post(name: RiskPolicyEditor.demoStep, object: Array(parts.dropFirst()).map { String($0) })
-            case "recurring": NotificationCenter.default.post(name: RecurringButton.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
+            case "recurring": NotificationCenter.default.post(name: RecurringSheetDemo.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
             case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
@@ -2635,6 +2650,10 @@ final class AppState {
                     policy.scoutItems = n
                     client.save(policy: policy)
                 }
+            // Risk policy › Task budget's When a task goes over picker set: `overbudget:handOff` or `overbudget:ask`.
+            case "overbudget":
+                for _ in 0..<300 where isLive && client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                policy.handOffOverBudget = parts.count > 1 && parts[1] == "handOff"
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
@@ -2727,6 +2746,10 @@ final class AppState {
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
             case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
+            // A sidebar person's hover card, by first name (`hoverperson:chris`; `none` closes it).
+            // A collapsed-rail item's tooltip, by its title (`hoverrail:andrea`; `none` hides it).
+            case "hoverrail": NotificationCenter.default.post(name: RailTooltip.demo, object: nil, userInfo: ["title": parts[1]])
+            case "hoverperson": NotificationCenter.default.post(name: PersonHover.demoHover, object: nil, userInfo: ["name": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.

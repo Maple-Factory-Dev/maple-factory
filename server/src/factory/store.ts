@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -61,6 +61,9 @@ export interface TaskPrivate {
   budgetBase?: import("./policy.ts").BudgetBase | null;
   /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
   budgetAskedAt?: number | null;
+  /** Over budget with the policy's "handOff": its work is being pushed so a follow-up draft can be filed and the
+   *  task cancelled; what its agent said in its overBudget hand (null: no hand came, the factory stepped in). */
+  budgetHandOff?: { summary: string | null } | null;
   /** The last answer a person gave its agent (to `ask`, a raised hand, or in a comment thread), since it last
    *  asked; what lets the builder `attest` Done when items for them. Cleared by a new `ask` or `raise_hand`. */
   lastAnswer?: { who: string; text: string; at: number } | null;
@@ -176,11 +179,12 @@ export class Store {
     return this.statRows("SELECT * FROM stats_events WHERE at >= ? ORDER BY at", since);
   }
 
-  /** The review rounds `tasks` had before `before`: a merge's earlier rounds, for review rounds per merge. */
+  /** The review rounds, steers and review requests `tasks` had before `before`: a merge's earlier rounds,
+   *  for review rounds per merge, and the changes people asked for, for merged as is or after changes. */
   statRoundsBefore(tasks: string[], before: number): StatEvent[] {
     if (!tasks.length) return [];
     return this.statRows(
-      "SELECT * FROM stats_events WHERE kind = 'review.round' AND at < ? AND task IN (SELECT value FROM json_each(?)) ORDER BY at",
+      "SELECT * FROM stats_events WHERE kind IN ('review.round', 'steer', 'review.requested') AND at < ? AND task IN (SELECT value FROM json_each(?)) ORDER BY at",
       before, JSON.stringify(tasks),
     );
   }
@@ -431,7 +435,7 @@ export class Store {
     const s: MachineSettings = { ...DEFAULT_SETTINGS, ...(row ? JSON.parse(row.doc) : {}) };
     // Pauses from before pausedUntil was a field were objects.
     if (typeof s.paused !== "boolean") s.paused = Boolean(s.paused);
-    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null };
+    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null, pauseNew: false };
     return s;
   }
 
@@ -647,6 +651,22 @@ export class Store {
 
   saveRepoOwners(owners: string[]) {
     this.set("repoOwners", JSON.stringify(owners));
+  }
+
+  /** Repos whose merges are on hold (an incident freeze), kept apart from the GitHub-refreshed repo list. */
+  mergeHolds(): MergeHold[] {
+    return JSON.parse(this.get("mergeHolds") ?? "[]");
+  }
+
+  saveMergeHolds(holds: MergeHold[]) {
+    this.set("mergeHolds", JSON.stringify(holds));
+  }
+
+  /** The hold on merges into `repo`, matched case-insensitively. */
+  mergeHold(repo: string | null | undefined): MergeHold | undefined {
+    if (!repo) return undefined;
+    const key = repo.toLowerCase();
+    return this.mergeHolds().find((h) => h.repo.toLowerCase() === key);
   }
 
   /** The factory's MCP connectors, secrets included: only for runners (apps get `redacted`). */

@@ -9,7 +9,7 @@ login`). With the variables below set, each one runs unattended: nothing waits o
 | `scripts/release-runner.mjs --to feed` (or `build` per target, then `publish`) | maple-runner to the feed | `runner-v<version>` |
 | `scripts/release-server.mjs --to feed` | the server bundle to the feed | `server-v<version>` |
 | `apps/mac/scripts/release.mjs ship <v> --yes` | Maple Factory.app (DMG + appcast) | `mac-v<version>` |
-| `scripts/release-site.mjs` | maplefactory.dev | `site-v<short sha>`, `site-deployed` |
+| `scripts/release-site.mjs` (in CI: deploy-site.yml, on every push to main touching `apps/site/`) | maplefactory.dev | `site-v<short sha>`, `site-deployed` |
 | `scripts/ci/import-signing-cert.sh import` / `cleanup` | puts the Developer ID in a temp keychain, and removes it | |
 
 ## Where secrets live
@@ -25,7 +25,7 @@ aren't secret and can be plain Environment variables. Nothing here is ever commi
 | `MAPLE_RELEASE_KEY_PEM` | release-runner, release-server (`scripts/feed.mjs`) | The Ed25519 release key's PKCS#8 PEM text (escaped `\n` newlines work too). Signs the feed's manifests; its public half is `RELEASE_PUBLIC_KEY` in `runner/src/update.rs` and `installer/maple.mjs`, checked before every release. | `MAPLE_RELEASE_KEY` (a path), then `~/.config/maple-factory/release-key.pem` |
 | `CLOUDFLARE_API_TOKEN` | feed uploads (`wrangler r2 object put/get`), release-server's bundle, release-site | A Cloudflare API token: Workers R2 Storage Edit (both release buckets), Workers Scripts Edit and Workers KV Storage Edit (the site), Workers Routes Edit on the maplefactory.dev zone. | `wrangler login` |
 | `CLOUDFLARE_ACCOUNT_ID` (variable) | same | The Cloudflare account. Required with the token: neither `wrangler.jsonc` names an account, and the scripts stop before any upload if the token is set without it. | `wrangler login` |
-| `RELEASE_APP_ID` (variable) | `.github/workflows/release-server.yml`, `release-runner.yml` | The ID of the GitHub App the release workflow pushes as. The App needs Contents: write on this repo and must be on `main`'s bypass list, so it can push the version bumps and the `server-v` and `runner-v` tags. | none: releases from a Mac push as you |
+| `RELEASE_APP_ID` (variable) | `.github/workflows/release-server.yml`, `release-runner.yml`, `deploy-site.yml` | The ID of the GitHub App the release workflow pushes as. The App needs Contents: write on this repo and must be on `main`'s bypass list, so it can push the version bumps and the `server-v`, `runner-v` and `site-` tags. | none: releases from a Mac push as you |
 | `RELEASE_APP_PRIVATE_KEY` | same | That App's private key (the `.pem` text). A dry run doesn't use it. | |
 | `APPLE_CERT_P12` | `scripts/ci/import-signing-cert.sh` (release-runner.yml's macOS leg) | Base64 of a `.p12` holding the "Developer ID Application" certificate and its private key. | the login keychain |
 | `APPLE_CERT_PASSWORD` | same | The `.p12`'s export password. | |
@@ -127,6 +127,42 @@ With required reviewers on `release`, each of the three jobs waits for an approv
 
 Locally, `release-runner.mjs` with no subcommand still does both halves: it tags, builds every target into
 `runner/target/release-dist` (Linux in Docker unless it's this machine's own) and publishes from there.
+
+`.github/workflows/release-mac.yml` releases the Mac app as a hand `release.mjs ship` does: Actions › Release the
+Mac app › Run workflow (or `gh workflow run release-mac.yml -f channel=beta [-f version=0.4.0] [-f notes="…"]
+[-f ref=<sha>]`), or `uses: ./.github/workflows/release-mac.yml` with `secrets: inherit`. One `macos-15` job in
+`release`, one run at a time (`release-mac`). Inputs: `version` (blank: patch + 1 of `apps/mac/version.json`),
+`channel` (`beta`, the default, or `stable`), `notes` (markdown; blank: written from the commits) and `ref` (the
+commit to build, which must already be on `main`; blank: `main`). It stops first if `ref` isn't on `main` (the
+release commit is rebased onto `main` and pushed past its protection) or `mac-v<v>` is already on origin. Then:
+
+1. imports the Developer ID (`import-signing-cert.sh` with `APPLE_CERT_P12` / `APPLE_CERT_PASSWORD`; removed again
+   at the end, pass or fail), runs `swift build` and `swift test` in `apps/mac`;
+2. `release.mjs new <v> --channel <channel>`, then `scripts/ci/mac-release-notes.mjs <v>`: the `notes` input as
+   the body, or else Added / Changed / Fixed bullets from the commit subjects since the last `mac-v` tag
+   (release commits and merges left out, `MF-123:` and `(#n)` taken off). The frontmatter stays as `new` wrote it;
+3. one step per stage, each with `--yes`: `build --no-tag` (`SIGN_IDENTITY` var, `SENTRY_AUTH_TOKEN` for the
+   dSYMs), `notarize` and `dmg` (the API key: `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`, `NOTARY_KEY`), `sign`
+   (`SPARKLE_PRIVATE_KEY`), `appcast`, and `publish` (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets,
+   `R2_ACCOUNT_ID`, `R2_BUCKET` and `UPDATES_URL` vars). The DMG is also uploaded as the `maple-factory-<v>-dmg`
+   artifact;
+4. waits up to 2 minutes for `$UPDATES_URL/appcast.xml` to list `<v>` as its first item. Only then does it commit
+   `apps/mac/releases/<v>` and `version.json` as `Mac app <v> released: <the notes' first bullet>`, push it to
+   `main` as the release App (retrying on a race) and push `mac-v<v>` on that commit.
+
+A beta still takes a `mac-v<v>` tag, like the other two. `bundle.sh` builds the runner it bundles from the tree,
+so a workflow that releases both in one round passes release-runner.yml's `sha` output as `ref`:
+`with: { ref: "${{ needs.runner.outputs.sha }}" }`.
+
+`.github/workflows/deploy-site.yml` deploys maplefactory.dev on every push to `main` that touches `apps/site/**`
+(or `release-site.mjs`, `site-pages.mjs`, the workflow itself); also Actions › Deploy maplefactory.dev › Run
+workflow (`gh workflow run deploy-site.yml`), or `uses: ./.github/workflows/deploy-site.yml` with
+`secrets: inherit`. It runs in `release` (so it waits for an approval there), one run at a time, never
+cancelling one in progress. It runs `node --check` on `worker.js`, `main.js` and `push.js` and the site's
+tests, then `release-site.mjs` with `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`: `wrangler deploy`, then
+`/` and every page changed since `site-deployed` must answer 200 and `/download/mac` 302 to a `.dmg`. Only
+then does it push `site-v<short sha>` and force-move `site-deployed` as the release App. The job summary
+lists the sha, each URL checked and the DMG it redirects to.
 
 ## Rehearsing
 

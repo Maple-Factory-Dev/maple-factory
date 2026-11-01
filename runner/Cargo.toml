@@ -1,6 +1,6 @@
 [package]
 name = "maple-runner"
-version = "0.92.0"
+version = "0.95.0"
 edition = "2024"
 
 [dependencies]

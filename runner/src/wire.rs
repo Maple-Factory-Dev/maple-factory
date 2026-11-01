@@ -919,6 +919,9 @@ pub struct MachineSettings {
     /// When a pause ends on its own; none: until resumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_until: Option<u64>,
+    /// With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_new: Option<bool>,
     /// Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_cap: Option<f64>,
@@ -1482,6 +1485,20 @@ pub struct RepoWorktreeScripts {
     pub updated_at: u64,
 }
 
+/// A hold on merges into one repo (an incident freeze across every goal): the factory starts no merges into it until someone lifts it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeHold {
+    /// GitHub owner/name.
+    pub repo: String,
+    /// Why, shown on every held task's merge card.
+    pub reason: String,
+    /// Who put it on.
+    pub by: String,
+    /// When (ms).
+    pub at: u64,
+}
+
 /// A newer maple-server than the factory runs, and how this factory gets it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1792,6 +1809,9 @@ pub struct RiskPolicy {
     /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_cost_usd: Option<f64>,
+    /// What a task past its budget does: "ask" raises a hand for a person; "handOff" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub over_budget: Option<String>,
     /// The optional risk classifier. None: off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classifier: Option<RiskClassifier>,
@@ -2481,6 +2501,39 @@ pub struct StatsFindings {
     pub recent: Vec<StatsFindingRow>,
 }
 
+/// A merge a person made, and why the factory didn't make it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsManualMergeRow {
+    pub task: String,
+    pub title: String,
+    pub at: u64,
+    /// Who merged it; none for a merge made on GitHub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// autoMergeOff, classifier, risk, held, mergedFirst, github or unknown.
+    pub reason: String,
+    /// Its risk level, when that's the reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Change requests and review requests people sent while it was in review; 0 means merged as is.
+    pub changes: u32,
+}
+
+/// The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsManualMerges {
+    pub total: u32,
+    pub as_is: u32,
+    pub with_changes: u32,
+    #[serde(default)]
+    pub by_reason: Vec<StatsCount>,
+    /// Newest first, up to 20.
+    #[serde(default)]
+    pub recent: Vec<StatsManualMergeRow>,
+}
+
 /// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2590,6 +2643,9 @@ pub struct StatsSummary {
     /// The findings breakdown; none from a server older than it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub findings: Option<StatsFindings>,
+    /// Merges people made, by reason; none from a server older than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_merges: Option<StatsManualMerges>,
 }
 
 /// One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.
@@ -3528,6 +3584,19 @@ pub enum ClientMessage {
         repo: String,
         name: String,
     },
+    /// Any member: hold merges into a repo across every goal (an incident freeze). Auto-merge countdowns stop and a person's Merge is refused until it's lifted.
+    #[serde(rename = "repos.holdMerges")]
+    ReposHoldMerges {
+        /// GitHub owner/name, one of the factory's repos.
+        repo: String,
+        /// Why, at most 200 characters.
+        reason: String,
+    },
+    /// Any member: lift a repo's merge hold. Its reviewing tasks are checked again, so the ones waiting merge on their own.
+    #[serde(rename = "repos.releaseMerges")]
+    ReposReleaseMerges {
+        repo: String,
+    },
     /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     #[serde(rename = "repos.scripts.set")]
     ReposScriptsSet {
@@ -3887,6 +3956,9 @@ pub enum ServerToClient {
         /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo_owners: Option<Vec<String>>,
+        /// The repos whose merges are on hold. None: none, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merge_holds: Option<Vec<MergeHold>>,
         /// The factory's GitHub App. None: no app, or an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         github_app: Option<GitHubAppInfo>,
@@ -4066,6 +4138,12 @@ pub enum ServerToClient {
         /// The approved other GitHub accounts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo_owners: Option<Vec<String>>,
+    },
+    /// Every merge hold again, after one was put on or lifted.
+    #[serde(rename = "mergeHolds.updated")]
+    MergeHoldsUpdated {
+        #[serde(default)]
+        holds: Vec<MergeHold>,
     },
     /// Every repo's secrets again (names only), after one changed.
     #[serde(rename = "secrets.updated")]

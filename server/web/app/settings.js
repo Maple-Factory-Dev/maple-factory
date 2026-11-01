@@ -50,6 +50,7 @@ export function formFromPolicy(p) {
     scoutItems: p.scoutItems ?? 3,
     taskMinutes: p.taskMinutes ?? 60,
     taskCostUsd: p.taskCostUsd ?? "",
+    overBudget: p.overBudget === "handOff" ? "handOff" : "ask",
     classifierOn: !!p.classifier?.enabled,
     classifierPrompt: p.classifier?.prompt ?? "",
     checks: (p.areas ?? []).map((a) => ({
@@ -100,6 +101,7 @@ export function policyFromForm(form, base) {
     scoutItems: clampInt(form.scoutItems, 1, 10, base.scoutItems ?? 3),
     taskMinutes: taskMinutes(form.taskMinutes, base.taskMinutes ?? 60),
     taskCostUsd: taskCost(form.taskCostUsd, base.taskCostUsd ?? null),
+    overBudget: form.overBudget === "handOff" ? "handOff" : form.overBudget === "ask" ? "ask" : (base.overBudget ?? "ask"),
     // Off with no prompt keeps it left out (or clears one that was there); a form without the fields keeps base's.
     ...(form.classifierOn === undefined ? {}
       : form.classifierOn || form.classifierPrompt?.trim() ? { classifier: { enabled: !!form.classifierOn, prompt: (form.classifierPrompt ?? "").trim() } }
@@ -580,7 +582,13 @@ export function createSettings({ state, h, send, toast, render, ago }) {
         field("Cost per task", "Dollars of agent work before it asks. Blank: no cost limit.",
           keep("policy:taskCostUsd", h("input", { type: "number", inputmode: "decimal", class: "set-num", min: 0, step: "0.01", placeholder: "No limit", value: f.taskCostUsd,
             oninput: (e) => set(() => (f.taskCostUsd = e.target.value === "" ? "" : e.target.valueAsNumber)) }))),
-        h("p", { class: "set-detail", style: "margin:8px 0 0" }, "Past either, the agent is asked to stop and raise a hand; if it doesn't within 10 minutes, the factory raises one for it.")),
+        field("When a task goes over", "Ask a person, or hand it off: its work is pushed and a follow-up draft is filed for someone to review and decide whether to spend more.",
+          h("select", { "aria-label": "When a task goes over", onchange: (e) => set(() => (f.overBudget = e.target.value)) },
+            h("option", { value: "ask", selected: f.overBudget !== "handOff" }, "Raise a hand (ask)"),
+            h("option", { value: "handOff", selected: f.overBudget === "handOff" }, "Hand off: push its work and file a follow-up for review"))),
+        h("p", { class: "set-detail", style: "margin:8px 0 0" }, f.overBudget === "handOff"
+          ? "Past either, the agent is asked to say what's done and what's left. The factory then pushes its branch, files a draft follow-up with its plan, what didn't finish and the budget used, and cancels the task. If it doesn't answer within 10 minutes, the factory hands it off anyway."
+          : "Past either, the agent is asked to stop and raise a hand; if it doesn't within 10 minutes, the factory raises one for it.")),
       h("h2", {}, "Risk checks"),
       h("p", { class: "muted" }, "A change's risk is the highest of: the planner's read, each check below it trips, and medium when it's over the PR budget. Path checks match the diff's files; the planner judges rules and cites the ones that apply."),
       h("div", { class: "card set-card" },

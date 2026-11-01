@@ -171,4 +171,47 @@ struct FeedStateTests {
         #expect(Set(state.unfinishedTasks(in: "g1").map(\.id)) == ["MF-1", "MF-2", "MF-5"])
         #expect(state.unfinishedTasks(in: "g2").isEmpty)
     }
+
+    // MARK: Activity
+
+    private var activitySnapshot: String {
+        let one = task("MF-1", state: "building", extra: #","events":[{"who":"andrea","text":"approved the plan","at":100},{"who":"builder","text":"pushed step 1","at":300}]"#)
+        let two = task("MF-2", state: "reviewing", extra: #","events":[{"who":"planner","text":"wrote a plan","at":200},{"who":"sam","text":"steered","at":400}]"#).replacingOccurrences(of: #""owner":"andrea""#, with: #""owner":"sam""#)
+        let tasks = "[\(task("MF-1", state: "awaitingApproval")),\(task("MF-2", state: "building"))]"
+        return snapshot.replacingOccurrences(of: tasks, with: "[\(one),\(two)]")
+    }
+
+    @Test func activityIsNewestFirstAcrossTasks() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        let feed = state.activity()
+        #expect(feed.map(\.at) == [400, 300, 200, 100])
+        #expect(feed.map(\.task) == ["MF-2", "MF-1", "MF-2", "MF-1"])
+        #expect(feed.map(\.text).first == "steered")
+    }
+
+    @Test func activitySplitsAgentsFromPeople() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        #expect(state.activity(filter: .agents).map(\.who) == ["builder", "planner"])
+        #expect(state.activity(filter: .people).map(\.who) == ["sam", "andrea"])
+        #expect(state.activity(filter: .agents).allSatisfy { $0.isAgent })
+        #expect(state.activity(filter: .people).allSatisfy { !$0.isAgent })
+    }
+
+    @Test func activityMyTasksAreTheOnesIOwn() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        #expect(state.activity(filter: .mine, me: "andrea").map(\.id) == ["MF-1-1", "MF-1-0"])
+        #expect(state.activity(filter: .mine, me: "sam").map(\.task) == ["MF-2", "MF-2"])
+        #expect(state.activity(filter: .mine, me: nil).isEmpty)
+    }
+
+    @Test func activityIdsAreStable() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        #expect(state.activity().map(\.id) == ["MF-2-1", "MF-1-1", "MF-2-0", "MF-1-0"])
+        #expect(state.activity().map(\.id) == state.activity().map(\.id))
+        #expect(Set(state.activity().map(\.id)).count == 4)
+    }
 }

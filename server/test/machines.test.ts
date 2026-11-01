@@ -2,6 +2,8 @@
 // they win in, caps from settings or an agent's own, usage rows and their reset text, meters, and sort order.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { Store } from "../src/factory/store.ts";
 import { capacityOf, capsFor, machineStatus, meters, resetText, since, sortMachines, span, usageRows, windowLabel } from "../web/app/machines.js";
 
 const NOW = Date.UTC(2026, 9, 31, 12);
@@ -149,4 +151,24 @@ test("sort: yours first, then online, then by name", () => {
     machine({ id: "e", name: "Beta", owner: "sam", online: true }),
   ];
   assert.deepEqual(sortMachines(ms, "andrea").map((m) => m.id), ["d", "c", "e", "a", "b"]);
+});
+
+test("a timed pause that's run out reads as resumed, a new-work pause included", () => {
+  const db = new DatabaseSync(":memory:");
+  const sql = {
+    exec(query: string, ...bindings: unknown[]) {
+      if (query.split(";").map((s) => s.trim()).filter(Boolean).length > 1) return db.exec(query), { toArray: () => [], one: () => undefined };
+      const rows = db.prepare(query).all(...(bindings as never[]));
+      return { toArray: () => rows, one: () => rows[0] };
+    },
+  } as unknown as SqlStorage;
+  const store = new Store(sql);
+  const base = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85 };
+  store.saveSettings("m1", { ...base, paused: true, pauseNew: true, pausedUntil: Date.now() - 1000 });
+  assert.equal(store.settings("m1").paused, false);
+  assert.equal(store.settings("m1").pauseNew, false);
+  assert.equal(store.settings("m1").pausedUntil, null);
+  store.saveSettings("m2", { ...base, paused: true, pauseNew: true, pausedUntil: Date.now() + H });
+  assert.equal(store.settings("m2").paused, true);
+  assert.equal(store.settings("m2").pauseNew, true);
 });

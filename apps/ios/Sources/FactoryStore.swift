@@ -557,7 +557,8 @@ final class FactoryStore {
     /// Moving a task off a stuck machine: its machine's owner, an admin, or the task's own owner.
     func canMove(task id: String, on machine: Wire.Machine) -> Bool { canManage(machine) || (!me.isEmpty && feed.task(id)?.owner == me) }
     /// A machine its tasks can be moved off: offline, or paused by its owner.
-    static func isStuck(_ machine: Wire.Machine) -> Bool { !machine.online || machine.settings?.paused == true }
+    /// Offline or fully paused. Under a new-work pause the tasks here keep finishing, so they aren't stuck.
+    static func isStuck(_ machine: Wire.Machine) -> Bool { !machine.online || (machine.settings?.paused == true && machine.settings?.pauseNew != true) }
 
     /// Asks the machine to install the runner release shown (not a newer one out since); `machine.update` on it says how it goes.
     func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id, version: feed.runnerLatest))) }

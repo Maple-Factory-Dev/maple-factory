@@ -303,7 +303,22 @@ struct RiskPolicyEditor: View {
                     TaskCostField(cost: state.policy.taskCostUsd) { state.policy.taskCostUsd = $0 }
                 }
                 .font(.system(size: 12.5))
-                Text("Past either, the agent is asked to stop and raise a hand; if it doesn't within 10 minutes, the factory raises one for it.")
+                HStack {
+                    Text("When a task goes over").foregroundStyle(Theme.text)
+                    Spacer()
+                    Picker("", selection: $state.policy.handOffOverBudget) {
+                        Text("Ask").tag(false)
+                        Text("Hand off").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+                .font(.system(size: 12.5))
+                Text(state.policy.handOffOverBudget
+                    ? "Past either, the agent is asked to say what's done and what's left. The factory then pushes its branch, files a draft follow-up with its plan, what didn't finish and the budget used, and cancels the task, so a person can decide whether to spend more. No answer within 10 minutes, it hands off anyway."
+                    : "Past either, the agent is asked to stop and raise a hand; if it doesn't within 10 minutes, the factory raises one for it.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -653,36 +668,5 @@ private struct RiskCheckAdder: View {
         text = ""
         isRule = true
         level = .medium
-    }
-}
-
-struct RiskPolicyButton: View {
-    @Environment(AppState.self) private var state
-    @SwiftUI.State private var open = false
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "shield.lefthalf.filled").font(.system(size: 11))
-            Text("Risk policy")
-            Text("\(state.policy.maxFiles) files · \(state.policy.maxLines) lines")
-                .foregroundStyle(Theme.textMuted)
-                .monospacedDigit()
-        }
-        .font(.system(size: 12))
-        .foregroundStyle(Theme.text)
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Theme.fill)
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { open = true }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Risk policy")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { open = true }
-        .popover(isPresented: $open, arrowEdge: .bottom) { RiskPolicyEditor() }
     }
 }

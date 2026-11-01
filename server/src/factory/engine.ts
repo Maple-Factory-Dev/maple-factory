@@ -26,8 +26,8 @@ import { threadAddress } from "../slack.ts";
 import { loginFor } from "../slack-links.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
-import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
-import { findingDetail, type StatKind } from "./stats.ts";
+import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
+import { findingDetail, manualReason, type StatKind } from "./stats.ts";
 import { trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
@@ -185,25 +185,28 @@ export class Engine {
   readonly slack: SlackAsks;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
+    // Maple's own one-off runs (Draft with AI, Scout, Set up with AI, @Maple in Slack) only stop for an
+    // "Everything" pause; Pause New Work holds back tasks, not these.
+    const stopped = (m: { id: string }) => this.pause(m.id) === "all";
     this.drafts = new Drafts(store, {
       sendTo: (login, message) => hooks.sendTo(login, message),
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       toRunner: (machine, command) => this.toRunner(machine, command),
     });
     this.scout = new Scout(store, {
       broadcast: (message) => hooks.broadcast(message),
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       toRunner: (machine, command) => this.toRunner(machine, command),
       make: (goal, by, picks, shown, made) => this.scouted(goal, by, picks, shown, made),
     });
     this.slack = new SlackAsks(store, {
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       toRunner: (machine, command) => this.toRunner(machine, command),
       token: async () => (await hooks.slack?.token()) ?? null,
       problem: (text) => hooks.slack?.problem(text),
@@ -224,7 +227,7 @@ export class Engine {
       broadcast: (message) => hooks.broadcast(message),
       machines: () => hooks.machines(),
       hasAgent: (m, agent) => this.hasAgent(m, agent),
-      paused: (m) => this.store.settings(m.id).paused,
+      paused: stopped,
       isAdmin: (login) => this.isAdmin(login),
       toRunner: (machine, command) => this.toRunner(machine, command),
     });
@@ -412,6 +415,38 @@ export class Engine {
         // Their repos come in (or the removed ones' go) once the app's installations are read again.
         return this.refreshRepos(true);
       }
+      case "repos.holdMerges": {
+        // Any member: whoever is on call during an incident.
+        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase());
+        if (!REPO.test(msg.repo.trim()) || !repo) fail(`${msg.repo} isn't one of the factory's repos.`);
+        const reason = msg.reason.trim();
+        if (!reason) fail("Say why merges are on hold.");
+        if (reason.length > 200) fail("Keep the reason to 200 characters.");
+        const hold = { repo: repo!.name, reason, by: who, at: now() };
+        this.store.saveMergeHolds([...this.store.mergeHolds().filter((h) => h.repo.toLowerCase() !== repo!.name.toLowerCase()), hold]);
+        await audit(this.env, who, "repo.merges_held", null, { repo: hold.repo, reason });
+        for (const task of this.reviewingOn(hold.repo)) {
+          // save() drops a running countdown now that mergeReady() says no.
+          this.event(task, who, `merges into ${hold.repo} are on hold: ${reason}`);
+          this.save(task);
+        }
+        this.hooks.broadcast({ type: "mergeHolds.updated", holds: this.store.mergeHolds() });
+        this.hooks.broadcast({ type: "toast", text: `${who} put merges into ${hold.repo} on hold: ${reason}` });
+        return;
+      }
+      case "repos.releaseMerges": {
+        const hold = this.store.mergeHold(msg.repo.trim()) ?? fail(`Merges into ${msg.repo} aren't on hold.`);
+        this.store.saveMergeHolds(this.store.mergeHolds().filter((h) => h !== hold && h.repo.toLowerCase() !== hold.repo.toLowerCase()));
+        await audit(this.env, who, "repo.merges_released", null, { repo: hold.repo });
+        this.hooks.broadcast({ type: "mergeHolds.updated", holds: this.store.mergeHolds() });
+        this.hooks.broadcast({ type: "toast", text: `${who} lifted the hold on merges into ${hold.repo}.` });
+        for (const task of this.reviewingOn(hold.repo)) {
+          this.event(task, who, `lifted the hold on merges into ${hold.repo}`);
+          this.save(task);
+          await this.autoMerge(this.store.task(task.id) ?? task);
+        }
+        return;
+      }
       case "repos.remove": {
         if (member.role !== "admin") fail("Only admins can remove repos.");
         const repos = this.store.repos();
@@ -485,7 +520,8 @@ export class Engine {
         const s = msg.settings;
         if (s.capacity != null && (s.capacity < 0 || s.capacity > 16)) fail("A machine takes 0 to 16 sessions.");
         if (s.teamSlots > (s.capacity ?? this.capacity(machine))) fail("It can't lend more slots than it has.");
-        const pausing = s.paused && !this.store.settings(machine.id).paused;
+        // Only a full pause hands teammates' tasks off: under a new-work pause they finish here.
+        const pausing = s.paused && !s.pauseNew && this.pause(machine.id) !== "all";
         this.store.saveSettings(machine.id, { ...s, loadCap: Math.min(1, Math.max(0.1, s.loadCap)) });
         await audit(this.env, who, "machine.settings", machine.id, s);
         if (pausing && msg.handOff) {
@@ -899,6 +935,7 @@ export class Engine {
         rounds.push({ number: rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null, focus, by: who });
         now_.comments.push(comment);
         this.event(now_, who, `asked for a review: ${focus}`);
+        this.stat(now_, "review.requested", { round: rounds.length }, who);
         this.save(now_);
         await this.pump();
         return;
@@ -908,6 +945,7 @@ export class Engine {
         // factory has it. Nothing to do, and nothing to complain about.
         if (task.state === "merged" || this.store.private(task.id).merging || this.countdownDone(task)) return;
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
+        this.failIfHeld(task);
         if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
@@ -1041,8 +1079,9 @@ export class Engine {
         if (!task.machine) fail("It hasn't started on a machine yet.");
         if (this.store.private(task.id).handingOff) fail("It's already being handed off.");
         const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
-        const stuck = !from || !from.online || this.store.settings(from.id).paused || !task.worker;
-        if (!stuck) fail(`It's running on ${from!.name}; it moves when that machine is offline or paused, or once it stops.`);
+        // A new-work pause lets the task already running finish there, so only a full pause frees it.
+        const stuck = !from || !from.online || this.pause(from.id) === "all" || !task.worker;
+        if (!stuck) fail(`It's running on ${from!.name}; it moves when that machine is offline or fully paused, or once it stops.`);
         await audit(this.env, who, "task.moved", task.id, { from: from?.id ?? task.machine });
         // A machine that's still there pushes the work it has first, so nothing stays behind on it.
         if (from?.online && (await this.handOff(task, who))) return;
@@ -1464,7 +1503,7 @@ export class Engine {
       machine = machines.find((m) => m.id === task.machine);
       if (!machine) return `${task.machine} was removed; move it to start over elsewhere.`;
       if (!machine.online) return `Waiting for ${machine.name} to come back online.`;
-      if (this.store.settings(machine.id).paused) return `${machine.name} is paused.`;
+      if (this.pause(machine.id) === "all") return `${machine.name} is paused.`;
       const capped = this.overCap(machine, task.agent, task.owner);
       if (capped) return capped;
       kind = machine.owner === task.owner ? "personal" : "team";
@@ -1494,6 +1533,7 @@ export class Engine {
         const running = online.filter((m) => !this.store.settings(m.id).paused);
         if (!running.length) {
           const names = online.map((m) => m.name).join(", ");
+          if (online.every((m) => this.pause(m.id) === "new")) return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused for new work; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused for new work.`;
           return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused.`;
         }
         if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of ${task.owner}'s online machines (${listed(running)}) has ${task.agent} installed.`;
@@ -1551,6 +1591,12 @@ export class Engine {
   }
 
   /** Why a machine's usage cap stops new work for `agent` there (for a task of `owner`'s), if it does. */
+  /** How a machine is paused: "new" holds back only new tasks, "all" stops every session there. */
+  private pause(machine: string): "all" | "new" | null {
+    const s = this.store.settings(machine);
+    return !s.paused ? null : s.pauseNew ? "new" : "all";
+  }
+
   private overCap(machine: Machine, agent: string, owner: string): string | null {
     const s = this.store.settings(machine.id);
     if (s.capsTeamOnly && owner === machine.owner) return null;
@@ -2284,10 +2330,16 @@ export class Engine {
       this.save(task);
       return;
     }
-    const by = this.store.private(task.id).mergeBy ?? null;
+    const before = this.store.private(task.id);
+    const by = before.mergeBy ?? null;
     // It merged after all (an answer after the watchdog gave up on it): its "didn't merge" hand is moot.
     if (task.hand?.reason === "mergeFailed") this.lowerHand(task, "factory");
-    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt }, by);
+    // Why it wasn't the factory's own merge, from the policy and state as they were before it merged.
+    const a = this.assessment(task);
+    const held = before.mergeHeld != null && before.mergeHeld === (task.pr.head ?? task.pr.branch);
+    const why = manualReason(a, this.store.policy(), { by, held });
+    const heldBy = held ? ([...task.events].reverse().find((e) => e.text.startsWith("held the auto-merge"))?.who ?? null) : null;
+    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt, ...(why ? { why, level: a.level } : {}), ...(heldBy ? { heldBy } : {}) }, by);
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base}${msg.commit ? ` (${msg.commit.slice(0, 7)})` : ""}`);
@@ -2455,6 +2507,7 @@ export class Engine {
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
     if (name !== "get_task" && this.store.private(task.id).handingOff) return { error: "The task is being handed off to another machine; stop here." };
+    const handingOffBefore = name === "raise_hand" && !!this.store.private(task.id).budgetHandOff;
     try {
       const out = this.run(task, s, name, args);
       // A plan whose risk level needs no approval goes straight to building.
@@ -2463,6 +2516,8 @@ export class Engine {
       this.save(task);
       if (unapproved) this.hooks.waitUntil(this.pump());
       if (name === "submit_review") await this.autoMerge(task);
+      // Only the hand that started this budget hand-off pushes, never a later one while it's in flight.
+      if (name === "raise_hand" && !handingOffBefore && this.store.private(task.id).budgetHandOff && !this.store.private(task.id).handingOff) await this.pushBudgetHandOff(task);
       // Off the tool's critical path: a share never waits on, or fails with, GitHub.
       if (name === "share_artifact") this.hooks.waitUntil(this.syncPullArtifacts(task.id));
       return { result: out };
@@ -2670,6 +2725,14 @@ export class Engine {
           const x = obj(o);
           return { title: str(x.title, "options[].title"), detail: String(x.detail ?? ""), recommended: x.recommended === true };
         });
+        // Asked to hand off over budget: what it says is carried into the follow-up, and nobody is asked.
+        if (reason === "overBudget" && this.store.private(task.id).budgetAskedAt != null && overBudgetMode(this.store.policy()) === "handOff") {
+          if (this.store.private(task.id).budgetHandOff) return { summary: "It's already being handed off. End your turn now." };
+          this.event(task, s.role, "said where it is, to hand it off over budget");
+          // The push and the follow-up come after this reply (tool()).
+          this.store.savePrivate(task.id, { ...this.store.private(task.id), budgetHandOff: { summary: str(a.summary, "summary") }, lastAnswer: null });
+          return { summary: "Noted. The factory is pushing your work and filing a follow-up for a person to review. End your turn now." };
+        }
         this.lowerHand(task, "factory");
         this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.hand = { reason, summary: str(a.summary, "summary"), at: now(), assignee: task.owner, options };
@@ -2916,7 +2979,24 @@ export class Engine {
     if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return false;
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return false;
     if (task.pr.checks.some((c) => c.status !== "passed")) return false; // CI first
+    if (this.heldFor(task)) return false; // an incident freeze on its repo
     return !this.store.private(task.id).merging && !task.hand;
+  }
+
+  /** The merge hold on this task's repo, if any. */
+  private heldFor(task: Task) {
+    return this.store.mergeHold(taskRepo(task, this.store.goal(task.goal) ?? null));
+  }
+
+  private failIfHeld(task: Task) {
+    const hold = this.heldFor(task);
+    if (hold) fail(`Merges into ${hold.repo} are on hold: ${hold.reason} (held by ${hold.by}).`);
+  }
+
+  /** Every reviewing task whose repo is `repo`, across all goals. */
+  private reviewingOn(repo: string) {
+    const key = repo.toLowerCase();
+    return this.store.tasks().filter((t) => t.state === "reviewing" && taskRepo(t, this.store.goal(t.goal) ?? null)?.toLowerCase() === key);
   }
 
   private mergeGraceMs() {
@@ -3000,17 +3080,26 @@ export class Engine {
         continue;
       }
       const priv = this.store.private(task.id);
+      if (priv.budgetHandOff || priv.handingOff) continue;
+      const handOff = overBudgetMode(policy) === "handOff";
       const asked = priv.budgetAskedAt ?? null;
       if (asked == null) {
-        const nudge = `You've used ${budgetText(use)} for this task. Stop at a safe point and call raise_hand with reason overBudget: `
-          + "say where you are, what's left, and the options (carry on, cut the scope, or stop). Then end your turn and wait.";
+        const nudge = handOff
+          ? `You've used ${budgetText(use)} for this task, so it's being handed off for a person to review. Don't commit anything; `
+            + "stop at a safe point and call raise_hand with reason overBudget, saying what's done, what's left and what went wrong. "
+            + "The factory then pushes your work and files a follow-up task. End your turn after."
+          : `You've used ${budgetText(use)} for this task. Stop at a safe point and call raise_hand with reason overBudget: `
+            + "say where you are, what's left, and the options (carry on, cut the scope, or stop). Then end your turn and wait.";
         // Offline: try again on a later alarm.
         if (!(await this.type(task, nudge))) { wake(60_000); continue; }
         this.store.savePrivate(task.id, { ...priv, budgetAskedAt: now() });
-        this.event(task, "factory", `budget reached: ${budgetText(use)}; asked the ${task.worker.role} to raise a hand`);
+        this.event(task, "factory", `budget reached: ${budgetText(use)}; asked the ${task.worker.role} to ${handOff ? "say where it is, to hand it off" : "raise a hand"}`);
         this.stat(task, "budget.reached", { over: use.over, minutes: Math.round(use.minutes), costUsd: use.costUsd, allowMinutes: use.allowMinutes, allowCostUsd: use.allowCostUsd }, null, task.worker.role);
         this.save(task);
         wake(BUDGET_HAND_AFTER_MS);
+      } else if (now() - asked >= BUDGET_HAND_AFTER_MS && handOff) {
+        this.event(task, "factory", `no word from the ${task.worker.role} 10 minutes after it was asked; handing it off anyway`);
+        await this.budgetHandOff(task, null);
       } else if (now() - asked >= BUDGET_HAND_AFTER_MS) {
         const more = use.over === "cost" ? `another ${dollars(budgetCostUsd(policy) ?? 0)}` : `another ${minutesText(budgetMinutes(policy) ?? 0)}`;
         this.raise(task, "factory", "overBudget", `It's used ${budgetText(use)} and didn't stop to ask, 10 minutes after it was asked to.`, [
@@ -3113,6 +3202,7 @@ export class Engine {
   }
 
   private async startMerge(task: Task, who: string, text = "merged it") {
+    this.failIfHeld(task); // a backstop: retries and conflict picks come through here too
     const priv = this.store.private(task.id);
     const app = githubApp(this.env);
     // A repo on GitHub merges through its pull request, never around it and its CI.
@@ -3482,6 +3572,12 @@ export class Engine {
     this.store.savePrivate(task.id, { ...priv, handingOff: null });
     if (isFinished(task.state)) return;
     const nothing = !msg.ok && /nothing to carry/.test(msg.message ?? "");
+    if (priv.budgetHandOff) {
+      if (msg.ok) this.hooks.waitUntil(this.fileBudgetHandOff(task, msg.commit ?? null, "pushed"));
+      else if (nothing) this.hooks.waitUntil(this.fileBudgetHandOff(task, null, "nothing"));
+      else this.budgetHandOffFailed(task, `pushing its work failed (${msg.message ?? "no reason given"})`);
+      return;
+    }
     if (!msg.ok && !nothing) {
       task.liveLog = null;
       this.event(task, "factory", `couldn't hand it off (${msg.message ?? "no reason given"}); it stays on ${machine}`);
@@ -3490,6 +3586,84 @@ export class Engine {
     }
     this.relocate(task, who, machine, msg.ok ? msg.commit ?? null : null);
     this.hooks.waitUntil(this.pump());
+  }
+
+  /** Over budget with the policy's "handOff": push its work (`task.handoff`), then file a follow-up and cancel it
+   *  (handedOff). With no worktree to push from (planning, say), the follow-up is filed straight away. `summary`
+   *  is its agent's word on where it is; null when the factory stepped in. */
+  private async budgetHandOff(task: Task, summary: string | null) {
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), budgetHandOff: { summary }, lastAnswer: null });
+    await this.pushBudgetHandOff(task);
+  }
+
+  private async pushBudgetHandOff(task: Task) {
+    const priv = this.store.private(task.id);
+    // Filed straight away only when there's truly no worktree; one its machine can't be reached for keeps its work.
+    if (!task.machine || !priv.worktree || !priv.repoDir || task.state === "planning") return this.fileBudgetHandOff(task, null, "noWorktree");
+    if (await this.handOff(task, "factory")) return;
+    this.event(task, "factory", `couldn't reach ${task.machine} to push its work, to hand it off over budget`);
+    this.budgetHandOffFailed(task, `its machine (${task.machine}) couldn't be reached to push its work`);
+  }
+
+  /** It couldn't be handed off (`why`: its push failed, its machine is out of reach, no goal to file into): an
+   *  ordinary overBudget hand instead, so nothing is lost and a person decides. */
+  private budgetHandOffFailed(task: Task, why: string) {
+    const priv = this.store.private(task.id);
+    const summary = priv.budgetHandOff?.summary;
+    this.store.savePrivate(task.id, { ...priv, budgetHandOff: null });
+    task.liveLog = null;
+    const policy = this.store.policy();
+    const use = this.budget(task);
+    const more = use.over === "cost" ? `another ${dollars(budgetCostUsd(policy) ?? 0)}` : `another ${minutesText(budgetMinutes(policy) ?? 0)}`;
+    this.raise(task, "factory", "overBudget", `It's used ${budgetText(use)} and couldn't be handed off: ${why}.${summary ? ` Its ${task.worker?.role ?? "agent"} said: ${summary}` : ""}`, [
+      { title: "Give it more budget", detail: `Let it carry on for ${more}, then ask again.`, recommended: true },
+      { title: BUDGET_CANCEL, detail: "Stop the task; its branch stays.", recommended: false },
+    ]);
+    this.save(task);
+  }
+
+  /** Files "Continue <id>: <title>", a draft follow-up with what a person needs to decide whether to reinvest:
+   *  its branch and pushed commit, the brief, the plan and Done when so far, its agent's word and the budget used.
+   *  Then cancels it, its branch kept. */
+  private async fileBudgetHandOff(task: Task, commit: string | null, how: "pushed" | "nothing" | "noWorktree") {
+    const priv = this.store.private(task.id);
+    const summary = priv.budgetHandOff?.summary ?? null;
+    this.store.savePrivate(task.id, { ...priv, budgetHandOff: null });
+    const goal = this.store.goal(task.goal);
+    if (!goal || goal.archived) {
+      const why = goal ? `${goal.name} is archived` : "its goal isn't there any more";
+      const work = how === "pushed" ? `its work was pushed${commit ? ` (${commit.slice(0, 7)})` : ""}, but` : "";
+      return this.budgetHandOffFailed(task, `${work} no follow-up could be filed, since ${why}`.trim());
+    }
+    const use = this.budget(task);
+    const head = commit ?? task.pr?.head ?? null;
+    const branch = how === "pushed" || task.pr ? task.branch ?? `agent/${branchName(task)}` : null;
+    const where = branch
+      ? `Its work is on \`${branch}\`${head ? ` at ${head.slice(0, 7)}` : ""}${task.pr?.url ? ` (${task.pr.url})` : ""}; carry on from there.`
+      : how === "nothing"
+        ? "Nothing was pushed: it had no changes to carry, so there's no branch to carry on from."
+        : `Nothing was pushed: it was handed off while ${task.state === "planning" ? "planning" : "it had no worktree"}, before any work was done.`;
+    const steps = task.plan.map((p, i) => `${i + 1}. [${p.progress === "done" ? "x" : " "}] ${p.text}${p.progress === "active" ? " (in progress)" : ""}`);
+    const done = task.doneWhen.map((d, i) => `${i + 1}. [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence?.summary ? ` — ${d.evidence.summary}` : ""}`);
+    const left = task.plan.filter((p) => p.progress !== "done").length;
+    const brief = [
+      `${task.id} (${task.title}) went over its budget and was handed off for a person to review. Read what it got done and what's left, then decide whether to send this to planning and spend more on it.`,
+      `## Where its work is\n${where}`,
+      `## Budget used\n${budgetText(use)}.`,
+      `## What went wrong or didn't finish\n${summary ?? `Its agent didn't say where it was 10 minutes after it was asked, so the factory stepped in.`}${task.plan.length ? `\n\n${left} of ${task.plan.length} plan steps not done.` : ""}`,
+      ...(steps.length ? [`## The previous plan (v${task.planVersion})\n${steps.join("\n")}`] : []),
+      ...(done.length ? [`## Done when\n${done.join("\n")}`] : []),
+      `## The original brief\n${task.brief.trim() || "(none)"}`,
+      `Follow-up from ${task.id}.`,
+    ].join("\n\n");
+    const draft = this.draftFrom(goal, task, task.owner, { title: `Continue ${task.id}: ${task.title}`.slice(0, 120), brief, repo: task.repo ?? null, priority: task.priority ?? null, followUpOf: task.id });
+    this.event(draft, "factory", `filed it as ${task.id} went over its budget, for a person to review`);
+    this.save(draft);
+    this.hooks.waitUntil(audit(this.env, "factory", "task.created", draft.id, { title: draft.title, followUpOf: task.id }));
+    this.stat(task, "budget.handedOff", { followUp: draft.id, commit: head, minutes: Math.round(use.minutes), costUsd: use.costUsd, stepped: summary == null }, null, task.worker?.role ?? null);
+    this.hooks.broadcast({ type: "toast", text: `${task.id} went over budget; ${draft.id} is waiting for review.`, taskId: draft.id });
+    await this.cancel(task, "factory", `handed it off over budget to ${draft.id}; its branch stays`);
+    await this.pump();
   }
 
   /** Frees a task from its machine: its next session starts on any free one, from what's pushed. */
