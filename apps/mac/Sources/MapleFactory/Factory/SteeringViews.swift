@@ -31,6 +31,8 @@ extension FactoryTask {
 struct PlanSection: View {
     @Environment(AppState.self) private var state
     let task: FactoryTask
+    /// Off when a folding header above already names the plan.
+    var titled = true
 
     @SwiftUI.State private var showChanges = true
     @SwiftUI.State private var hovered: Int? = nil
@@ -56,7 +58,7 @@ struct PlanSection: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            SectionLabel(title: task.state == .building ? "Progress" : task.state == .planning ? "Draft plan" : "Plan")
+            if titled { SectionLabel(title: task.state == .building ? "Progress" : task.state == .planning ? "Draft plan" : "Plan") }
 
             if task.state == .building {
                 Text("\(doneCount) of \(task.plan.count) steps")

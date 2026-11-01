@@ -13,16 +13,16 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::agents;
+use crate::ends;
 use crate::hooks::{self, Activity, Hooks};
 use crate::proof::TaskTag;
-use crate::ends;
 use crate::protocol::{AgentState, Outbound, SessionInfo};
-use crate::wire::{self, SessionEnd};
 use crate::tmux::{Control, ControlEvent, Tmux};
+use crate::wire::{self, SessionEnd};
 
 /// Everything the runner wants to send, in the order it happened.
 pub enum Event {
-    Text(Outbound),
+    Text(Box<Outbound>),
     Output(Uuid, Vec<u8>),
 }
 
@@ -188,7 +188,7 @@ impl Sessions {
     }
 
     pub fn emit(&self, msg: Outbound) {
-        let _ = self.outbox.send(Event::Text(msg));
+        let _ = self.outbox.send(Event::Text(Box::new(msg)));
     }
 
     pub fn list(&self) -> Vec<SessionInfo> {
@@ -405,7 +405,7 @@ impl Sessions {
                 let mut data = if crate::secrets::any() { crate::secrets::scrub_bytes(&data) } else { data };
                 data.splice(0..0, mode.iter().copied());
                 let data = base64::engine::general_purpose::STANDARD.encode(data);
-                let _ = outbox.send(Event::Text(Outbound::SessionReplay { id, nonce, data }));
+                let _ = outbox.send(Event::Text(Box::new(Outbound::SessionReplay { id, nonce, data })));
             }
             // Exits are picked up by `watch_exits`, which also reads the status.
             ControlEvent::Exit => {
@@ -559,7 +559,7 @@ impl Sessions {
                 }
                 Err(e) => {
                     unreachable += 1;
-                    if unreachable == 1 || unreachable % 60 == 0 {
+                    if unreachable == 1 || unreachable.is_multiple_of(60) {
                         warn!("could not list tmux panes ({unreachable} in a row): {e:#}");
                     }
                     if self.tmux.recover_socket() {
@@ -585,14 +585,8 @@ impl Sessions {
                     }
                     Some(p) => {
                         let last = self.tmux.last_lines(&name, END_LINES).await;
-                        let seen = ends::Seen {
-                            status: p.status,
-                            signal: p.signal,
-                            requested,
-                            slept: clock.recent_sleep(),
-                            last_output: &last,
-                            ..Default::default()
-                        };
+                        let seen =
+                            ends::Seen { status: p.status, signal: p.signal, requested, slept: clock.recent_sleep(), last_output: &last, ..Default::default() };
                         self.end(id, &name, &seen, last.clone()).await;
                     }
                     None => {
@@ -685,14 +679,7 @@ fn wire_activity(a: &AgentState) -> wire::Activity {
         "done" => wire::AgentState::Done,
         _ => wire::AgentState::Idle,
     };
-    wire::Activity {
-        state,
-        message: a.message.clone(),
-        step: a.task.clone(),
-        summary: a.summary.clone(),
-        question: a.question.clone(),
-        at: a.at,
-    }
+    wire::Activity { state, message: a.message.clone(), step: a.task.clone(), summary: a.summary.clone(), question: a.question.clone(), at: a.at }
 }
 
 /// Two different ports from `bind` (the OS's pick of a free one) that aren't in `taken`.
@@ -830,5 +817,4 @@ mod paste_tests {
         agent.feed(b"\x1b[2J\x1b[H hello");
         assert!(agent.on);
     }
-
 }

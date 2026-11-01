@@ -5,7 +5,7 @@ import SwiftUI
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
 /// `-stats YES` (with `-statsDays N`) opens Statistics.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
-/// machine on Machines.
+/// terminal on Machines.
 struct RootView: View {
     @Environment(FactoryStore.self) private var store
 
@@ -14,6 +14,7 @@ struct RootView: View {
     @State private var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "tab") ?? "") ?? .inbox
     @State private var inboxPath = NavigationPath()
     @State private var goalsPath = NavigationPath()
+    @State private var machinesPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
 
     var body: some View {
@@ -31,7 +32,7 @@ struct RootView: View {
             .tabItem { Label("Goals", systemImage: "flag") }
             .tag(Tab.goals)
 
-            NavigationStack { MachinesView().withTaskDestinations() }
+            NavigationStack(path: $machinesPath) { MachinesView().withTaskDestinations() }
                 .tabItem { Label("Machines", systemImage: "desktopcomputer") }
                 .tag(Tab.machines)
 
@@ -62,8 +63,9 @@ struct RootView: View {
                 // feed yet: the detail fills in when the snapshot lands.
                 tab = .inbox
                 inboxPath = NavigationPath([TaskRoute(id: id)])
-            case .session:
+            case .session(let machine, let id):
                 tab = .machines
+                machinesPath = NavigationPath([SessionRoute(machine: machine, session: id)])
             }
         }
         // Live, who you are arrives with the snapshot, after the first appearance.
@@ -78,11 +80,13 @@ struct RootView: View {
 struct TaskRoute: Hashable { let id: String }
 struct GoalRoute: Hashable { let id: String }
 struct StatsRoute: Hashable {}
+struct SessionRoute: Hashable { let machine: String; let session: String }
 
 extension View {
     func withTaskDestinations() -> some View {
         navigationDestination(for: TaskRoute.self) { TaskDetailView(id: $0.id) }
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
+            .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
     }
 }
 
@@ -282,7 +286,8 @@ struct GoalRow: View {
                     .background(RoundedRectangle(cornerRadius: 7).fill(Color(goalHex: goal.color)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(goal.name).font(.body.weight(.medium))
-                    Text("\(open.count) open · \(tasks.count - open.count) done").font(.caption).foregroundStyle(.secondary)
+                    // Finished tasks the snapshot left out still count as done.
+                    Text("\(open.count) open · \(tasks.count - open.count + (store.feed.older[goal.id]?.finished ?? 0)) done").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Avatar(login: goal.lead, url: store.feed.member(goal.lead)?.avatarUrl, size: 22)
@@ -352,6 +357,25 @@ struct GoalView: View {
             .tint(Theme.state(.planning))
     }
 
+    /// Under the finished stages: the snapshot sends tasks finished in the last 14 days; this brings 50 older ones.
+    private var loadOlderSection: some View {
+        let loading = store.feed.loadingOlder.contains(id)
+        let left = store.feed.older[id]?.finished ?? 0
+        return Section {
+            Button { store.loadOlder(goal: id) } label: {
+                HStack {
+                    Label("Load older", systemImage: "clock.arrow.circlepath")
+                    Spacer()
+                    if loading { ProgressView() } else { Text("\(left) more").foregroundStyle(.secondary) }
+                }
+            }
+            .disabled(loading)
+            .accessibilityIdentifier("load-older")
+        } footer: {
+            Text("Finished tasks older than 14 days load when you ask.")
+        }
+    }
+
     private func header(_ stage: Wire.TaskState, _ count: Int) -> some View {
         Label("\(stage.title) · \(count)", systemImage: stage.icon).foregroundStyle(Theme.state(stage))
     }
@@ -386,6 +410,7 @@ struct GoalView: View {
                         }
                     }
                 }
+                if store.feed.hasOlder(goal: id) { loadOlderSection }
             }
             .environment(\.editMode, $editMode)
             .navigationTitle(goal.name)
@@ -394,6 +419,8 @@ struct GoalView: View {
                 if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
             }
             .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
+            // `-loadOlder YES` presses Load older once, for screenshots.
+            .task { if UserDefaults.standard.bool(forKey: "loadOlder") { store.loadOlder(goal: id) } }
         } else {
             ContentUnavailableView("Goal not found", systemImage: "flag.slash")
         }
@@ -490,7 +517,7 @@ struct MachineRows: View {
             let movable = live.session.taskId.flatMap { id in
                 FactoryStore.isStuck(machine) && store.canMove(task: id, on: machine) ? id : nil
             }
-            NavigationLink(value: live.session.taskId.map { TaskRoute(id: $0) }) {
+            NavigationLink(value: SessionRoute(machine: machine.id, session: live.session.id)) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(live.session.taskId ?? live.session.agent).font(.subheadline.monospaced())
@@ -511,7 +538,6 @@ struct MachineRows: View {
                     }
                 }
             }
-            .disabled(live.session.taskId == nil)
             .swipeActions(edge: .trailing) {
                 if let movable {
                     Button("Move to another machine", systemImage: "arrow.uturn.forward") { moving = movable }.tint(Theme.accent)

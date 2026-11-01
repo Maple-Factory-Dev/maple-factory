@@ -138,7 +138,9 @@ pub enum Handled {
     Nothing,
     Reply(Value),
     /// A `tools/list`: ask the factory for this session's tools, then answer with `id`.
-    List { id: Value },
+    List {
+        id: Value,
+    },
     /// A `tools/call` to run, then answer with `id`.
     Call {
         id: Value,
@@ -486,7 +488,7 @@ fn tools() -> Value {
                 "kind": { "type": "string", "enum": PROOF_KINDS, "description": "One the item names after Proof:." },
                 "summary": { "type": "string", "maxLength": MAX_PROOF_SUMMARY, "description": "One line: what the evidence shows." },
                 "text": { "type": "string", "description": "The evidence itself, up to 64 KB. Give this or file." },
-                "file": { "type": "string", "description": "A PNG, JPEG, WebP or text file (at most 5 MB), or an MP4, MOV or WebM video (at most 25 MB), under ~/.cache/maple-proof/<branch>/. Give this or text." },
+                "file": { "type": "string", "description": "A PNG, JPEG, WebP or text file (at most 20 MB), or an MP4, MOV or WebM video (at most 95 MB), under ~/.cache/maple-proof/<branch>/. Keep screenshots and recordings at full resolution: don't shrink or trim them to fit. Give this or text." },
             }, "required": ["criterion", "kind", "summary"] },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
         },
@@ -1043,7 +1045,7 @@ fn list_tools(backend: &dyn Backend) -> Value {
 }
 
 /// Built-in names the factory also serves, with its own arguments: never checked against ours.
-const FACTORY_OWNED: &[&str] = &["prove"];
+const FACTORY_OWNED: &[&str] = &["prove", "share_artifact"];
 
 pub fn call_tool(backend: &dyn Backend, name: &str, args: &Value) -> Value {
     // The built-in tools are checked here; the factory checks its own. `prove` is the factory's in a
@@ -1169,6 +1171,16 @@ pub async fn forward(sessions: &Sessions, request: &Value) -> Value {
         args = match crate::proof::prepare(sessions, session, args).await {
             Ok(args) => args,
             Err(e) => return answer(Err(e)),
+        };
+    }
+    // An artifact's file goes up the same way, to its own route.
+    if tool == "share_artifact" {
+        args = match crate::proof::prepare_artifact(sessions, session, args).await {
+            Ok(args) => args,
+            Err(e) => {
+                PENDING.lock().unwrap().remove(&req_id);
+                return answer(Err(e));
+            }
         };
     }
     sessions.emit(Outbound::McpRequest { req_id: req_id.clone(), session, tool: tool.to_string(), args });

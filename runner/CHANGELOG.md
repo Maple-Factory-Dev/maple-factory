@@ -5,6 +5,50 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.88.0 — 2026-11-01
+
+The runner's libraries are brought up to date (uuid 1.29, rustls-native-certs, ureq and others); nothing changes in how it works.
+
+## 0.87.0 — 2026-11-01
+
+Proof screenshots and recordings upload at full size (up to 20 MB and 95 MB) instead of being shrunk first, and the runner keeps up with the factory's protocol for recurring tasks.
+
+## 0.86.0 — 2026-11-01
+
+The runner keeps up with the factory's protocol for day reports and phone push notifications.
+
+## 0.85.0 — 2026-11-01
+
+The runner keeps up with the factory's protocol for rechecking a task's pull request on GitHub, and uses a newer sysinfo for its health readings.
+
+## 0.84.0 — 2026-10-31
+
+Newer versions of the runner's libraries, including the one that checks release signatures; nothing changes in how it works.
+
+## 0.83.0 — 2026-10-31
+
+The runner keeps up with the factory's protocol for task budgets, quiet hours and mobile presence.
+
+## 0.82.0 — 2026-10-31
+
+When GitHub refuses a push that changes workflow files, the runner says the GitHub App needs Workflows: write and links to its permissions page.
+
+## 0.81.0 — 2026-10-31
+
+The runner speaks protocol 2: the factory's snapshot carries open and recently finished tasks, and older ones load on demand.
+
+## 0.80.0 — 2026-10-31
+
+The runner keeps up with the factory's protocol for threaded comments: replies carry the comment they answer.
+
+## 0.79.0 — 2026-10-31
+
+Agents can share charts, images, PDFs and HTML pages on a task with the share_artifact tool; the runner uploads the file to the factory.
+
+## 0.78.0 — 2026-10-31
+
+Update installs only the runner version you were shown; if a newer one came out meanwhile, nothing is installed until you press Update again.
+
 ## 0.77.0 — 2026-10-31
 
 The runner keeps up with the factory's protocol for task dependencies: a task can wait on several others before it builds.

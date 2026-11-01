@@ -6,7 +6,7 @@
 import type { Env } from "./env.ts";
 import { authenticateRunner, MACHINE_ID } from "./machines.ts";
 import type { Member } from "./wire.ts";
-import { audit, readCapped, text } from "./util.ts";
+import { audit, peek, readCapped, text } from "./util.ts";
 
 export const MAX_ATTACHMENT = 25 * 1024 * 1024;
 
@@ -67,9 +67,10 @@ export async function serveRunner(request: Request, env: Env, rest: string): Pro
   return serve(env, rest);
 }
 
-/** A proof file's limit: a screenshot or text capture, or a screen recording. */
-export const MAX_PROOF_IMAGE = 5 * 1024 * 1024;
-export const MAX_PROOF_VIDEO = 25 * 1024 * 1024;
+/** A proof file's limit: a screenshot or text capture (a full-size Retina screenshot fits), or a screen
+ *  recording (under Cloudflare's 100 MB request limit). */
+export const MAX_PROOF_IMAGE = 20 * 1024 * 1024;
+export const MAX_PROOF_VIDEO = 95 * 1024 * 1024;
 
 /** What a proof file is from its first bytes, as the runner decides it (`sniff` in runner/src/proof.rs). */
 export function sniffProof(b: Uint8Array): string | null {
@@ -81,7 +82,8 @@ export function sniffProof(b: Uint8Array): string | null {
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "video/webm";
   if (!b.includes(0)) {
     try {
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b);
+      // `stream`: b may be only a file's first bytes, cut mid-character.
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b, { stream: true });
       return "text/plain";
     } catch {}
   }
@@ -100,16 +102,82 @@ export async function uploadProof(request: Request, env: Env, task: string): Pro
   if (!TASK_ID.test(task)) return text("Not a task.", 400);
   const name = storedName(url.searchParams.get("name") ?? "");
   if (!name) return text("Give the file a name without folders or '..'.", 400);
-  const body = await readCapped(request, MAX_PROOF_VIDEO);
-  if (!body) return text(`A proof file is at most ${MAX_PROOF_VIDEO / 1024 / 1024} MB.`, 413);
-  if (!body.byteLength) return text("The file is empty.", 400);
-  const mime = sniffProof(body);
+  // Streamed into the bucket, never held whole: so its size has to be known up front.
+  const declared = request.headers.get("content-length");
+  if (declared === null || !/^\d+$/.test(declared.trim())) return text("Send a proof file with its content-length.", 411);
+  const size = Number(declared);
+  const mb = (n: number) => `${n / 1024 / 1024} MB`;
+  if (size > MAX_PROOF_VIDEO) return text(`A proof file is at most ${mb(MAX_PROOF_VIDEO)}.`, 413);
+  if (!size || !request.body) return text("The file is empty.", 400);
+  const { head, stream } = await peek(request.body, 4096);
+  const mime = sniffProof(head.subarray(0, 4096));
+  // A refusal leaves the rest of the body unread: the runtime drops it with the request.
   if (!mime) return text("A proof file is PNG, JPEG, WebP, MP4, MOV, WebM or text.", 415);
   const max = mime.startsWith("video/") ? MAX_PROOF_VIDEO : MAX_PROOF_IMAGE;
-  if (body.byteLength > max) return text(`A ${mime.startsWith("video/") ? "video" : "file"} proof is at most ${max / 1024 / 1024} MB.`, 413);
+  if (size > max) {
+    return text(`A ${mime.startsWith("video/") ? "video" : "file"} proof is at most ${mb(max)}.`, 413);
+  }
   const id = crypto.randomUUID();
-  await env.RELEASES.put(`attachments/${id}/${name}`, body, { httpMetadata: { contentType: mime }, customMetadata: { task, runner } });
-  await audit(env, `runner:${runner}`, "proof.upload", `${id}/${name}`, { task, size: body.byteLength, mime });
+  const sized = new FixedLengthStream(size);
+  const piped = stream.pipeTo(sized.writable);
+  try {
+    await env.RELEASES.put(`attachments/${id}/${name}`, sized.readable, { httpMetadata: { contentType: mime }, customMetadata: { task, runner } });
+    await piped;
+  } catch {
+    piped.catch(() => {});
+    return text(`The upload didn't match its content-length (${size} bytes).`, 400);
+  }
+  await audit(env, `runner:${runner}`, "proof.upload", `${id}/${name}`, { task, size, mime });
+  return Response.json({ key: `/attachments/${id}/${name}`, type: mime, bytes: size }, { status: 201 });
+}
+
+/** An artifact file's limit: a chart, an image, a page, a PDF. */
+export const MAX_ARTIFACT = 10 * 1024 * 1024;
+
+/** What an artifact file is, from its first bytes and (for text) its name, as the runner decides it
+ *  (`sniff_artifact` in runner/src/proof.rs). Text that isn't one of the named kinds is plain text. */
+export function sniffArtifact(b: Uint8Array, name: string): string | null {
+  const at = (i: number, s: string) => [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
+  if (b[0] === 0x89 && at(1, "PNG")) return "image/png";
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (at(0, "RIFF") && at(8, "WEBP")) return "image/webp";
+  if (at(0, "GIF87a") || at(0, "GIF89a")) return "image/gif";
+  if (at(0, "%PDF-")) return "application/pdf";
+  if (b.includes(0)) return null;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b);
+  } catch {
+    return null;
+  }
+  const ext = (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? "").toLowerCase();
+  const head = text.slice(0, 1024).trimStart().toLowerCase();
+  if (ext === "svg" || (head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg")))) return "image/svg+xml";
+  if (ext === "html" || ext === "htm" || head.startsWith("<!doctype html") || head.startsWith("<html")) return "text/html";
+  if (ext === "md" || ext === "markdown") return "text/markdown";
+  if (ext === "csv") return "text/csv";
+  if (ext === "json") return "application/json";
+  return "text/plain";
+}
+
+/** PUT /runner/artifact/<task>?runner=<machine>&name=<file name>, with that machine's token: a
+ *  `share_artifact` call's file (runner/src/proof.rs `prepare_artifact`). Kept like an attachment; HTML and
+ *  SVG are only ever served as sandboxed downloads (`serve`), so a direct link never runs on this origin. */
+export async function uploadArtifact(request: Request, env: Env, task: string): Promise<Response> {
+  const url = new URL(request.url);
+  const runner = url.searchParams.get("runner") ?? "";
+  if (!MACHINE_ID.test(runner) || !(await authenticateRunner(env, runner, request))) return text("Unknown machine or bad token.", 401);
+  if (!TASK_ID.test(task)) return text("Not a task.", 400);
+  const name = storedName(url.searchParams.get("name") ?? "");
+  if (!name) return text("Give the file a name without folders or '..'.", 400);
+  const body = await readCapped(request, MAX_ARTIFACT);
+  if (!body) return text(`An artifact is at most ${MAX_ARTIFACT / 1024 / 1024} MB.`, 413);
+  if (!body.byteLength) return text("The file is empty.", 400);
+  const mime = sniffArtifact(body, name);
+  if (!mime) return text("An artifact is HTML, SVG, PNG, JPEG, WebP, GIF, PDF, Markdown, CSV, JSON or text.", 415);
+  const id = crypto.randomUUID();
+  await env.RELEASES.put(`attachments/${id}/${name}`, body, { httpMetadata: { contentType: mime }, customMetadata: { task, runner, artifact: "1" } });
+  await audit(env, `runner:${runner}`, "artifact.upload", `${id}/${name}`, { task, size: body.byteLength, mime });
   return Response.json({ key: `/attachments/${id}/${name}`, type: mime, bytes: body.byteLength }, { status: 201 });
 }
 

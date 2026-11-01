@@ -240,10 +240,25 @@ enum FactoryData {
         FactoryTask(
             id: "ATL-141", title: "Replace jsonwebtoken with jose", state: .reviewing,
             agent: agents[1], owner: chris, detail: "12 checks passed", diff: (170, 128), span: 5...12, updated: "1h",
-            brief: "jsonwebtoken pulls in Node crypto and won't run on the edge runtime. Swap it for jose everywhere we sign or verify tokens.",
+            brief: """
+            jsonwebtoken pulls in Node crypto and won't run on the edge runtime. Swap it for jose everywhere we sign or verify tokens.
+
+            ## Why now
+            The middleware that checks sessions has to move to the edge for the latency budget, and it can't while token verification needs Node's crypto module. Every request currently pays a hop to the Node region just to read the cookie.
+
+            ## What changes
+            - `lib/auth/jwt.ts` becomes the one place that signs and verifies, on top of jose.
+            - jose's helpers are async, so every caller awaits them: the refresh route, the session middleware, the API key exchange and the WebSocket upgrade.
+            - Tokens already issued keep verifying: same algorithm (RS256), same key IDs, same claims.
+
+            ## Out of scope
+            Rotating the signing keys, and moving the refresh endpoint itself to the edge. Both follow once this lands.
+            """,
             plan: [
                 PlanStep(text: "Wrap sign and verify around jose", file: "lib/auth/jwt.ts", progress: .done),
                 PlanStep(text: "Await the new async helpers at every call site", file: "app/api/auth/refresh/route.ts", progress: .done),
+                PlanStep(text: "Verify sessions in the edge middleware", file: "middleware.ts", progress: .done),
+                PlanStep(text: "Await tokens in the WebSocket upgrade", file: "server/ws/upgrade.ts", progress: .done),
                 PlanStep(text: "Remove jsonwebtoken and add jose", file: "package.json", progress: .done),
                 PlanStep(text: "Update the auth tests for async tokens", file: "tests/auth/jwt.test.ts", progress: .done),
             ],
@@ -279,7 +294,8 @@ enum FactoryData {
         ),
 
         FactoryTask(id: "ATL-133", title: "Auth guard for the assistant panel", state: .merged,
-                    agent: agents[0], detail: "#482 · 1d ago", span: 3...10, updated: "1d"),
+                    agent: agents[0], detail: "#482 · 1d ago", span: 3...10, updated: "1d",
+                    pr: PullRequest(number: 482, state: .merged, checks: CICheck.standard())),
         FactoryTask(id: "ATL-136", title: "Password reset tokens expire after 30 min", state: .merged,
                     agent: agents[1], owner: chris, detail: "#476 · 3d ago", span: 1...8, updated: "3d"),
         FactoryTask(id: "ATL-138", title: "CSRF protection on form posts", state: .merged,
@@ -330,7 +346,9 @@ enum FactoryData {
         FactoryTask(id: "DOC-5", goal: "Docs site", title: "Search with keyboard navigation", state: .building,
                     agent: agents[4], owner: chris, detail: "Step 5 of 7", progress: 0.7, span: 7...15, updated: "now", footprint: (11, 480, false), pr: PullRequest(number: 486, state: .draft, checks: CICheck.standard(running: ["preview deploy"]))),
         FactoryTask(id: "DOC-3", goal: "Docs site", title: "MDX component library", state: .merged,
-                    agent: agents[2], owner: chris, detail: "#450 · 9d ago", span: 0...3, updated: "9d"),
+                    agent: agents[2], owner: chris, detail: "#450 · 9d ago", span: 0...3, updated: "9d",
+                    // A local repo's change: pushed to its origin, with no pull request page or CI.
+                    pr: PullRequest(number: 450, state: .merged, checks: [], branch: "agent/doc-3", base: "main")),
     ]
 
     // MARK: Inbox

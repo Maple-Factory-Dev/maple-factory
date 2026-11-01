@@ -138,7 +138,8 @@ pub struct Ran {
     pub phase: Phase,
     pub command: String,
     pub ms: u64,
-    /// The end of its output, scrubbed.
+    /// The end of its output, scrubbed. Only the tests read it today.
+    #[allow(dead_code)]
     pub tail: String,
     /// Why it ran, for preflight.
     pub why: Option<String>,
@@ -263,7 +264,7 @@ struct Stamp {
 }
 
 fn sha(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::update::hex(&Sha256::digest(bytes))
 }
 
 impl Stamp {
@@ -340,8 +341,24 @@ mod tests {
         d
     }
 
+    #[test]
+    fn sha_is_lowercase_hex_of_sha256() {
+        // Stored preflight stamps hold these strings, so the format can't drift across sha2 bumps.
+        assert_eq!(sha(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(sha(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+
     fn scripts(setup: &str, timeout: Option<u32>) -> WorktreeScripts {
-        WorktreeScripts { create: None, preflight: None, preflight_watch: None, setup: Some(setup.into()), checks: None, teardown: None, archive: Some("  ".into()), timeout_secs: timeout }
+        WorktreeScripts {
+            create: None,
+            preflight: None,
+            preflight_watch: None,
+            setup: Some(setup.into()),
+            checks: None,
+            teardown: None,
+            archive: Some("  ".into()),
+            timeout_secs: timeout,
+        }
     }
 
     #[tokio::test]

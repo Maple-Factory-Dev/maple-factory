@@ -102,4 +102,115 @@ import Testing
         #expect(FactoryClient.runnerAction(machine(nil), latest: "0.11.0") == .check)
         #expect(FactoryClient.runnerAction(machine("0.9.0"), latest: "0.11.0") == .update("0.11.0"))
     }
+
+    // MARK: Settings › Runner's Check for Update
+
+    private let studio = Wire.Machine(id: "studio", name: "Studio", owner: "andrea", online: true, version: "0.9.0")
+    private let mini = Wire.Machine(id: "mini", name: "Mini", owner: "andrea", online: true, version: "0.9.0")
+
+    private func match(_ text: String, taskId: String? = nil, pending: [String: RunnerCheck]) -> String? {
+        FactoryClient.matchRunnerCheck(text: text, taskId: taskId, pending: pending, machines: [studio, mini])
+    }
+
+    @Test func upToDateAnswersTheCheck() {
+        #expect(match("Studio is on the latest runner (0.11.0).", pending: ["studio": .pending(since: .now)]) == "studio")
+    }
+
+    @Test func availableAnswersTheCheck() {
+        #expect(match("Runner 0.11.0 is available for Studio.", pending: ["studio": .pending(since: .now)]) == "studio")
+    }
+
+    @Test func couldNotReadAnswersTheOldestCheck() {
+        let pending: [String: RunnerCheck] = ["studio": .pending(since: .now), "mini": .pending(since: .now.addingTimeInterval(-5))]
+        #expect(match("Couldn't read the runner releases.", pending: ["studio": .pending(since: .now)]) == "studio")
+        #expect(match("Couldn't read the runner releases.", pending: pending) == "mini")
+    }
+
+    @Test func unrelatedToastsLeaveTheCheckPending() {
+        let pending: [String: RunnerCheck] = ["studio": .pending(since: .now)]
+        #expect(match("ATL-3 merged", pending: pending) == nil)
+        #expect(match("Studio is on the latest runner (0.11.0).", taskId: "ATL-3", pending: pending) == nil)
+        #expect(match("Runner 0.11.0 is available for Mini.", pending: pending) == nil)
+        // Already answered: nothing waiting for it.
+        #expect(match("Studio is on the latest runner (0.11.0).", pending: ["studio": .answered("x", at: .now)]) == nil)
+    }
+
+    @Test func onlyTheNamedMachineResolves() {
+        let pending: [String: RunnerCheck] = ["studio": .pending(since: .now), "mini": .pending(since: .now)]
+        #expect(match("Runner 0.11.0 is available for Mini.", pending: pending) == "mini")
+        #expect(match("Studio is on the latest runner (0.11.0).", pending: pending) == "studio")
+    }
+
+    // MARK: What's New sheet
+
+    private typealias Sheet = RunnerChangesSheet
+
+    @Test func sheetListsTheReleasesSinceUpToTheLatestAndTheRunningOne() {
+        let list = Sheet.window(releases, since: "0.9.0", latest: "0.11.0", running: "0.9.0", showAll: false)
+        #expect(list.map(\.version) == ["0.11.0", "0.10.0", "0.9.0"])
+    }
+
+    @Test func showAllListsEveryRelease() {
+        let list = Sheet.window(releases, since: "0.9.0", latest: "0.11.0", running: "0.9.0", showAll: true)
+        #expect(list.map(\.version) == ["0.12.0-beta.1", "0.11.0", "0.10.0", "0.9.0"])
+    }
+
+    @Test func anUnknownSinceStillListsWhatsNewer() {
+        let list = Sheet.window(releases, since: "0.9.5", latest: "0.11.0", running: "0.9.5", showAll: false)
+        #expect(list.map(\.version) == ["0.11.0", "0.10.0"])
+        #expect(Sheet.window(releases, since: nil, latest: "0.10.0", running: nil, showAll: false).map(\.version) == ["0.10.0", "0.9.0"])
+    }
+
+    @Test func rangeTitleForSeveralNewerReleases() {
+        let shown = Sheet.window(releases, since: "0.9.0", latest: "0.11.0", running: "0.9.0", showAll: false)
+        #expect(Sheet.rangeTitle(shown, since: "0.9.0", machineName: "studio", showAll: false)
+            == .init(title: "Changes since 0.9.0 · 2 releases", subtitle: "0.10.0 to 0.11.0, newest first"))
+    }
+
+    @Test func rangeTitleForOneNewerReleaseIsItsHeadingAndDate() {
+        let shown = Sheet.window(releases, since: "0.10.0", latest: "0.11.0", running: "0.10.0", showAll: false)
+        #expect(Sheet.rangeTitle(shown, since: "0.10.0", machineName: "studio", showAll: false)
+            == .init(title: "Runner 0.11.0", subtitle: "October 3, 2026"))
+    }
+
+    @Test func rangeTitleWhenItRunsTheLatest() {
+        let shown = Sheet.window(releases, since: "0.11.0", latest: "0.11.0", running: "0.11.0", showAll: false)
+        #expect(shown.map(\.version) == ["0.11.0"])
+        #expect(Sheet.rangeTitle(shown, since: "0.11.0", machineName: "studio", showAll: false)
+            == .init(title: "studio runs 0.11.0, the latest release", subtitle: nil))
+    }
+
+    @Test func rangeTitleWithShowAll() {
+        let shown = Sheet.window(releases, since: "0.9.0", latest: "0.11.0", running: "0.9.0", showAll: true)
+        #expect(Sheet.rangeTitle(shown, since: "0.9.0", machineName: "studio", showAll: true).title == "Every runner release · 4 releases")
+    }
+
+    @Test func notesSplitIntoParagraphsBulletsAndHeadings() {
+        let notes = """
+        # Fixes
+        The runner restarts
+        cleanly now.
+
+        - Sessions keep `tmux` running
+          through an update.
+        * See [the docs](https://maplefactory.dev).
+
+        Thanks.
+        """
+        #expect(Sheet.blocks(notes) == [
+            .heading("Fixes"),
+            .paragraph("The runner restarts cleanly now."),
+            .bullet("Sessions keep `tmux` running through an update."),
+            .bullet("See [the docs](https://maplefactory.dev)."),
+            .paragraph("Thanks."),
+        ])
+    }
+
+    @Test func updateIsTheFooterButtonOnlyWhenBehindOnlineAndAllowed() {
+        #expect(Sheet.primaryButton(phase: .outdated("0.11.0"), online: true, canUpdate: true) == "Update")
+        #expect(Sheet.primaryButton(phase: .outdated("0.11.0"), online: true, canUpdate: false) == nil)
+        #expect(Sheet.primaryButton(phase: .outdated("0.11.0"), online: false, canUpdate: true) == nil)
+        #expect(Sheet.primaryButton(phase: .current, online: true, canUpdate: true) == nil)
+        #expect(Sheet.primaryButton(phase: .installing("0.11.0"), online: true, canUpdate: true) == nil)
+    }
 }

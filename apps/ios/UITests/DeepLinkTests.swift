@@ -1,7 +1,7 @@
 import XCTest
 
 /// maplefactory:// links in the demo factory: a task link opens its detail on the Inbox tab, a
-/// session link switches to Machines. Runs without a live factory.
+/// session link opens its terminal on Machines. Runs without a live factory.
 ///   xcodebuild test -scheme "Maple Factory" -only-testing:MapleFactoryUITests/DeepLinkTests …
 final class DeepLinkTests: XCTestCase {
     private var app: XCUIApplication!
@@ -23,8 +23,9 @@ final class DeepLinkTests: XCTestCase {
     }
 
     func testSessionLinkOpensMachines() {
-        app.openLink("maplefactory://session/m-studio/s-1")
-        XCTAssertTrue(app.navigationBars["Machines"].waitForExistence(timeout: 20), "Machines didn't open")
+        app.openLink("maplefactory://session/m-studio/s1")
+        XCTAssertTrue(app.descendants(matching: .any)["sessionTerminal"].waitForExistence(timeout: 20), "the session's terminal didn't open")
+        XCTAssertTrue(app.navigationBars["APP-12"].exists)
         XCTAssertTrue(app.tabBars.buttons["Machines"].isSelected)
     }
 

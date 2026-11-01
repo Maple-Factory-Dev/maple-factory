@@ -126,7 +126,7 @@ const TOOLS: Tool[] = [
       },
       ["reason", "summary", "options"],
     ),
-    roles: ["planner", "builder"],
+    roles: ["planner", "builder", "reviewer"],
   },
   {
     name: "progress",
@@ -151,11 +151,37 @@ const TOOLS: Tool[] = [
         output: list(str(""), "Its output's lines (the last 60 are kept)."),
         passed: int("Tests passed."),
         failed: int("Tests failed."),
-        file: str("For a screenshot or video: the full path of a PNG, JPEG, WebP, MP4, MOV or WebM (video at most 25 MB, others 5 MB) saved under ~/.cache/maple-proof/<this task's branch>/, never in the worktree. The runner uploads it."),
+        file: str("For a screenshot or video: the full path of a PNG, JPEG, WebP, MP4, MOV or WebM (video at most 95 MB, others 20 MB) saved under ~/.cache/maple-proof/<this task's branch>/, never in the worktree. Keep screenshots and recordings at full resolution; don't shrink them. The runner uploads it."),
       },
       ["item", "kind", "summary"],
     ),
     roles: ["builder"],
+  },
+  {
+    name: "share_artifact",
+    description: "Share a file on the task for people to look at in the Mac app and on the web: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. Not evidence for Done when (that's `prove`). Sharing again under the same title adds a new version of it.",
+    inputSchema: obj(
+      {
+        title: str("A short name, e.g. \"Latency before/after\". The same title replaces that artifact with a new version."),
+        summary: str("What it shows, one line."),
+        file: str("The full path of an HTML, SVG, PNG, JPEG, WebP, GIF, PDF, Markdown (.md), text, CSV or JSON file, at most 10 MB, saved under ~/.cache/maple-proof/<this task's branch>/, never in the worktree. HTML runs with scripts but no network: inline everything. The runner uploads it."),
+        kind: oneOf(["html", "image", "svg", "pdf", "markdown", "text", "data"], "Left out: worked out from the file."),
+      },
+      ["title", "file"],
+    ),
+    roles: ["planner", "builder", "reviewer"],
+  },
+  {
+    name: "reply",
+    description: "Answer a person in a task's comment thread: they wrote to you there (it's typed in as \"<who> in comment thread <id>: …\", or listed in get_task's threads). It's conversation, not a change request: answer briefly and carry on with your work.",
+    inputSchema: obj(
+      {
+        thread: str("The thread's id, from the message (any comment's id in it works)."),
+        text: str("Your answer. Short, plain words."),
+      },
+      ["thread", "text"],
+    ),
+    roles: ["planner", "builder", "reviewer"],
   },
   {
     name: "finish",

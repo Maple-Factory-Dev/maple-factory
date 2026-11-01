@@ -37,6 +37,12 @@ kept in D1, since a Worker can't set its own secrets. After installing the app, 
 Flow** in its settings for the Mac app's sign-in; GitHub doesn't allow that from a manifest. Only an
 app owned by `GITHUB_ORG` is accepted, and once sign-in works, `/setup` changes nothing.
 
+The app asks for **Workflows: write** (alongside contents, pull requests, checks and actions), so tasks that change
+`.github/workflows/*` are pushed and merged as the app: GitHub refuses those pushes without it. An app made before
+it asked for this doesn't have it: add Workflows → Read and write under the app's **Permissions & events**, then
+accept the new permission on each installation. Until then everything else works as before (the factory asks for
+its tokens without it), and a task that changes a workflow fails its push with a message that says so and links there.
+
 Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `SESSION_SECRET`, `SECRETS_KEY`) take precedence over what `/setup` stored.
 
@@ -126,6 +132,22 @@ starting, changing or resolving) is broadcast as `github.status`; the Mac sideba
 "GitHub is having issues" while there's one. A read that fails keeps the last known status, and an idle org
 isn't woken for it. `GITHUB_STATUS_URL` points it at a fake for tests (test/e2e-github-status.mjs), and
 `POST /dev/alarm?stale` makes the check due.
+
+### Mobile push
+
+Settings › General's "Send mobile notifications through Maple Factory's relay" (`src/push.ts`, off by default).
+`PUT /api/push { on }` (admins only) enrolls with the relay at maplefactory.dev (`apps/site/push.js`), seals the
+returned `{ id, secret }` under `SECRETS_KEY` into D1's settings as `PUSH_CREDENTIAL`, and audits `push.relay.on`;
+off deletes it, calls `/push/revoke` and audits `push.relay.off`. `PUSH_RELAY=off` locks it off; `PUSH_RELAY_URL`
+points it at another relay. Phones register over the feed (`push.register`, `push.unregister`, `push.devices`;
+`push_devices` in OrgHub's SQLite, 10 a person, deleted when their access is revoked), even while it's off.
+`Engine.save` hands each saved task to `Push.taskSaved`, which works out who it newly needs (the Mac Notifier's
+reasons) and, unless they're in quiet hours, POSTs `/push/send` per device with only token, platform,
+environment, task key, reason and factory id, signed `x-maple-signature: hex HMAC-SHA256(sha256hex(secret),
+"<ts>.<body>")`. A 410 from the relay deletes the device. Tests: `test/push.test.ts`, `test/e2e-push.mjs` (start
+`wrangler dev --var PUSH_RELAY_URL:http://localhost:8799`), and `node --test apps/site/test/` for the relay. The relay
+needs `APNS_KEY_P8`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC` and `FCM_SERVICE_ACCOUNT` as Worker secrets on the
+site; until then `/push/send` answers 503.
 
 ### Moving a task to another goal
 

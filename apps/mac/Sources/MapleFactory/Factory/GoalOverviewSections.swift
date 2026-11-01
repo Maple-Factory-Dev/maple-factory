@@ -2,7 +2,8 @@ import Foundation
 
 /// A goal's tasks sorted by what a person should do with them, for the Overview layout: what's
 /// waiting on you, what's up next (and in what order), what's moving, and what landed lately.
-/// Each open task sits in exactly one section; cancelled tasks and older merges are left out.
+/// Each open task sits in exactly one section; cancelled, closed and backlogged tasks and older merges
+/// are left out (a backlogged task that needs a person still shows under Needs you).
 struct GoalOverviewSections {
     /// Why a task is waiting on a person, most pressing first.
     enum Reason: Int, Comparable {
@@ -43,7 +44,7 @@ struct GoalOverviewSections {
     var drafts: [FactoryTask] = []
     /// Waiting for a session, front of the queue first.
     var queued: [FactoryTask] = []
-    /// Being planned, or parked in the backlog, with nothing asked of a person.
+    /// Being planned or waiting for plan approval, with nothing asked of a person.
     var planning: [FactoryTask] = []
     /// Building or in review with nothing asked of a person.
     var inMotion: [FactoryTask] = []
@@ -59,7 +60,7 @@ struct GoalOverviewSections {
     init(tasks: [FactoryTask], today: Int, pendingMerge: (FactoryTask) -> Bool = { _ in false }) {
         for task in tasks {
             switch task.state {
-            case .cancelled:
+            case .cancelled, .closed:
                 continue
             case .merged:
                 if today - task.span.upperBound <= Self.recentDays { recentlyLanded.append(task) }
@@ -69,13 +70,17 @@ struct GoalOverviewSections {
             }
             if let waiting = Self.waiting(task, pendingMerge: pendingMerge(task)) {
                 needsYou.append(waiting)
+            } else if task.state == .backlog {
+                // Parked: it lives on the Board's Backlog column, not in the Overview.
+                continue
             } else if task.queued {
                 queued.append(task)
             } else {
                 switch task.state {
                 case .drafting: drafts.append(task)
                 case .building, .reviewing: inMotion.append(task)
-                default: planning.append(task)
+                case .planning, .awaitingApproval: planning.append(task)
+                case .backlog, .merged, .cancelled, .closed: break
                 }
             }
         }
@@ -109,5 +114,36 @@ struct GoalOverviewSections {
     static func steps(_ task: FactoryTask) -> (done: Int, total: Int)? {
         guard task.plan.contains(where: { $0.progress != nil }) else { return nil }
         return (task.plan.filter { $0.progress == .done }.count, task.plan.count)
+    }
+}
+
+/// A section of the Overview a person can collapse to its header.
+enum OverviewSection: String, CaseIterable {
+    case needsYou, upNext, queue, drafts, planning, inMotion, landed
+}
+
+/// Which Overview sections are collapsed, kept as a comma-joined string so @AppStorage can hold it.
+struct OverviewCollapse: Equatable {
+    var collapsed: Set<OverviewSection>
+
+    /// Only Recently landed starts collapsed.
+    static let defaultRaw = OverviewSection.landed.rawValue
+
+    init(collapsed: Set<OverviewSection> = [.landed]) { self.collapsed = collapsed }
+
+    /// Unknown or empty keys are dropped.
+    init(raw: String) {
+        collapsed = Set(raw.split(separator: ",").compactMap { OverviewSection(rawValue: $0.trimmingCharacters(in: .whitespaces)) })
+    }
+
+    /// In `OverviewSection.allCases` order, so the same set always stores the same string.
+    var raw: String { OverviewSection.allCases.filter(collapsed.contains).map(\.rawValue).joined(separator: ",") }
+
+    func isCollapsed(_ section: OverviewSection) -> Bool { collapsed.contains(section) }
+
+    func toggling(_ section: OverviewSection) -> Self {
+        var next = self
+        if next.collapsed.remove(section) == nil { next.collapsed.insert(section) }
+        return next
     }
 }

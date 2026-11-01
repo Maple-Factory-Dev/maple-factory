@@ -73,6 +73,10 @@ struct RiskPolicy {
     var autoMerges = true
     /// The most leftovers one Scout run turns into drafted plans (1–10).
     var scoutItems = 3
+    /// Minutes of agent work a task gets before it asks for a hand; 0 is off.
+    var taskMinutes = 60
+    /// Dollars of agent work a task gets before it asks for a hand; nil is no cost limit.
+    var taskCostUsd: Double?
 
     func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
         guard let footprint = task.footprint else { return nil }

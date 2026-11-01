@@ -82,6 +82,8 @@ struct Agent: Identifiable {
     let color: Color
     var isHuman = false
     var github: String? = nil
+    /// Online only on the iPhone or Android app, where presence says so (task viewers carry it).
+    var mobile = false
     var id: String { name }
 
     var firstName: String { String(name.split(separator: " ").first ?? "") }
@@ -108,6 +110,8 @@ struct Comment {
     var id: String? = nil
     /// The logins it @mentions, as the server worked them out; nil from a server older than mentions.
     var mentions: [String]? = nil
+    /// The id of its thread's first comment, when it's a reply.
+    var replyTo: String? = nil
 
     /// Whether it @mentions this login, by the server's list or, from an older server, its text.
     func mentions(_ login: String) -> Bool {
@@ -284,6 +288,8 @@ struct FactoryTask: Identifiable {
     var intakeID: String? = nil
     /// Screens and terminal output the planner drew for the change.
     var mockups: [Mockup] = []
+    /// Files its agents shared: charts, pages, images (MF-205).
+    var artifacts: [Wire.Artifact] = []
     /// Waiting for its next session (to plan, build or review) with nobody on it: on the board's Queued column.
     var queued = false
     /// Its place in the queue: lower starts first.
@@ -494,12 +500,12 @@ struct InboxItem: Identifiable {
 }
 
 enum Destination: Hashable {
-    case inbox, myTasks, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals
+    case inbox, myTasks, dayReport, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals
     case goal(String)
 
     /// The pages that aren't goals, by the names `-destination` takes.
     private static let pages: [String: Destination] = [
-        "inbox": .inbox, "mytasks": .myTasks, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
+        "inbox": .inbox, "mytasks": .myTasks, "report": .dayReport, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
         "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals,
     ]
 

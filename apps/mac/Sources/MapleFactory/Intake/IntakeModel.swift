@@ -385,3 +385,77 @@ struct LinkedCard: View {
         }
     }
 }
+
+// MARK: Filter
+
+/// The Requests list's filter pills (MF-197): which requests still need an answer, which wait on the
+/// requester, which became tasks that are still running, and which are over.
+enum IntakeFilter: String, CaseIterable, Identifiable {
+    case all, unanswered, waiting, inFlight, done
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .unanswered: "Unanswered"
+        case .waiting: "Waiting"
+        case .inFlight: "In flight"
+        case .done: "Done"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .all: "tray"
+        case .unanswered: "bubble.left"
+        case .waiting: "hourglass"
+        case .inFlight: "hammer"
+        case .done: "checkmark.circle"
+        }
+    }
+
+    /// What the list says when nothing matches.
+    var emptyTitle: String {
+        switch self {
+        case .all: "No requests yet"
+        case .unanswered: "No unanswered requests"
+        case .waiting: "Nobody to wait on"
+        case .inFlight: "Nothing in flight"
+        case .done: "Nothing done yet"
+        }
+    }
+
+    /// The bucket a request lands in. An accepted request is in flight until its task finishes; a task
+    /// this app doesn't know counts as still running.
+    static func bucket(for request: IntakeRequest, taskState: (String) -> TaskState?) -> IntakeFilter {
+        switch request.status {
+        case .new: .unanswered
+        case .clarifying: .waiting
+        case .declined: .done
+        case .accepted(let id): taskState(id)?.isFinished == true ? .done : .inFlight
+        }
+    }
+
+    /// The requests the filter shows, in the order given. `keeping` stays in the list even when it no longer
+    /// matches: the request just acted on, so answering one doesn't swap the detail pane for another.
+    static func visible(_ requests: [IntakeRequest], filter: IntakeFilter, keeping: String? = nil,
+                        taskState: (String) -> TaskState?) -> [IntakeRequest] {
+        guard filter != .all else { return requests }
+        return requests.filter { $0.id == keeping || bucket(for: $0, taskState: taskState) == filter }
+    }
+
+    /// The filter to show when `selected` is picked from outside the list (a task's linked request):
+    /// this one if it shows the request, otherwise All, so the request isn't dropped for another.
+    func revealing(_ selected: String?, in requests: [IntakeRequest], taskState: (String) -> TaskState?) -> IntakeFilter {
+        guard let selected, let request = requests.first(where: { $0.id == selected }) else { return self }
+        return self == .all || Self.bucket(for: request, taskState: taskState) == self ? self : .all
+    }
+
+    /// How many requests each pill shows.
+    static func counts(_ requests: [IntakeRequest], taskState: (String) -> TaskState?) -> [IntakeFilter: Int] {
+        var counts: [IntakeFilter: Int] = [.all: requests.count]
+        for request in requests { counts[bucket(for: request, taskState: taskState), default: 0] += 1 }
+        return counts
+    }
+}

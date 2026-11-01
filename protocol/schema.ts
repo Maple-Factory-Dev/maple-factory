@@ -15,7 +15,7 @@ export type Enum = Doc & { values: Record<string, string> };
 export type Variant = Doc & { fields?: Fields; fieldDocs?: Record<string, string> };
 export type Union = Doc & { variants: Record<string, Variant> };
 
-export const version = 1;
+export const version = 2;
 
 export const enums: Record<string, Enum> = {
   EndCause: {
@@ -79,6 +79,10 @@ export const enums: Record<string, Enum> = {
     doc: "Where a goal's Scout run is.",
     values: { running: "Its agent is looking over the goal's leftovers.", done: "Finished: `tasks` went to planning.", failed: "It couldn't; `error` says why." },
   },
+  RecurringUnit: {
+    doc: "How a recurring task's interval is shown.",
+    values: { hours: "Every N hours.", days: "Every N days.", weeks: "Every N weeks." },
+  },
   RepoSetupState: {
     doc: "Where a repo's Set up with AI run is.",
     values: { running: "Its agent is reading the repo.", done: "Finished: `suggestion` is filled in.", failed: "It couldn't; `error` says why." },
@@ -105,14 +109,32 @@ export const enums: Record<string, Enum> = {
     values: { p0: "Do it right away.", p1: "Next.", p2: "Soon.", p3: "When there's room." },
   },
   FindingStatus: { values: { open: "Open.", fixed: "Fixed (see fixedIn).", disputed: "The builder disagrees." } },
+  PushPlatform: {
+    values: { apns: "Apple Push Notification service (iPhone, iPad).", fcm: "Firebase Cloud Messaging (Android)." },
+  },
+  PushEnvironment: {
+    values: { sandbox: "A development build (APNs' sandbox).", production: "An App Store or TestFlight build." },
+  },
   HandReason: {
     values: {
       reviewLoop: "Review rounds ran out.",
       proofBurden: "Can't produce a proof.",
       needsInput: "Needs more input than the plan has.",
-      overBudget: "The fix goes over the size budget.",
+      overBudget: "The task goes over its budget: the change's size, or the time or money spent on it.",
       sessionEnded: "Its session ended in a way that needs a person.",
       mergeFailed: "It was approved but didn't merge.",
+    },
+  },
+  ArtifactKind: {
+    doc: "What an agent shared on a task, which decides how the apps show it.",
+    values: {
+      html: "An HTML page, run sandboxed with no network.",
+      image: "A PNG, JPEG, WebP or GIF.",
+      svg: "An SVG drawing, shown like an HTML page.",
+      pdf: "A PDF.",
+      markdown: "Markdown text.",
+      text: "Plain text.",
+      data: "CSV or JSON, shown as text.",
     },
   },
   MockupStatus: { values: { proposed: "Proposed with the plan.", approved: "Approved.", changesRequested: "Someone asked for changes." } },
@@ -454,9 +476,10 @@ export const structs: Record<string, Struct> = {
     fields: { text: "string", proof: "ProofKind", status: "ProofStatus", evidence: "Evidence?" },
   },
   Comment: {
-    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?" },
+    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?", replyTo: "string?" },
     fieldDocs: {
       author: "A login, or an agent like \"planner\".",
+      replyTo: "The id of the comment that starts its thread. Replies to a reply sit under that same root.",
       via: "Where it came in from, e.g. \"Slack #requests\".",
       mentions: "Logins of the org members this comment @mentions, worked out by the server. Never the author.",
     },
@@ -533,6 +556,26 @@ export const structs: Record<string, Struct> = {
       differences: "string[]",
     },
     fieldDocs: { kind: "\"screen\" (html, shown in a browser frame at url) or \"terminal\" (lines)." },
+  },
+  Artifact: {
+    doc: "A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.",
+    fields: {
+      id: "string",
+      title: "string",
+      kind: "ArtifactKind",
+      summary: "string?",
+      file: "string",
+      mime: "string",
+      bytes: "u64",
+      by: "string",
+      at: "u64",
+      version: "u32",
+    },
+    fieldDocs: {
+      file: "Its upload's link, /attachments/<id>/<name> (members fetch it there).",
+      by: "The role of the agent that shared it.",
+      version: "1 for the first share, one more each time the same title is shared again.",
+    },
   },
   TicketLink: {
     fields: { system: "string", key: "string", title: "string", status: "string", url: "string?", asContext: "bool" },
@@ -663,6 +706,7 @@ export const structs: Record<string, Struct> = {
       risk: "Risk?",
       autoReview: "AutoReview?",
       mockups: "Mockup[]",
+      artifacts: "Artifact[]",
       tickets: "TicketLink[]",
       shareable: "bool",
       agent: "string",
@@ -685,6 +729,7 @@ export const structs: Record<string, Struct> = {
       mergeForecast: "MergeForecast?",
     },
     fieldDocs: {
+      artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",
       mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
       suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
@@ -727,8 +772,12 @@ export const structs: Record<string, Struct> = {
       autoFixMerges: "bool?",
       autoMerges: "bool?",
       scoutItems: "u32?",
+      taskMinutes: "u32?",
+      taskCostUsd: "f64?",
     },
     fieldDocs: {
+      taskMinutes: "Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60.",
+      taskCostUsd: "Dollars of agent work a task gets before it asks for a hand. None: no cost limit.",
       autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
       scoutItems: "The most leftovers one Scout run turns into drafted plans (1–10). None: 3.",
@@ -875,7 +924,8 @@ export const structs: Record<string, Struct> = {
   },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
-    fields: { login: "string", viewing: "string?", since: "u64" },
+    fields: { login: "string", viewing: "string?", since: "u64", mobile: "bool?" },
+    fieldDocs: { mobile: "True when every app the person has open is the iPhone or Android app." },
   },
   NewGoalIdea: {
     doc: "A goal Draft with AI suggests making.",
@@ -899,6 +949,38 @@ export const structs: Record<string, Struct> = {
     doc: "A goal's Scout run: an agent that can't change anything picks the goal's leftovers still worth doing, and each becomes a planned task.",
     fields: { goal: "string", by: "string", state: "ScoutState", startedAt: "u64", tasks: "string[]", error: "string?" },
     fieldDocs: { by: "Who started it; it runs on their machine.", tasks: "The tasks it sent to planning." },
+  },
+  Recurring: {
+    doc: "A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online.",
+    fields: {
+      id: "string",
+      goal: "string",
+      title: "string",
+      brief: "string",
+      repo: "string?",
+      agent: "string",
+      every: "u32",
+      unit: "RecurringUnit",
+      firstAt: "u64",
+      timeZone: "string",
+      nextAt: "u64",
+      paused: "bool",
+      lastRunAt: "u64?",
+      lastTask: "string?",
+      by: "string",
+    },
+    fieldDocs: {
+      brief: "The prompt: each run's task brief.",
+      repo: "One of the goal's repos. None: the goal's own.",
+      agent: "claude or codex.",
+      every: "The interval in minutes (60 at least).",
+      unit: "How `every` is shown: hours, days or weeks.",
+      firstAt: "The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST.",
+      timeZone: "An IANA time zone, e.g. America/New_York.",
+      nextAt: "When it next runs (ms).",
+      lastTask: "The task its last run started. While that one is still open, a due run is skipped.",
+      by: "Who saved it last; its runs are started on their behalf.",
+    },
   },
   Draft: {
     doc: "Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.",
@@ -932,6 +1014,25 @@ export const structs: Record<string, Struct> = {
   GoalFollow: {
     doc: "Someone's own choice to follow a goal, or not. Without one, they follow goals they lead, have tasks in, or that are for one of their teams.",
     fields: { goal: "string", following: "bool" },
+  },
+  QuietWindow: {
+    doc: "One quiet-hours window: on these days, from `start` to `end`.",
+    fields: { days: "u16[]", start: "u16", end: "u16" },
+    fieldDocs: {
+      days: "The days it starts on, 0 Sunday to 6 Saturday.",
+      start: "Minutes after midnight (0–1439) it starts, in the schedule's time zone.",
+      end: "Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day.",
+    },
+  },
+  PushDevice: {
+    doc: "One of your phones registered for push notifications. Its token is never sent back.",
+    fields: { id: "string", platform: "PushPlatform", environment: "PushEnvironment", createdAt: "u64", lastSeen: "u64" },
+    fieldDocs: { id: "Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding." },
+  },
+  QuietHours: {
+    doc: "Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.",
+    fields: { timeZone: "string", windows: "QuietWindow[]" },
+    fieldDocs: { timeZone: "An IANA time zone, like America/Toronto.", windows: "Up to 7 windows." },
   },
   Member: {
     fields: {
@@ -1047,6 +1148,35 @@ export const structs: Record<string, Struct> = {
       recent: "StatsFindingRow[]",
     },
     fieldDocs: { areas: "Most findings first, up to 12.", recent: "Newest first, up to 60." },
+  },
+  GoalTally: {
+    doc: "How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).",
+    fields: { goal: "string", merged: "u32", cancelled: "u32", closed: "u32", total: "u32" },
+  },
+  ReportItem: {
+    doc: "One task on a day report.",
+    fields: { id: "string", url: "string", title: "string", goal: "string?", owner: "string", pr: "u32?", prUrl: "string?", at: "u64?", note: "string?" },
+    fieldDocs: {
+      url: "The task in the Factory: <factory>/t/<id>.",
+      goal: "Its goal's name.",
+      prUrl: "Its pull request on GitHub; none for a local repo.",
+      at: "When it merged or was approved; for pending and in-progress rows, when it last changed.",
+      note: "What happened: \"approved the plan\", \"review\"…",
+    },
+  },
+  ReportSection: {
+    doc: "A day report's section; empty ones are left out.",
+    fields: { key: "string", title: "string", items: "ReportItem[]" },
+    fieldDocs: { key: "merged, reviewed, pendingReview or inProgress." },
+  },
+  DayReport: {
+    doc: "What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal.",
+    fields: { login: "string", since: "u64", until: "u64", title: "string", sections: "ReportSection[]", markdown: "string", slack: "string" },
+    fieldDocs: {
+      title: "\"EOD - Fri, Oct 31\".",
+      markdown: "The report as Markdown, ready to paste.",
+      slack: "The report as Slack mrkdwn, ready to paste.",
+    },
   },
   StatsSummary: {
     doc: "The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.",
@@ -1315,8 +1445,8 @@ export const unions: Record<string, Union> = {
         },
       },
       "task.token": {
-        doc: "The answer to `task.token_request`.",
-        fields: { reqId: "string", token: "string?", error: "string?", code: "string?" },
+        doc: "The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write).",
+        fields: { reqId: "string", token: "string?", error: "string?", code: "string?", settingsUrl: "string?" },
       },
       "secrets.reply": {
         doc: "The answer to `secrets.request`: `values` by name, or `error` with a `code`.",
@@ -1365,12 +1495,34 @@ export const unions: Record<string, Union> = {
       "draft.goal": { doc: "Carry on a draft with this goal (one it suggested making, or another).", fields: { id: "string", goal: "string" } },
       "draft.cancel": { fields: { id: "string" } },
       "goal.scout": { doc: "Run Scout on a goal: its leftovers still worth doing come back as drafted plans.", fields: { goal: "string" } },
+      "recurring.save": {
+        doc: "The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`.",
+        fields: { recurring: "Recurring" },
+        fieldDocs: { recurring: "nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent." },
+      },
+      "recurring.delete": { doc: "The goal's lead or an admin.", fields: { id: "string" } },
+      "recurring.pause": { doc: "The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now.", fields: { id: "string", paused: "bool" } },
+      "recurring.runNow": { doc: "The goal's lead or an admin: start a run now; its schedule is kept.", fields: { id: "string" } },
       "repo.setup.start": {
         doc: "Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.",
         fields: { repo: "string", agent: "string?" },
         fieldDocs: { agent: "claude or codex; none: whichever the machine has." },
       },
       "repo.setup.cancel": { doc: "Stop a repo's Set up with AI run.", fields: { repo: "string" } },
+      "quietHours.set": {
+        doc: "Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`.",
+        fields: { quietHours: "QuietHours?" },
+        fieldDocs: { quietHours: "None: no quiet hours." },
+      },
+      "push.register": {
+        doc: "Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`.",
+        fields: { platform: "PushPlatform", token: "string", environment: "PushEnvironment" },
+      },
+      "push.unregister": {
+        doc: "Remove one of your push devices, by its token or its id. Answered with `push.devices`.",
+        fields: { token: "string?", id: "string?" },
+      },
+      "push.devices": { doc: "List your push devices. Answered with `push.devices`." },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -1464,7 +1616,11 @@ export const unions: Record<string, Union> = {
       },
       "task.plan": { doc: "Send a draft to planning, or pick up a backlog task (one with a plan is planned again).", fields: { id: "string" } },
       "task.backlog": { doc: "Park a draft or a plan waiting for approval in the backlog: nothing runs on it until someone picks it up.", fields: { id: "string" } },
-      "task.comment": { fields: { id: "string", text: "string", anchor: "string?" } },
+      "task.comment": {
+        doc: "Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.",
+        fields: { id: "string", text: "string", anchor: "string?", replyTo: "string?" },
+        fieldDocs: { replyTo: "The id of a comment on this task to reply to; a reply to a reply goes under its root." },
+      },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
       "task.review": {
         doc: "Submit a review of its diff: each note goes to its comments, and the batch to the planner or builder as one change request.",
@@ -1507,6 +1663,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
+      "task.recheckGitHub": { doc: "Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.", fields: { id: "string" } },
       "task.rerunCheck": { doc: "Run one of the pull request's CI checks again, by name.", fields: { id: "string", check: "string" } },
       "task.checkLog": {
         doc: "The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.",
@@ -1523,6 +1680,21 @@ export const unions: Record<string, Union> = {
       "task.checkedIt": { doc: "Attest to a Done when item yourself, with an optional reason.", fields: { id: "string", item: "u32", note: "string?" } },
       "task.mockupChange": { fields: { id: "string", mockup: "string", text: "string" } },
       "stats.get": { doc: "Admins only: the factory's statistics, answered with `stats`.", fields: { days: "u32", goal: "string?" } },
+      "report.get": {
+        doc: "Your day report for [since, until), your local day's bounds in ms, answered with `report`.",
+        fields: { since: "u64", until: "u64" },
+      },
+      "tasks.older": {
+        doc: "Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.",
+        fields: { goal: "string?", before: "u64?", beforeId: "string?", limit: "u32?" },
+        fieldDocs: {
+          goal: "One goal's tasks. None: every goal's.",
+          before: "Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start.",
+          beforeId: "The previous page's last task ID, to page past tasks updated in the same millisecond.",
+          limit: "Page size: 50 by default, 200 at most.",
+        },
+      },
+      "task.get": { doc: "One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`.", fields: { id: "string" } },
     },
   },
   ServerToClient: {
@@ -1537,6 +1709,8 @@ export const unions: Record<string, Union> = {
           ended: "EndedSession[]",
           goals: "Goal[]",
           tasks: "Task[]",
+          tallies: "GoalTally[]?",
+          olderTasks: "u32?",
           policy: "RiskPolicy",
           acceptances: "RiskAcceptance[]",
           prompts: "PromptAdditions?",
@@ -1545,6 +1719,7 @@ export const unions: Record<string, Union> = {
           online: "Presence[]",
           notes: "Note[]",
           follows: "GoalFollow[]",
+          quietHours: "QuietHours?",
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
           repoOwners: "string[]?",
@@ -1553,6 +1728,7 @@ export const unions: Record<string, Union> = {
           scripts: "RepoWorktreeScripts[]?",
           setupRuns: "RepoSetupRun[]?",
           scoutRuns: "ScoutRun[]?",
+          recurring: "Recurring[]?",
           runnerLatest: "string?",
           runnerReleases: "RunnerRelease[]?",
           serverVersion: "string?",
@@ -1564,11 +1740,16 @@ export const unions: Record<string, Union> = {
         },
         fieldDocs: {
           ended: "The most recent session ends (last 7 days, newest first).",
+          tasks: "Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`.",
+          tallies: "Each goal's task counts over every task, also those left out. None: an older server, which sends every task.",
+          olderTasks: "How many finished tasks the snapshot left out. None: an older server.",
           prompts: "The org's prompt additions. None: an older server.",
+          quietHours: "Your quiet hours. None: none set, or an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",
           setupRuns: "Each repo's latest Set up with AI run. None: an older server.",
           scoutRuns: "Each goal's latest Scout run. None: an older server.",
+          recurring: "Every goal's recurring tasks. None: an older server.",
           repoOwners: "Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.",
           githubApp: "The factory's GitHub App. None: no app, or an older server.",
           connectors: "The factory's MCP connectors, secret values blank. None: an older server.",
@@ -1587,14 +1768,27 @@ export const unions: Record<string, Union> = {
       "machine.agent_login": { doc: "How a sign-in on your machine is going, to its owner's apps only.", fields: { machine: "string", status: "AgentLoginStatus" } },
       "task.updated": { fields: { task: "Task" } },
       "task.removed": { fields: { id: "string" } },
+      "tasks.page": {
+        doc: "A page of older finished tasks `tasks.older` asked for, newest first, to that connection only.",
+        fields: { goal: "string?", tasks: "Task[]", more: "bool" },
+        fieldDocs: { goal: "The goal asked for. None: every goal.", more: "There are older ones still: ask again from this page's last task." },
+      },
       "goal.updated": { fields: { goal: "Goal" } },
       "note.updated": { fields: { note: "Note" } },
       "intake.updated": { fields: { request: "IntakeRequest" } },
       "note.removed": { fields: { id: "uuid" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
       "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
+      "recurring.updated": { doc: "A recurring task was saved or ran.", fields: { recurring: "Recurring" } },
+      "recurring.deleted": { fields: { id: "string" } },
       "repo.setup.updated": { doc: "How a repo's Set up with AI run is going.", fields: { run: "RepoSetupRun" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
+      "push.devices": { doc: "Your push devices, to your apps only.", fields: { devices: "PushDevice[]" } },
+      "quietHours.updated": {
+        doc: "Your quiet hours changed, to your apps only.",
+        fields: { quietHours: "QuietHours?" },
+        fieldDocs: { quietHours: "None: cleared." },
+      },
       presence: { doc: "Who's online and what they're looking at, whenever it changes.", fields: { online: "Presence[]" } },
       "policy.updated": { fields: { policy: "RiskPolicy", acceptances: "RiskAcceptance[]" } },
       "prompts.updated": { fields: { prompts: "PromptAdditions" } },
@@ -1633,6 +1827,7 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64" },
       },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
+      report: { doc: "The day report `report.get` asked for, to that connection only.", fields: { report: "DayReport" } },
       checkLog: {
         doc: "The CI check log `task.checkLog` asked for, to that connection only.",
         fields: { id: "string", check: "string", url: "string?", text: "string", truncated: "bool", failedStep: "string?" },

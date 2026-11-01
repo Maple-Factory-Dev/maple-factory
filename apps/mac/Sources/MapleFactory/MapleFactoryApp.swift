@@ -18,6 +18,8 @@ struct MapleFactoryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var state: AppState
     @State private var client: FactoryClient
+    /// The task comment or thread reply box with focus, if any: ⌘↩ sends it rather than toggling full view.
+    @FocusedValue(\.composerSubmit) private var composerSubmit
 
     init() {
         ErrorReports.start()
@@ -58,7 +60,10 @@ struct MapleFactoryApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: launchWidth, height: launchHeight)
         .commands {
-            CommandGroup(after: .appInfo) {
+            // The custom About window in place of the standard panel; Check for Updates… sits with it, since
+            // a group placed after .appInfo would hang off the one this replaces.
+            CommandGroup(replacing: .appInfo) {
+                AboutMenuItem()
                 Button("Check for Updates…") { Updater.shared.checkForUpdates() }
                     .disabled(!Updater.shared.canCheck)
             }
@@ -74,13 +79,16 @@ struct MapleFactoryApp: App {
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(!state.taskPanelEnabled)
 
-                Button(state.isComposing ? "Send to Planning" : state.focusedTask == nil ? "Open Task Full View" : "Close Task Full View") {
-                    if state.isComposing {
-                        state.submitDraft(sendToPlanning: true)
-                    } else if state.focusedTask == nil {
-                        state.openFocus(state.selectedTask)
-                    } else {
-                        state.closeFocus()
+                let returnCommand = state.returnCommand(composerFocused: composerSubmit != nil,
+                                                        composerCanSend: composerSubmit?.send != nil)
+                Button(composerSubmit?.label ?? (state.isComposing ? "Send to Planning" : state.focusedTask == nil ? "Open Task Full View" : "Close Task Full View")) {
+                    switch returnCommand {
+                    case .sendComposer: composerSubmit?.send?()
+                    // An empty comment box: don't swap the view out from under it.
+                    case .nothing: break
+                    case .sendToPlanning: state.submitDraft(sendToPlanning: true)
+                    case .openFocus: state.openFocus(state.selectedTask)
+                    case .closeFocus: state.closeFocus()
                     }
                 }
                 .keyboardShortcut(.return, modifiers: .command)
@@ -104,6 +112,14 @@ struct MapleFactoryApp: App {
                     .disabled(!client.isSignedIn)
             }
         }
+
+        Window("About Maple Factory", id: AboutView.windowID) {
+            AboutView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .restorationBehavior(.disabled)
 
         Settings {
             OrgSettingsView()
@@ -208,7 +224,7 @@ struct ContentView: View {
                     let remembered = state.pageRestored || state.demoLaunch ? nil : client.server.flatMap { LastPage.load(factory: $0) }
                     defer { state.pageRestored = true }
                     guard let next = AppState.destinationAfterSnapshot(state.destination, goals: names, focusedGoal: open.map { state.task($0).goal },
-                                                                       remembered: remembered) else { return }
+                                                                       remembered: remembered, renamed: client.goalRenames) else { return }
                     state.destination = next
                     state.focusedTask = open
                 }
@@ -223,6 +239,7 @@ struct ContentView: View {
         case .goal: page = "goal.\(state.layout.rawValue.lowercased())"
         case .inbox: page = "inbox"
         case .myTasks: page = "mytasks"
+        case .dayReport: page = "report"
         case .activity: page = "activity"
         case .scratchpad: page = "scratchpad"
         case .usage: page = "usage"
@@ -279,6 +296,7 @@ struct ContentView: View {
             .padding(.leading, state.sidebarSpace)
             .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
+        .sheet(isPresented: Bindable(Updater.shared).showsReleaseNotes) { ReleaseNotesSheet() }
         // ⌘K: above the sidebar, the slab and the toasts, below a proof shown large.
         .overlay {
             if state.showPalette {
@@ -397,7 +415,7 @@ struct ContentView: View {
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
         if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing, state.goalSheet == nil,
-           ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
+           ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
                     .contentShape(Rectangle())
@@ -469,6 +487,7 @@ extension ContentView {
         switch state.destination {
         case .inbox: InboxView()
         case .myTasks: MyTasksView()
+        case .dayReport: DayReportView()
         case .activity: ActivityView()
         case .scratchpad: ScratchpadView()
         case .usage: UsageView()

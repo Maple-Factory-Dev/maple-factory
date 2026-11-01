@@ -1,16 +1,24 @@
 import SwiftUI
 
 /// A goal sorted by what you should do with it: what's waiting on you across the top, what's up next
-/// (drafts and the queue, in order and draggable) beside what's moving, and what landed lately below.
+/// (the queue, then tasks being planned, then drafts; the queue and drafts in order and draggable)
+/// beside what's moving, and what landed lately below.
 struct GoalOverview: View {
     @Environment(AppState.self) private var state
     let goal: Goal
     let tasks: [FactoryTask]
 
-    @SwiftUI.State private var landedOpen = false
+    /// Which sections are folded to their header, remembered across launches.
+    @AppStorage("overviewCollapsed") private var collapsedRaw = OverviewCollapse.defaultRaw
     /// A draft dragged over Drafts' empty space, to go to the bottom; a task over Queue's, to go to the back.
     @SwiftUI.State private var draftsTargeted = false
     @SwiftUI.State private var queueTargeted = false
+    /// A task dragged over the folded Up next header, to go to the back of the queue.
+    @SwiftUI.State private var upNextTargeted = false
+
+    /// `overview:toggle:<section>` clicks a section's header; `overview:dropqueue:<id>` and `overview:dropdrafts:<id>`
+    /// drop a task on the Queue or Drafts lane (its header, when collapsed), lit as a drag over it would be.
+    static let demo = Notification.Name("GoalOverview.demo")
 
     var body: some View {
         let sections = GoalOverviewSections(tasks: tasks, today: FactoryData.todayOffset, pendingMerge: state.pendingMerge)
@@ -41,6 +49,43 @@ struct GoalOverview: View {
         .scrollIndicators(.automatic)
         // Drafts and the queue animate when a person drops a row (withAnimation there), not on each live update.
         .animation(.snappy, value: sections.needsYou.map(\.id))
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            guard let parts = note.object as? [String], parts.count > 1 else { return }
+            switch parts[0] {
+            case "toggle": if let section = OverviewSection(rawValue: parts[1]) { toggle(section) }
+            case "dropqueue", "dropdrafts":
+                let toQueue = parts[0] == "dropqueue"
+                if toQueue { queueTargeted = true } else { draftsTargeted = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(0.8))
+                    _ = toQueue ? dropOnQueue(parts[1]) : dropOnDrafts(parts[1], drafts: sections.drafts)
+                    if toQueue { queueTargeted = false } else { draftsTargeted = false }
+                }
+            default: break
+            }
+        }
+    }
+
+    /// A task dropped on the Queue lane goes to the back of the queue.
+    private func dropOnQueue(_ id: String) -> Bool {
+        guard state.tasks.contains(where: { $0.id == id }) else { return false }
+        withAnimation(.snappy) { state.moveToBottom(id) }
+        return true
+    }
+
+    /// A draft dropped on the Drafts lane goes to the bottom of the drafts.
+    private func dropOnDrafts(_ id: String, drafts: [FactoryTask]) -> Bool {
+        guard drafts.contains(where: { $0.id == id }) else { return false }
+        withAnimation(.snappy) { state.rankDraft(id, before: nil) }
+        return true
+    }
+
+    private var collapse: OverviewCollapse { OverviewCollapse(raw: collapsedRaw) }
+
+    private func isOpen(_ section: OverviewSection) -> Bool { !collapse.isCollapsed(section) }
+
+    private func toggle(_ section: OverviewSection) {
+        withAnimation(.snappy) { collapsedRaw = collapse.toggling(section).raw }
     }
 
     // MARK: Needs you
@@ -59,9 +104,12 @@ struct GoalOverview: View {
             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.columnBG))
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                header(icon: "exclamationmark.circle.fill", title: "Needs you", count: waiting.count, color: Theme.State.awaitingApproval)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-                    ForEach(waiting) { NeedsYouCard(waiting: $0) }
+                header(icon: "exclamationmark.circle.fill", title: "Needs you", count: waiting.count, color: Theme.State.awaitingApproval,
+                       section: .needsYou)
+                if isOpen(.needsYou) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                        ForEach(waiting) { NeedsYouCard(waiting: $0) }
+                    }
                 }
             }
         }
@@ -71,48 +119,69 @@ struct GoalOverview: View {
 
     private func upNext(_ sections: GoalOverviewSections) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            header(icon: "arrow.right.circle", title: "Up next", count: sections.drafts.count + sections.queued.count + sections.planning.count,
-                   color: Theme.State.building)
-            lane(icon: "list.number", title: "Queue", count: sections.queued.count, color: Theme.State.building, targeted: queueTargeted) {
-                ForEach(Array(sections.queued.enumerated()), id: \.element.id) { index, task in
-                    OverviewRow(task: task, position: index + 1, drop: .queueAhead)
-                }
-                if sections.queued.isEmpty { placeholder("Drag a draft here to queue it") }
-            }
-            .dropDestination(for: String.self) { ids, _ in
-                guard let id = ids.first, state.tasks.contains(where: { $0.id == id }) else { return false }
-                withAnimation(.snappy) { state.moveToBottom(id) }
-                return true
-            } isTargeted: { queueTargeted = $0 }
-
-            lane(icon: TaskState.drafting.icon, title: "Drafts", count: sections.drafts.count, color: TaskState.drafting.color, targeted: draftsTargeted) {
-                ForEach(sections.drafts) { task in
-                    OverviewRow(task: task, drop: .draftAhead)
-                }
-                if sections.drafts.isEmpty { placeholder("No drafts") }
-            }
-            .dropDestination(for: String.self) { ids, _ in
-                guard let id = ids.first, sections.drafts.contains(where: { $0.id == id }) else { return false }
-                withAnimation(.snappy) { state.rankDraft(id, before: nil) }
-                return true
-            } isTargeted: { draftsTargeted = $0 }
-
-            if !sections.planning.isEmpty {
-                lane(icon: TaskState.planning.icon, title: "Planning", count: sections.planning.count, color: TaskState.planning.color, targeted: false) {
-                    ForEach(sections.planning) { OverviewRow(task: $0) }
-                }
+            let upNextHeader = header(icon: "arrow.right.circle", title: "Up next", count: sections.drafts.count + sections.queued.count + sections.planning.count,
+                                      color: Theme.State.building, section: .upNext)
+            if isOpen(.upNext) {
+                upNextHeader
+                upNextLanes(sections)
+            } else {
+                // Folded, the lanes and their drop targets are gone, so the header queues what's dropped on it.
+                upNextHeader
+                    .padding(.vertical, 6)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Theme.State.building.opacity(upNextTargeted ? 0.6 : 0), lineWidth: 1.5)
+                            .padding(.horizontal, -4)
+                    }
+                    .dropDestination(for: String.self) { ids, _ in
+                        ids.first.map(dropOnQueue) ?? false
+                    } isTargeted: { upNextTargeted = $0 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func upNextLanes(_ sections: GoalOverviewSections) -> some View {
+        lane(icon: "list.number", title: "Queue", count: sections.queued.count, color: Theme.State.building, section: .queue,
+             targeted: queueTargeted) {
+            ForEach(Array(sections.queued.enumerated()), id: \.element.id) { index, task in
+                OverviewRow(task: task, position: index + 1, drop: .queueAhead)
+            }
+            if sections.queued.isEmpty { placeholder("Drag a draft here to queue it") }
+        }
+        .dropDestination(for: String.self) { ids, _ in
+            ids.first.map(dropOnQueue) ?? false
+        } isTargeted: { queueTargeted = $0 }
+
+        if !sections.planning.isEmpty {
+            lane(icon: TaskState.planning.icon, title: "Planning", count: sections.planning.count, color: TaskState.planning.color,
+                 section: .planning, targeted: false) {
+                ForEach(sections.planning) { OverviewRow(task: $0) }
+            }
+        }
+
+        lane(icon: TaskState.drafting.icon, title: "Drafts", count: sections.drafts.count, color: TaskState.drafting.color, section: .drafts,
+             targeted: draftsTargeted) {
+            ForEach(sections.drafts) { task in
+                OverviewRow(task: task, drop: .draftAhead)
+            }
+            if sections.drafts.isEmpty { placeholder("No drafts") }
+        }
+        .dropDestination(for: String.self) { ids, _ in
+            ids.first.map { dropOnDrafts($0, drafts: sections.drafts) } ?? false
+        } isTargeted: { draftsTargeted = $0 }
     }
 
     // MARK: In motion
 
     private func inMotion(_ moving: [FactoryTask]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            header(icon: "bolt.fill", title: "In motion", count: moving.count, color: Theme.State.reviewing)
-            lane(targeted: false) {
-                ForEach(moving) { OverviewRow(task: $0, showsProgress: true) }
-                if moving.isEmpty { placeholder("Nothing building or in review") }
+            header(icon: "bolt.fill", title: "In motion", count: moving.count, color: Theme.State.reviewing, section: .inMotion)
+            if isOpen(.inMotion) {
+                lane(targeted: false) {
+                    ForEach(moving) { OverviewRow(task: $0, showsProgress: true) }
+                    if moving.isEmpty { placeholder("Nothing building or in review") }
+                }
             }
         }
     }
@@ -124,13 +193,10 @@ struct GoalOverview: View {
         if !landed.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
-                    withAnimation(.snappy) { landedOpen.toggle() }
+                    toggle(.landed)
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: landedOpen ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Theme.textMuted)
-                            .frame(width: 10)
+                        chevron(open: isOpen(.landed))
                         Image(systemName: TaskState.merged.icon)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(TaskState.merged.color)
@@ -142,7 +208,7 @@ struct GoalOverview: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if landedOpen {
+                if isOpen(.landed) {
                     lane(targeted: false) {
                         ForEach(landed) { OverviewRow(task: $0) }
                     }
@@ -153,8 +219,30 @@ struct GoalOverview: View {
 
     // MARK: Parts
 
-    private func header(icon: String, title: String, count: Int, color: Color) -> some View {
+    private func chevron(open: Bool) -> some View {
+        Image(systemName: open ? "chevron.down" : "chevron.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Theme.textMuted)
+            .frame(width: 10)
+    }
+
+    /// A section's title and count; with a section, a toggle that folds it to this line.
+    @ViewBuilder
+    private func header(icon: String, title: String, count: Int, color: Color, section: OverviewSection? = nil) -> some View {
+        if let section {
+            Button { toggle(section) } label: {
+                headerLabel(icon: icon, title: title, count: count, color: color, chevronOpen: isOpen(section))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            headerLabel(icon: icon, title: title, count: count, color: color, chevronOpen: nil)
+        }
+    }
+
+    private func headerLabel(icon: String, title: String, count: Int, color: Color, chevronOpen: Bool?) -> some View {
         HStack(spacing: 7) {
+            if let chevronOpen { chevron(open: chevronOpen) }
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(color)
@@ -168,12 +256,15 @@ struct GoalOverview: View {
         }
     }
 
-    /// A box of rows, under a small title when it has one.
+    /// A box of rows, under a small title when it has one. With a section, the title folds the lane to
+    /// itself; a collapsed lane still takes drops, outlined around its title.
     private func lane<Rows: View>(icon: String? = nil, title: String? = nil, count: Int = 0, color: Color = Theme.textMuted,
-                                  targeted: Bool, @ViewBuilder rows: () -> Rows) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+                                  section: OverviewSection? = nil, targeted: Bool, @ViewBuilder rows: () -> Rows) -> some View {
+        let open = section.map(isOpen) ?? true
+        return VStack(alignment: .leading, spacing: 6) {
             if let title {
-                HStack(spacing: 6) {
+                let titleRow = HStack(spacing: 6) {
+                    if let section { chevron(open: isOpen(section)) }
                     if let icon {
                         Image(systemName: icon)
                             .font(.system(size: 10.5, weight: .semibold))
@@ -185,17 +276,34 @@ struct GoalOverview: View {
                     Text("\(count)")
                         .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(Theme.textFaint)
+                    if section != nil { Spacer() }
                 }
                 .padding(.horizontal, 4)
-            }
-            // Lazy within the page's scroll view: a long queue lays out only the rows in view.
-            LazyVStack(spacing: 0) { rows() }
-                .padding(4)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.columnBG))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(Theme.State.building.opacity(targeted ? 0.6 : 0), lineWidth: 1.5)
+                if let section {
+                    Button { toggle(section) } label: {
+                        titleRow
+                            .padding(.vertical, open ? 0 : 6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Theme.State.building.opacity(targeted && !open ? 0.6 : 0), lineWidth: 1.5)
+                    }
+                } else {
+                    titleRow
                 }
+            }
+            if open {
+                // Lazy within the page's scroll view: a long queue lays out only the rows in view.
+                LazyVStack(spacing: 0) { rows() }
+                    .padding(4)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.columnBG))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Theme.State.building.opacity(targeted ? 0.6 : 0), lineWidth: 1.5)
+                    }
+            }
         }
     }
 

@@ -50,6 +50,7 @@
           <a href="#runner">Runner</a>
           <a href="#mac">Mac app</a>
           <a href="#errors">Error reports</a>
+          <a href="#push">Mobile notifications</a>
           <a href="#report">Reporting a vulnerability</a>
         </nav>
 
@@ -196,6 +197,26 @@
             <li><strong>Mac app:</strong> turn off <em>Send crash and error reports</em> in Settings › General › Privacy. It takes effect straight away. Or run <code>defaults write dev.maplefactory.app MapleTelemetry off</code>, or set <code>MAPLE_TELEMETRY=off</code>.</li>
             <li>Builds you make yourself (debug builds of the runner and Mac app) never report.</li>
           </ul>
+        </section>
+
+        <section class="sec-part" id="push" aria-labelledby="push-title">
+          <h2 id="push-title">Mobile notifications</h2>
+          <p>Phones get notifications through a push relay at maplefactory.dev, the only place that holds Apple’s (APNs) and Google’s (FCM) keys. It’s off in every factory until an admin turns it on in Settings › General. Turning it on enrolls the factory with the relay, which gives it an id and a secret; the factory keeps the secret encrypted under its <code>SECRETS_KEY</code>, and the relay keeps a hash of it, which it uses as the signing key: the raw secret never leaves the factory after enrollment, but the relay’s copy is enough to sign for the factory, so it’s guarded like a key. At worst a leak would let someone send fixed-text notifications (a task key and a reason) to phones whose tokens they already have. A Worker var <code>PUSH_RELAY=off</code> locks it off.</p>
+
+          <h3>What’s sent</h3>
+          <ul>
+            <li>When a task newly needs someone (a raised hand, a question, a plan to approve, a review or an @mention), one request per phone they registered: the phone’s device token, its platform and build (sandbox or production), the task’s key (like <code>MF-12</code>), the reason, and the factory’s relay id.</li>
+            <li>Each request is signed (HMAC-SHA256 over a timestamp and the body). The relay refuses unsigned, altered or replayed requests (older than 5 minutes), revoked factories, and more than 600 sends a factory an hour.</li>
+            <li>The notification itself says only the task key and the reason. The app loads the rest from your factory.</li>
+          </ul>
+
+          <h3>What’s never sent</h3>
+          <ul>
+            <li>Task titles, briefs, comments, code, diffs, repo or branch names, or who anyone is.</li>
+            <li>Nothing while the relay is off, while someone is in their quiet hours, or for a member whose access was revoked (their devices are deleted with it).</li>
+          </ul>
+
+          <p>Turning it off deletes the credential in the factory at once and revokes it at the relay. Each person sees and removes only their own devices, at most 10. When Apple or Google says a token is gone, the factory deletes that device.</p>
         </section>
 
         <!-- Reporting -->

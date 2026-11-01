@@ -188,7 +188,13 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
         disconnect()
         val gen = generation
         if (status != Status.Live && attempt == 0) status = Status.Connecting
-        val request = Request.Builder().url(FactoryApi.websocketUrl(server, "/client/connect")).header("Authorization", "Bearer $token").build()
+        val request = Request.Builder().url(FactoryApi.websocketUrl(server, "/client/connect"))
+            .header("Authorization", "Bearer $token")
+            // Teammates see a phone badge for someone who's only on a phone.
+            .header("x-maple-client", "mobile")
+            .build()
+        // Big snapshots need nothing raised here: OkHttp has no cap on incoming messages (unlike URLSession's
+        // 1 MiB default, which iPhone raised to 64 MiB in MF-212). SocketSizeTest reads 8 and 40 MiB frames whole.
         socket = FactoryApi.client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send(encode(ClientMessage.Subscribe))
@@ -292,6 +298,21 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
     }
 
     private fun encode(message: ClientMessage) = WireJson.encodeToString(ClientMessage.serializer(), message)
+
+    /** The next page of the goal's finished tasks older than the snapshot's 14 days. */
+    fun loadOlder(goal: String) {
+        val (next, request) = feed.olderRequest(goal) ?: return
+        feed = next
+        send(request)
+    }
+
+    /** A task opened by ID that isn't loaded (the snapshot leaves out ones finished over 14 days ago). */
+    fun fetchTask(id: String) {
+        if (status != Status.Live) return
+        val (next, request) = feed.fetchRequest(id) ?: return
+        feed = next
+        send(request)
+    }
 
     fun send(message: ClientMessage) {
         if (status == Status.Demo) return demoSend(message)

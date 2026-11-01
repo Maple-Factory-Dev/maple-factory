@@ -3,6 +3,7 @@
 
 import type { Goal, PromptAdditions, Role, SensitiveArea, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
+import type { BudgetUse } from "./policy.ts";
 
 /** The anchor on a change request made because the branch didn't merge: "Didn't merge into <base>". */
 export const MERGE_ANCHOR = "Didn't merge into";
@@ -71,7 +72,7 @@ function moving(others: Moving[]) {
 function comments(task: Task) {
   const recent = task.comments.slice(-10);
   if (!recent.length) return "";
-  return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}: ${c.text}`).join("\n");
+  return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}${c.replyTo ? ` (in thread ${c.replyTo})` : ""}: ${c.text}`).join("\n");
 }
 
 /** The org's enabled risk checks, for the planner to judge and cite. */
@@ -108,6 +109,7 @@ Read the repository (this worktree) to understand where the change goes. Then ca
 
 If something essential is ambiguous, call \`ask\` with the question and a few options, then end your turn and wait: the answer will be typed here.
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal instead of writing a plan. Each becomes a draft in this goal for a person to accept, and this task closes (there's nothing to merge): end your turn after it. Don't build them yourself. When the work has to land in order (an epic), give each proposal \`after\` (#n for an earlier proposal in the call, or an existing task id) and the whole set one \`effort\` name: once approved, each starts building on its own after everything it waits on has merged.
+${THREADS}
 If the task can't be planned as asked, call \`raise_hand\`. After \`submit_plan\` succeeds, end your turn; your session will be closed.`;
 }
 
@@ -120,7 +122,16 @@ function unmerged(task: Task) {
 The branch already has the reviewed, approved work, but it doesn't merge into ${base}. Only bring it up to date with origin/${base} and resolve the conflicts (${c.id}); don't redo or extend the plan. Re-prove only the Done when items the conflict resolution touched, then call \`finish\`.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: string[] = []): string {
+/** The task's time and cost budget, what's left of it, and to ask before going past it. Empty with both limits off. */
+export function budgetSection(use: BudgetUse | null): string {
+  if (!use || (use.allowMinutes == null && use.allowCostUsd == null)) return "";
+  const parts: string[] = [];
+  if (use.allowMinutes != null) parts.push(`${Math.max(0, Math.round(use.allowMinutes - use.minutes))} of its ${Math.round(use.allowMinutes)} minutes of agent time`);
+  if (use.allowCostUsd != null) parts.push(`$${Math.max(0, use.allowCostUsd - use.costUsd).toFixed(2)} of its $${use.allowCostUsd.toFixed(2)}`);
+  return `\n\n## Budget\nThis task has ${parts.join(" and ")} left (all its sessions count). As soon as it looks like you'll go past that (stuck proving something, say, or the fix keeps growing), call \`raise_hand\` with reason \`overBudget\`: where you are, what's left, and the options. Ask before you reach it, not after.`;
+}
+
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: string[] = [], budget: BudgetUse | null = null): string {
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
@@ -137,15 +148,34 @@ ${done}${moving(others)}${comments(task)}${changes(task)}${
     review?.length
       ? `\n\n## Review round ${task.autoReview!.rounds.length} asked for changes\n` + review.map((f) => `- [${f.severity}] (${f.id}) ${f.text}${f.file ? ` (${f.file})` : ""}`).join("\n")
       : ""
-  }${unmerged(task)}${checksSection(checks)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
+  }${unmerged(task)}${checksSection(checks)}${budgetSection(budget)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
 
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
 For each Done when item, produce real evidence and call \`prove\` (item numbers from 1): paste the command and its output for terminal/tests proofs.
+${ARTIFACTS(task)}
+${THREADS}
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal. Each becomes a draft in this goal for a person to accept; don't build them yourself. (Proposing from planning closes a task; once it's building, it carries on.)
 If you're stuck on a decision only a person can make, call \`ask\`, end your turn and wait. If you can't meet a proof or the fix grows past the plan, call \`raise_hand\`.
 When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${checks.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
 }
+
+/** Comment threads: people talking to the session mid-flight, answered with \`reply\`. */
+const THREADS =
+  "People can talk to you in the task's comment threads while you work: it arrives as \"<who> in comment thread <id>: …\" (and \`get_task\` lists any threads still waiting on an answer). Answer briefly with \`reply\` in that thread, then carry on with the work. It's conversation, not a change request.";
+
+/** What \`share_artifact\` is for: something people look at, not evidence (proofs stay that). The builder
+ *  also shares a "Change walkthrough" before \`finish\`, which the pull request lists (\`pullArtifacts\`). */
+const ARTIFACTS = (task: Task, role: "builder" | "reviewer" = "builder") => {
+  const where = `Save the file (HTML with everything inline and no network, SVG, PNG, PDF, Markdown, CSV…) under ~/.cache/maple-proof/${task.branch ?? "<this task's branch>"}/, never in the worktree.`;
+  const share = `When a picture says it better than words, share it with \`share_artifact\`: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. ${where} Proofs stay the evidence for Done when; artifacts are for people to look at, and the pull request lists each one.`;
+  return role === "builder"
+    ? `${share}\nBefore \`finish\`, share one artifact titled "${WALKTHROUGH}" with \`share_artifact\`: a self-contained page (HTML, or SVG/Markdown) showing what the change does — before/after for UI, a flow or diagram for logic, sample output for a CLI or API. After a review round, share it again under the same title to add a new version. Skip it only for a trivial one-file fix.`
+    : `${share} You may add your own (e.g. "Review notes"); it's optional.`;
+};
+
+/** The builder's walkthrough artifact's title. */
+export const WALKTHROUGH = "Change walkthrough";
 
 /** The repo's checks, which a finish runs before anything is committed. */
 function checksSection(checks: string[]): string {
@@ -153,7 +183,7 @@ function checksSection(checks: string[]): string {
   return `\n\n## Checks\nThese must exit 0 in the worktree before \`finish\` is accepted; run them yourself first and fix what they find:\n${checks.map((c) => `- \`${c}\``).join("\n")}\nIf one fails when you finish, nothing is committed or pushed and its output is typed into this session: fix it, then call \`finish\` again.`;
 }
 
-export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null): string {
+export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null, budget: BudgetUse | null = null): string {
   const done = task.doneWhen
     .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
@@ -171,7 +201,7 @@ ${task.planSummary ?? ""}
 ${task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})`).join("\n")}
 
 ## Done when, with the builder's evidence
-${done}
+${done}${budgetSection(budget)}
 ${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}${asked}
 Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/${base}..HEAD\`). Answer three things:
 1. Did it do the ask? One check per part of the brief: met, partial or missed.
@@ -179,5 +209,7 @@ Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/
 3. Code: bugs, missing cases, risky changes.
 
 Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
-List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.`;
+List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
+${ARTIFACTS(task, "reviewer")}
+${THREADS}`;
 }

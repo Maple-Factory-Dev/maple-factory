@@ -23,10 +23,10 @@ use uuid::Uuid;
 use crate::protocol::Outbound;
 use crate::sessions::{Sessions, expand_home};
 
-/// One file's bytes (the control plane's limit): a screenshot or text capture.
-pub const MAX_FILE: u64 = 5 * 1024 * 1024;
+/// One file's bytes (the control plane's limit): a screenshot or text capture, full-size Retina ones too.
+pub const MAX_FILE: u64 = 20 * 1024 * 1024;
 /// A screen recording's bytes (MP4, MOV or WebM).
-pub const MAX_VIDEO: u64 = 25 * 1024 * 1024;
+pub const MAX_VIDEO: u64 = 95 * 1024 * 1024;
 /// What a session's task is: kept on its tmux session (`@maple_task`) so a restarted runner knows too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskTag {
@@ -185,8 +185,30 @@ pub struct Checked {
 }
 
 /// Checks the file a `prove` call names: `~` expanded and symlinks resolved, it must be inside
-/// `folder`, and PNG, JPEG, WebP or text (at most 5 MB) or MP4, MOV or WebM (at most 25 MB). The message says what to do instead.
+/// `folder`, and PNG, JPEG, WebP or text (at most 20 MB) or MP4, MOV or WebM (at most 95 MB). The message says what to do instead.
 pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, String> {
+    let (path, bytes) = read_in_folder(file, home, folder, "Evidence files", MAX_VIDEO, |len| {
+        format!("{file} is {} MB; a video is at most 95 MB and any other file at most 20 MB. Record a shorter clip.", len / 1024 / 1024)
+    })?;
+    let kind = sniff(&bytes).ok_or_else(|| {
+        format!(
+            "{file} isn't PNG, JPEG, WebP, MP4, MOV, WebM or text. Save screenshots as PNG, recordings as MP4, and output as a .txt file (or pass it as text)."
+        )
+    })?;
+    if !kind.starts_with("video/") && bytes.len() as u64 > MAX_FILE {
+        return Err(format!(
+            "{file} is {} KB; a screenshot or text file is at most 20 MB. Save a smaller one (a PNG of one screen, or the end of the output).",
+            bytes.len() / 1024
+        ));
+    }
+    let name = path.file_name().map(|n| stored_name(&n.to_string_lossy())).unwrap_or_else(|| "evidence".into());
+    Ok(Checked { path, name, kind, bytes })
+}
+
+/// A file a tool call names, read: `~` expanded and symlinks resolved, it must be a non-empty file
+/// inside `folder` and at most `max` bytes (`too_big` says so otherwise). `what` names the files in
+/// the message for one outside the folder.
+fn read_in_folder(file: &str, home: &Path, folder: &Path, what: &str, max: u64, too_big: impl Fn(u64) -> String) -> Result<(PathBuf, Vec<u8>), String> {
     let shown = folder.strip_prefix(home).map(|p| format!("~/{}/", p.display())).unwrap_or_else(|_| format!("{}/", folder.display()));
     let file = file.trim();
     let given = match file.strip_prefix("~/") {
@@ -199,27 +221,74 @@ pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, Str
     let path = std::fs::canonicalize(&given).map_err(|_| format!("There's no file at {file}. Save it under {shown} first."))?;
     let inside = std::fs::canonicalize(folder).is_ok_and(|f| path.starts_with(&f) && path != f);
     if !inside {
-        return Err(format!("Evidence files go under {shown} (this task's proof folder, outside the worktree); {file} isn't there."));
+        return Err(format!("{what} go under {shown} (this task's proof folder, outside the worktree); {file} isn't there."));
     }
     let meta = std::fs::metadata(&path).map_err(|e| format!("Couldn't read {file}: {e}"))?;
     if !meta.is_file() {
         return Err(format!("{file} isn't a file."));
     }
-    if meta.len() > MAX_VIDEO {
-        return Err(format!("{file} is {} MB; a video is at most 25 MB and any other file at most 5 MB. Record a shorter clip.", meta.len() / 1024 / 1024));
+    if meta.len() > max {
+        return Err(too_big(meta.len()));
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read {file}: {e}"))?;
     if bytes.is_empty() {
         return Err(format!("{file} is empty."));
     }
-    let kind = sniff(&bytes).ok_or_else(|| {
-        format!("{file} isn't PNG, JPEG, WebP, MP4, MOV, WebM or text. Save screenshots as PNG, recordings as MP4, and output as a .txt file (or pass it as text).")
+    Ok((path, bytes))
+}
+
+/// An artifact file's bytes (the control plane's `MAX_ARTIFACT`).
+pub const MAX_ARTIFACT: u64 = 10 * 1024 * 1024;
+
+/// Checks the file a `share_artifact` call names: inside `folder` like a proof (`read_in_folder`), at
+/// most 10 MB, and one of the kinds `sniff_artifact` knows.
+pub fn check_artifact(file: &str, home: &Path, folder: &Path) -> Result<Checked, String> {
+    let (path, bytes) = read_in_folder(file, home, folder, "Artifact files", MAX_ARTIFACT, |len| {
+        format!("{file} is {} MB; an artifact is at most 10 MB. Save a smaller one.", len / 1024 / 1024)
     })?;
-    if !kind.starts_with("video/") && bytes.len() as u64 > MAX_FILE {
-        return Err(format!("{file} is {} KB; a file is at most 5 MB. Save a smaller one (a PNG of one screen, or the end of the output).", bytes.len() / 1024));
-    }
-    let name = path.file_name().map(|n| stored_name(&n.to_string_lossy())).unwrap_or_else(|| "evidence".into());
+    let name = path.file_name().map(|n| stored_name(&n.to_string_lossy())).unwrap_or_else(|| "artifact".into());
+    let kind = sniff_artifact(&bytes, &name)
+        .ok_or_else(|| format!("{file} isn't HTML, SVG, PNG, JPEG, WebP, GIF, PDF, Markdown, CSV, JSON or text. Save a chart as HTML, SVG or PNG."))?;
     Ok(Checked { path, name, kind, bytes })
+}
+
+/// What an artifact file is, from its first bytes and (for text) its name, as the control plane decides
+/// it (`sniffArtifact` in server/src/attachments.ts). Text that isn't a named kind is plain text.
+pub fn sniff_artifact(b: &[u8], name: &str) -> Option<&'static str> {
+    if b.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        return Some("image/png");
+    }
+    if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some("image/jpeg");
+    }
+    if b.starts_with(b"RIFF") && b.get(8..12) == Some(b"WEBP") {
+        return Some("image/webp");
+    }
+    if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if b.starts_with(b"%PDF-") {
+        return Some("application/pdf");
+    }
+    if b.contains(&0) {
+        return None;
+    }
+    let text = std::str::from_utf8(b).ok()?;
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let head: String = text.chars().take(1024).collect::<String>().trim_start().trim_start_matches('\u{feff}').to_ascii_lowercase();
+    Some(if ext == "svg" || head.starts_with("<svg") || (head.starts_with("<?xml") && head.contains("<svg")) {
+        "image/svg+xml"
+    } else if ext == "html" || ext == "htm" || head.starts_with("<!doctype html") || head.starts_with("<html") {
+        "text/html"
+    } else if ext == "md" || ext == "markdown" {
+        "text/markdown"
+    } else if ext == "csv" {
+        "text/csv"
+    } else if ext == "json" {
+        "application/json"
+    } else {
+        "text/plain"
+    })
 }
 
 /// A file's name as the control plane takes it: other characters become `-`, at most 80 kept.
@@ -255,10 +324,17 @@ pub fn sniff(b: &[u8]) -> Option<&'static str> {
 
 /// Uploads one file for a task; the answer is the control plane's `{key, type, bytes}`.
 async fn upload(base: &str, runner_id: &str, token: &str, task_id: &str, file: &Checked) -> Result<Value, String> {
-    let mut url = reqwest::Url::parse(&format!("{base}/runner/proof/{task_id}")).map_err(|e| format!("The control plane's URL is wrong: {e}"))?;
+    upload_to(base, "proof", runner_id, token, task_id, file).await
+}
+
+/// Uploads one file to `/runner/<route>/<task>`: `proof` or `artifact`.
+async fn upload_to(base: &str, route: &str, runner_id: &str, token: &str, task_id: &str, file: &Checked) -> Result<Value, String> {
+    let mut url = reqwest::Url::parse(&format!("{base}/runner/{route}/{task_id}")).map_err(|e| format!("The control plane's URL is wrong: {e}"))?;
     url.query_pairs_mut().append_pair("runner", runner_id).append_pair("name", &file.name);
     let res = CLIENT
         .put(url)
+        // A 95 MB recording over a slow uplink takes longer than the client's usual 50 s.
+        .timeout(Duration::from_secs(300))
         .bearer_auth(token)
         .header("content-type", file.kind)
         .body(file.bytes.clone())
@@ -313,6 +389,28 @@ async fn prepare_with(mut args: Value, tag: &TaskTag, worktree: &Path, home: &Pa
     if let Some(sha) = head(worktree).await {
         args["head"] = json!(sha);
     }
+    Ok(args)
+}
+
+/// A `share_artifact` call on its way to the hub: its file is checked and uploaded to
+/// `/runner/artifact/<task>`, and the stored `{key, name, type, bytes}` put in its place.
+pub async fn prepare_artifact(sessions: &Sessions, session: Uuid, args: Value) -> Result<Value, String> {
+    let Some((tag, _)) = sessions.task_of(session) else {
+        return Err(
+            "share_artifact is for a task's own session, and this session isn't running a task (or it started before this runner could attach files).".into()
+        );
+    };
+    prepare_artifact_with(args, &tag, &expand_home("~"), origin()).await
+}
+
+async fn prepare_artifact_with(mut args: Value, tag: &TaskTag, home: &Path, origin: Option<(&str, &str, &str)>) -> Result<Value, String> {
+    let Some(Value::String(file)) = args.get("file") else {
+        return Err("file must be the full path of a file under the task's proof folder.".into());
+    };
+    let checked = check_artifact(file, home, &folder(home, &tag.branch))?;
+    let (base, runner_id, token) = origin.ok_or("The runner doesn't know its control plane, so it can't upload files.")?;
+    let stored = upload_to(base, "artifact", runner_id, token, &tag.id, &checked).await?;
+    args["file"] = json!({ "key": stored["key"], "name": checked.name, "type": stored["type"], "bytes": stored["bytes"] });
     Ok(args)
 }
 
@@ -1129,22 +1227,51 @@ mod tests {
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/nope.png", &home, &dir).unwrap_err().contains("no file"));
         assert!(check_file("tasks-390.png", &home, &dir).unwrap_err().contains("full path"));
         std::fs::write(dir.join("big.txt"), vec![b'a'; MAX_FILE as usize + 1]).unwrap();
-        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/big.txt", &home, &dir).unwrap_err().contains("at most 5 MB"));
-        // A video may be bigger, up to 25 MB.
+        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/big.txt", &home, &dir).unwrap_err().contains("at most 20 MB"));
+        // A full-size Retina screenshot goes as it is: 15 MB is fine, 21 MB is over.
+        let mut png = PNG.to_vec();
+        png.resize(15 * 1024 * 1024, 0);
+        std::fs::write(dir.join("retina.png"), &png).unwrap();
+        assert_eq!(check_file("~/.cache/maple-proof/agent/cleanup-badge/retina.png", &home, &dir).unwrap().kind, "image/png");
+        png.resize(21 * 1024 * 1024, 0);
+        std::fs::write(dir.join("huge.png"), &png).unwrap();
+        let err = check_file("~/.cache/maple-proof/agent/cleanup-badge/huge.png", &home, &dir).unwrap_err();
+        assert!(err.contains("at most 20 MB") && err.contains("smaller one"), "{err}");
+        // A video may be bigger, up to 95 MB.
         let mut mp4 = b"\0\0\0\x20ftypisom\0\0\x02\0".to_vec();
-        mp4.resize(MAX_FILE as usize * 3, 0);
+        mp4.resize(60 * 1024 * 1024, 0);
         std::fs::write(dir.join("flow.mp4"), &mp4).unwrap();
         let ok = check_file("~/.cache/maple-proof/agent/cleanup-badge/flow.mp4", &home, &dir).unwrap();
         assert_eq!((ok.name.as_str(), ok.kind), ("flow.mp4", "video/mp4"));
         let mut webm = b"\x1a\x45\xdf\xa3".to_vec();
-        webm.resize(MAX_VIDEO as usize + 1, 0);
+        webm.resize(96 * 1024 * 1024, 0);
         std::fs::write(dir.join("long.webm"), &webm).unwrap();
-        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/long.webm", &home, &dir).unwrap_err().contains("at most 25 MB"));
+        let err = check_file("~/.cache/maple-proof/agent/cleanup-badge/long.webm", &home, &dir).unwrap_err();
+        assert!(err.contains("at most 95 MB") && err.contains("shorter clip"), "{err}");
         std::fs::write(dir.join("clip.gif"), b"GIF89a\x01\x00\x00").unwrap();
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/clip.gif", &home, &dir).unwrap_err().contains("isn't PNG"));
         std::fs::write(dir.join("empty.txt"), b"").unwrap();
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/empty.txt", &home, &dir).unwrap_err().contains("empty"));
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// The prove path against a real control plane, with real files: `MAPLE_LIVE_BASE`, `MAPLE_LIVE_RUNNER`,
+    /// `MAPLE_LIVE_TOKEN` (an enrolled runner's), `MAPLE_LIVE_TASK` and `MAPLE_LIVE_FILES` (paths under
+    /// ~/.cache/maple-proof/<MAPLE_LIVE_BRANCH>/, comma-separated). Prints each stored key and size.
+    #[tokio::test]
+    #[ignore = "needs a running control plane (wrangler dev)"]
+    async fn live_prove_uploads_files_as_they_are() {
+        let env = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("set {k}"));
+        let home = PathBuf::from(env("HOME"));
+        let tag = TaskTag { id: env("MAPLE_LIVE_TASK"), branch: env("MAPLE_LIVE_BRANCH") };
+        let (base, runner, token) = (env("MAPLE_LIVE_BASE"), env("MAPLE_LIVE_RUNNER"), env("MAPLE_LIVE_TOKEN"));
+        for (i, file) in env("MAPLE_LIVE_FILES").split(',').enumerate() {
+            let size = std::fs::metadata(expand_home(file)).unwrap().len();
+            let args = json!({ "item": i + 1, "kind": "screenshot", "summary": "live", "file": file });
+            let out = prepare_with(args, &tag, &home, &home, Some((&base, &runner, &token))).await.unwrap();
+            println!("{file}: {size} bytes on disk -> {} {} {} bytes", out["file"]["key"], out["file"]["type"], out["file"]["bytes"]);
+            assert_eq!(out["file"]["bytes"], json!(size));
+        }
     }
 
     #[test]
@@ -1230,6 +1357,73 @@ mod tests {
         let text = json!({ "criterion": 3, "kind": "test", "summary": "s", "text": "ok" });
         assert_eq!(prepare_with(text.clone(), &tag, &home, &home, None).await.unwrap(), text);
         assert!(prepare_with(json!({ "file": 5 }), &tag, &home, &home, None).await.is_err());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn artifact_files_are_the_shareable_kinds_inside_the_folder() {
+        let (home, dir) = home();
+        let at = |name: &str| format!("~/.cache/maple-proof/agent/cleanup-badge/{name}");
+        let cases: &[(&str, &[u8], &str)] = &[
+            ("chart.html", b"<!doctype html><script>draw()</script>", "text/html"),
+            ("page.txt", b"  <html><body>hi</body></html>", "text/html"),
+            ("bars.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
+            ("drawing.xml", b"<?xml version='1.0'?><svg/>", "image/svg+xml"),
+            ("shot.png", PNG, "image/png"),
+            ("anim.gif", b"GIF89a\x01\x00\x01\x00", "image/gif"),
+            ("repro.pdf", b"%PDF-1.7\n", "application/pdf"),
+            ("notes.md", b"# How to review", "text/markdown"),
+            ("results.csv", b"run,ms\n1,20\n", "text/csv"),
+            ("results.json", b"{\"ms\":20}", "application/json"),
+            ("log.txt", b"plain output", "text/plain"),
+        ];
+        for (name, bytes, kind) in cases {
+            std::fs::write(dir.join(name), bytes).unwrap();
+            let ok = check_artifact(&at(name), &home, &dir).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!((ok.kind, ok.name.as_str()), (*kind, *name), "{name}");
+        }
+        // A binary blob, a video (a proof, not an artifact), and an empty file.
+        std::fs::write(dir.join("blob.bin"), [0u8, 1, 2, 3, 0xff]).unwrap();
+        assert!(check_artifact(&at("blob.bin"), &home, &dir).unwrap_err().contains("isn't HTML"));
+        std::fs::write(dir.join("clip.mp4"), [0, 0, 0, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0]).unwrap();
+        assert!(check_artifact(&at("clip.mp4"), &home, &dir).is_err());
+        std::fs::write(dir.join("empty.html"), b"").unwrap();
+        assert!(check_artifact(&at("empty.html"), &home, &dir).unwrap_err().contains("empty"));
+        // 10 MB and no more.
+        std::fs::write(dir.join("edge.txt"), vec![b'a'; MAX_ARTIFACT as usize]).unwrap();
+        assert!(check_artifact(&at("edge.txt"), &home, &dir).is_ok());
+        std::fs::write(dir.join("big.html"), vec![b'a'; MAX_ARTIFACT as usize + 1]).unwrap();
+        assert!(check_artifact(&at("big.html"), &home, &dir).unwrap_err().contains("at most 10 MB"));
+        // Outside the folder: the worktree, another task's folder, `..`, or a symlink out.
+        std::fs::write(home.join("src/app/chart.html"), b"<html></html>").unwrap();
+        assert!(check_artifact("~/src/app/chart.html", &home, &dir).unwrap_err().contains("Artifact files go under"));
+        assert!(check_artifact("~/.cache/maple-proof/agent/cleanup-badge/../../../src/app/chart.html", &home, &dir).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(home.join("src/app/chart.html"), dir.join("sneaky.html")).unwrap();
+            assert!(check_artifact(&at("sneaky.html"), &home, &dir).unwrap_err().contains("isn't there"));
+        }
+        assert!(check_artifact("chart.html", &home, &dir).unwrap_err().contains("full path"));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[tokio::test]
+    async fn shares_an_artifact_through_the_artifact_route() {
+        let (home, dir) = home();
+        std::fs::write(dir.join("chart.html"), b"<!doctype html><p>chart</p>").unwrap();
+        let tag = TaskTag { id: "MF-205".into(), branch: "agent/cleanup-badge".into() };
+        let (base, req) =
+            server("201 Created", r#"{"key":"/attachments/0f0e0d0c-0b0a-4908-8706-050403020100/chart.html","type":"text/html","bytes":27}"#).await;
+        let args = json!({ "title": "Chart", "file": "~/.cache/maple-proof/agent/cleanup-badge/chart.html" });
+        let out = prepare_artifact_with(args, &tag, &home, Some((&base, "mini", "aor_mini-token"))).await.unwrap();
+        assert_eq!(out["file"]["key"], json!("/attachments/0f0e0d0c-0b0a-4908-8706-050403020100/chart.html"));
+        assert_eq!((out["file"]["name"].as_str(), out["title"].as_str()), (Some("chart.html"), Some("Chart")));
+        let (head, _) = req.await.unwrap();
+        assert!(head.starts_with("PUT /runner/artifact/MF-205?runner=mini&name=chart.html HTTP/1.1"), "{head}");
+        assert!(head.to_lowercase().contains("content-type: text/html"), "{head}");
+        // No file, or not a path: refused before any upload.
+        assert!(prepare_artifact_with(json!({ "title": "x" }), &tag, &home, None).await.is_err());
+        assert!(prepare_artifact_with(json!({ "title": "x", "file": 5 }), &tag, &home, None).await.is_err());
         std::fs::remove_dir_all(&home).unwrap();
     }
 
@@ -1361,7 +1555,7 @@ mod tests {
         let emit = |m: Outbound| {
             if let Outbound::TaskTokenRequest { req_id, purpose, .. } = &m {
                 assert_eq!(*purpose, Some("fetch"));
-                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None });
+                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None, settings_url: None });
             }
             sent.lock().unwrap().push(serde_json::to_value(&m).unwrap());
         };
@@ -1762,7 +1956,7 @@ mod tests {
         // The fetch is answered from the repo itself.
         let emit = |m: Outbound| {
             if let Outbound::TaskTokenRequest { req_id, .. } = &m {
-                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None });
+                crate::tasks::resolve(req_id, crate::tasks::TokenReply { token: Some("ghs_test-token".into()), error: None, code: None, settings_url: None });
             }
         };
         let fetch = repo.to_string_lossy().to_string();

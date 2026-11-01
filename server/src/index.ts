@@ -2,12 +2,13 @@
 
 import * as Sentry from "@sentry/cloudflare";
 import type { Env } from "./env.ts";
-import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadProof } from "./attachments.ts";
+import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadArtifact, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { remove as removeName, set as setName } from "./name.ts";
 import { get as getErrorReports, set as setErrorReports } from "./error-reports.ts";
+import { get as getPush, set as setPush } from "./push.ts";
 import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
@@ -69,12 +70,14 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     if (path.startsWith("/runner/attachments/") && request.method === "GET") return serveRunnerAttachment(request, env, path.slice("/runner/attachments/".length));
     const proof = /^\/runner\/proof\/([^/]+)$/.exec(path);
     if (proof && request.method === "PUT") return uploadProof(request, env, proof[1]);
+    const artifact = /^\/runner\/artifact\/([^/]+)$/.exec(path);
+    if (artifact && request.method === "PUT") return uploadArtifact(request, env, artifact[1]);
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
     if (path.startsWith("/icon/") && request.method === "GET") return serveIcon(env, path.slice("/icon/".length));
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 
     const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,9}-\d+)$/);
-    if (link) return taskLink(link[1]);
+    if (link) return taskLink(link[1], url.searchParams.get("artifact"));
 
     if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
     if (path === "/integrations/slack/events" && request.method === "POST") return slackEvents(request, env, ctx);
@@ -97,6 +100,8 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
         return new Response(null, { status: 204 });
       }
       if (path === "/dev/alarm" && request.method === "POST") return orgHub(env).fetch(`https://org/dev/alarm${url.search}`, { method: "POST" });
+      if (path === "/dev/age-tasks" && request.method === "POST") return orgHub(env).fetch("https://org/dev/age-tasks", { method: "POST", body: await request.text() });
+      if (path === "/dev/age-sessions" && request.method === "POST") return orgHub(env).fetch("https://org/dev/age-sessions", { method: "POST", body: await request.text() });
     }
 
     const me = await currentMember(request, env);
@@ -154,6 +159,13 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     if (path === "/api/error-reports" && request.method === "GET") return getErrorReports(env, sentry.projects.server.dsn);
     if (path === "/api/error-reports" && request.method === "PUT") return setErrorReports(request, env, me, sentry.projects.server.dsn);
 
+    // Mobile notifications through the maplefactory.dev push relay (src/push.ts).
+    if (path === "/api/push") {
+      const devices = async () => ((await (await orgHub(env).fetch("https://org/push-devices")).json()) as { devices: number }).devices;
+      if (request.method === "GET") return getPush(env, await devices());
+      if (request.method === "PUT") return setPush(request, env, me, devices, async () => { await orgHub(env).fetch("https://org/push-changed", { method: "POST" }); });
+    }
+
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;
     if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local" });
@@ -163,6 +175,11 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
       // For prompt and loop tuning: ?days= (1, 3, 7, 30 or 90), &goal=, &raw=1 adds the event rows.
       if (me.role !== "admin") return text("Only admins can see statistics.", 403);
       return orgHub(env).fetch(`https://org/stats${url.search}`);
+    }
+    if (path === "/api/report" && request.method === "GET") {
+      // Your day report: ?since=&until= are your local day's bounds in ms (src/factory/report.ts).
+      const q = new URLSearchParams({ since: url.searchParams.get("since") ?? "", until: url.searchParams.get("until") ?? "", login: me.login });
+      return orgHub(env).fetch(`https://org/report?${q}`);
     }
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
     if (diff && request.method === "GET") {

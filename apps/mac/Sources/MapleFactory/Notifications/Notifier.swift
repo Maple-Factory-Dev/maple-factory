@@ -5,7 +5,8 @@ import SwiftUI
 import UserNotifications
 
 /// macOS banners for when a task newly needs you and the app is in the background. Snoozing and
-/// turning them off are this Mac's alone, kept in UserDefaults.
+/// turning them off are this Mac's alone, kept in UserDefaults; quiet hours are the person's own,
+/// kept on the server and the same on every device.
 @MainActor @Observable final class Notifier: NSObject {
     static let shared = Notifier()
 
@@ -56,7 +57,32 @@ import UserNotifications
         return snoozedUntil > .now
     }
 
-    var isOn: Bool { enabled && !isSnoozed }
+    /// Your quiet hours, from the factory (FactoryClient keeps it current). None: no quiet hours.
+    var quietHours: Wire.QuietHours? {
+        didSet { if quietHours != oldValue { tick() } }
+    }
+    /// The time the bell last looked: moved on each minute while there are quiet hours, so it redraws as a window starts or ends.
+    private(set) var clock = Date.now
+    private var ticker: Timer?
+
+    var isQuiet: Bool { isQuiet(at: clock) }
+    func isQuiet(at date: Date) -> Bool { quietHours?.isQuiet(at: date) ?? false }
+    /// When the current quiet hours end; nil when it isn't quiet.
+    var quietUntil: Date? { quietHours?.quietUntil(clock) }
+
+    var isOn: Bool { isOn(at: clock) }
+    func isOn(at date: Date) -> Bool { enabled && !isSnoozed && !isQuiet(at: date) }
+
+    private func tick() {
+        clock = .now
+        ticker?.invalidate()
+        ticker = nil
+        guard quietHours != nil else { return }
+        let next = (clock.timeIntervalSince1970 / 60).rounded(.down) * 60 + 60.5
+        ticker = Timer.scheduledTimer(withTimeInterval: next - clock.timeIntervalSince1970, repeats: false) { _ in
+            Task { @MainActor in Notifier.shared.tick() }
+        }
+    }
 
     /// Called once at launch: takes the banners' clicks and defines their buttons.
     func start() {
@@ -107,6 +133,7 @@ import UserNotifications
             return
         }
         guard available else { return log.info("\(task.id): no banner, not a bundled app") }
+        clock = .now
         guard isOn else { return log.info("\(task.id): no banner, \(self.statusText)") }
         guard !NSApp.isActive else { return log.info("\(task.id): no banner, the app is frontmost") }
         log.info("\(task.id): banner, \(reason.text)")

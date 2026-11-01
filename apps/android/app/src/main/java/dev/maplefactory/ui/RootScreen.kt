@@ -455,7 +455,7 @@ fun GoalsScreen(store: FactoryStore, open: (String) -> Unit) {
 @Composable
 private fun GoalRow(store: FactoryStore, goal: Goal, onClick: () -> Unit) {
     val tasks = store.feed.tasks(goal.id)
-    val open = tasks.count { it.state != TaskState.Merged && it.state != TaskState.Cancelled }
+    val open = tasks.count { it.state != TaskState.Merged && it.state != TaskState.Cancelled && it.state != TaskState.Closed }
     ListRow(onClick) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.width(48.dp).height(30.dp).clip(RoundedCornerShape(7.dp)).background(goalColor(goal.color)), contentAlignment = Alignment.Center) {
@@ -463,7 +463,8 @@ private fun GoalRow(store: FactoryStore, goal: Goal, onClick: () -> Unit) {
             }
             Column(Modifier.weight(1f)) {
                 Text(goal.name, fontWeight = FontWeight.Medium)
-                Text("$open open · ${tasks.size - open} done", style = MaterialTheme.typography.bodySmall, color = secondaryText)
+                // Finished tasks the snapshot left out still count as done.
+                Text("$open open · ${tasks.size - open + (store.feed.older[goal.id]?.finished ?: 0)} done", style = MaterialTheme.typography.bodySmall, color = secondaryText)
             }
             Avatar(store, goal.lead, 22.dp)
         }
@@ -472,7 +473,7 @@ private fun GoalRow(store: FactoryStore, goal: Goal, onClick: () -> Unit) {
 
 private val stages = listOf(
     TaskState.AwaitingApproval, TaskState.Planning, TaskState.Building, TaskState.Reviewing,
-    TaskState.Drafting, TaskState.Backlog, TaskState.Merged, TaskState.Cancelled,
+    TaskState.Drafting, TaskState.Backlog, TaskState.Merged, TaskState.Closed, TaskState.Cancelled,
 )
 
 @Composable
@@ -508,7 +509,20 @@ fun GoalScreen(store: FactoryStore, id: String, open: (String) -> Unit) {
                 item(key = "h-$stage") { SectionHeader("${stage.title} · ${staged.size}", stage.icon, Maple.state(stage)) }
                 items(staged, key = { it.id }) { TaskRow(store, it) { open(it.id) } }
             }
+            if (store.feed.hasOlder(id)) item(key = "load-older") { LoadOlderRow(store, id) }
         }
+    }
+}
+
+/** Under the finished stages: the snapshot sends tasks finished in the last 14 days; this brings 50 older ones. */
+@Composable
+private fun LoadOlderRow(store: FactoryStore, goal: String) {
+    val loading = goal in store.feed.loadingOlder
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = { store.loadOlder(goal) }, enabled = !loading) { Text("Load older") }
+        Spacer(Modifier.weight(1f))
+        if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        else Text("${store.feed.older[goal]?.finished ?: 0} more", style = MaterialTheme.typography.bodySmall, color = secondaryText)
     }
 }
 

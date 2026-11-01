@@ -527,6 +527,7 @@ struct NotificationSettings: View {
                     SettingsValueRow("Status", value: notifier.statusText)
                 }
             }
+            QuietHoursSection()
             if notifier.denied {
                 SettingsSection("macOS") {
                     SettingsButtonRow("macOS isn't letting Maple Factory show notifications.", button: "Open System Settings") { notifier.openSystemSettings() }
@@ -545,7 +546,7 @@ struct UpdateSettings: View {
         SettingsPane("Updates", subtitle: "Maple Factory updates itself from maplefactory.dev. Runners and the factory's server update on their own.") {
             SettingsSection("Maple Factory", caption: updater.available ? nil : "This build doesn't update itself (it isn't a release build).") {
                 SettingsValueRow("Version", value: updater.version)
-                SettingsButtonRow("Check for updates", value: updater.available ? status : nil, button: "Check Now", disabled: !updater.canCheck) {
+                SettingsButtonRow("Check for updates", value: updater.available ? updater.status : nil, button: "Check Now", disabled: !updater.canCheck) {
                     updater.checkForUpdates()
                 }
             }
@@ -560,12 +561,34 @@ struct UpdateSettings: View {
             .disabled(!updater.available)
         }
     }
+}
 
-    private var status: String {
-        switch updater.result {
-        case .some(.some(let version)): return "\(version) is available"
-        case .some(.none): return "Up to date"
-        case .none: return updater.lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet"
+/// Settings › Runner's answer to Check for Update, inline under This Mac.
+struct RunnerCheckRow: View {
+    let check: RunnerCheck
+    let machine: Wire.Machine
+
+    var body: some View {
+        switch check {
+        case .pending:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking for a runner update…")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .settingsRowPadding()
+        case .answered(let text, _):
+            if text.hasSuffix(" is available for \(machine.name).") {
+                SettingsNote(text, systemImage: "arrow.down.circle", color: Theme.State.awaitingApproval)
+            } else if text.contains(" is on the latest runner (") {
+                SettingsNote(text, systemImage: "checkmark.circle", color: Theme.State.merged)
+            } else {
+                SettingsNote(text, systemImage: "exclamationmark.triangle", color: Theme.State.cancelled)
+            }
+        case .noAnswer:
+            SettingsNote("The factory didn't answer the check. Try again in a moment.", systemImage: "exclamationmark.triangle", color: Theme.State.cancelled)
         }
     }
 }
@@ -613,16 +636,25 @@ struct RunnerSettings: View {
                             Spacer()
                             let action = client.runnerAction(machine)
                             Button(action == .check ? "Check for Update" : "Update") {
+                                // An Update starts afresh: the check's "available" has done its job.
+                                if action != .check { client.clearRunnerCheck(machine.id) }
                                 client.perform(action, on: machine)
                             }
-                            .disabled((action != .check && !machine.online) || client.updatePhase(machine).isBusy)
+                            .disabled((action != .check && !machine.online) || client.updatePhase(machine).isBusy
+                                      || client.runnerChecks[machine.id]?.isPending == true)
                             Button("Show Log") {
                                 NSWorkspace.shared.open(LocalRunner.logFile)
                             }
                         }
                     }
                     // Its progress and how it ended; Settings has its own Update and Show Log beside it.
-                    if case let phase = client.updatePhase(machine), phase != .current, !Self.outdatedOnly(phase) {
+                    // An update under way comes first; then what Check for Update found, which stands in for
+                    // the plain "is available" note and an earlier update's ending.
+                    if case let phase = client.updatePhase(machine), phase.isBusy {
+                        SettingsBlock { RunnerUpdateRow(machine: machine, canUpdate: false) { showingChanges = true } }
+                    } else if let check = client.runnerChecks[machine.id] {
+                        RunnerCheckRow(check: check, machine: machine)
+                    } else if case let phase = client.updatePhase(machine), phase != .current, !Self.outdatedOnly(phase) {
                         SettingsBlock { RunnerUpdateRow(machine: machine, canUpdate: false) { showingChanges = true } }
                     } else if client.runnerOutdated(machine), let latest = client.runnerLatest {
                         SettingsNote("Runner \(latest) is available.", systemImage: "arrow.down.circle", color: Theme.State.awaitingApproval)
@@ -636,8 +668,9 @@ struct RunnerSettings: View {
                             .disabled(nickname.trimmingCharacters(in: .whitespaces) == machine.name)
                     }
                 }
-                .runnerChanges(machine, isPresented: $showingChanges)
+                .runnerChanges(machine, canUpdate: false, isPresented: $showingChanges)
                 .onAppear { nickname = machine.name == machine.id ? "" : machine.name }
+                .onDisappear { client.clearRunnerCheck(machine.id) }
                 MachineSettingsSheet(machine: machine, embedded: true)
                     .id(machine.id)
             } else if LocalRunner.enrolled != nil {

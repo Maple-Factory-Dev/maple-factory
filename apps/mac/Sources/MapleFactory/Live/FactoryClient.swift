@@ -44,6 +44,15 @@ import Foundation
     }
     /// Counts changes to `factoryTasks`: what's worked out from the tasks is cached against it.
     private(set) var tasksRevision = 0
+    /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
+    /// Empty from an older server, which sends every task.
+    private(set) var older: [String: OlderTasks] = [:]
+    /// Goals whose next page of older tasks is on its way.
+    private(set) var loadingOlder: Set<String> = []
+    /// Where each goal's next page of older tasks starts: the last task of its last page.
+    private var olderCursor: [String: OlderCursor] = [:]
+    /// Tasks asked for by ID (`task.get`) that haven't come yet.
+    private var fetching: Set<String> = []
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -55,8 +64,14 @@ import Foundation
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
     private(set) var follows: [String: Bool] = [:]
+    /// Your quiet hours, the same on every device; the Notifier checks them before a banner.
+    private(set) var quietHours: Wire.QuietHours? {
+        didSet { Notifier.shared.quietHours = quietHours }
+    }
     /// Each goal's latest Scout run since this app connected, by goal id.
     private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
+    /// Every goal's recurring tasks, by id.
+    private(set) var recurring: [String: Wire.Recurring] = [:]
     /// Each repo's latest Set up with AI run, by lowercased repo name.
     private(set) var setupRuns: [String: Wire.RepoSetupRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
@@ -98,6 +113,8 @@ import Foundation
     private(set) var displayName: String?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
+    /// The last day report asked for (`report.get`), for whichever day Day report shows.
+    private(set) var dayReport: Wire.DayReport?
     /// CI check logs asked for (`task.checkLog`), by CheckLogRequest.id. Logs are never broadcast or kept by the server.
     private(set) var checkLogs: [String: CheckLogLoad] = [:]
     var isAdmin: Bool { me?.role == "admin" }
@@ -153,6 +170,8 @@ import Foundation
     private(set) var riskAcceptances: [String: RiskAcceptance] = [:]
     /// A passing line from the factory ("ATL-3 merged"), for the app's toast.
     private(set) var toast: (text: String, taskID: String?, at: Date)?
+    /// Settings › Runner's Check for Update, per machine id: waiting on the factory, or its answer.
+    private(set) var runnerChecks: [String: RunnerCheck] = [:]
     private(set) var status: Status = .signedOut
     /// Whether this factory's first snapshot has landed. A reconnect keeps it, so the old content stays up.
     private(set) var hasSnapshot = false
@@ -162,6 +181,9 @@ import Foundation
     var savingGoal = false
     /// Bumped on every goal.updated, so a saving goal editor hears an update even when nothing changed.
     private(set) var goalUpdates = 0
+    /// Goals renamed this session, old name → current name (chains collapsed), so a page open on the old
+    /// name can follow the goal instead of falling back to the first one.
+    private(set) var goalRenames: [String: String] = [:]
 
     private var token: String?
     private var socket: URLSessionWebSocketTask?
@@ -287,12 +309,18 @@ import Foundation
         members = []
         goals = []
         tasks = []
+        older = [:]
+        loadingOlder = []
+        olderCursor = [:]
+        fetching = []
         online = []
         intakeRequests = []
         notes = []
         drafts = [:]
         follows = [:]
+        quietHours = nil
         scoutRuns = [:]
+        recurring = [:]
         setupRuns = [:]
         policy = nil
         prompts = nil
@@ -313,6 +341,7 @@ import Foundation
         icon = nil
         displayName = nil
         toast = nil
+        runnerChecks = [:]
         notice = nil
         viewing = nil
         attempt = 0
@@ -332,6 +361,9 @@ import Foundation
         var request = URLRequest(url: Self.websocketURL(server, path: "/client/connect"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
+        // The snapshot carries every task the factory has had, so it outgrows URLSession's 1 MiB default
+        // ("Message too long") as a factory gets used.
+        socket.maximumMessageSize = 64 << 20
         self.socket = socket
         lastHeard = Date()
         socket.resume()
@@ -419,6 +451,10 @@ import Foundation
             members = snapshot.members
             goals = snapshot.goals
             tasks = snapshot.tasks
+            older = Self.older(tallies: snapshot.tallies, tasks: snapshot.tasks)
+            loadingOlder = []
+            olderCursor = [:]
+            fetching = []
             FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
             policy = snapshot.policy
             acceptances = snapshot.acceptances
@@ -428,12 +464,14 @@ import Foundation
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
+            quietHours = snapshot.quietHours
             intakeRequests = snapshot.intake
             repos = snapshot.repos
             secrets = snapshot.secrets
             repoScripts = snapshot.scripts ?? []
             setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
             scoutRuns = Dictionary((snapshot.scoutRuns ?? []).map { ($0.goal, $0) }, uniquingKeysWith: { _, last in last })
+            recurring = Dictionary((snapshot.recurring ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
@@ -469,6 +507,10 @@ import Foundation
             guard ended.end.by != "factory" else { break }
             ends.insert(EndRecord(machine: ended.machine, end: ended.end), at: 0)
             if ends.count > 50 { ends.removeLast(ends.count - 50) }
+        case .taskUpdated(let update) where fetching.contains(update.task.id):
+            // A task asked for by ID (`task.get`), maybe one the snapshot left out: no news to tell.
+            fetching.remove(update.task.id)
+            mergeOlder([update.task])
         case .taskUpdated(let update):
             let previous = tasks.first { $0.id == update.task.id }
             defer { notify(was: previous, now: update.task) }
@@ -486,6 +528,12 @@ import Foundation
             factoryTasks.removeAll { $0.id == removed.id }
         case .goalUpdated(let update):
             if let index = goals.firstIndex(where: { $0.id == update.goal.id }) {
+                let old = goals[index].name, new = update.goal.name
+                if old != new {
+                    for (from, to) in goalRenames where to == old { goalRenames[from] = new }
+                    goalRenames[old] = new
+                    goalRenames[new] = nil
+                }
                 goals[index] = update.goal
             } else {
                 goals.append(update.goal)
@@ -507,11 +555,17 @@ import Foundation
             drafts[update.draft.id] = update.draft
         case .scoutUpdated(let update):
             scoutRuns[update.run.goal] = update.run
+        case .recurringUpdated(let update):
+            recurring[update.recurring.id] = update.recurring
+        case .recurringDeleted(let update):
+            recurring[update.id] = nil
         case .repoSetupUpdated(let update):
             setupRuns[update.run.repo.lowercased()] = update.run
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
+        case .quietHoursUpdated(let update):
+            quietHours = update.quietHours
         case .noteRemoved(let removed):
             notes.removeAll { $0.id.uuidString.lowercased() == removed.id.lowercased() }
         case .presence(let update):
@@ -550,8 +604,17 @@ import Foundation
             policy = update.policy
             acceptances = update.acceptances
             rebuild()
+        case .tasksPage(let page):
+            let goal = page.goal ?? ""
+            loadingOlder.remove(goal)
+            if let last = page.tasks.last { olderCursor[goal] = OlderCursor(before: last.updatedAt, id: last.id) }
+            mergeOlder(page.tasks)
+            // The server knows best: none left means none left, whatever the counts drifted to.
+            if !page.more, let id = page.goal { older[id] = OlderTasks() }
         case .stats(let reply):
             stats = reply.summary
+        case .report(let reply):
+            dayReport = reply.report
         case .checkLog(let reply):
             let key = CheckLogRequest(taskID: reply.id, check: reply.check).id
             // Only into a sheet still waiting for it: a log forgotten since (the check re-run) stays forgotten.
@@ -560,9 +623,14 @@ import Foundation
             }
         case .toast(let toast):
             self.toast = (toast.text, toast.taskId, Date())
+            if let id = Self.matchRunnerCheck(text: toast.text, taskId: toast.taskId, pending: runnerChecks, machines: machines) {
+                runnerChecks[id] = .answered(toast.text, at: Date())
+            }
         case .error(let error):
             // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
-            if let id = error.requestId, id.hasPrefix("checkLog:") {
+            if let id = error.requestId, id.hasPrefix("task.get:") {
+                fetching.remove(String(id.dropFirst("task.get:".count)))
+            } else if let id = error.requestId, id.hasPrefix("checkLog:") {
                 let key = String(id.dropFirst("checkLog:".count))
                 if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
             } else {
@@ -570,6 +638,9 @@ import Foundation
             }
         case .sessionEvents:
             break // The native session view (MF-199) isn't built yet.
+        case .pushDevices:
+            // Phone push devices: only the iPhone and Android apps register or list them.
+            break
         case .unknown:
             break
         }
@@ -623,16 +694,19 @@ import Foundation
         var viewers: [String: [Person]] = [:]
         for presence in online where presence.login != me {
             guard let id = presence.viewing else { continue }
-            viewers[id, default: []].append(LiveAdapter.person(presence.login, members: members))
+            var person = LiveAdapter.person(presence.login, members: members)
+            person.mobile = presence.mobile == true
+            viewers[id, default: []].append(person)
         }
         return viewers
     }
 
-    /// The tasks whose viewers aren't `viewers`', by index, with the viewers they now have.
+    /// The tasks whose viewers (or whether they're on a phone) aren't `viewers`', by index, with the viewers they now have.
     static func viewerChanges(_ tasks: [FactoryTask], viewers: [String: [Person]]) -> [(index: Int, viewers: [Person])] {
         tasks.indices.compactMap { index in
             let now = viewers[tasks[index].id] ?? []
-            return now.map(\.id) == tasks[index].viewers.map(\.id) ? nil : (index, now)
+            let same = now.elementsEqual(tasks[index].viewers) { $0.id == $1.id && $0.mobile == $1.mobile }
+            return same ? nil : (index, now)
         }
     }
 
@@ -653,10 +727,40 @@ import Foundation
         send(.goalFollow(.init(id: goal.id, following: following)))
     }
 
+    /// Set (or with nil, clear) your quiet hours: every device you're signed in on hears it.
+    func setQuietHours(_ schedule: Wire.QuietHours?) {
+        quietHours = schedule
+        send(.quietHoursSet(.init(quietHours: schedule)))
+    }
+
     /// Run Scout on a goal: its leftovers come back as drafted plans, and `scoutRuns` says how it went.
     func scout(goal name: String) {
         guard let goal = goal(named: name) else { return }
         send(.goalScout(.init(goal: goal.id)))
+    }
+
+    /// A goal's recurring tasks (by goal id), soonest next run first.
+    func recurring(goalId: String) -> [Wire.Recurring] {
+        recurring.values.filter { $0.goal == goalId }.sorted { ($0.paused ? 1 : 0, $0.nextAt) < ($1.paused ? 1 : 0, $1.nextAt) }
+    }
+
+    /// Add or change a recurring task; the server works out its next run.
+    func saveRecurring(_ item: Wire.Recurring) {
+        send(.recurringSave(.init(recurring: item)))
+    }
+
+    func deleteRecurring(id: String) {
+        recurring[id] = nil
+        send(.recurringDelete(.init(id: id)))
+    }
+
+    func pauseRecurring(id: String, paused: Bool) {
+        send(.recurringPause(.init(id: id, paused: paused)))
+    }
+
+    /// Start a run now; its schedule is kept.
+    func runRecurringNow(id: String) {
+        send(.recurringRunNow(.init(id: id)))
     }
 
     /// Every GitHub team someone in the org is on, for a goal's team.
@@ -883,6 +987,42 @@ import Foundation
     /// The goal a view knows by name.
     func goal(named name: String) -> Wire.Goal? { goals.first { $0.name == name } }
 
+    // MARK: Older tasks
+
+    /// What the snapshot left out of each goal: its tally (counted over every task) less the tasks it sent.
+    nonisolated static func older(tallies: [Wire.GoalTally]?, tasks: [Wire.Task]) -> [String: OlderTasks] {
+        FeedState.older(tallies: tallies, tasks: tasks)
+    }
+
+    /// Older tasks from `tasks.page` or `task.get` join the list; one a live update already brought stays as it is.
+    private func mergeOlder(_ page: [Wire.Task]) {
+        let held = Set(tasks.map(\.id))
+        let new = page.filter { !held.contains($0.id) }
+        guard !new.isEmpty else { return }
+        for task in new { older[task.goal]?.count(task.state, by: -1) }
+        tasks.append(contentsOf: new)
+        let viewers = Self.viewers(online, me: me?.login, members: members)
+        factoryTasks.append(contentsOf: new.map { adapt($0, viewers: viewers) })
+    }
+
+    /// Whether `goal` (its id) has finished tasks older than the snapshot's that aren't loaded yet.
+    func hasOlder(goal: String) -> Bool { (older[goal]?.finished ?? 0) > 0 }
+
+    /// The next page of `goal`'s older finished tasks (its id), going back from the oldest one loaded.
+    func loadOlder(goal: String) {
+        guard hasOlder(goal: goal), !loadingOlder.contains(goal) else { return }
+        loadingOlder.insert(goal)
+        let cursor = olderCursor[goal]
+        send(.tasksOlder(.init(goal: goal, before: cursor?.before, beforeId: cursor?.id, limit: 50)))
+    }
+
+    /// A task opened by ID (a link, a reference, `after`, follow-up or split) that isn't loaded: ask for it.
+    func fetchTask(id: String) {
+        guard hasSnapshot, !fetching.contains(id), !tasks.contains(where: { $0.id == id }) else { return }
+        fetching.insert(id)
+        send(.taskGet(.init(id: id)))
+    }
+
     func send(_ message: Wire.ClientMessage) {
         guard let socket, let data = try? JSONEncoder().encode(message), let text = String(data: data, encoding: .utf8) else { return }
         socket.send(.string(text)) { _ in }
@@ -922,34 +1062,24 @@ import Foundation
     /// A socket request for one session's terminal.
     func terminalRequest(machine: String, session: String, cols: Int, rows: Int) -> URLRequest? {
         guard let server, let token else { return nil }
-        var components = URLComponents(url: Self.websocketURL(server, path: "/client/terminal"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            .init(name: "machine", value: machine), .init(name: "session", value: session),
-            .init(name: "cols", value: String(cols)), .init(name: "rows", value: String(rows)),
-        ]
-        var request = URLRequest(url: components.url!)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return request
+        return FactoryAPI.terminalRequest(server, token: token, machine: machine, session: session, cols: cols, rows: rows)
     }
 
-    /// Why a terminal socket was refused or closed, in the server's words, when it's about access rather than a
-    /// network blip: a 403 (only the machine's owner or an admin; the same URL over plain HTTP says so) or close
-    /// code 4003 (this person's access was revoked). Nil: try again as usual.
+    /// Why a terminal socket was refused (FactoryAPI.terminalRefusal). Nil: try again as usual.
     nonisolated static func terminalRefusal(_ socket: URLSessionWebSocketTask) async -> String? {
-        if socket.closeCode.rawValue == 4003 { return "Your access to this factory was revoked." }
-        guard (socket.response as? HTTPURLResponse)?.statusCode == 403, var request = socket.originalRequest,
-              let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        components.scheme = components.scheme == "wss" ? "https" : "http"
-        request.url = components.url
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 403,
-              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return "You can't open terminals on this machine." }
-        return text
+        await FactoryAPI.terminalRefusal(socket)
     }
 
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
         send(.statsGet(.init(days: UInt32(days), goal: goal)))
+    }
+
+    /// Your day report for `day`'s local calendar day (so time zones stay right); the answer lands in `dayReport`.
+    func requestReport(day: Date) {
+        let start = Calendar.current.startOfDay(for: day)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        send(.reportGet(.init(since: UInt64(start.timeIntervalSince1970 * 1000), until: UInt64(end.timeIntervalSince1970 * 1000))))
     }
 
     /// Reads a CI check's log from GitHub again; the answer (or a refusal) lands in `checkLogs`.
@@ -1274,9 +1404,42 @@ extension FactoryClient {
     /// Runs the runner menu item: a check never installs anything, so it doesn't need the machine online.
     func perform(_ action: RunnerAction, on machine: Wire.Machine) {
         switch action {
-        case .check: send(.runnerCheck(.init(machine: machine.id)))
+        case .check:
+            let since = Date()
+            runnerChecks[machine.id] = .pending(since: since)
+            send(.runnerCheck(.init(machine: machine.id)))
+            // The factory answers in a moment; one that never does shouldn't spin forever.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard let self, self.runnerChecks[machine.id] == .pending(since: since) else { return }
+                self.runnerChecks[machine.id] = .noAnswer
+            }
         case .update(let version): send(.machineUpdate(.init(machine: machine.id, version: version)))
         }
+    }
+
+    /// Forgets a machine's check result, so a stale answer doesn't linger.
+    func clearRunnerCheck(_ machineID: String) {
+        guard let check = runnerChecks[machineID], !check.isPending else { return }
+        runnerChecks[machineID] = nil
+    }
+
+    /// Which pending check a factory toast answers: the server's runner.check reply has no task and
+    /// names the machine ("Runner 0.9.0 is available for studio." / "studio is on the latest runner
+    /// (0.9.0)."), or says it couldn't read the releases, which answers the oldest pending check.
+    static func matchRunnerCheck(text: String, taskId: String?, pending: [String: RunnerCheck], machines: [Wire.Machine]) -> String? {
+        guard taskId == nil else { return nil }
+        let waiting = pending.compactMap { id, check -> (String, Date)? in
+            if case .pending(let since) = check { (id, since) } else { nil }
+        }
+        if text == "Couldn't read the runner releases." {
+            return waiting.min { $0.1 < $1.1 }?.0
+        }
+        return waiting.first { id, _ in
+            let name = machines.first { $0.id == id }?.name ?? id
+            return (text.hasPrefix("Runner ") && text.hasSuffix(" is available for \(name)."))
+                || (text.hasPrefix("\(name) is on the latest runner (") && text.hasSuffix(")."))
+        }?.0
     }
 
     /// Updates a machine's runner to the release the app shows: if a newer one is out by the time the
@@ -1315,6 +1478,20 @@ extension FactoryClient {
         case .failed: return .failed(update.message, target: update.target)
         case .other: return outdated()
         }
+    }
+}
+
+/// Settings › Runner's Check for Update for one machine.
+enum RunnerCheck: Equatable {
+    /// Sent; the factory hasn't answered yet.
+    case pending(since: Date)
+    /// The factory's line, as its toast said it.
+    case answered(String, at: Date)
+    /// Nothing came back in time.
+    case noAnswer
+
+    var isPending: Bool {
+        if case .pending = self { true } else { false }
     }
 }
 

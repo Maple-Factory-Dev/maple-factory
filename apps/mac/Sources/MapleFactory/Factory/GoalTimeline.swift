@@ -13,10 +13,12 @@ struct GoalTimeline: View {
 
     private var rows: [FactoryTask] { GoalTimeline.visibleRows(tasks, showMerged: state.timelineShowsMerged) }
     private var mergedCount: Int { tasks.filter { $0.state == .merged }.count }
+    /// Shown merged, with finished tasks older than the snapshot's 14 days still on the factory.
+    private var showsLoadOlder: Bool { state.timelineShowsMerged && state.hasOlderTasks(in: goal) }
     /// Every task is merged and hidden, so the grid would be blank.
     private var allHidden: Bool { rows.isEmpty && mergedCount > 0 }
     private var chartHeight: CGFloat {
-        headerHeight + CGFloat(rows.count) * rowHeight + (allHidden ? rowHeight : 0) + 24
+        headerHeight + CGFloat(rows.count) * rowHeight + (allHidden ? rowHeight : 0) + (showsLoadOlder ? rowHeight : 0) + 24
     }
 
     /// The tasks the timeline draws, by span start: merged ones only when `showMerged` is on.
@@ -50,7 +52,7 @@ struct GoalTimeline: View {
             HStack(spacing: 10) {
                 SectionLabel(title: "Task")
                 Spacer()
-                if mergedCount > 0 { mergedToggle }
+                if mergedCount > 0 || state.hasOlderTasks(in: goal) { mergedToggle }
                 SectionLabel(title: "Owner")
             }
             .padding(.horizontal, 24)
@@ -88,13 +90,41 @@ struct GoalTimeline: View {
                 .contentShape(Rectangle())
                 .onTapGesture { state.toggleTask(task.id) }
             }
+
+            if showsLoadOlder { loadOlderRow }
         }
+    }
+
+    /// The snapshot sends tasks finished in the last 14 days; this brings the next 50 older ones.
+    private var loadOlderRow: some View {
+        let loading = state.isLoadingOlderTasks(in: goal)
+        return Button { state.loadOlderTasks(in: goal) } label: {
+            HStack(spacing: 8) {
+                if loading {
+                    ProgressView().controlSize(.mini).frame(width: 14)
+                } else {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .frame(width: 14)
+                }
+                Text(loading ? "Loading older finished tasks…" : "Load older finished tasks")
+                    .font(.system(size: 12.5))
+                Spacer()
+            }
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 24)
+            .frame(height: rowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(loading)
+        .help("Finished tasks older than 14 days aren't loaded until you ask")
     }
 
     /// A pill like the layout picker's: lit while merged tasks show, with how many there are.
     private var mergedToggle: some View {
         let on = state.timelineShowsMerged
-        return Text("Show merged · \(mergedCount)")
+        return Text("Show merged · \(mergedCount + state.olderMerged(in: goal))")
             .font(.system(size: 11.5, weight: on ? .medium : .regular).monospacedDigit())
             .foregroundStyle(on ? Theme.text : Theme.textMuted)
             .padding(.horizontal, 9)

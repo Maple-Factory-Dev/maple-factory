@@ -8,16 +8,78 @@
 
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
-import { loadCollapsed, toggleCollapsed } from "./sections.js";
+import { loadCollapsed, sectionOrder, toggleCollapsed } from "./sections.js";
 import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
+import { inQuietHours } from "./quiet-hours.js";
 import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
+import { fillIcons, icon } from "./icons.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map() };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
+
+/**
+ * The finished tasks the snapshot left out (it sends those of the last 14 days) and not loaded since:
+ * `byGoal` their counts per goal id, `left` how many in all. `cursor` is where each `tasks.older` page
+ * starts (by goal id, "" for every goal), `loading` the pages on their way, `fetching` the `task.get`s.
+ */
+function older(tallies = null, tasks = [], left = 0) {
+  const byGoal = {};
+  for (const t of tallies ?? []) {
+    const sent = tasks.filter((x) => x.goal === t.goal);
+    const finished = t.merged + t.cancelled + t.closed - sent.filter((x) => FINISHED.includes(x.state)).length;
+    byGoal[t.goal] = { merged: Math.max(0, t.merged - sent.filter((x) => x.state === "merged").length), finished: Math.max(0, finished) };
+  }
+  return { byGoal, left, cursor: new Map(), loading: new Set(), fetching: new Set(), missing: new Set() };
+}
+const FINISHED = ["merged", "cancelled", "closed"];
+
+/** Older tasks from `tasks.page` or `task.get` join the tasks; one a live update already brought stays as it is. */
+function mergeOlder(tasks) {
+  for (const t of tasks) {
+    if (state.tasks.has(t.id)) continue;
+    state.tasks.set(t.id, t);
+    const counts = state.older.byGoal[t.goal];
+    if (counts && FINISHED.includes(t.state)) {
+      counts.finished = Math.max(0, counts.finished - 1);
+      if (t.state === "merged") counts.merged = Math.max(0, counts.merged - 1);
+      state.older.left = Math.max(0, state.older.left - 1);
+    }
+  }
+}
+
+/** Whether the goal (its id; none: any goal) has finished tasks older than the snapshot's still to load. */
+const hasOlder = (goal = null) => goal ? (state.older.byGoal[goal]?.finished ?? 0) > 0 : state.older.left > 0;
+
+/** The next 50 older finished tasks: the goal's, or every goal's. */
+function loadOlder(goal = null) {
+  const key = goal ?? "";
+  if (!hasOlder(goal) || state.older.loading.has(key)) return;
+  const cursor = state.older.cursor.get(key);
+  if (send({ type: "tasks.older", goal, before: cursor?.before ?? null, beforeId: cursor?.id ?? null, limit: 50 })) state.older.loading.add(key);
+  render();
+}
+
+/** A task opened by ID that isn't loaded, maybe one the snapshot left out: ask for it. */
+function fetchTask(id) {
+  if (!state.live || state.tasks.has(id) || state.older.fetching.has(id) || state.older.missing.has(id)) return;
+  if (send({ type: "task.get", id })) state.older.fetching.add(id);
+}
+
+/** "Load older" and its state, for under a list of finished tasks. */
+function loadOlderLink(goal = null) {
+  if (!hasOlder(goal)) return null;
+  const loading = state.older.loading.has(goal ?? "");
+  const left = goal ? state.older.byGoal[goal].finished : state.older.left;
+  return h("div", { class: "muted", style: "font-size:13px;margin-top:8px" },
+    loading ? "Loading older finished tasks…" : h("a", { href: "javascript:void 0", "data-load-older": goal ?? "", onclick: () => loadOlder(goal) }, "Load older"),
+    ` · ${left} finished more than 14 days ago`);
+}
 /** The CI check log asked for (`task.checkLog`) and not answered yet: a refusal meanwhile is its answer. */
 let socket = null;
 let retry = 1000;
+/** Set while signing out, so the socket closing doesn't reconnect with the old session. */
+let signingOut = false;
 
 // ---- DOM ----
 
@@ -97,6 +159,7 @@ function connect() {
   socket.onmessage = (e) => receive(JSON.parse(e.data));
   socket.onclose = async () => {
     state.live = false;
+    if (signingOut) return;
     status();
     // Never connected: maybe not signed in.
     if (!opened && (await fetch("/api/me").then((r) => r.status === 401).catch(() => false))) return signIn();
@@ -117,12 +180,18 @@ function receive(m) {
     case "snapshot":
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });
       state.tasks = new Map(m.tasks.map((t) => [t.id, t]));
+      state.older = older(m.tallies, m.tasks, m.olderTasks ?? 0);
       state.notes = m.notes ?? [];
+      // My quiet hours (the same on every device): no mention notifications inside them.
+      state.quietHours = m.quietHours ?? null;
       state.machines = m.machines ?? [];
       // The factory's settings, for admins' Settings page.
       Object.assign(state, { policy: m.policy ?? null, prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
       // null: a server too old to have integrations.
       state.integrations = m.integrations ?? null;
+      // The maple-server running now (not the bundle this tab loaded), and a newer release (admins only).
+      state.serverVersion = m.serverVersion ?? null;
+      state.serverUpdate = m.serverUpdate ?? null;
       $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
@@ -132,6 +201,7 @@ function receive(m) {
       showGitHubStatus(m.githubStatus);
       break;
     case "github.status": showGitHubStatus(m.status); return;
+    case "quietHours.updated": state.quietHours = m.quietHours ?? null; return;
     case "icon.updated": showIcon(m.icon); return;
     case "name.updated": state.name = m.name ?? null; $("org").textContent = m.name || state.org || "Maple Factory"; break;
     case "policy.updated": state.policy = m.policy; break;
@@ -145,12 +215,25 @@ function receive(m) {
     case "secrets.updated": state.secrets = m.secrets; break;
     case "integrations.updated": state.integrations = m.integrations; break;
     case "task.updated":
+      // One asked for by ID (`task.get`): no news, just here now.
+      if (state.older.fetching.delete(m.task.id) && !state.tasks.has(m.task.id)) { mergeOlder([m.task]); break; }
       if (!state.tasks.has(m.task.id)) created(m.task);
       notifyMentions(state.tasks.get(m.task.id), m.task);
       state.tasks.set(m.task.id, m.task);
       mergeSent.delete(m.task.id);
       break;
     case "task.removed": state.tasks.delete(m.id); break;
+    case "tasks.page": {
+      const key = m.goal ?? "";
+      state.older.loading.delete(key);
+      const last = m.tasks.at(-1);
+      if (last) state.older.cursor.set(key, { before: last.updatedAt, id: last.id });
+      mergeOlder(m.tasks);
+      // The server knows best: none left means none left, whatever the counts drifted to.
+      if (!m.more && m.goal && state.older.byGoal[m.goal]) state.older.byGoal[m.goal] = { merged: 0, finished: 0 };
+      if (!m.more && !m.goal) { state.older.left = 0; for (const c of Object.values(state.older.byGoal)) Object.assign(c, { merged: 0, finished: 0 }); }
+      break;
+    }
     case "machine.updated":
     case "machine.removed": {
       // Machines change with every step an agent takes; only a prompt starting or ending redraws, or a
@@ -175,6 +258,13 @@ function receive(m) {
       break;
     }
     case "error":
+      // A task asked for by ID that isn't there: its page says so, once.
+      if (m.requestId?.startsWith("task.get:")) {
+        const id = m.requestId.slice(9);
+        state.older.fetching.delete(id);
+        state.older.missing.add(id);
+        break;
+      }
       // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its panel.
       if (m.requestId?.startsWith("checkLog:")) {
         const key = m.requestId.slice(9);
@@ -211,7 +301,7 @@ function showGitHubStatus(s) {
   const incident = s.incidents?.[0];
   $("github-status-detail").textContent = `· ${incident?.name || s.components?.join(", ") || s.description}`;
   $("github-status-link").href = incident?.url || "https://www.githubstatus.com";
-  $("github-status-link").textContent = incident?.url ? "See the incident ↗" : "githubstatus.com ↗";
+  $("github-status-link").replaceChildren(incident?.url ? "See the incident" : "githubstatus.com", icon("external-link", { size: 14 }));
 }
 
 /** The factory's icon (`/icon/<id>`) in the header in place of the leaf, and as the tab's icon; none puts both back. */
@@ -225,15 +315,77 @@ function showIcon(link) {
 
 function status() {
   const s = $("status");
-  s.textContent = state.live ? "Live" : "Reconnecting…";
+  s.replaceChildren(...(state.live ? ["Live"] : [icon("refresh-cw", { size: 12, class: "spin" }), "Reconnecting…"]));
   s.className = `status${state.live ? " live" : ""}`;
 }
 
-function signIn() {
+/** The sign-in screen; `signedOut` just after signing out: say so, and come back to the inbox, not the old page's hash. */
+function signIn({ signedOut = false } = {}) {
+  const next = signedOut ? location.pathname : location.pathname + location.hash;
+  // Not "Reconnecting…": nothing will until they sign in.
+  $("status").replaceChildren("Signed out");
+  $("status").className = "status";
+  for (const a of document.querySelectorAll("[data-nav]")) a.classList.remove("on");
   $("main").replaceChildren(h("div", { class: "signin" },
     h("h1", {}, "Sign in"),
+    signedOut && h("p", { class: "signed-out", role: "status" }, `You've signed out${state.org ? ` of ${state.org}` : ""}.`),
     h("p", { class: "muted" }, "Members of the factory's GitHub organization review and approve work here."),
-    h("p", {}, h("a", { class: "btn primary", href: `/auth/login?next=${encodeURIComponent(location.pathname + location.hash)}` }, "Sign in with GitHub"))));
+    h("p", {}, h("a", { class: "btn primary", href: `/auth/login?next=${encodeURIComponent(next)}` }, "Sign in with GitHub"))));
+}
+
+// ---- the account menu ----
+
+/** The header's avatar and its menu, from state.me (hidden while signed out). */
+function account() {
+  const me = state.me;
+  $("account").hidden = !me;
+  if (!me) return closeAccountMenu();
+  const label = me.name || me.login;
+  const avatar = $("account-avatar");
+  if (avatar.dataset.for !== `${me.login} ${me.avatarUrl ?? ""}`) {
+    avatar.dataset.for = `${me.login} ${me.avatarUrl ?? ""}`;
+    const initial = () => avatar.replaceChildren(label[0].toUpperCase());
+    if (me.avatarUrl) {
+      const img = h("img", { src: me.avatarUrl, alt: "", width: 28, height: 28 });
+      img.onerror = initial;
+      avatar.replaceChildren(img);
+    } else initial();
+  }
+  $("account-btn").setAttribute("aria-label", `Account: ${label}`);
+  $("account-btn").title = label;
+  $("account-name").textContent = label;
+  $("account-login").textContent = `@${me.login}`;
+}
+function openAccountMenu() {
+  $("account-menu").hidden = false;
+  $("account-btn").setAttribute("aria-expanded", "true");
+  $("account-signout").focus();
+}
+function closeAccountMenu(refocus = false) {
+  if ($("account-menu").hidden) return;
+  $("account-menu").hidden = true;
+  $("account-btn").setAttribute("aria-expanded", "false");
+  if (refocus) $("account-btn").focus();
+}
+$("account-btn").addEventListener("click", () => ($("account-menu").hidden ? openAccountMenu() : closeAccountMenu()));
+$("account-signout").addEventListener("click", () => signOut());
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("account-menu").hidden) closeAccountMenu(true); });
+document.addEventListener("pointerdown", (e) => { if (!$("account").contains(e.target)) closeAccountMenu(); });
+
+/** Sign out: the server clears the session cookie; the feed closes without reconnecting and what it sent is forgotten. */
+async function signOut() {
+  closeAccountMenu();
+  const ok = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).then((r) => r.ok).catch(() => false);
+  if (!ok) return toast("Couldn't sign out; try again.");
+  signingOut = true;
+  socket?.close();
+  Object.assign(state, { me: null, members: [], tasks: new Map(), notes: [], machines: [], goals: [], live: false, diffs: new Map(), checkLogs: new Map(), older: older() });
+  account();
+  $("nav-settings").hidden = true;
+  for (const id of ["inbox-count", "machines-count"]) $(id).textContent = "";
+  document.title = "Maple Factory";
+  history.replaceState(null, "", location.pathname);
+  signIn({ signedOut: true });
 }
 
 // ---- what needs you ----
@@ -273,6 +425,7 @@ function mentions() {
 /** A browser notification for each comment newly mentioning me, while this tab is in the background. */
 function notifyMentions(before, task) {
   if (!before || !document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  if (inQuietHours(state.quietHours)) return;
   const seen = new Set(before.comments.map((c) => c.id));
   for (const c of task.comments.filter((c) => !seen.has(c.id) && mentionsMe(c))) {
     const n = new Notification(`${name(c.author)} mentioned you`, { body: `${task.id} · ${task.title}\n${c.text.slice(0, 180)}`, tag: c.id });
@@ -300,7 +453,7 @@ function route() {
   const task = hash.match(/^\/t\/([A-Z][A-Z0-9]*-\d+)$/);
   const note = hash.match(/^\/notes\/([\w-]+)$/);
   const settings = hash.match(/^\/settings(?:\/([\w-]+))?$/);
-  if (task) return { name: "task", nav: "tasks", id: task[1] };
+  if (task) return { name: "task", nav: "tasks", id: task[1], artifact: new URLSearchParams(query).get("artifact") };
   if (note) return { name: "note", nav: "notes", id: note[1] };
   if (settings) return { name: "settings", nav: "settings", section: settings[1] ?? null };
   if (hash === "/new") return { name: "new", nav: "new", note: new URLSearchParams(query).get("note") };
@@ -314,11 +467,14 @@ function render() {
   const r = route();
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === r.nav);
   $("nav-settings").hidden = state.me.role !== "admin";
+  account();
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   $("machines-count").textContent = online() || "";
+  for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
+    document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
@@ -335,7 +491,7 @@ function section(key, title, count, body) {
   return h("section", { class: `section${open ? "" : " closed"}` },
     h("h2", {}, h("button", { type: "button", class: "section-head", "data-section": key, "aria-expanded": String(open), "aria-controls": open ? id : null,
       onclick: () => { toggleCollapsed(collapsed, key); render(); } },
-      h("span", { class: "chevron", "aria-hidden": "true" }, "▾"), count == null ? title : `${title} · ${count}`)),
+      h("span", { class: "chevron", "aria-hidden": "true" }, icon("chevron-down")), count == null ? title : `${title} · ${count}`)),
     open && h("div", { id }, body()));
 }
 
@@ -384,7 +540,7 @@ function inboxView() {
       h("div", { class: "list" }, mentioned.map(([t, c]) => h("div", { class: "item mention-row" },
         row(t, `${name(c.author)} · ${ago(c.at)}: ${c.text.replace(/\s+/g, " ").slice(0, 140)}`),
         h("button", { class: "btn small", onclick: () => dismissMention(c.id) }, "Dismiss"))))),
-    !total && h("div", { class: "card empty" }, "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
+    !total && h("div", { class: "card empty" }, icon("inbox", { size: 28 }), "When a plan needs your approval, an agent asks something, a change is ready for your review, or someone mentions you, it shows up here."));
 }
 
 /** Waiting for a session with nobody on it, as the server's queue reads it (the Mac app's Queued column). */
@@ -398,20 +554,28 @@ const rank = (t) => t.queueRank ?? t.createdAt;
 const scheduled = (t) => t.startAt != null && t.startAt > Date.now();
 const queueLine = (t) => scheduled(t) ? `Starts ${new Date(t.startAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : t.waiting || "Waiting for a slot";
 
+/** How many merged tasks the Tasks page lists: 10, or every one loaded once someone asks for more. */
+let mergedShown = 0;
+
 function tasksView() {
   const drafts = [...state.tasks.values()].filter((t) => t.state === "drafting").sort((a, b) => b.updatedAt - a.updatedAt);
   const queued = [...state.tasks.values()].filter(isQueued).sort((a, b) => rank(a) - rank(b));
   const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
   const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled", "closed"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
-  const done = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
+  const merged = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt);
+  const done = merged.slice(0, Math.max(10, mergedShown));
   return h("div", {},
     h("h1", {}, "Tasks"),
     drafts.length > 0 && section("tasks:drafts", "Drafts", drafts.length, () => h("div", { class: "list" }, drafts.map((t) => row(t, t.owner === state.me?.login ? `draft · edited ${ago(t.updatedAt)}` : `${name(t.owner)}'s draft`)))),
     queued.length > 0 && section("tasks:queued", "Queued", queued.length, () => h("div", { class: "list" }, queued.map((t, i) => row(t, `#${i + 1} · ${queueLine(t)}`)))),
     backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
     section("tasks:active", "In flight", active.length, () =>
-      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, "Nothing in flight.")),
-    done.length > 0 && section("tasks:merged", "Recently merged", null, () => h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`)))));
+      active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, icon("list-checks", { size: 28 }), "Nothing in flight.")),
+    (done.length > 0 || hasOlder()) && section("tasks:merged", mergedShown ? "Merged" : "Recently merged", null, () => h("div", {},
+      h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`))),
+      merged.length > done.length
+        ? h("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, h("a", { href: "javascript:void 0", onclick: () => { mergedShown = merged.length; render(); } }, `Show all ${merged.length} loaded`))
+        : loadOlderLink())));
 }
 
 // ---- machines: read-only; what each one is doing, how loaded it is and how much plan it has left ----
@@ -426,7 +590,7 @@ function machinesView() {
     h("p", { class: "muted" }, "Where agents run: what each machine is doing, its load, and how much plan its agents have left."),
     machines.length
       ? h("div", { class: "machines" }, machines.map((m) => machineCard(m, now)))
-      : h("div", { class: "card empty" }, "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
+      : h("div", { class: "card empty" }, icon("server", { size: 28 }), "No machines yet. ", h("a", { href: "/" }, "Add one"), " to run agents on."));
 }
 
 function machineCard(m, now) {
@@ -435,6 +599,7 @@ function machineCard(m, now) {
   const gauges = meters(m);
   return h("section", { class: `card machine ${st.kind}`, "data-machine": m.id },
     h("div", { class: "machine-head" },
+      h("span", { class: "machine-icon" }, icon("server", { size: 18 })),
       h("div", { class: "machine-title" },
         h("div", { class: "title" }, m.name),
         h("div", { class: "sub muted" }, [m.owner === state.me?.login ? "Yours" : name(m.owner), m.os, m.version && `runner ${m.version}`].filter(Boolean).join(" · "))),
@@ -444,7 +609,7 @@ function machineCard(m, now) {
     gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
     usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
       h("div", { class: "usage-head" }, agentIcon(u.agent), h("span", {}, u.title), u.plan && h("span", { class: "faint usage-plan" }, `· ${u.plan}`),
-        h("span", { class: "faint usage-seen" }, `read ${ago(u.observedAt)}`)),
+        h("span", { class: "faint usage-seen" }, icon("clock", { size: 12 }), `read ${ago(u.observedAt)}`)),
       u.rows.map((r) => h("div", { class: `usage-row${r.over ? " over" : ""}` },
         h("span", { class: "usage-label" }, r.label),
         bar(r.used / 100, r.cap == null ? null : r.cap / 100, `${r.label}: ${r.usedText} used${r.cap == null ? "" : `, cap ${r.cap}%`}`),
@@ -458,7 +623,7 @@ function sessionLine(s) {
   const doing = a ? [ACTIVITY_TITLE[a.state] ?? a.state, a.step || a.message].filter(Boolean).join(" · ") : "Starting";
   const what = s.session.taskId
     ? h("a", { href: `#/t/${s.session.taskId}` }, h("span", { class: "mono" }, s.session.taskId), task ? ` ${task.title}` : "")
-    : h("span", {}, "Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
+    : h("span", {}, icon("terminal", { size: 14 }), " Personal session ", h("span", { class: "mono faint" }, s.session.cwd.split("/").filter(Boolean).at(-1) ?? ""));
   return h("div", { class: "machine-session" },
     h("span", { class: `dot act-${a?.state ?? "idle"}` }),
     h("div", {}, h("div", { class: "session-what" }, agentIcon(s.session.agent), what), h("div", { class: "sub muted" }, doing)));
@@ -587,7 +752,7 @@ function notesView() {
           h("div", { class: "title" }, n.title || "Untitled note"),
           h("div", { class: "sub" }, `${ago(n.updatedAt)} · `, preview(n.body) || "Empty")),
         n.taskId && h("span", { class: "pill tag" }, `became ${n.taskId}`))))
-      : h("div", { class: "card empty" }, "Nothing jotted down yet."));
+      : h("div", { class: "card empty" }, icon("notebook-pen", { size: 28 }), "Nothing jotted down yet."));
 }
 const preview = (body) => body.replace(/\s+/g, " ").trim().slice(0, 120);
 
@@ -692,10 +857,23 @@ function mount(next, keepCompose) {
 // ---- a task ----
 
 const taskTabs = new Map(); // id → "overview" | "diff"
+// The folded sections opened on each task this visit (id → Set of section keys), so a feed update's
+// re-render keeps them open, like AppState.sectionFolds on the Mac.
+const openedSections = new Map();
+function setOpened(id, key, open) {
+  const keys = openedSections.get(id) ?? new Set();
+  if (open) keys.add(key); else keys.delete(key);
+  openedSections.set(id, keys);
+}
 
-function taskView(id) {
+function taskView(id, artifact = null) {
   const t = state.tasks.get(id);
-  if (!t) return h("div", { class: "card empty" }, state.live ? `There's no task ${id}.` : "Loading…");
+  if (!t) {
+    // One the snapshot left out (finished over 14 days ago) comes when asked for.
+    fetchTask(id);
+    return h("div", { class: "card empty" }, state.live && !state.older.fetching.has(id) ? `There's no task ${id}.` : "Loading…");
+  }
+  if (artifact) linkToArtifact(t, artifact);
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
   // Parked in the backlog: as far as its plan got.
@@ -721,8 +899,8 @@ function taskView(id) {
     (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
     t.effort && effortCard(t),
     h("div", { class: "tabs", style: "margin-top:22px" },
-      h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, "Overview"),
-      t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, `Diff +${t.diff.added} −${t.diff.removed}`)),
+      h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, icon("file-text"), "Overview"),
+      t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, icon("git-pull-request"), `Diff +${t.diff.added} −${t.diff.removed}`)),
     tab === "diff" ? diffView(t) : overview(t));
 }
 
@@ -789,6 +967,8 @@ function effortCard(t) {
   const counted = tasks.filter((x) => x.state !== "cancelled" && x.state !== "closed");
   return [h("h2", { class: "row" }, h("span", {}, `Effort · ${t.effort}`), h("span", { class: "spacer" }),
       h("span", { style: "text-transform:none;letter-spacing:0;font-weight:500" }, `${counted.filter((x) => x.state === "merged").length} of ${counted.length} merged`)),
+    // The effort's older tasks may be among the goal's finished ones the snapshot left out.
+    loadOlderLink(t.goal),
     h("div", { class: "list" }, tasks.map((x) => h("a", { class: `item${x.id === t.id ? " current" : ""}`, href: `#/t/${x.id}` },
       h("span", { class: `dot bg-${x.state}` }),
       h("div", { style: "flex:1;min-width:0" },
@@ -800,7 +980,7 @@ function effortCard(t) {
 function handCard(t) {
   const mine = t.hand.assignee === state.me?.login;
   return h("div", { class: "callout hand" },
-    h("b", {}, "The agent needs a hand"),
+    h("b", { class: "callout-head" }, icon("hand"), "The agent needs a hand"),
     h("p", { style: "margin:6px 0 0" }, t.hand.summary),
     mine && h("div", { class: "options" }, t.hand.options.map((o) =>
       h("button", { class: `option${o.recommended ? " recommended" : ""}`, onclick: () => send({ type: "task.resolveHand", id: t.id, option: o.title, note: "" }) },
@@ -848,7 +1028,7 @@ function promptCard(t) {
 function questionCard(t) {
   const mine = t.owner === state.me?.login;
   return h("div", { class: "callout question" },
-    h("b", {}, `${name(t.question.role)} asks`),
+    h("b", { class: "callout-head" }, icon("message-square"), `${name(t.question.role)} asks`),
     h("p", { style: "margin:6px 0 0" }, t.question.text),
     mine && t.question.options.length > 0 && h("div", { class: "options" }, t.question.options.map((o) =>
       h("button", { class: "option", onclick: () => send({ type: "task.answer", id: t.id, text: o }) }, h("b", {}, o)))),
@@ -862,7 +1042,7 @@ function decisions(t) {
   const buttons = [];
   if (t.state === "awaitingApproval") {
     buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => approvePlan(t) },
-      t.approvals.includes(me) ? "You approved it" : "Approve plan"));
+      icon("check"), t.approvals.includes(me) ? "You approved it" : "Approve plan"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
   if (t.state === "awaitingApproval" || t.state === "drafting") {
@@ -870,7 +1050,7 @@ function decisions(t) {
   }
   if (t.state === "backlog") {
     // Nothing runs on it until it's picked up: its plan approved, or planned (again).
-    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, "Approve & build"));
+    if (t.plan.length) buttons.push(h("button", { class: "btn go", onclick: () => approvePlan(t) }, icon("check"), "Approve & build"));
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.plan", id: t.id }) }, "Send to planning"));
     buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, "In the backlog: nothing runs until you pick it up."));
   }
@@ -880,7 +1060,7 @@ function decisions(t) {
     const pending = t.pr?.checks?.some((c) => c.status !== "passed" && c.status !== "failed");
     if (approvable(t)) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
-        t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
+        icon("check"), t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
       buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
@@ -894,14 +1074,15 @@ function decisions(t) {
         class: "btn go countdown", "aria-disabled": "true", "data-merge-at": t.mergeAt, "data-locks": "",
         style: `--grace:${countdown.total}ms;--used:${countdown.total - countdown.left}ms`,
       }, countdownLabel(t.mergeAt)));
-      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, "Hold"));
-      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, "Merge now"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.holdMerge") }, icon("pause"), "Hold"));
+      buttons.push(h("button", { class: "btn", onclick: () => sendMerge(t, "task.merge") }, icon("git-merge"), "Merge now"));
     } else if (passed && t.reviews.length >= t.reviewsNeeded && t.hand?.reason !== "mergeFailed") {
       // A failed merge's hand carries the ways forward instead.
       buttons.push(h("button", { class: "btn go", disabled: failing || pending, onclick: () => sendMerge(t, "task.merge") },
-        failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
+        icon(failing ? "circle-alert" : pending ? "clock" : "git-merge"), failing ? "CI is failing" : pending ? "Waiting for CI" : "Merge"));
     }
-    if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, "Re-run failed"));
+    if (failing) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.rerunChecks", id: t.id }) }, icon("refresh-cw"), "Re-run failed"));
+    if (t.pr?.url && t.pr.state === "open") buttons.push(h("button", { class: "btn", title: "Read the pull request and its CI from GitHub again", onclick: () => send({ type: "task.recheckGitHub", id: t.id }) }, icon("refresh-cw"), "Recheck CI"));
     // One more automated-review round, with this person's focus.
     if (reviewRequestable(t) && !reviewAsks.has(t.id)) {
       buttons.push(h("button", { class: "btn", onclick: () => { reviewAsks.set(t.id, ""); render(); document.querySelector(`[data-keep="${t.id}:review-ask"] textarea`)?.focus(); } }, "Request a review…"));
@@ -910,12 +1091,12 @@ function decisions(t) {
   }
   if (isQueued(t)) {
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top" }) }, "Move to top"));
-    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, "Start now"));
+    if (scheduled(t)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.queue", id: t.id, before: "top", clearSchedule: true }) }, icon("play"), "Start now"));
   }
   if (t.state !== "merged") {
     // Waiting on its plan's approval or in the backlog, nothing is running to retry; requesting a change plans again.
-    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, "Retry"));
-    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, "Cancel…"));
+    if (!["drafting", "awaitingApproval", "backlog"].includes(t.state)) buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.retry", id: t.id }) }, icon("refresh-cw"), "Retry"));
+    if (t.state !== "cancelled" && t.state !== "closed") buttons.push(h("button", { class: "btn danger", onclick: () => { cancelling.add(t.id); render(); } }, icon("x"), "Cancel…"));
   }
   const steerable = ["planning", "awaitingApproval", "building", "reviewing"].includes(t.state) || (t.state === "backlog" && t.plan.length > 0);
   const [placeholder, label] = {
@@ -1098,21 +1279,71 @@ function draftEditor(t) {
 
 function overview(t) {
   const editing = (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login;
-  return h("div", {},
-    t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
-    t.autoReview && t.autoReview.rounds.length > 0 && review(t),
-    t.pr && pull(t),
-    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
-    t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
-      h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
-        h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
-    (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
+  const { order, folded } = sectionOrder(t.state);
+  // A folded section is a <details> with its one-line summary; open, it's the section as before.
+  const fold = (key, title, line, body) => folded.has(key)
+    ? h("details", { class: "fold", id: `s-${key}`, open: openedSections.get(t.id)?.has(key) ?? false,
+        ontoggle: (e) => setOpened(t.id, key, e.currentTarget.open) }, h("summary", {}, h("span", { class: "fold-title" }, title), " ", h("span", { class: "muted" }, line)), body)
+    : h("div", { id: `s-${key}` }, h("h2", {}, title), body);
+  const planDone = t.plan.filter((s) => s.progress === "done").length;
+  const sections = {
+    summary: () => readyStrip(t),
+    brief: () => t.brief && !editing && fold("brief", "Brief", firstSentence(t.brief), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))),
+    review: () => h("div", { id: "s-review" }, t.autoReview && t.autoReview.rounds.length > 0 && review(t), t.pr && pull(t)),
+    mockups: () => t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
+    artifacts: () => (t.artifacts ?? []).length > 0 && h("div", { id: "s-artifacts" }, h("h2", {}, "Artifacts"), artifacts(t)),
+    plan: () => [t.plan.length > 0 && fold("plan", `Plan · v${t.planVersion}`,
+      `${t.plan.length} ${t.plan.length === 1 ? "step" : "steps"}${planDone === t.plan.length ? ", all done" : planDone ? `, ${planDone} done` : ""}`,
+      h("div", { class: "card" },
+        h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
+          h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file)))))))],
+    followUps: () => (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
       t.followUps.map((f) => h("div", { class: "check" }, h("div", {},
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
         f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
-    t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))],
-    t.risk && riskCard(t.risk),
-    timeline(t));
+    doneWhen: () => t.doneWhen.length > 0 && h("div", { id: "s-doneWhen" }, h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))),
+    risk: () => t.risk && riskCard(t.risk),
+    timeline: () => timeline(t),
+  };
+  return h("div", {}, order.map((key) => sections[key]()));
+}
+
+/** The first sentence of a brief, without its markdown, for its folded line. */
+function firstSentence(text) {
+  const line = text.split("\n").map((l) => l.replace(/^[#>*\-_\s]+/, "").trim()).find(Boolean) ?? "";
+  const plain = line.replace(/\*\*|`/g, "");
+  const end = plain.search(/[.!?](\s|$)/);
+  return end >= 0 ? plain.slice(0, end + 1) : plain;
+}
+
+/** "Ready to review": the verdict, the proofs, the size of the change and the PR, with links down to each
+ *  section; checks that failed or have no proof yet are listed in red. */
+function readyStrip(t) {
+  const last = t.autoReview?.rounds.at(-1);
+  if (!t.doneWhen.length && !last && !t.pr && !t.diff) return null;
+  const verdict = last && { passed: ["Passed · ready for you", "ok"], changesRequested: ["Changes requested", "wait"], escalated: ["Handed to a person", "bad"], inProgress: ["Reviewing…", "muted"] }[last.verdict];
+  const proven = t.doneWhen.filter((d) => d.status === "proven").length;
+  const gaps = t.state === "merged" ? [] : t.doneWhen.filter((d) => d.status !== "proven");
+  const failing = (t.pr?.checks ?? []).filter((c) => c.status === "failed").length;
+  const jump = (key) => (e) => {
+    e.preventDefault();
+    const el = document.getElementById(`s-${key}`);
+    if (el?.tagName === "DETAILS") { setOpened(t.id, key, true); el.open = true; }
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const links = [["doneWhen", "Done when", t.doneWhen.length], ["review", "Review", t.autoReview || t.pr], ["artifacts", "Artifacts", (t.artifacts ?? []).length],
+    ["plan", "Plan", t.plan.length], ["brief", "Brief", t.brief]].filter(([, , has]) => has);
+  return [h("h2", {}, t.state === "reviewing" ? "Ready to review" : "Review"), h("div", { class: "card review-summary" },
+    h("div", { class: "row" },
+      verdict && h("span", { class: verdict[1] }, h("b", {}, verdict[0])),
+      last && h("span", { class: "muted" }, `round ${last.number} of ${t.autoReview.maxRounds}`),
+      t.doneWhen.length > 0 && h("span", { class: proven === t.doneWhen.length ? "ok" : "" }, `${proven} of ${t.doneWhen.length} proven`),
+      t.diff && h("a", { href: "#", onclick: (e) => { e.preventDefault(); taskTabs.set(t.id, "diff"); render(); } },
+        h("span", { class: "ok" }, `+${t.diff.added}`), " ", h("span", { class: "bad" }, `−${t.diff.removed}`)),
+      t.pr && (t.pr.url ? h("a", { href: t.pr.url, target: "_blank", rel: "noopener" }, `#${t.pr.number} ↗`) : h("b", {}, `#${t.pr.number}`)),
+      t.pr && t.pr.checks.length > 0 && h("span", { class: failing ? "bad" : "muted" }, failing ? `${failing} failing` : `${t.pr.checks.length} ${t.pr.checks.length === 1 ? "check" : "checks"}`)),
+    gaps.length > 0 && h("div", { style: "margin-top:8px" }, gaps.map((d) => h("div", { class: "bad" }, `${d.status === "failed" ? "Failed" : "No proof yet"}: ${d.text}`))),
+    links.length > 0 && h("div", { class: "row muted", style: "margin-top:8px" }, "Jump to", links.map(([key, label]) => h("a", { href: `#s-${key}`, onclick: jump(key) }, label))))];
 }
 
 /** The server's reasons for the risk level, highest first; older servers send none. */
@@ -1353,6 +1584,83 @@ function attestForm(t, i) {
 /** `/attachments/<uuid>/<name>`, the shape the server keeps a proof's file under (attachments.ts). */
 const ATTACHMENT = /^\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[\w.\-]{1,120}$/;
 
+// ---- artifacts: files an agent shared with `share_artifact` (MF-205) ----
+
+/** No network, no frames, no forms: only the page's own inline scripts and styles, and data: images. */
+const ARTIFACT_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:";
+/** The artifact picked on each task's page, by task id. */
+const pickedArtifact = new Map();
+/** Fetched artifact text, by file: they never change (a new version is a new file). */
+const artifactText = new Map();
+
+/** Artifact links followed, by "<task>:<artifact>": a link picks its artifact once, then clicks win. */
+const artifactLinks = new Set();
+
+/** A task link with \`?artifact=<id>\` (from the pull request's Artifacts): pick that artifact, on the
+ *  overview, and scroll to the Artifacts section once it's drawn. */
+function linkToArtifact(t, id) {
+  const key = `${t.id}:${id}`;
+  if (artifactLinks.has(key) || !(t.artifacts ?? []).some((a) => a.id === id)) return;
+  artifactLinks.add(key);
+  pickedArtifact.set(t.id, id);
+  taskTabs.set(t.id, "overview");
+  requestAnimationFrame(() => document.getElementById("s-artifacts")?.scrollIntoView({ block: "start" }));
+}
+
+/** Chips to pick an artifact, above the one picked (the newest by default). */
+function artifacts(t) {
+  const list = t.artifacts;
+  const active = list.find((a) => a.id === pickedArtifact.get(t.id)) ?? list[list.length - 1];
+  const chips = h("div", { class: "artifact-chips" }, list.map((a) => h("button", {
+    class: `artifact-chip${a === active ? " on" : ""}`, title: a.summary ?? a.title,
+    onclick: () => { pickedArtifact.set(t.id, a.id); render(); },
+  }, a.title, a.version > 1 && h("span", { class: "muted mono" }, ` v${a.version}`))));
+  return h("div", { class: "card" }, chips, artifactBody(active),
+    h("div", { class: "artifact-foot" },
+      h("div", {}, active.summary && h("div", {}, active.summary), h("div", { class: "muted" }, `Shared by the ${active.by}${active.version > 1 ? ` · v${active.version}` : ""} · ${kb(active.bytes)}`)),
+      ATTACHMENT.test(active.file) && h("a", { class: "proof-file", href: active.file, download: active.file.split("/").pop() }, "Download")));
+}
+
+const kb = (n) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function artifactBody(a) {
+  if (!ATTACHMENT.test(a.file)) return null;
+  const name = a.file.split("/").pop();
+  const chip = () => h("a", { class: "proof-file", href: a.file, target: "_blank", rel: "noopener noreferrer" }, name, h("span", { class: "muted" }, " ↗"));
+  if (a.kind === "image") {
+    const link = h("a", { class: "proof-img", href: a.file, target: "_blank", rel: "noopener noreferrer", title: "Open full size" },
+      h("img", { src: a.file, alt: a.title, loading: "lazy", onerror: () => link.replaceWith(chip()) }));
+    return link;
+  }
+  if (!["html", "svg", "markdown", "text", "data"].includes(a.kind)) return chip();
+  // Text kinds come in with the session cookie and are drawn here: HTML and SVG in an iframe with
+  // scripts but no same-origin (an opaque origin: no cookies, no factory) and a CSP that blocks the network.
+  const box = h("div", { class: "artifact-view" }, h("div", { class: "muted" }, "Loading…"));
+  const draw = (text) => {
+    box.textContent = "";
+    if (a.kind === "html" || a.kind === "svg") box.append(h("iframe", { class: "artifact-frame", sandbox: "allow-scripts", srcdoc: artifactPage(text, a.kind), title: a.title }));
+    else if (a.kind === "markdown") box.append(markdown(text, h, knownTasks()));
+    else box.append(h("pre", { class: "out" }, text.slice(0, 512 * 1024)));
+  };
+  if (artifactText.has(a.file)) draw(artifactText.get(a.file));
+  else fetch(a.file, { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+    .then((text) => { artifactText.set(a.file, text); draw(text); })
+    .catch(() => { box.textContent = ""; box.append(chip()); });
+  return box;
+}
+
+/** An HTML or SVG artifact as the iframe's page, with the CSP before anything else in it. */
+function artifactPage(text, kind) {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  if (kind === "svg") return `<!doctype html><html><head>${meta}<style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#fff}svg{max-width:100%;max-height:100%}</style></head><body>${text}</body></html>`;
+  // First in the document (after a leading doctype only): the parser puts it in the implicit <head> ahead of
+  // every other tag. Looking for "<head" instead would also match <header>, or a <head> in a comment or script.
+  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(text);
+  const at = doctype ? doctype[0].length : 0;
+  return text.slice(0, at) + meta + text.slice(at);
+}
+
 /** The screenshot or recording the runner uploaded: shown in place, or a chip to open it if it won't load. */
 function proofFile(e) {
   const src = e.file;
@@ -1368,11 +1676,58 @@ function proofFile(e) {
   return link;
 }
 
+const AGENT_ROLES = ["planner", "builder", "reviewer"];
+/** Comment threads that have a Reply box open, by root id. */
+const replying = new Set();
+
+/** Comments grouped into threads: each root with its replies, oldest first, placed at its latest word.
+ *  A reply whose root isn't there any more shows as a root of its own. */
+function threads(comments) {
+  const ids = new Set(comments.map((c) => c.id));
+  const rootOf = (c) => (c.replyTo && ids.has(c.replyTo) ? c.replyTo : c.id);
+  const byRoot = new Map();
+  for (const c of comments) {
+    const r = rootOf(c);
+    if (!byRoot.has(r)) byRoot.set(r, { root: null, replies: [] });
+    if (r === c.id) byRoot.get(r).root = c;
+    else byRoot.get(r).replies.push(c);
+  }
+  return [...byRoot.values()].filter((th) => th.root).map((th) => {
+    th.replies.sort((a, b) => a.at - b.at);
+    th.at = Math.max(th.root.at, ...th.replies.map((c) => c.at));
+    return th;
+  });
+}
+
+function commentBody(t, c, known) {
+  const agent = AGENT_ROLES.includes(c.author);
+  return [
+    h("div", { class: "row" },
+      agent && h("span", { class: `agent-avatar ${c.author}`, title: `${name(c.author)} (${agentTitle(t.agent) || "agent"})` }, agentIcon(t.agent) ?? c.author[0].toUpperCase()),
+      h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))),
+    markdown(c.text, h, known),
+  ];
+}
+
+/** A comment and its replies, nested, with a Reply link that opens a box under them. */
+function thread(t, th, known) {
+  const root = th.root.id;
+  const open = replying.has(root);
+  const toggle = (e) => { e.preventDefault(); open ? replying.delete(root) : replying.add(root); render(); };
+  return h("div", { class: "comment thread" },
+    commentBody(t, th.root, known),
+    th.replies.length > 0 && h("div", { class: "replies" }, th.replies.map((c) => h("div", { class: `reply${AGENT_ROLES.includes(c.author) ? " by-agent" : ""}` }, commentBody(t, c, known)))),
+    open
+      ? h("div", { class: "reply-box" }, compose(t, `reply:${root}`, "Reply…", "Reply", (text) => { send({ type: "task.comment", id: t.id, text, replyTo: root }); }),
+          h("button", { class: "link faint small", onclick: toggle }, "Cancel"))
+      : h("button", { class: "link reply-link", onclick: toggle }, th.replies.length ? `Reply · ${th.replies.length}` : "Reply"));
+}
+
 function timeline(t) {
   const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
-    ...t.comments.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), c.anchor && h("span", { class: "mono muted anchor" }, c.anchor), c.via && h("span", { class: "muted" }, `via ${c.via}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...threads(t.comments).map((th) => ({ at: th.at, el: thread(t, th, known) })),
     ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
@@ -1570,4 +1925,5 @@ window.addEventListener("hashchange", () => {
   render();
 });
 $("update-refresh").addEventListener("click", () => location.reload());
+fillIcons();
 connect();

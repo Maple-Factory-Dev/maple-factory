@@ -18,6 +18,7 @@ struct FactoryTopBar: View {
                 case .goal: layoutPicker
             case .inbox: title("Inbox", icon: "tray")
             case .myTasks: title("My tasks", icon: "checkmark.circle")
+                case .dayReport: title("Day report", icon: "doc.text")
                 case .activity: title("Activity", icon: "waveform.path.ecg")
                 case .scratchpad: title("Scratchpad", icon: "note.text")
                 case .usage: title("Usage", icon: "gauge.with.dots.needle.33percent")
@@ -163,6 +164,7 @@ struct FactoryTopBar: View {
         case .goal(let name): name
         case .inbox: "Inbox"
         case .myTasks: "My tasks"
+        case .dayReport: "Day report"
         case .activity: "Activity"
         case .scratchpad: "Scratchpad"
         case .usage: "Usage"

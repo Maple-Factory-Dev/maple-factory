@@ -3,11 +3,12 @@ import SwiftUI
 /// What the proof lightbox shows: a screenshot (and its upload, for Open in Preview) or a recording from where it was.
 enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
-    case video(URL, poster: NSImage?, caption: String, at: Double = 0)
+    /// `size`: the recording's own size (its track's, turned upright), which the lightbox fits by.
+    case video(URL, poster: NSImage?, size: CGSize? = nil, caption: String, at: Double = 0)
 
     var caption: String {
         switch self {
-        case let .image(_, caption, _), let .video(_, _, caption, _): caption
+        case let .image(_, caption, _), let .video(_, _, _, caption, _): caption
         }
     }
 }
@@ -103,7 +104,9 @@ final class AppState {
         didSet { boardDefaults.set(goalTaskFilter.rawValue, forKey: "goalTaskFilter") }
     }
     /// A task opened full-screen in place of the board/list/timeline.
-    var focusedTask: String? = nil
+    var focusedTask: String? = nil {
+        didSet { if let focusedTask, focusedTask != oldValue { loadIfMissing(focusedTask) } }
+    }
     /// A live session a maplefactory://session/<machine>/<id> link asked for; Machines opens it.
     var openingLiveSession: LiveMachinesView.OpenSession? = nil
     /// The task whose ⋯ menu shows its cancel confirmation, when a demo script opened it (`cancelask:<id>`).
@@ -126,7 +129,15 @@ final class AppState {
         return TaskOpening.stored() == .panel && AppDefaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
-    var selectedTask = "ATL-147"
+    var selectedTask = "ATL-147" {
+        didSet { if selectedTask != oldValue { loadIfMissing(selectedTask) } }
+    }
+
+    /// A task opened by ID that the snapshot left out (finished over 14 days ago): the factory sends it.
+    private func loadIfMissing(_ id: String) {
+        guard isLive, let client else { return }
+        client.fetchTask(id: id)
+    }
     /// The task showing in the panel, which is what a card or row highlights; nil while it's closed.
     var openedTask: String? { showInspector ? selectedTask : nil }
 
@@ -240,7 +251,7 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "onboardingStep", "goaltasks"]
+                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -311,7 +322,7 @@ final class AppState {
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
         showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
-            && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
+            && ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
     var contentWidth: CGFloat { windowWidth - sidebarSpace - (inspectorInline ? 380 : 0) }
@@ -353,14 +364,19 @@ final class AppState {
     /// Where to land once the workspace's goals are known, or nil to stay put: a goal that isn't the
     /// workspace's (the mock's starting one) gives way to the focused task's goal, else the first, else the inbox.
     /// `remembered`, the page this factory was last on, wins while it's still there: any page that isn't a goal,
-    /// or a goal the workspace still has.
+    /// or a goal the workspace still has. `renamed` (old → new name) follows a goal renamed while you were on it.
     nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?,
-                                                     remembered: Destination? = nil) -> Destination? {
-        if let remembered {
+                                                     remembered: Destination? = nil, renamed: [String: String] = [:]) -> Destination? {
+        func follow(_ destination: Destination) -> Destination {
+            guard case .goal(let name) = destination, !goals.contains(name), let new = renamed[name], goals.contains(new) else { return destination }
+            return .goal(new)
+        }
+        if let remembered = remembered.map(follow) {
             let exists = if case .goal(let name) = remembered { goals.contains(name) } else { true }
             if exists { return remembered == current ? nil : remembered }
         }
         guard case .goal(let name) = current, !goals.contains(name) else { return nil }
+        if case .goal(let new) = follow(current), new != name { return .goal(new) }
         if let focusedGoal, goals.contains(focusedGoal) { return .goal(focusedGoal) }
         return goals.first.map(Destination.goal) ?? .inbox
     }
@@ -401,6 +417,7 @@ final class AppState {
         task.after = FactoryData.seedAfter[task.id] ?? []
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
+        task.artifacts = FactoryData.seedArtifacts[task.id] ?? []
         if task.id == "ATL-160" {
             task.intakeID = "req-sso"
             task.comments.append(Comment(author: FactoryData.dana,
@@ -420,6 +437,22 @@ final class AppState {
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
     var postedComments: [String: [Comment]] = [:]
+    /// Task page sections opened from their folded line this session ("<task>#<section>"), or folded by hand ("<task>#<section>!").
+    var sectionFolds: Set<String> = []
+
+    /// Whether a task page section is folded: its stage's default, unless it was opened or closed this session.
+    func isFolded(_ task: String, _ section: TaskPageLayout.Section, byDefault: Bool) -> Bool {
+        let key = "\(task)#\(section.rawValue)"
+        if sectionFolds.contains(key) { return false }
+        if sectionFolds.contains(key + "!") { return true }
+        return byDefault
+    }
+
+    func setFolded(_ task: String, _ section: TaskPageLayout.Section, _ folded: Bool) {
+        let key = "\(task)#\(section.rawValue)"
+        sectionFolds.remove(folded ? key : key + "!")
+        sectionFolds.insert(folded ? key + "!" : key)
+    }
     /// Each task's review being drafted in its Changes tab.
     @ObservationIgnored private var reviewDrafts: [String: ReviewDraft] = [:]
     /// The risk policy and goals' accepted risk: the factory's when signed in (edits go to it).
@@ -463,6 +496,9 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
+    /// What's typed in each task's comment box, by task id: the panel and full view share it, so switching
+    /// between them keeps it. Cleared when it's sent.
+    var composerDrafts: [String: String] = [:]
     /// Bumped by every New Task, so the composer puts the caret in the title even when it's already open.
     var composeFocusRequest = 0
     /// Your Scratchpad: the factory's copy when signed in.
@@ -567,7 +603,32 @@ final class AppState {
 
     func stats(for goal: Goal) -> (merged: Int, total: Int) {
         let live = tasks(for: goal).filter { $0.state != .cancelled && $0.state != .closed }
-        return (live.filter { $0.state == .merged }.count, live.count)
+        // Merged tasks the snapshot left out still count (an older server sends every task, and none are left out).
+        let left = olderMerged(in: goal)
+        return (live.filter { $0.state == .merged }.count + left, live.count + left)
+    }
+
+    /// The goal's merged tasks older than the snapshot's window, not loaded yet.
+    func olderMerged(in goal: Goal) -> Int {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return 0 }
+        return client.older[id]?.merged ?? 0
+    }
+
+    /// Whether the goal has finished tasks older than the snapshot's window still to load.
+    func hasOlderTasks(in goal: Goal) -> Bool {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return false }
+        return client.hasOlder(goal: id)
+    }
+
+    func isLoadingOlderTasks(in goal: Goal) -> Bool {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return false }
+        return client.loadingOlder.contains(id)
+    }
+
+    /// The next page of the goal's older finished tasks.
+    func loadOlderTasks(in goal: Goal) {
+        guard isLive, let client, let id = client.goal(named: goal.name)?.id else { return }
+        client.loadOlder(goal: id)
     }
 
     func risk(for task: FactoryTask) -> RiskAssessment? {
@@ -1077,7 +1138,16 @@ final class AppState {
         case .action(.toggleSidebar): toggleSidebar()
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
+        case .action(let action):
+            if let appearance = action.appearance { setAppearance(appearance) }
         }
+    }
+
+    /// The same `appearance` default the sidebar's toggle writes; set on NSApp too so it changes at once.
+    func setAppearance(_ appearance: Appearance) {
+        AppDefaults.set(appearance.rawValue, forKey: "appearance")
+        NSApp.appearance = appearance.nsAppearance
+        showToast("Theme: \(appearance.rawValue.capitalized)", icon: appearance.icon)
     }
 
     /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.
@@ -1128,6 +1198,18 @@ final class AppState {
 
     func closeFocus() {
         withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+    }
+
+    /// What ⌘↩ does. A focused comment or reply box takes it (sending, or nothing while it's empty) before
+    /// the new-task composer or the full-view toggle, so it never swaps the view under what you're typing.
+    enum ReturnCommand: Equatable {
+        case sendComposer, nothing, sendToPlanning, openFocus, closeFocus
+    }
+
+    func returnCommand(composerFocused: Bool, composerCanSend: Bool) -> ReturnCommand {
+        if composerFocused { return composerCanSend ? .sendComposer : .nothing }
+        if isComposing { return .sendToPlanning }
+        return focusedTask == nil ? .openFocus : .closeFocus
     }
 
     /// A link to the task that opens it in the app (through the factory's server when live).
@@ -1214,12 +1296,13 @@ final class AppState {
         steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: text, status: interruptNow ? .applying : .queued, timing: timing))
     }
 
-    func comment(_ id: String, text: String) {
+    /// A comment on a task, or a reply in the thread whose first comment is `replyTo`.
+    func comment(_ id: String, text: String, replyTo: String? = nil) {
         if let client, isLive {
-            client.send(.taskComment(.init(id: id, text: text)))
+            client.send(.taskComment(.init(id: id, text: text, replyTo: replyTo)))
             return
         }
-        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now"))
+        postedComments[id, default: []].append(Comment(author: FactoryData.me, text: text, when: "now", id: UUID().uuidString, replyTo: replyTo))
     }
 
     /// The review being drafted on a task's diff; the same one each time, until it's sent.
@@ -2038,6 +2121,31 @@ final class AppState {
         }
     }
 
+    /// Reads the task's pull request and CI from GitHub again, for a webhook that never came.
+    func recheckGitHub(_ id: String) {
+        if let client, isLive {
+            client.send(.taskRecheckGitHub(.init(id: id)))
+            showToast("Checking GitHub…", icon: "arrow.triangle.2.circlepath")
+            return
+        }
+        showToast("Checking GitHub…", icon: "arrow.triangle.2.circlepath")
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr else { return }
+                    if pr.checks.isEmpty { pr.checks = [CICheck(name: "test", status: .passed, duration: "1:12")] }
+                    for index in pr.checks.indices where pr.checks[index].status == .running || pr.checks[index].status == .queued {
+                        pr.checks[index].status = .passed
+                        pr.checks[index].duration = "1:\(20 + index * 7)"
+                    }
+                    task.pr = pr
+                    task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Rechecked CI on GitHub", when: "now"), at: 0)
+                }
+            }
+        }
+    }
+
     /// Splits an over-budget task into `parts`: the original keeps everything up to its current step,
     /// and the remaining steps become new tasks queued for planning.
     func split(_ id: String, into parts: Int) {
@@ -2296,6 +2404,8 @@ final class AppState {
                     tasks.append(task)
                 }
             case "board" where parts[1] == "bottom": NotificationCenter.default.post(name: BoardColumns.demoScroll, object: nil)
+            // Opens the Reply box on the timeline's first thread with replies (`reply:open`), or on the comment whose id starts with `reply:<id>`.
+            case "reply": NotificationCenter.default.post(name: TaskTimeline.demoReply, object: parts[1])
             case "goto": destination = .goal(parts.dropFirst().joined(separator: ":"))
             case "scheduleask": schedulingTask = parts[1]
             case "schedule":
@@ -2332,6 +2442,9 @@ final class AppState {
             case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
+            // Recheck on the PR card; `nochecks:<id>` empties its checks first, to show it with none reported.
+            case "recheck": recheckGitHub(parts[1])
+            case "nochecks": update(parts[1]) { $0.pr?.checks = [] }
             // A PR card check row's View Log (`checklog:<id>:<check>`) and Re-run (`reruncheck:<id>:<check>`).
             case "checklog": showCheckLog(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
             case "reruncheck": rerunCheck(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
@@ -2346,20 +2459,28 @@ final class AppState {
                 case "notes": if let url = Updater.shared.releaseNotesURL { NSWorkspace.shared.open(url) }
                 default: Updater.shared.updateAndRestart()
                 }
+            // The About window's Check for Updates… button (`about:check`; with MAPLE_UPDATE_DEMO for an answer).
+            case "about": AboutView.checkForUpdates()
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
+            case "recurring": NotificationCenter.default.post(name: RecurringButton.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
+            case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
+            case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
             // The Changes tab's review: `diff:file:<path>`, `diff:select:<from>:<to>`, `diff:comment`, `diff:type:<text>`,
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
             case "diff": NotificationCenter.default.post(name: DiffView.demo, object: Array(parts.dropFirst()))
             case "tab": NotificationCenter.default.post(name: TaskFocusView.demoTab, object: parts[1])
+            case "jump": NotificationCenter.default.post(name: TaskFocusView.demoJump, object: parts[1])
             // The Activity page: `activity:seed:2400` gives the mockup's tasks that many events, `activity:more` is Show 50 more,
             // `activity:bottom` and `activity:top` scroll to its footer and its header, `activity:filter:Agents` picks a filter.
             case "activity": NotificationCenter.default.post(name: ActivityView.demo, object: Array(parts.dropFirst()))
+            // Day report: `report:markdown` / `report:slack` press its Copy buttons, `report:prev` / `report:today` step the day.
+            case "report": NotificationCenter.default.post(name: DayReportView.demo, object: parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()
@@ -2395,6 +2516,10 @@ final class AppState {
                     if let goal = client?.goals.first(where: { $0.name == parts[1] || $0.prefix == parts[1] }) { client?.scout(goal: goal.name); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+            // Settings › Runner's Check for Update pressed for this Mac: `runnercheck:mac`. Signing in, it waits for the machine.
+            case "runnercheck":
+                for _ in 0..<300 where client?.thisMac == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if let client, let mac = client.thisMac { client.perform(.check, on: mac) }
             // Settings → Scout's Items per Scout run stepper set to a number: `scoutitems:5`.
             case "scoutitems":
                 for _ in 0..<300 where client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
@@ -2490,6 +2615,8 @@ final class AppState {
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.
             case "merged": timelineShowsMerged = ["yes", "on", "true"].contains(parts[1].lowercased())
+            // `older:<goal>` presses the Timeline's "Load older finished tasks" for that goal (by name).
+            case "older": loadOlderTasks(in: FactoryData.goal(named: parts.dropFirst().joined(separator: ":")))
             // The board's hide-empty toggle, through the same persisted preference as the UI.
             case "boardempty": boardHidesEmptyColumns = ["yes", "on", "true"].contains(parts[1].lowercased())
             // The goal view's Everyone | You switch, through the same persisted preference: `goaltasks:mine|everyone`.
@@ -2549,7 +2676,7 @@ final class AppState {
                     if let client, let machine = client.machines.first(where: { $0.id == parts[1] }) { client.perform(client.runnerAction(machine), on: machine); break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-            case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1])
+            case "whatsnew": NotificationCenter.default.post(name: RunnerChangesSheet.demoOpen, object: parts[1], userInfo: ["all": parts.count > 2 && parts[2] == "all"])
             // `automerge:off` is its "Merge approved changes automatically": ready tasks wait in Pending merge.
             case "automerge": policy.autoMerges = ["yes", "on", "true"].contains(parts[1].lowercased())
             // `reviews:low:1`: the policy's final reviews for a level; `green:<id>` proves all its Done when items and passes its checks.

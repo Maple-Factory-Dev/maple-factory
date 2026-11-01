@@ -330,6 +330,38 @@ private struct TestsProof: View {
 }
 
 /// A stand-in thumbnail for screenshot and video proofs: a tiny browser window with a login form.
+/// How big screenshot and video proofs are shown: as wide as the Done-when column, up to `maxWidth`, and
+/// never wider than the media itself.
+enum ProofViews {
+    nonisolated static let maxWidth: CGFloat = 720
+
+    /// min(column, maxWidth, the media's own width).
+    nonisolated static func inlineWidth(column: CGFloat, media: CGSize?) -> CGFloat {
+        min(column, maxWidth, media.map { $0.width > 0 ? $0.width : maxWidth } ?? maxWidth)
+    }
+
+    /// Width over height, 16:10 until there's a size.
+    nonisolated static func aspect(_ size: CGSize?) -> CGFloat {
+        guard let size, size.width > 0, size.height > 0 else { return 16 / 10 }
+        return size.width / size.height
+    }
+
+    /// A track's natural size with its preferred transform applied: a phone's portrait recording is stored
+    /// landscape and turned on playback.
+    nonisolated static func upright(_ size: CGSize, transform: CGAffineTransform) -> CGSize {
+        let turned = CGRect(origin: .zero, size: size).applying(transform)
+        return CGSize(width: abs(turned.width).rounded(), height: abs(turned.height).rounded())
+    }
+
+    /// The poster's largest size: 2× the widest it's shown, kept to the recording's shape and own size.
+    nonisolated static func posterSize(_ natural: CGSize?) -> CGSize {
+        let most = maxWidth * 2
+        guard let natural, natural.width > 0, natural.height > 0 else { return CGSize(width: most, height: most) }
+        let scale = min(1, most / natural.width)
+        return CGSize(width: (natural.width * scale).rounded(), height: (natural.height * scale).rounded())
+    }
+}
+
 /// The screenshot a runner uploaded (`/attachments/…`), fetched with the app's token; a click shows it in the lightbox.
 private struct ScreenshotProof: View {
     let caption: String
@@ -350,7 +382,7 @@ private struct ScreenshotProof: View {
                         .aspectRatio(contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
-                        .frame(maxWidth: min(image.size.width, Self.maxWidth), alignment: .leading)
+                        .frame(maxWidth: min(image.size.width, ProofViews.maxWidth), alignment: .leading)
                 }
                 .buttonStyle(.plain)
                 .help("View larger")
@@ -367,7 +399,7 @@ private struct ScreenshotProof: View {
         .task(id: path) {
             do {
                 guard let client else { throw FactoryClient.ClientError.message("Not signed in.") }
-                guard let loaded = Self.thumbnail(try await client.attachment(path), width: Self.maxWidth * 2) else {
+                guard let loaded = Self.thumbnail(try await client.attachment(path), width: ProofViews.maxWidth * 2) else {
                     throw FactoryClient.ClientError.message("Not an image.")
                 }
                 image = loaded
@@ -376,8 +408,6 @@ private struct ScreenshotProof: View {
             }
         }
     }
-
-    static let maxWidth: CGFloat = 380
 
     /// The screenshot whole, in the lightbox.
     private func showLarge() {
@@ -420,6 +450,8 @@ struct VideoProof: View {
     @Environment(FactoryClient.self) private var client: FactoryClient?
     @State private var file: URL?
     @State private var poster: NSImage?
+    /// The recording's own size, upright: what it lays out by (the poster's only a picture of it).
+    @State private var natural: CGSize?
     @State private var duration: String?
     @State private var player: AVPlayer?
     @State private var failed: String?
@@ -429,7 +461,7 @@ struct VideoProof: View {
             if let player {
                 VideoPlayer(player: player)
                     .aspectRatio(aspect, contentMode: .fit)
-                    .frame(maxWidth: 380)
+                    .frame(maxWidth: inlineMax)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
                     .overlay(alignment: .topTrailing) { expandButton }
@@ -437,9 +469,9 @@ struct VideoProof: View {
                 Button { play(file) } label: {
                     ZStack {
                         if let poster {
-                            Image(nsImage: poster).resizable().aspectRatio(contentMode: .fit)
+                            Image(nsImage: poster).resizable().aspectRatio(aspect, contentMode: .fit)
                         } else {
-                            Color(hex: 0x1A1E27).aspectRatio(16 / 10, contentMode: .fit)
+                            Color(hex: 0x1A1E27).aspectRatio(aspect, contentMode: .fit)
                         }
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: 30))
@@ -456,7 +488,7 @@ struct VideoProof: View {
                                 .padding(6)
                         }
                     }
-                    .frame(maxWidth: 380)
+                    .frame(maxWidth: inlineMax)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
                     .contentShape(Rectangle())
@@ -503,7 +535,7 @@ struct VideoProof: View {
         guard let file else { return }
         player?.pause()
         let at = player.map { $0.currentTime().seconds } ?? 0
-        state.showLightbox(.video(file, poster: poster, caption: caption, at: at.isFinite ? at : 0))
+        state.showLightbox(.video(file, poster: poster, size: natural, caption: caption, at: at.isFinite ? at : 0))
     }
 
     private func play(_ file: URL) {
@@ -512,10 +544,10 @@ struct VideoProof: View {
         player.play()
     }
 
-    private var aspect: CGFloat {
-        guard let poster, poster.size.height > 0 else { return 16 / 10 }
-        return poster.size.width / poster.size.height
-    }
+    private var aspect: CGFloat { ProofViews.aspect(natural ?? poster?.size) }
+
+    /// As wide as the column lets it, up to ProofViews.maxWidth, and never past the recording's own width.
+    private var inlineMax: CGFloat { ProofViews.inlineWidth(column: .infinity, media: natural) }
 
     /// AVFoundation plays files, not bytes: the upload goes to a temporary file first.
     private func load() async {
@@ -530,9 +562,14 @@ struct VideoProof: View {
             let asset = AVURLAsset(url: url)
             let length = try? await asset.load(.duration)
             if let length, length.isNumeric { duration = Self.clock(length.seconds) }
+            if let track = try? await asset.loadTracks(withMediaType: .video).first,
+               let (size, transform) = try? await track.load(.naturalSize, .preferredTransform) {
+                natural = ProofViews.upright(size, transform: transform)
+            }
             let frames = AVAssetImageGenerator(asset: asset)
             frames.appliesPreferredTrackTransform = true
-            frames.maximumSize = CGSize(width: 760, height: 760)
+            // Sharp at the most it's shown (2× for Retina), never more than the recording has.
+            frames.maximumSize = ProofViews.posterSize(natural)
             if let frame = try? await frames.image(at: .zero).image {
                 poster = NSImage(cgImage: frame, size: NSSize(width: frame.width, height: frame.height))
             }
@@ -560,7 +597,7 @@ private struct ProofLoading: View {
         }
         .font(.system(size: 12))
         .foregroundStyle(Theme.textMuted)
-        .frame(maxWidth: 380, minHeight: 60, alignment: .leading)
+        .frame(maxWidth: ProofViews.maxWidth, minHeight: 60, alignment: .leading)
     }
 }
 
@@ -611,7 +648,7 @@ private struct MediaProof: View {
                 }
             }
             .frame(height: 118)
-            .frame(maxWidth: 380)
+            .frame(maxWidth: ProofViews.maxWidth)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
 
@@ -812,9 +849,10 @@ struct ProofLightboxView: View {
         case let .image(image, _, _):
             ZoomableProofImage(image: image, fitted: Self.fit(image.size, in: room), room: room, zoom: zoom, pan: pan,
                                zoomTo: { setZoom($0, at: $1, room: room) }, panTo: { setPan($0, room: room) })
-        case let .video(_, poster, _, _):
-            // Recordings are often small: they grow to fill the room, unlike screenshots.
-            let size = Self.fit(poster?.size ?? CGSize(width: 16, height: 10), in: room, upscale: true)
+        case let .video(_, poster, natural, _, _):
+            // Recordings are often small: they grow to fill the room, unlike screenshots, but only to 2× their
+            // own size, so a small capture isn't blown up to a blur.
+            let size = Self.fit(natural ?? poster?.size ?? CGSize(width: 16, height: 10), in: room, upscale: Self.maxVideoUpscale)
             Group {
                 if let player { VideoPlayer(player: player) } else { Color.black }
             }
@@ -910,7 +948,7 @@ struct ProofLightboxView: View {
     private var canOpen: Bool { if case .image(_, _, nil) = lightbox { false } else { true } }
 
     private func startVideo() {
-        guard case let .video(file, _, _, at) = lightbox else { return }
+        guard case let .video(file, _, _, _, at) = lightbox else { return }
         let player = AVPlayer(url: file)
         if at > 0 { player.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
         self.player = player
@@ -923,20 +961,23 @@ struct ProofLightboxView: View {
             Task { await client?.open(attachment: attachment) }
         case .image:
             break
-        case let .video(file, _, _, _):
+        case let .video(file, _, _, _, _):
             player?.pause()
             FactoryClient.quarantine(file)
             NSWorkspace.shared.open(file)
         }
     }
 
-    /// Media fitted into the room it has, keeping its shape; screenshots never grow past their own size.
-    nonisolated static func fit(_ media: CGSize, in room: CGSize, upscale: Bool = false) -> CGSize {
+    /// Media fitted into the room it has, keeping its shape, grown at most `upscale` times its own size:
+    /// screenshots never grow past it (1), recordings up to `maxVideoUpscale`.
+    nonisolated static func fit(_ media: CGSize, in room: CGSize, upscale: CGFloat = 1) -> CGSize {
         guard media.width > 0, media.height > 0, room.width > 0, room.height > 0 else { return .zero }
-        var scale = min(room.width / media.width, room.height / media.height)
-        if !upscale { scale = min(scale, 1) }
+        let scale = min(room.width / media.width, room.height / media.height, max(upscale, 1))
         return CGSize(width: (media.width * scale).rounded(), height: (media.height * scale).rounded())
     }
+
+    /// The most a recording grows past its own size in the lightbox.
+    nonisolated static let maxVideoUpscale: CGFloat = 2
 
     /// The most a screenshot zooms past fitted, unless its own pixels are bigger still.
     nonisolated static let maxZoom: CGFloat = 8

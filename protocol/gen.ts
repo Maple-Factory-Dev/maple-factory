@@ -74,7 +74,7 @@ function rustFields(fields: Fields, docs: Record<string, string> = {}, indent = 
 }
 
 function rust(): string {
-  let out = header("//!") + "\n#![allow(dead_code)]\n\nuse serde::{Deserialize, Serialize};\n#[allow(unused_imports)]\nuse std::collections::BTreeMap;\nuse uuid::Uuid;\n\n";
+  let out = header("//!") + "\n#![allow(dead_code, clippy::large_enum_variant)]\n\nuse serde::{Deserialize, Serialize};\n#[allow(unused_imports)]\nuse std::collections::BTreeMap;\nuse uuid::Uuid;\n\n";
   out += `pub const PROTOCOL_VERSION: u32 = ${version};\n\n`;
   for (const [name, e] of Object.entries(enums)) {
     out += rustDoc(e.doc) + `#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub enum ${name} {\n`;

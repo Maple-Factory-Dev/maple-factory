@@ -6,9 +6,9 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
-import { PriorityValues } from "../wire.ts";
+import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
-  ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -19,17 +19,18 @@ import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
+import { everyText, Recurrings } from "./recurring.ts";
 import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
-import { assess, validPolicy } from "./policy.ts";
+import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
-import { mentionsIn } from "./mentions.ts";
-import { checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { agentsIn, mentionsIn } from "./mentions.ts";
+import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestBody, pullRequestState, repoToken, updatePullRequestBody, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -39,6 +40,19 @@ const MAX_RESTARTS = 2;
 /// How long a session that reported its last word gets to wrap up before it's closed.
 const CLOSE_AFTER_MS = 8_000;
 const MAX_EVENTS = 200;
+/** Artifacts a task keeps; sharing more drops the oldest. */
+const MAX_ARTIFACTS = 20;
+
+/** An uploaded artifact's kind from the type the server sniffed (attachments.ts `sniffArtifact`). */
+function artifactKind(mime: string): ArtifactKind {
+  if (mime === "text/html") return "html";
+  if (mime === "image/svg+xml") return "svg";
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "text/markdown") return "markdown";
+  if (mime === "text/csv" || mime === "application/json") return "data";
+  return "text";
+}
 const COLS = 160;
 const ROWS = 48;
 
@@ -54,11 +68,18 @@ type Hooks = {
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
+  /** A task was saved (`old` as it was before, null for a new one): mobile push looks for who it newly needs (push.ts). */
+  taskSaved?(old: Task | null, task: Task): void;
   /** Call `pollCI`, `mergeDue` and `pump` again in about `ms`: for CI that webhooks may never report (a local server), auto-merge countdowns and scheduled tasks. */
   wakeIn(ms: number): void;
   /** Slack's bot token, and where to note what Slack refused: for @Maple. */
   slack?: { token(): Promise<string | null>; problem(text: string): void };
+  /** A member's GitHub user token from their sign-in (auth.ts userToken), to approve a pull request as them; null: none that works. */
+  userToken?(login: string): Promise<string | null>;
 };
+
+/** How a "didn't merge" for missing approving reviews starts: a builder can't fix that, so it goes to a person. */
+const REVIEWS_WANTED = "GitHub wants an approving review";
 
 /** What a runner says while Claude Code waits on its folder-trust prompt (runner/src/trust.rs). */
 const TRUST_PROMPT = "Claude Code is asking whether to trust this folder";
@@ -102,6 +123,25 @@ const DEQUEUE_REASONS: Record<string, string> = {
 };
 /** How long a pull request with no checks yet waits for some to show up. */
 const CI_APPEAR_MS = 10 * 60_000;
+/** How long the factory waits for an agent to raise its own over-budget hand before it raises one for it. */
+const BUDGET_HAND_AFTER_MS = 10 * 60_000;
+/** The way forward on the factory's overBudget hand that stops the task. */
+const BUDGET_CANCEL = "Cancel it";
+/** A pick on a budget hand that stops the task rather than giving it more (the factory's Cancel it, or an agent's own). */
+const BUDGET_STOP = /\b(cancel|stop|abandon|drop)\b/i;
+/** "62 min" or "1 h 5 min". */
+const minutesText = (m: number) => {
+  const r = Math.round(m);
+  return r < 60 ? `${r} min` : `${Math.floor(r / 60)} h${r % 60 ? ` ${r % 60} min` : ""}`;
+};
+const dollars = (n: number) => `$${n.toFixed(2)}`;
+/** What a task has used against what it may: "62 min of its 60 min budget" (or the cost). */
+export function budgetText(use: BudgetUse): string {
+  return use.over === "cost"
+    ? `${dollars(use.costUsd)} of the ${dollars(use.allowCostUsd ?? 0)} budget`
+    : `${minutesText(use.minutes)} of the ${minutesText(use.allowMinutes ?? 0)} budget`;
+}
+
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
 const MERGE_GRACE_MS = 10_000;
 
@@ -134,6 +174,7 @@ export class Engine {
   private drafts: Drafts;
   private scout: Scout;
   private setup: RepoSetup;
+  private recurrings: Recurrings;
   /** @Maple's asks in Slack. */
   readonly slack: SlackAsks;
 
@@ -164,6 +205,14 @@ export class Engine {
       forget: (paths) => hooks.waitUntil(this.env.RELEASES.delete(paths.filter((p) => p.startsWith("/attachments/")).map((p) => p.slice(1)))),
       wakeIn: (ms) => hooks.wakeIn(ms),
     });
+    this.recurrings = new Recurrings(store, {
+      make: (r, goal) => this.recurringRun(r, goal),
+      note: (task, text) => {
+        this.event(task, "factory", text);
+        this.save(task, false);
+      },
+      updated: (recurring) => hooks.broadcast({ type: "recurring.updated", recurring }),
+    });
     this.setup = new RepoSetup(store, {
       broadcast: (message) => hooks.broadcast(message),
       machines: () => hooks.machines(),
@@ -189,6 +238,35 @@ export class Engine {
     return this.scout.runs();
   }
 
+  /** Every goal's recurring tasks, for an app that's just connected. */
+  recurring() {
+    return this.store.recurringAll();
+  }
+
+  /** The alarm: start every due recurring task, then wake for the next one. */
+  async runRecurring() {
+    const next = await this.recurrings.run(now());
+    if (next != null) this.hooks.wakeIn(Math.max(1_000, next - now()));
+  }
+
+  /** One recurring task's run: an ordinary task, sent to planning on its saver's behalf. */
+  private async recurringRun(r: import("../wire.ts").Recurring, goal: Goal): Promise<Task> {
+    const brief = `${r.brief}\n\nRecurring: ${r.title}, ${everyText(r)}`;
+    const task = this.newTask(goal, r.by, { title: r.title, brief, tickets: [], shareable: true, agent: r.agent || "claude", model: null, intake: null, repo: r.repo ?? null, after: [], effort: null });
+    this.event(task, "factory", `started by recurring "${r.title}" (${everyText(r)})`);
+    this.save(task);
+    await audit(this.env, r.by, "task.created", task.id, { title: task.title, recurring: r.id });
+    await this.startPlanning(task, r.by);
+    return this.store.task(task.id) ?? task;
+  }
+
+  /** Recurring tasks are changed by their goal's lead or an admin, like its prompts. */
+  private async mayChangeRecurring(goalId: string, who: string, role: string) {
+    const goal = this.store.goal(goalId) ?? fail("That goal isn't there any more.");
+    if (role !== "admin" && goal.lead !== who) fail(`Only admins or ${goal.lead}, its lead, can change ${goal.name}'s recurring tasks.`);
+    return goal;
+  }
+
   // ---------------------------------------------------------------------------
   // Apps
 
@@ -207,6 +285,40 @@ export class Engine {
           fail((e as Error).message);
         }
         return;
+      case "recurring.save": {
+        await this.mayChangeRecurring(msg.recurring.goal, who, member.role);
+        let saved;
+        try {
+          saved = this.recurrings.clean(msg.recurring, who, now());
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        this.store.saveRecurring(saved!);
+        this.hooks.broadcast({ type: "recurring.updated", recurring: saved! });
+        await audit(this.env, who, "recurring.saved", saved!.id, { goal: saved!.goal, title: saved!.title });
+        return this.runRecurring();
+      }
+      case "recurring.delete":
+      case "recurring.pause":
+      case "recurring.runNow": {
+        const r = this.store.recurring(msg.id) ?? fail("That recurring task isn't there any more.");
+        await this.mayChangeRecurring(r.goal, who, member.role);
+        if (msg.type === "recurring.delete") {
+          this.store.deleteRecurring(r.id);
+          this.hooks.broadcast({ type: "recurring.deleted", id: r.id });
+          await audit(this.env, who, "recurring.deleted", r.id, { goal: r.goal });
+          return;
+        }
+        let saved = r;
+        try {
+          saved = msg.type === "recurring.pause" ? this.recurrings.pause(r, msg.paused, now()) : await this.recurrings.start(r, now());
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        this.store.saveRecurring(saved);
+        this.hooks.broadcast({ type: "recurring.updated", recurring: saved });
+        return this.runRecurring();
+      }
       case "goal.scout":
         try {
           await this.scout.start(who, msg.goal);
@@ -231,8 +343,8 @@ export class Engine {
         goal.due ??= null;
         if (goal.due !== null && !(Number.isSafeInteger(goal.due) && goal.due > 0)) fail("A goal's due date is a time in epoch milliseconds, or none.");
         if (!goal.id) goal.id = crypto.randomUUID();
-        // Whoever makes a goal leads it unless they named someone, so it's in their sidebar.
-        if (!goal.lead?.trim()) goal.lead = who;
+        // Whoever makes a goal leads it unless they named someone, so it's in their sidebar; none keeps an existing goal's lead.
+        if (!goal.lead?.trim()) goal.lead = this.store.goal(goal.id)?.lead ?? who;
         goal.team = goal.team?.trim().replace(/^@/, "").toLowerCase() || null;
         if (goal.team && !/^[a-z0-9][a-z0-9_.-]*$/.test(goal.team)) fail(`${goal.team} isn't a GitHub team's name.`);
         goal.repos = goalRepos({ ...goal, repo: goal.repo?.trim() || null, repos: (goal.repos ?? []).map((r) => r.trim()).filter(Boolean) });
@@ -243,12 +355,21 @@ export class Engine {
         if (unknown) fail(`${unknown} isn't one of the org's repos. Add it in Settings → Repositories (or grant the GitHub App access) first.`);
         if (this.store.goals().some((g) => g.prefix === goal.prefix && g.id !== goal.id)) fail(`Another goal already uses ${goal.prefix}.`);
         const before = this.store.goal(goal.id);
+        // Same login whatever its case, `@` or spaces; a new lead (or a new goal's lead other than its creator) has to have signed in.
+        goal.lead = goal.lead.trim().replace(/^@/, "");
+        const was = before?.lead ?? who;
+        if (goal.lead.toLowerCase() === was.toLowerCase()) goal.lead = was;
+        else {
+          if (before && member.role !== "admin" && before.lead !== who) fail(`Only admins or ${before.lead}, its lead, can hand ${goal.name} to someone else.`);
+          const to = (await this.hooks.members()).find((m) => m.login.toLowerCase() === goal.lead.toLowerCase()) ?? fail(`${goal.lead} hasn't signed in to this factory.`);
+          goal.lead = to.login;
+        }
         // None (an older app) keeps what it had; all empty is none.
         goal.prompts = goal.prompts ? cleanPrompts(goal.prompts) : (before?.prompts ?? null);
         if (goal.prompts && !goal.prompts.planner && !goal.prompts.builder && !goal.prompts.reviewer) goal.prompts = null;
         if (JSON.stringify(goal.prompts ?? null) !== JSON.stringify(before?.prompts ?? null) && member.role !== "admin") {
-          // Its lead before this save, so nobody can make themselves lead and change the prompts in one go.
-          const lead = before ? before.lead : goal.lead;
+          // Its lead before this save (a new goal's creator), so nobody can make themselves lead and change the prompts in one go.
+          const lead = before ? before.lead : who;
           if (lead !== who) fail(`Only admins or ${lead}, its lead, can change ${goal.name}'s agent instructions.`);
         }
         this.store.saveGoal(goal);
@@ -562,7 +683,15 @@ export class Engine {
       }
       case "task.comment": {
         const text = msg.text.trim() || fail("Say something.");
-        task.comments.push(await this.comment(who, text, { anchor: msg.anchor ?? null }));
+        // A reply goes under its thread's root: replies to a reply flatten onto it.
+        let replyTo: string | null = null;
+        if (msg.replyTo != null) {
+          const parent = task.comments.find((c) => c.id === msg.replyTo) ?? fail("That comment isn't on this task.");
+          replyTo = parent.replyTo ?? parent.id;
+        }
+        const comment = await this.comment(who, text, { anchor: msg.anchor ?? null, replyTo });
+        task.comments.push(comment);
+        await this.toThread(task, who, comment);
         this.save(task);
         return;
       }
@@ -647,7 +776,16 @@ export class Engine {
         if (decision) task.comments.push(await this.comment(who, decision, { anchor: `Hand: ${hand.summary}` }));
         this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
         if (hand.reason === "reviewLoop" && task.autoReview) task.autoReview.maxRounds += 2;
-        this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0, discard: false, cleaned: false });
+        const priv = this.store.private(task.id);
+        // A time or cost budget hand (the factory's, or the agent's after the nudge; not a PR size one) answered
+        // with anything but a way to stop: one more budget's worth, counted from what it has used now, so the
+        // time it spent waiting for this answer isn't taken out of it.
+        const granted = hand.reason === "overBudget" && priv.budgetAskedAt != null && !(option && BUDGET_STOP.test(option.title));
+        const use = granted ? this.budget(task) : null;
+        this.store.savePrivate(task.id, {
+          ...priv, restarts: 0, discard: false, cleaned: false,
+          ...(use ? { budgetBase: { minutes: use.minutes, costUsd: use.costUsd }, budgetAskedAt: null } : {}),
+        });
         this.save(task);
         if (!(await this.type(task, `${who} answered your raised hand: ${decision || "carry on."}`))) await this.pump();
         return;
@@ -697,8 +835,11 @@ export class Engine {
         if (task.reviews.includes(who)) fail("You've already approved it.");
         task.reviews.push(who);
         this.event(task, who, "approved the changes");
+        this.stat(task, "changes.approved", { reviews: task.reviews.length }, who);
         this.save(task);
-        await this.autoMerge(task);
+        // On GitHub too, as them, before a merge that may need it; the Factory approval counts either way.
+        await this.approveOnGitHub(task.id, who);
+        await this.autoMerge(this.store.task(task.id) ?? task);
         return;
       }
       case "task.requestReview": {
@@ -888,6 +1029,40 @@ export class Engine {
         await audit(this.env, who, "task.rerunChecks", task.id, { asked });
         return;
       }
+      case "task.recheckGitHub": {
+        // A webhook that never came: read the pull request and its CI from GitHub again.
+        const app = githubApp(this.env);
+        const gh = this.store.private(task.id).gh;
+        if (!app || !gh || !task.pr?.url) fail("Its pull request isn't on GitHub.");
+        const pr = task.pr!;
+        const onGitHub = await pullRequestState(app!, gh!.owner, gh!.repo, pr.number).catch((e) => fail(`Couldn't read pull request #${pr.number}: ${(e as Error).message}`));
+        await audit(this.env, who, "task.recheckGitHub", task.id, { state: onGitHub.state });
+        if (onGitHub.state === "merged" && !isFinished(task.state)) {
+          this.event(task, who, `rechecked GitHub: pull request #${pr.number} merged`);
+          this.save(task, false); // merged() reads it again
+          this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: onGitHub.sha, message: null });
+          return;
+        }
+        if (onGitHub.state === "closed" && pr.state === "open") {
+          pr.state = "closed";
+          this.event(task, "factory", `pull request #${pr.number} was closed on GitHub`);
+          this.save(task);
+          return;
+        }
+        const moved = !!onGitHub.head && onGitHub.head !== pr.head;
+        if (moved) {
+          pr.head = onGitHub.head!;
+          this.save(task, false);
+        }
+        const changed = (await this.refreshChecks(task.id)) || moved;
+        const now_ = this.store.task(task.id);
+        if (changed && now_) {
+          this.event(now_, who, moved ? `rechecked CI on GitHub (new head ${onGitHub.head!.slice(0, 7)})` : "rechecked CI on GitHub");
+          this.save(now_);
+        }
+        this.hooks.wakeIn(CI_POLL_MS);
+        return;
+      }
       case "task.rerunCheck": {
         const app = githubApp(this.env);
         const priv = this.store.private(task.id);
@@ -939,6 +1114,7 @@ export class Engine {
             changes: [],
             events: [{ who, text: `split it off ${task.id}`, at: t }],
             mockups: [],
+            artifacts: [],
             question: null,
             hand: null,
             worker: null,
@@ -1138,6 +1314,7 @@ export class Engine {
       changes: [],
       events: [{ who, text: "created it", at: t }],
       mockups: [],
+      artifacts: [],
       followUps: [],
       queueRank: t,
       draftRank: t,
@@ -1295,7 +1472,7 @@ export class Engine {
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
     const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal)))) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts);
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal))), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task));
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -1455,6 +1632,7 @@ export class Engine {
           tokens: { input: c.inputTokens, output: c.outputTokens, cacheRead: c.cacheReadTokens, cacheWrite: c.cacheWriteTokens },
           updated: Date.now(),
         });
+        await this.checkBudgets(task.id);
         return null;
       }
       case "task.started": {
@@ -1503,8 +1681,8 @@ export class Engine {
       case "task.token_request": {
         // A token for the task's repo, only for the machine it's on; without the app the runner
         // fetches and pushes with the machine's own credentials.
-        const reply = (token: string | null, error: string | null, code: string | null) =>
-          this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code });
+        const reply = (token: string | null, error: string | null, code: string | null, settingsUrl?: string) =>
+          this.toRunner(machine, { type: "task.token", reqId: msg.reqId, token, error, code, ...(settingsUrl ? { settingsUrl } : {}) });
         const app = githubApp(this.env);
         if (!app) return await reply(null, "The factory has no GitHub App installed.", "not_installed"), null;
         const draft = this.drafts.forRun(msg.taskId, machine), scouting = this.scout.forRun(msg.taskId, machine), setup = this.setup.forRun(msg.taskId, machine);
@@ -1540,7 +1718,9 @@ export class Engine {
         if (repo && repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
         try {
           const { token } = await repoToken(app, msg.owner, msg.repo, msg.purpose === "fetch" ? PERMISSIONS.fetch : PERMISSIONS.push);
-          await reply(token, null, null);
+          // Where to approve Workflows: write, should GitHub refuse the push for a workflow change.
+          const slug = msg.purpose === "fetch" ? "" : this.env.GITHUB_APP_SLUG?.trim();
+          await reply(token, null, null, slug && this.env.GITHUB_ORG ? `${appSettingsUrl(this.env, slug)}/permissions` : undefined);
         } catch (e) {
           await reply(null, (e as Error).message, e instanceof GitHubError ? e.code : "api");
         }
@@ -1734,6 +1914,10 @@ export class Engine {
         task.pr.number = pr.number;
         task.pr.url = pr.url;
         this.event(task, "factory", `opened pull request #${pr.number} on ${owner}/${repo}`);
+        this.save(task);
+        await this.assignOwner(id, app, owner, repo, pr.number);
+        task = this.store.task(id);
+        if (!task?.pr) return;
       }
       this.store.savePrivate(task.id, { ...this.store.private(task.id), gh: { owner, repo }, prOpenedAt: now() });
       this.save(task);
@@ -1744,6 +1928,84 @@ export class Engine {
       this.event(t, "factory", `couldn't open a pull request on ${owner}/${repo}: ${(e as Error).message}`);
       this.save(t);
     }
+  }
+
+  /** Brings an open pull request's Artifacts section up to date after an artifact is shared: reads the body
+   *  as it is now (people may have edited it), swaps only the factory's marked block and writes it back.
+   *  Best-effort: what GitHub refused goes on the timeline. */
+  private async syncPullArtifacts(id: string) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.url || !gh || task.pr.state !== "open") return;
+    const number = task.pr.number;
+    try {
+      const isPrivate = this.store.repos().find((r) => r.name.toLowerCase() === `${gh.owner}/${gh.repo}`.toLowerCase())?.isPrivate ?? false;
+      const block = pullArtifacts(task, { base: this.env.PUBLIC_URL?.replace(/\/+$/, ""), isPrivate });
+      const current = await pullRequestBody(app, gh.owner, gh.repo, number);
+      const next = swapArtifacts(current, block).slice(0, 65_000);
+      if (next !== current) await updatePullRequestBody(app, gh.owner, gh.repo, number, next);
+    } catch (e) {
+      const t = this.store.task(id);
+      if (!t) return;
+      this.event(t, "factory", `couldn't update the pull request's artifacts: ${(e as Error).message}`.slice(0, 2000));
+      this.save(t);
+    }
+  }
+
+  /** Makes the task's owner the pull request's assignee and, when its base branch's rules require approving
+   *  reviews, asks them for one. Best-effort: what GitHub refused goes on the timeline. */
+  private async assignOwner(id: string, app: GitHubApp, owner: string, repo: string, number: number) {
+    const task = this.store.task(id);
+    if (!task?.pr) return;
+    const who = task.owner;
+    // The factory's own account (or a bot's) can't be assigned or asked to review.
+    if (!who || who === "factory" || /\[bot\]$/i.test(who) || (this.env.GITHUB_APP_SLUG && who.toLowerCase() === this.env.GITHUB_APP_SLUG.toLowerCase())) return;
+    const notes: string[] = [];
+    try {
+      await addAssignees(app, owner, repo, number, [who]);
+      notes.push(`assigned @${who} to pull request #${number}`);
+    } catch (e) {
+      notes.push(`couldn't assign @${who} to pull request #${number}: ${(e as Error).message}`);
+    }
+    try {
+      const needed = await requiredApprovals(app, owner, repo, task.pr.base);
+      if (needed > 0) {
+        await requestReviewers(app, owner, repo, number, [who]);
+        notes.push(`asked @${who} to review pull request #${number} (${task.pr.base} requires ${needed} approving review${needed === 1 ? "" : "s"})`);
+      }
+    } catch (e) {
+      notes.push(`couldn't ask @${who} to review pull request #${number}: ${(e as Error).message}`);
+    }
+    const t = this.store.task(id);
+    if (!t) return;
+    for (const n of notes) this.event(t, "factory", n);
+    this.save(t);
+  }
+
+  /** Approves the task's pull request on GitHub as `who`, with their own token, pinned to the reviewed head. With no
+   *  token for them, or a refusal, the timeline says so and how to fix it. */
+  private async approveOnGitHub(id: string, who: string) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.number || !task.pr.url || !gh || task.pr.state !== "open") return;
+    const pr = task.pr;
+    let note: string;
+    try {
+      const token = (await this.hooks.userToken?.(who)) ?? null;
+      if (!token) note = `couldn't approve pull request #${pr.number} on GitHub as @${who}: the factory has no GitHub sign-in for them; sign in again to approve on GitHub`;
+      else {
+        await approvePullRequest(app, token, gh.owner, gh.repo, pr.number, pr.head ?? null, `Approved on Maple Factory (${task.id}).`);
+        note = `approved pull request #${pr.number} on GitHub`;
+      }
+    } catch (e) {
+      note = `couldn't approve pull request #${pr.number} on GitHub as @${who}: ${(e as Error).message}; sign in again to approve on GitHub`;
+    }
+    const t = this.store.task(id);
+    if (!t) return;
+    this.event(t, who, note);
+    this.save(t);
   }
 
   /** Whether a task's CI may still change: checks running, or none yet on a fresh pull request. */
@@ -1802,18 +2064,19 @@ export class Engine {
     for (const task of this.store.tasks().filter((t) => this.ciPending(t))) await this.refreshChecks(task.id);
   }
 
-  /** Reads the task's CI from GitHub; all passed may let it merge. Keeps reading while it runs. */
-  async refreshChecks(id: string) {
+  /** Reads the task's CI from GitHub; all passed may let it merge. Keeps reading while it runs.
+   *  True when a check's result changed. */
+  async refreshChecks(id: string): Promise<boolean> {
     const app = githubApp(this.env);
     const task = this.store.task(id);
     const gh = task && this.store.private(id).gh;
-    if (!app || !task?.pr?.head || !gh) return;
+    if (!app || !task?.pr?.head || !gh) return false;
     const found = await checks(app, gh.owner, gh.repo, task.pr.head).catch(() => null);
     const now_ = this.store.task(id);
-    if (!now_?.pr) return;
+    if (!now_?.pr) return false;
     if (!found) {
       if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
-      return;
+      return false;
     }
     const before = now_.pr.checks.map((c) => `${c.name}:${c.status}`).join();
     const links = now_.pr.checks.map((c) => c.url ?? "").join();
@@ -1823,13 +2086,14 @@ export class Engine {
     if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) {
       // Same results, but a check's link changed (a re-run is a new job): the apps get the new one.
       if (now_.pr.checks.map((c) => c.url ?? "").join() !== links) this.save(now_);
-      return;
+      return false;
     }
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
     else if (found.length && found.every((c) => c.status === "passed")) this.event(now_, "factory", "CI passed");
     this.save(now_);
     await this.autoMerge(now_);
+    return true;
   }
 
   /** A GitHub webhook about a repo's checks or pull requests: the tasks it's about read their CI again. */
@@ -1924,7 +2188,8 @@ export class Engine {
       const why = msg.message ?? "no reason given";
       // With the policy's say-so, a builder fixes it (a few times at most) before a person is asked.
       const tries = this.store.private(task.id).mergeFixes ?? 0;
-      const autoFix = this.store.policy().autoFixMerges !== false;
+      // A builder can't give it the reviews GitHub wants: that goes straight to a person.
+      const autoFix = this.store.policy().autoFixMerges !== false && !why.startsWith(REVIEWS_WANTED);
       if (autoFix && tries < MERGE_FIX_TRIES) {
         const n = tries + 1;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeFixes: n });
@@ -1940,9 +2205,10 @@ export class Engine {
       // The runner's message already says it didn't merge; GitHub's may not.
       const gaveUp = autoFix ? ` (after ${MERGE_FIX_TRIES} tries)` : "";
       const summary = (/merge/i.test(why) ? why : `It didn't merge into ${task.pr.base}: ${why}`) + gaveUp;
+      const reviews = why.startsWith(REVIEWS_WANTED);
       this.raise(task, "factory", "mergeFailed", summary, [
-        { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: true },
-        { title: MERGE_RETRY, detail: "Merge it again as it is.", recommended: false },
+        { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: !reviews },
+        { title: MERGE_RETRY, detail: reviews ? "Merge it again once it's approved on GitHub." : "Merge it again as it is.", recommended: reviews },
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
       ]);
       this.save(task);
@@ -2079,6 +2345,21 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // Agents' tools
 
+  /** A `share_artifact` file is only one the runner uploaded as an artifact of this task
+   *  (`PUT /runner/artifact/<task>`): not a proof, a member's attachment or another task's file. Its `type`
+   *  becomes what was stored. An error to give the agent, or null. */
+  private async checkArtifactUpload(taskId: string, args: Record<string, unknown>): Promise<string | null> {
+    const up = args.file && typeof args.file === "object" ? (args.file as { key?: unknown; type?: unknown }) : null;
+    // A missing or malformed key is refused in `run`, with the save-it-here hint.
+    if (!up || !isAttachmentKey(up.key)) return null;
+    const stored = await this.env.RELEASES.head(up.key.slice(1));
+    if (!stored || stored.customMetadata?.artifact !== "1" || stored.customMetadata?.task !== taskId) {
+      return "file: that upload isn't an artifact of this task. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.";
+    }
+    if (stored.httpMetadata?.contentType) up.type = stored.httpMetadata.contentType;
+    return null;
+  }
+
   private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
     if (!s) {
@@ -2096,6 +2377,10 @@ export class Engine {
     }
     if (name === "tools/list") return { result: { summary: "", data: { tools: toolsFor(s.role) } } };
     if (!allowed(s.role, name)) return { error: `${name} isn't one of the ${s.role}'s tools.` };
+    if (name === "share_artifact") {
+      const refused = await this.checkArtifactUpload(s.task, args);
+      if (refused) return { error: refused };
+    }
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
@@ -2104,6 +2389,8 @@ export class Engine {
       const out = this.run(task, s, name, args);
       this.save(task);
       if (name === "submit_review") await this.autoMerge(task);
+      // Off the tool's critical path: a share never waits on, or fails with, GitHub.
+      if (name === "share_artifact") this.hooks.waitUntil(this.syncPullArtifacts(task.id));
       return { result: out };
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
@@ -2156,8 +2443,20 @@ export class Engine {
   private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>): { summary: string; data?: unknown } {
     const goal = this.store.goal(task.goal);
     switch (name) {
-      case "get_task":
-        return { summary: `${task.id} · ${task.title} (${task.state})`, data: { task, goal } };
+      case "get_task": {
+        const threads = openThreads(task.comments);
+        const open = threads.length ? ` · ${threads.length} comment thread${threads.length === 1 ? "" : "s"} waiting on an answer (answer each with \`reply\`)` : "";
+        return { summary: `${task.id} · ${task.title} (${task.state})${open}`, data: { task, goal, threads } };
+      }
+
+      case "reply": {
+        const thread = str(a.thread, "thread").trim();
+        const text = str(a.text, "text").trim() || fail("text: say something.");
+        const parent = task.comments.find((c) => c.id === thread) ?? fail(`thread: no comment ${thread} on this task.`);
+        const root = parent.replyTo ?? parent.id;
+        task.comments.push({ id: crypto.randomUUID(), author: s.role, text: text.slice(0, 8000), at: now(), anchor: null, via: null, mentions: null, replyTo: root });
+        return { summary: `Replied in thread ${root}.` };
+      }
 
       case "submit_plan": {
         if (task.state !== "planning") fail("The plan isn't open for changes right now.");
@@ -2345,6 +2644,28 @@ export class Engine {
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
         const left = task.doneWhen.filter((d) => d.status !== "proven").length;
         return { summary: left ? `Attached. ${left} item${left === 1 ? "" : "s"} left to prove.` : "Attached. Every item is proven." };
+      }
+
+      case "share_artifact": {
+        const title = str(a.title, "title").trim().slice(0, 120);
+        if (!title) fail("title: give it a short name.");
+        // The runner uploaded the file (PUT /runner/artifact/<task>) and put `{key, name, type, bytes}` in its place.
+        const up = a.file && typeof a.file === "object" ? (a.file as { key?: unknown; type?: unknown; bytes?: unknown }) : null;
+        if (!up || !isAttachmentKey(up.key)) fail("file: the runner didn't upload it. Save it under ~/.cache/maple-proof/<this task's branch>/ and pass its full path.");
+        // `tool` checked the upload is this task's artifact and set `type` from what was stored.
+        const mime = typeof up!.type === "string" ? up!.type : "application/octet-stream";
+        const kind: ArtifactKind = a.kind != null && ArtifactKindValues.includes(a.kind as ArtifactKind) && a.kind !== "other" ? (a.kind as ArtifactKind) : artifactKind(mime);
+        const summary = typeof a.summary === "string" && a.summary.trim() ? a.summary.trim().slice(0, 300) : null;
+        task.artifacts ??= [];
+        const same = task.artifacts.findIndex((x) => x.title.toLowerCase() === title.toLowerCase());
+        const version = same >= 0 ? task.artifacts[same]!.version + 1 : 1;
+        const artifact: Artifact = { id: crypto.randomUUID(), title, kind, summary, file: up!.key as string, mime, bytes: num(up!.bytes ?? 0), by: s.role, at: now(), version };
+        if (same >= 0) task.artifacts.splice(same, 1);
+        task.artifacts.push(artifact);
+        // Newest kept: an agent that shares a lot loses its oldest first.
+        if (task.artifacts.length > MAX_ARTIFACTS) task.artifacts.splice(0, task.artifacts.length - MAX_ARTIFACTS);
+        this.event(task, s.role, `shared an artifact: ${title}${version > 1 ? ` (v${version})` : ""}`);
+        return { summary: `Shared "${title}"${version > 1 ? ` as v${version}` : ""}. People see it in the task's Artifacts.`, data: { id: artifact.id, version } };
       }
 
       case "finish": {
@@ -2543,6 +2864,57 @@ export class Engine {
     });
   }
 
+  /** A task's use of its time and cost budget so far. */
+  budget(task: Task): BudgetUse {
+    const priv = this.store.private(task.id);
+    return budgetUse(this.store.taskSessions(task.id), this.store.taskCosts(task.id), this.store.policy(), priv.budgetBase ?? null);
+  }
+
+  /** Running tasks past their budget (policy.taskMinutes, taskCostUsd): the first time, a nudge is typed into the
+   *  session asking its agent to raise an overBudget hand; no hand 10 minutes on, the factory raises one. Tasks
+   *  with a hand or question up wait for that first. The hub's alarm calls this (and wakes for the next deadline);
+   *  so does each session.cost, for `only` that task. */
+  async checkBudgets(only?: string) {
+    const policy = this.store.policy();
+    if (budgetMinutes(policy) == null && budgetCostUsd(policy) == null) return;
+    const ids = new Set(this.store.liveSessions().map((s) => s.task).filter((id) => !only || id === only));
+    let next: number | null = null;
+    const wake = (ms: number) => { next = next == null ? ms : Math.min(next, ms); };
+    for (const id of ids) {
+      const task = this.store.task(id);
+      if (!task?.worker || isFinished(task.state) || task.hand || task.question) continue;
+      const use = this.budget(task);
+      if (!use.over) {
+        if (use.allowMinutes != null) wake((use.allowMinutes - use.minutes) * 60_000);
+        continue;
+      }
+      const priv = this.store.private(task.id);
+      const asked = priv.budgetAskedAt ?? null;
+      if (asked == null) {
+        const nudge = `You've used ${budgetText(use)} for this task. Stop at a safe point and call raise_hand with reason overBudget: `
+          + "say where you are, what's left, and the options (carry on, cut the scope, or stop). Then end your turn and wait.";
+        // Offline: try again on a later alarm.
+        if (!(await this.type(task, nudge))) { wake(60_000); continue; }
+        this.store.savePrivate(task.id, { ...priv, budgetAskedAt: now() });
+        this.event(task, "factory", `budget reached: ${budgetText(use)}; asked the ${task.worker.role} to raise a hand`);
+        this.stat(task, "budget.reached", { over: use.over, minutes: Math.round(use.minutes), costUsd: use.costUsd, allowMinutes: use.allowMinutes, allowCostUsd: use.allowCostUsd }, null, task.worker.role);
+        this.save(task);
+        wake(BUDGET_HAND_AFTER_MS);
+      } else if (now() - asked >= BUDGET_HAND_AFTER_MS) {
+        const more = use.over === "cost" ? `another ${dollars(budgetCostUsd(policy) ?? 0)}` : `another ${minutesText(budgetMinutes(policy) ?? 0)}`;
+        this.raise(task, "factory", "overBudget", `It's used ${budgetText(use)} and didn't stop to ask, 10 minutes after it was asked to.`, [
+          { title: use.over === "cost" ? "Give it more budget" : `Give it another ${budgetMinutes(policy) === 60 ? "hour" : minutesText(budgetMinutes(policy) ?? 0)}`, detail: `Let it carry on for ${more}, then ask again.`, recommended: true },
+          { title: BUDGET_CANCEL, detail: "Stop the task; its branch stays.", recommended: false },
+        ]);
+        this.save(task);
+        // The hand doesn't stop the session, so the agent is told to wait for the answer.
+        await this.type(task, `You're past this task's budget (${budgetText(use)}), so the factory raised an overBudget hand for you. `
+          + "Stop at a safe point now, say where you are, and end your turn; the answer will be typed in here.");
+      } else wake(asked + BUDGET_HAND_AFTER_MS - now());
+    }
+    if (next != null) this.hooks.wakeIn(Math.max(1_000, Math.ceil(next)));
+  }
+
   /** Its auto-merge countdown ran out: the factory is merging it (or checking it merges first). */
   private countdownDone(task: Task) {
     return task.state === "reviewing" && task.mergeAt != null && task.mergeAt <= now();
@@ -2677,7 +3049,10 @@ export class Engine {
           .then((m) => ({ queued: null, sha: m.sha }), (e) => (needsMergeQueue(e) ? enqueue() : Promise.reject(e)));
       }
     } catch (e) {
-      this.merged({ type: "task.merged", taskId, ok: false, commit: null, message: (e as Error).message });
+      const message = needsReviews(e)
+        ? `${REVIEWS_WANTED} before it merges into ${pr.base} (${(e as Error).message}). Approve pull request #${pr.number} on GitHub, or sign in to the factory again and approve the changes here so the factory approves it on GitHub as you.`
+        : (e as Error).message;
+      this.merged({ type: "task.merged", taskId, ok: false, commit: null, message });
       return;
     }
     if (outcome.queued != null) return this.inMergeQueue(taskId, pr, outcome.queued);
@@ -2768,9 +3143,20 @@ export class Engine {
   }
 
   /** A person's comment, with the members it @mentions. */
-  private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null } = {}): Promise<Comment> {
+  private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null; replyTo?: string | null } = {}): Promise<Comment> {
     const mentions = mentionsIn(text, await this.hooks.members(), author);
-    return { id: crypto.randomUUID(), author, text, at: opts.at ?? now(), anchor: opts.anchor ?? null, via: opts.via ?? null, mentions: mentions.length ? mentions : null };
+    return { id: crypto.randomUUID(), author, text, at: opts.at ?? now(), anchor: opts.anchor ?? null, via: opts.via ?? null, mentions: mentions.length ? mentions : null, replyTo: opts.replyTo ?? null };
+  }
+
+  /** A person's comment in a thread an agent is part of (or one that @mentions an agent) is
+   *  conversation for the task's live session: typed in for it to answer with `reply`. With
+   *  nothing running, it waits in the thread and the next agent's `get_task` hands it over. */
+  private async toThread(task: Task, who: string, comment: Comment) {
+    const root = comment.replyTo ?? comment.id;
+    if (!threadTalksToAgent(task.comments, root)) return;
+    const said = `${who} in comment thread ${root}: ${comment.text}\nAnswer with \`reply\` (thread ${root}). This is conversation, not a change request; use the steer flow only if they ask for a change, and carry on with your work after.`;
+    if (task.worker && (await this.type(task, said))) return;
+    this.event(task, who, "left a comment in a thread; the next agent on it will see it");
   }
 
   /** A person's pick on a "didn't merge" hand. Its task is reviewing with no session, so the
@@ -3118,8 +3504,10 @@ export class Engine {
     }
     // "Merging…" with no merge in flight and no countdown behind it would lock the card for good.
     if (mergingLog(task.liveLog) && task.mergeAt == null && task.state === "reviewing" && !this.store.private(task.id).merging) task.liveLog = null;
+    const old = this.hooks.taskSaved ? this.store.task(task.id) : null;
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
+    this.hooks.taskSaved?.(old, task);
   }
 }
 
@@ -3191,7 +3579,43 @@ export function pullBody(task: Task, opts: { base?: string | null; isPrivate: bo
   const body = [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, brief, steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
     .join("\n\n");
-  return pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 60_000);
+  // Artifacts last, after attachment links are rewritten: the block is the factory's own and kept current.
+  const artifacts = pullArtifacts(task, opts);
+  return (pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 55_000) + (artifacts ? `\n\n${artifacts}` : "")).slice(0, 60_000);
+}
+
+/** Around the pull request's Artifacts section: the factory swaps what's between them, nothing else. */
+export const ARTIFACTS_START = "<!-- maple:artifacts -->";
+export const ARTIFACTS_END = "<!-- /maple:artifacts -->";
+
+/** The pull request's Artifacts section, between its markers: each artifact the agents shared, linked to
+ *  the task page with it picked. On a public repo only titles and the members-only links (no summaries,
+ *  which can quote the brief), as with evidence. Empty with no artifacts. */
+export function pullArtifacts(task: Task, opts: { base?: string | null; isPrivate: boolean }): string {
+  const list = task.artifacts ?? [];
+  if (!list.length) return "";
+  const base = (opts.base ?? "").replace(/\/+$/, "");
+  const md = (t: string) => t.replace(/[\[\]\\`*_<>|]/g, (c) => `\\${c}`).replace(/\s+/g, " ");
+  const lines = [...list]
+    .sort((a, b) => a.at - b.at)
+    .map((x) => {
+      const title = base ? `[${md(x.title)}](${base}/t/${encodeURIComponent(task.id)}?artifact=${encodeURIComponent(x.id)})` : md(x.title);
+      const meta = `${x.kind}${x.version > 1 ? `, v${x.version}` : ""}, shared by the ${x.by}`;
+      const summary = opts.isPrivate && x.summary ? ` — ${md(x.summary)}` : "";
+      return `- ${title} (${meta})${summary}`;
+    });
+  const where = base ? (opts.isPrivate ? "" : " Links open in Maple Factory, for its members.") : " They're kept in Maple Factory.";
+  return `${ARTIFACTS_START}\n## Artifacts\n\nShared by the agents on ${task.id}.${where}\n\n${lines.join("\n")}\n${ARTIFACTS_END}`;
+}
+
+/** A pull request body with its Artifacts section swapped for \`block\` (appended when a person removed it),
+ *  leaving whatever people wrote around it as it was. An empty \`block\` drops the section. */
+export function swapArtifacts(body: string, block: string): string {
+  const start = body.indexOf(ARTIFACTS_START);
+  const end = start >= 0 ? body.indexOf(ARTIFACTS_END, start) : -1;
+  if (start >= 0 && end >= 0) return body.slice(0, start) + block + body.slice(end + ARTIFACTS_END.length);
+  if (!block) return body;
+  return `${body.replace(/\s+$/, "")}${body.trim() ? "\n\n" : ""}${block}`;
 }
 
 /** A runner's `task.merged` branch note (deleted, gone, moved or `failed: <why>`) as a timeline line,
@@ -3202,4 +3626,26 @@ export function branchNote(branch: string, note: string): { text: string; outcom
   if (note === "moved") return { text: `kept branch ${branch} on origin (it moved after the merge)`, outcome: "kept" };
   const why = note.replace(/^failed:\s*/, "") || "no reason given";
   return { text: `couldn't delete branch ${branch} on origin: ${why}`.slice(0, 2000), outcome: "failed" };
+}
+
+/** Is this an agent's (planner, builder, reviewer) comment rather than a person's? */
+const isAgent = (author: string) => (RoleValues as readonly string[]).includes(author);
+
+/** The thread under `root`: its first comment and replies, oldest first. */
+function threadOf(comments: Comment[], root: string): Comment[] {
+  return comments.filter((c) => c.id === root || c.replyTo === root).sort((a, b) => a.at - b.at);
+}
+
+/** A thread an agent wrote in, or one that @mentions @planner, @builder or @reviewer. */
+function threadTalksToAgent(comments: Comment[], root: string): boolean {
+  return threadOf(comments, root).some((c) => isAgent(c.author) || agentsIn(c.text).length > 0);
+}
+
+/** Threads talking to an agent whose last word is a person's: what the next agent should answer. */
+export function openThreads(comments: Comment[]): { root: string; comments: Comment[] }[] {
+  const roots = [...new Set(comments.map((c) => c.replyTo ?? c.id))];
+  return roots
+    .filter((r) => threadTalksToAgent(comments, r))
+    .map((r) => ({ root: r, comments: threadOf(comments, r) }))
+    .filter((t) => t.comments.length && !isAgent(t.comments[t.comments.length - 1]!.author));
 }

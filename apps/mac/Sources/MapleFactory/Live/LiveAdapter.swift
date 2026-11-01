@@ -108,7 +108,7 @@ import SwiftUI
         task.approvals = t.approvals.map(who)
         task.approvalsNeeded = t.approvalsNeeded.int
         task.reviews = t.reviews.map(who)
-        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions) }
+        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions, replyTo: $0.replyTo) }
         task.changeRequests = t.changes.map { change in
             var request = ChangeRequest(author: who(change.author), text: change.text, anchor: change.anchor,
                                         status: changeStatus(change.status), when: ago(change.at))
@@ -144,6 +144,7 @@ import SwiftUI
             TicketLink(system: $0.system.lowercased() == "jira" ? .jira : .linear, key: $0.key, title: $0.title, status: $0.status, asContext: $0.asContext)
         }
         task.mockups = t.mockups.map(mockup)
+        task.artifacts = t.artifacts
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)
@@ -306,6 +307,8 @@ import SwiftUI
         policy.autoFixMerges = p.autoFixMerges ?? true
         policy.autoMerges = p.autoMerges ?? true
         policy.scoutItems = p.scoutItems.map(Int.init) ?? 3
+        policy.taskMinutes = p.taskMinutes.map(Int.init) ?? 60
+        policy.taskCostUsd = p.taskCostUsd
         return policy
     }
 
@@ -318,7 +321,9 @@ import SwiftUI
             autoMerge: Dictionary(uniqueKeysWithValues: policy.autoMerge.map { (wireLevel($0.key).rawValue, $0.value) }),
             autoFixMerges: policy.autoFixMerges,
             autoMerges: policy.autoMerges,
-            scoutItems: UInt32(policy.scoutItems)
+            scoutItems: UInt32(policy.scoutItems),
+            taskMinutes: UInt32(max(0, policy.taskMinutes)),
+            taskCostUsd: policy.taskCostUsd
         )
     }
 

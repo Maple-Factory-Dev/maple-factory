@@ -22,6 +22,7 @@ struct FactorySidebar: View {
                     .contextMenu { NotificationMenu() }
                 navRow("Requests", icon: "tray.and.arrow.down", destination: .intake, count: state.newIntake == 0 ? nil : "\(state.newIntake)")
                 navRow("My tasks", icon: "checkmark.circle", destination: .myTasks)
+                navRow("Day report", icon: "doc.text", destination: .dayReport)
                 navRow("Needs a hand", icon: "hand.raised", destination: .needsHand, badge: state.handRaises.isEmpty ? nil : "\(state.handRaises.count)")
                     .contextMenu { NotificationMenu() }
                 navRow("Activity", icon: "waveform.path.ecg", destination: .activity)
@@ -39,6 +40,15 @@ struct FactorySidebar: View {
                     .foregroundStyle(Theme.textMuted)
                     .onTapGesture { Notifier.shared.resume() }
                     .help("Resume notifications")
+                }
+                else if Notifier.shared.enabled, let until = Notifier.shared.quietUntil {
+                    row(selected: false) {
+                        Image(systemName: "moon").font(.system(size: 11)).frame(width: 16)
+                        Text("Quiet hours until \(Notifier.untilText(until))")
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.textMuted)
+                    .help("Your quiet hours, on every device: Settings › Notifications")
                 }
             }
 
@@ -82,7 +92,8 @@ struct FactorySidebar: View {
                         if client.isSignedIn {
                             ForEach(client.sidebarMembers, id: \.login) { member in
                                 let presence = client.online.first { $0.login == member.login }
-                                personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil)
+                                personRow(LiveAdapter.person(member.login, members: client.members), viewing: presence?.viewing, online: presence != nil,
+                                          mobile: presence?.mobile == true)
                             }
                         } else {
                             ForEach(FactoryData.presence, id: \.person.id) { entry in
@@ -197,11 +208,11 @@ struct FactorySidebar: View {
         .contextMenu { GoalContextMenu(goal: goal) }
     }
 
-    private func personRow(_ person: Person, viewing: String?, online: Bool = true) -> some View {
+    private func personRow(_ person: Person, viewing: String?, online: Bool = true, mobile: Bool = false) -> some View {
         let isMe = person.id == FactoryData.me.id
 
         return row(selected: false) {
-            AgentAvatar(agent: person, size: 18, online: online).frame(width: 16)
+            AgentAvatar(agent: person, size: 18, online: online, mobile: mobile).frame(width: 16)
                 .opacity(online ? 1 : 0.55)
             Text(isMe ? "\(person.firstName) (you)" : person.firstName)
             Spacer()
@@ -217,7 +228,14 @@ struct FactorySidebar: View {
         .onTapGesture {
             if let viewing { state.openTask(viewing) }
         }
-        .help(viewing.map { "\(person.firstName) is viewing \($0)" } ?? (online ? "Online" : "Offline"))
+        .help(Self.presenceHelp(person, viewing: viewing, online: online, mobile: mobile))
+    }
+
+    /// A person row's tooltip: what they're looking at, and whether it's from a phone.
+    static func presenceHelp(_ person: Person, viewing: String?, online: Bool, mobile: Bool) -> String {
+        let suffix = online && mobile ? " on mobile" : ""
+        if let viewing { return "\(person.firstName) is viewing \(viewing)\(suffix)" }
+        return online ? "Online\(suffix)" : "Offline"
     }
 
     private func machineRow(_ machine: Machine) -> some View {
@@ -450,14 +468,27 @@ struct UpdateFooter: View {
                 // (the version and its What's new link don't fit beside them).
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .center, spacing: 9) {
-                        Image(systemName: phase.icon)
-                            .font(.system(size: 13))
-                            .foregroundStyle(iconColor(phase))
-                            .frame(width: 16)
+                        // While it works, the toast's ring takes the icon's slot and the percentage
+                        // sits beside the title, so a busy footer is a single line.
+                        if phase.isBusy {
+                            UpdateRing(fraction: phase.progress)
+                        } else {
+                            Image(systemName: phase.icon)
+                                .font(.system(size: 13))
+                                .foregroundStyle(iconColor(phase))
+                                .frame(width: 16)
+                        }
                         Text(phase.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
+                        if phase.isBusy, let detail = phase.detail {
+                            Text(detail)
+                                .font(.system(size: 10.5).monospacedDigit())
+                                .foregroundStyle(Theme.textMuted)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                         Spacer(minLength: 0)
                         HStack(spacing: 4) {
                             if let action = phase.action, let label = phase.buttonLabel {
@@ -474,47 +505,30 @@ struct UpdateFooter: View {
                             }
                         }
                     }
-                    Group {
-                        if phase.isBusy {
-                            HStack(spacing: 6) {
-                                if let progress = phase.progress {
-                                    ProgressView(value: progress)
-                                    Text(phase.detail ?? "")
-                                        .font(.system(size: 10.5).monospacedDigit())
-                                        .foregroundStyle(Theme.textMuted)
-                                        .frame(width: 30, alignment: .trailing)
-                                } else {
-                                    ProgressView()
-                                }
-                            }
-                            .progressViewStyle(.linear)
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                        } else if let detail = phase.detail {
-                            HStack(spacing: 0) {
-                                Text(detail)
+                    if !phase.isBusy, let detail = phase.detail {
+                        HStack(spacing: 0) {
+                            Text(detail)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textMuted)
+                                .lineLimit(1)
+                                .help(detail)
+                            if phase.showsReleaseNotesLink, updater.releaseNotesURL != nil {
+                                Text(" · ")
                                     .font(.system(size: 11))
                                     .foregroundStyle(Theme.textMuted)
+                                Text(UpdatePhase.releaseNotesLinkLabel)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Theme.accent)
                                     .lineLimit(1)
-                                    .help(detail)
-                                if phase.showsReleaseNotesLink, let url = updater.releaseNotesURL {
-                                    Text(" · ")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(Theme.textMuted)
-                                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(Theme.accent)
-                                        .lineLimit(1)
-                                        .fixedSize()
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { NSWorkspace.shared.open(url) }
-                                        .pointerStyle(.link)
-                                        .help("See the release notes")
-                                }
+                                    .fixedSize()
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { updater.openReleaseNotes() }
+                                    .pointerStyle(.link)
+                                    .help("Read the release notes")
                             }
                         }
+                        .padding(.leading, 25)
                     }
-                    .padding(.leading, 25)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)

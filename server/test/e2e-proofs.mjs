@@ -5,10 +5,11 @@
 // PUTs each file to /runner/proof/<task> with the runner's token and calls `prove` with the key.
 // Checks: the upload answers {key, type, bytes}; the item's evidence.file is that key; a member GETs the
 // same bytes there; a wrong or missing runner token gets 401; a file that isn't an image, video or text
-// is refused, as is a video over 25 MB and an image over 5 MB; and a key that isn't an attachment's is
-// dropped. Without files it uses made-up bytes with the right headers. The task is left proven, to look at.
+// is refused, as is a video over 95 MB and an image over 20 MB; full-size ones (a 15 MB PNG, a 30 MB
+// video) go through byte for byte; a body over 95 MB is refused (413); and a key that isn't an attachment's is dropped. Without files it uses made-up bytes with the right headers. The task is left proven, to look at.
 
 import { randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 
@@ -113,10 +114,39 @@ check((await putProof(id, "x.png", png, "image/png", "Bearer mfr_wrong")).status
 check((await putProof(id, "x.png", png, "image/png", null)).status === 401, "no runner token gets 401");
 check((await fetch(`${base}/runner/proof/${id}?runner=${runnerId}&name=x.png`, { method: "PUT", headers: member, body: png })).status === 401, "a member's token isn't a runner's (401)");
 check((await putProof(id, "x.bin", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe, 0, 1]), "application/zip")).status === 415, "a file that isn't an image, video or text is refused (415)");
-const bigPng = Buffer.concat([png.subarray(0, 8), Buffer.alloc(5 * 1024 * 1024)]);
-check((await putProof(id, "big.png", bigPng, "image/png")).status === 413, "an image over 5 MB is refused (413)");
-const bigMp4 = Buffer.concat([mp4.subarray(0, 16), Buffer.alloc(25 * 1024 * 1024)]);
-check((await putProof(id, "big.mp4", bigMp4, "video/mp4")).status === 413, "a video over 25 MB is refused (413)");
+// Full-size ones go as they are, and come back the same.
+const fullPng = Buffer.concat([png.subarray(0, 8), randomBytes(15 * 1024 * 1024)]);
+const fullMp4 = Buffer.concat([mp4.subarray(0, 16), randomBytes(30 * 1024 * 1024)]);
+for (const [what, name, bytes, type] of [["a 15 MB PNG", "retina.png", fullPng, "image/png"], ["a 30 MB video", "long.mp4", fullMp4, "video/mp4"]]) {
+  const res = await putProof(id, name, bytes, type);
+  const up = await res.json().catch(() => ({}));
+  const got = up.key ? await fetch(`${base}${up.key}`, { headers: member }) : null;
+  const back = got ? Buffer.from(await got.arrayBuffer()) : Buffer.alloc(0);
+  check(res.status === 201 && up.bytes === bytes.length && back.equals(bytes), `${what} uploads (${res.status}) and comes back byte for byte (${back.length} of ${bytes.length})`);
+}
+
+/** A raw PUT: `length` as the content-length (or chunked when null). The whole body is sent: wrangler
+ *  dev's proxy holds a request until its body is in, so "refused without reading it" is checked against
+ *  the Worker's own code in security.test.ts (it counts the bytes pulled); here it's the status. */
+const rawPut = (name, length, send, type = "video/mp4", head = mp4.subarray(0, 16)) => new Promise((resolve, reject) => {
+  const headers = { authorization: `Bearer ${enrolled.token}`, "content-type": type };
+  if (length !== null) headers["content-length"] = String(length);
+  const req = httpRequest(`${base}/runner/proof/${id}?runner=${runnerId}&name=${name}`, { method: "PUT", headers }, (res) => {
+    res.resume();
+    resolve(res.statusCode);
+    req.destroy();
+  });
+  // Refused early, the connection can be closed while the body's still going: that's a refusal too.
+  req.on("error", (e) => (e.code === "ECONNRESET" || e.code === "EPIPE" ? setTimeout(() => resolve(e.code), 500) : reject(e)));
+  req.end(Buffer.concat([head, Buffer.alloc(send)]));
+  setTimeout(() => { resolve(-1); req.destroy(); }, 60000);
+});
+const bigPng = await rawPut("big.png", 21 * 1024 * 1024 + 8, 21 * 1024 * 1024, "image/png", png.subarray(0, 8));
+check(bigPng === 413 || bigPng === "EPIPE" || bigPng === "ECONNRESET", `a 21 MB image is refused (413, or the connection closed mid-body) (${bigPng})`);
+const huge = await rawPut("huge.mp4", 96 * 1024 * 1024, 96 * 1024 * 1024 - 16);
+check(huge === 413, `a 96 MB body is refused (413) (${huge})`);
+// A chunked upload with no content-length (411) isn't checked here: wrangler dev's proxy adds one. See
+// security.test.ts, "a proof without content-length is refused (411), without reading it".
 check((await putProof(id, "../x.png", png, "image/png")).status === 400, "a name with '..' is refused (400)");
 
 // `prove` with the keys, the way proof.rs `prepare_with` rewrites the call.

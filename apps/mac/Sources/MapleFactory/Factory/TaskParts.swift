@@ -16,6 +16,59 @@ struct TaskSection<Content: View>: View {
     }
 }
 
+/// A section that can fold to its title and a one-line summary; the chevron, or clicking the line, toggles it.
+struct FoldableSection<Content: View>: View {
+    let title: String
+    let summary: String
+    @Binding var folded: Bool
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                    .rotationEffect(.degrees(folded ? 0 : 90))
+                SectionLabel(title: title)
+                if folded {
+                    Text(summary)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.snappy(duration: 0.2)) { folded.toggle() } }
+            .help(folded ? "Show the \(title.lowercased())" : "Fold the \(title.lowercased())")
+            if !folded { content }
+        }
+    }
+}
+
+extension FactoryTask {
+    /// "v2 · 6 steps, all done": the plan in a line, for its folded header.
+    var planSummary: String {
+        let done = plan.filter { $0.progress == .done }.count
+        let steps = "\(plan.count) \(plan.count == 1 ? "step" : "steps")"
+        let progress = done == plan.count ? (plan.count == 1 ? "done" : "all done") : done == 0 ? "" : "\(done) done"
+        return [planVersion > 1 ? "v\(planVersion)" : nil, progress.isEmpty ? steps : "\(steps), \(progress)"].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The brief's (or spec's) first sentence, without its markdown, for its folded header.
+    var briefSummary: String {
+        let source = spec.flatMap { $0.isEmpty ? nil : $0 } ?? brief
+        let line = source.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "#>*-_ \t")) }
+            .first { !$0.isEmpty } ?? ""
+        let plain = line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        if let end = plain.range(of: #"[.!?](\s|$)"#, options: .regularExpression) { return String(plain[..<end.upperBound]).trimmingCharacters(in: .whitespaces) }
+        return plain
+    }
+}
+
 struct ViewerPill: View {
     let viewer: Person
 
@@ -38,15 +91,37 @@ struct TaskOwnership: View {
     let task: FactoryTask
     var avatarSize: CGFloat = 18
 
-    private var open: Bool { !task.state.isFinished }
-
     var body: some View {
         HStack(spacing: 8) {
             StateBadge(state: task.state)
-            AgentAvatar(agent: task.owner, size: avatarSize)
+            OwnerMenu(task: task, avatarSize: avatarSize, spacing: 8)
+            if let agent = task.agent {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+                AgentAvatar(agent: agent, size: avatarSize)
+                Text(agent.name)
+            }
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.textMuted)
+    }
+}
+
+/// A task's owner (avatar, then "You" or their first name). While the task is open the name opens a menu
+/// to take it over or give it to a teammate; once it's merged, closed or cancelled it's plain text.
+struct OwnerMenu: View {
+    let task: FactoryTask
+    var avatarSize: CGFloat = 18
+    var showAvatar = true
+    var spacing: CGFloat = 6
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            if showAvatar { AgentAvatar(agent: task.owner, size: avatarSize) }
             let name = Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
                 .foregroundStyle(Theme.text)
-            if open {
+            if !task.state.isFinished {
                 // Picks its owner: take it over, or (its owner, an admin) give it to a teammate.
                 Menu {
                     TaskAssignButtons(task: task)
@@ -59,16 +134,7 @@ struct TaskOwnership: View {
             } else {
                 name
             }
-            if let agent = task.agent {
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.textFaint)
-                AgentAvatar(agent: agent, size: avatarSize)
-                Text(agent.name)
-            }
         }
-        .font(.system(size: 12))
-        .foregroundStyle(Theme.textMuted)
     }
 }
 
@@ -252,18 +318,26 @@ struct TaskAssignButtons: View {
             Button { appState.assign(task.id, to: me) } label: { Label("Take it over", systemImage: "person.crop.circle.badge.checkmark") }
         }
         if appState.canReassign(task.id) {
-            let others = FactoryData.people.filter { $0.github != nil && $0.github != task.owner.github }
+            let choices = Self.choices(for: task)
             Menu {
-                ForEach(others) { person in
-                    Button(person.github == FactoryData.me.github ? "\(person.name) (you)" : person.name) {
-                        appState.assign(task.id, to: person.github!)
-                    }
+                ForEach(choices, id: \.person.id) { choice in
+                    let person = choice.person
+                    // The current owner is checked; picking them again changes nothing.
+                    Toggle(person.github == FactoryData.me.github ? "\(person.name) (you)" : person.name, isOn: Binding(
+                        get: { choice.current },
+                        set: { _ in appState.assign(task.id, to: person.github!) }
+                    ))
                 }
             } label: {
                 Label("Assign to", systemImage: "person.badge.plus")
             }
-            .disabled(others.isEmpty)
+            .disabled(!choices.contains { !$0.current })
         }
+    }
+
+    /// Everyone you can give `task` to: the teammates with a GitHub login, its current owner checked.
+    static func choices(for task: FactoryTask) -> [(person: Person, current: Bool)] {
+        FactoryData.people.filter { $0.github != nil }.map { ($0, $0.github == task.owner.github) }
     }
 }
 
@@ -1249,16 +1323,51 @@ struct DiscussionPeek: View {
 // MARK: - Composer
 
 /// One input for both audiences: steer the task's agent, or comment to teammates.
+/// A focused comment or reply box, for the ⌘↩ menu command: its title, and how to send what's typed
+/// (nil while there's nothing to send, or an @/# picker is open).
+struct ComposerSubmit {
+    var label: String
+    var send: (() -> Void)?
+}
+
+struct ComposerSubmitKey: FocusedValueKey {
+    typealias Value = ComposerSubmit
+}
+
+extension FocusedValues {
+    var composerSubmit: ComposerSubmit? {
+        get { self[ComposerSubmitKey.self] }
+        set { self[ComposerSubmitKey.self] = newValue }
+    }
+}
+
 struct TaskComposer: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     @Binding var mode: ComposerMode
     var focused: FocusState<Bool>.Binding
 
-    @State private var draft = ""
     @State private var interruptNow = false
     @State private var mention = MentionState()
     @State private var taskRef = MentionState()
+
+    /// Kept in AppState by task, so it survives switching between the panel and full view.
+    private var draft: String {
+        get { appState.composerDrafts[task.id] ?? "" }
+        nonmutating set { appState.composerDrafts[task.id] = newValue.isEmpty ? nil : newValue }
+    }
+    private var draftBinding: Binding<String> { Binding(get: { draft }, set: { draft = $0 }) }
+
+    /// What ⌘↩ shows and does while this box has focus.
+    private var submit: ComposerSubmit {
+        let steering = mode == .steer && task.isSteerable
+        let label = !steering ? "Send Comment"
+            : task.state == .awaitingApproval || task.state == .backlog ? "Revise Plan"
+            : "Steer \(task.agent?.name ?? "Agent")"
+        let ready = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && mentionCandidates.isEmpty && taskCandidates.isEmpty
+        return ComposerSubmit(label: label, send: ready ? { send() } : nil)
+    }
 
     // The box is a TextField, so its cursor isn't known: an `@name` or `#ref` at the end is what's being typed.
     private var mentionQuery: MentionQuery? { mention.query(draft, cursor: (draft as NSString).length) }
@@ -1311,11 +1420,13 @@ struct TaskComposer: View {
                 }
             }
 
-            TextField(placeholder, text: $draft, axis: .vertical)
+            TextField(placeholder, text: draftBinding, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
+                // ⌘↩ (a menu command, so it runs before the box sees the key) sends this instead of toggling full view.
+                .focusedValue(\.composerSubmit, submit)
                 .onExitCommand { if !pickerKey(.close) { focused.wrappedValue = false } }
                 .onSubmit { if !pickerKey(.pick) { send() } }
                 .onKeyPress(keys: [.upArrow, .downArrow, .tab]) { press in

@@ -8,6 +8,12 @@ struct TaskTimeline: View {
     let comments: [Comment]
     let requests: [ChangeRequest]
     @State private var filter: Filter = .all
+    /// The thread whose Reply box is open, by its first comment's id, and what's typed in it.
+    @State private var replyingTo: String?
+    @State private var replyDraft = ""
+
+    /// A headless script opening a Reply box (`reply:open` or `reply:<comment id prefix>`).
+    static let demoReply = Notification.Name("TaskTimeline.demoReply")
 
     enum Filter: String, CaseIterable { case all = "All", discussion = "Discussion", changes = "Changes", events = "Events" }
 
@@ -25,10 +31,20 @@ struct TaskTimeline: View {
         }
     }
 
+    /// Each thread's replies, oldest first, by its first comment's id. A reply whose first comment
+    /// isn't here shows on its own instead.
+    private var replies: [String: [Comment]] {
+        let ids = Set(comments.compactMap(\.id))
+        return Dictionary(grouping: comments.filter { $0.replyTo.map(ids.contains) == true }, by: { $0.replyTo! })
+    }
+
     private var entries: [Entry] {
         // Change requests show as their own cards, so skip the matching one-line events.
         let events = task.activity.filter { !$0.text.contains("a change") }.map(Entry.event)
-        let all = comments.map(Entry.comment) + requests.map(Entry.request) + events
+        // Replies sit inside their thread's card, not on the rail.
+        let ids = Set(comments.compactMap(\.id))
+        let roots = comments.filter { $0.replyTo.map(ids.contains) != true }
+        let all = roots.map(Entry.comment) + requests.map(Entry.request) + events
         let filtered = all.filter { entry in
             switch (filter, entry) {
             case (.all, _), (.discussion, .comment), (.changes, .request), (.events, .event): true
@@ -76,6 +92,11 @@ struct TaskTimeline: View {
                     row(entry, last: index == entries.count - 1)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoReply)) { note in
+            guard let which = note.object as? String else { return }
+            let ids = comments.compactMap(\.id)
+            replyingTo = which == "open" ? ids.first { replies[$0]?.isEmpty == false } : ids.first { $0.hasPrefix(which) }
         }
     }
 
@@ -149,8 +170,98 @@ struct TaskTimeline: View {
                 MarkdownPreview(source: comment.text, baseSize: 13)
                     .padding(12)
             }
+            if let id = comment.id { thread(id) }
         }
         .background(card(Theme.stroke))
+    }
+
+    /// A comment's replies nested under it, then its Reply button or the open Reply box.
+    @ViewBuilder private func thread(_ root: String) -> some View {
+        let list = replies[root] ?? []
+        if !list.isEmpty {
+            Hairline()
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(list.enumerated()), id: \.offset) { _, reply in replyRow(reply) }
+            }
+            .padding(.vertical, 10)
+            .padding(.leading, 12)
+            .padding(.trailing, 12)
+        }
+        Hairline()
+        if replyingTo == root {
+            replyBox(root)
+        } else {
+            Button {
+                replyDraft = ""
+                withAnimation(.snappy(duration: 0.2)) { replyingTo = root }
+            } label: {
+                Label(list.isEmpty ? "Reply" : "Reply · \(list.count)", systemImage: "arrowshape.turn.up.left")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Reply in this thread. An agent in it, or one you @mention, answers here.")
+        }
+    }
+
+    private func replyRow(_ reply: Comment) -> some View {
+        let agent = !reply.author.isHuman
+        return HStack(alignment: .top, spacing: 8) {
+            AgentAvatar(agent: reply.author, size: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(reply.author.id == FactoryData.me.id ? "You" : agent ? reply.author.name : reply.author.firstName)
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text("replied").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    Spacer()
+                    Text(reply.when).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                }
+                .lineLimit(1)
+                MarkdownPreview(source: reply.text, baseSize: 12.5)
+            }
+        }
+        .padding(agent ? 8 : 0)
+        .background(agent ? RoundedRectangle(cornerRadius: 8).fill(reply.author.color.opacity(0.07)) : nil)
+        .overlay(alignment: .leading) {
+            if !agent { Rectangle().fill(Theme.stroke).frame(width: 2).offset(x: -8) }
+        }
+    }
+
+    private func replyBox(_ root: String) -> some View {
+        let send = {
+            let text = replyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            appState.comment(task.id, text: text, replyTo: root)
+            replyDraft = ""
+        }
+        return VStack(alignment: .trailing, spacing: 8) {
+            TextField("Reply…", text: $replyDraft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .lineLimit(2...8)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Theme.editorBG))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.accent.opacity(0.5)))
+                .onSubmit(send)
+                // ⌘↩ is the menu's command (it'd beat a button shortcut here); while this box has focus it posts the reply.
+                .focusedValue(\.composerSubmit, ComposerSubmit(
+                    label: "Send Reply",
+                    send: replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : send))
+            HStack(spacing: 8) {
+                Button("Cancel") { withAnimation(.snappy(duration: 0.2)) { replyingTo = nil } }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textMuted)
+                Button("Reply", action: send)
+                    .controlSize(.small)
+                    .help("Reply (⌘↩)")
+                    .disabled(replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(12)
     }
 
     /// Diff lines as the comment quoted them, coloured like the Changes tab.

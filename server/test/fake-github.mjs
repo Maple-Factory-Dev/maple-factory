@@ -3,7 +3,7 @@
 //
 //   node server/test/fake-github.mjs --port 18803 --public-key app.pub.pem --installed acme/greeter \
 //     --remotes '/tmp/mfgh/remotes/{owner}/{repo}.git' --webhook-url http://localhost:8788/integrations/github \
-//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice] [--owner acme:alice]
+//     --webhook-secret dev-gh-secret [--ci test] [--user afomera] [--member acme:alice] [--owner acme:alice] [--no-workflows]
 //
 // Point the server at it with GITHUB_API_URL=http://localhost:18803 (only honored on localhost) and
 // the runner's pushes at the bare repos with MAPLE_TASK_PUSH_URL / MAPLE_TASK_FETCH_URL. It checks
@@ -11,15 +11,24 @@
 // covers the repo and the permission a call needs. It answers:
 //
 //   GET  /repos/:o/:r/installation                       app JWT → { id } or 404
-//   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }
+//   POST /app/installations/:id/access_tokens            app JWT → { token } for { repositories, permissions }; with --no-workflows
+//                                                        (an install that hasn't approved Workflows: write) a request with
+//                                                        `workflows` is a 422. GET /_log's `tokens` lists every request's permissions
 //   GET  /app/installations, GET /installation/repositories   the app's installations (one per account, with its
 //                                                        login), and an installation's repos
 //   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
 //   GET  /orgs/:org/memberships/:login                   { state: "active", role } if a member, else 404 (members:read)
-//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
+//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close, reopen or a new body), POST …/issues/:n/comments
+//   POST /_setBody { number, body }                      a person's edit of a pull request's description, made on GitHub
+//   POST /_failBody { on: true|false }                   a PATCH of a pull request's body answers 422 while it's on
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head; 405 on a
 //                                                        branch that requires a merge queue)
-//   GET  /repos/:o/:r/rules/branches/:branch             [{ type: "merge_queue" }] when /_queue says the branch requires one, else []
+//   GET  /repos/:o/:r/rules/branches/:branch             [{ type: "merge_queue" }] when /_queue says the branch requires one, and
+//                                                        a pull_request rule with required_approving_review_count when /_reviews does
+//   POST /repos/:o/:r/issues/:n/assignees, POST …/pulls/:n/requested_reviewers   kept on the pull request (pull_requests:write)
+//   POST /repos/:o/:r/pulls/:n/reviews                   a review by a user token (`Bearer ghu_fake_<login>`); the app's own token is
+//                                                        refused (422), as GitHub refuses an author approving their own pull request.
+//                                                        A merge into a branch /_reviews covers is 405 until it has that many APPROVEs
 //   GET  /repos/:o/:r/git/ref/heads/*, DELETE …/git/refs/heads/*   a branch of the bare repo (404 / 422 once it's gone)
 //   GET  /repos/:o/:r/commits/:sha/check-runs, …/status  every commit has the --ci checks, queued until set
 //   POST /repos/:o/:r/check-suites/:id/rerequest         failed runs in the suite queue again, then pass
@@ -30,7 +39,8 @@
 //   GET  /repos/:o/:r/check-runs/:id                      a check run with its output
 //   POST /app-manifests/:code/conversions                /setup's new app; code `app-<owner>` makes one owned by <owner>
 //   GET  /users/:login                                   a personal account for each --user, otherwise an organization
-//   POST /login/oauth/access_token                       sign-in: code (or device_code) `as-<login>` is <login>'s user token
+//   POST /login/oauth/access_token                       sign-in: code (or device_code) `as-<login>` is <login>'s user token (with
+//                                                        refresh token `ghr_fake_<login>`, which a refresh trades for a new pair)
 //   GET  /user, /user/memberships/orgs/:org, /user/teams  who that token is; active in an org for each --member org:login
 //                                                        (its admin, for each --owner org:login)
 //   POST /graphql                                        repository.pullRequest.reviewThreads, from /_threads; repository.pullRequest.id;
@@ -46,6 +56,7 @@
 // resolved?, outdated?, comments: [{ author, body }] }] }, the review threads people left on that pull request, and
 // POST /_queue { owner, repo, branch = "main", then: "merge"|"dequeue"|"hold"|"off", reason?, delayMs? }: that branch requires
 // a merge queue (not with "off"), and what the queue does with each pull request added to it a moment later, and
+// POST /_reviews { owner, repo, branch = "main", count }: that branch's rules require `count` approving reviews, and
 // POST /_private { owner, repo, private: false }: the app's repo list says that repo is public (repos are private until then).
 
 import { execFileSync } from "node:child_process";
@@ -68,6 +79,7 @@ const { values } = parseArgs({
     user: { type: "string", multiple: true, default: [] },
     member: { type: "string", multiple: true, default: [] },
     owner: { type: "string", multiple: true, default: [] },
+    "no-workflows": { type: "boolean", default: false },
   },
 });
 
@@ -82,12 +94,15 @@ const accounts = [...new Set(values.installed.map((r) => r.split("/")[0].toLower
 const installed = new Map(values.installed.map((r) => [r.toLowerCase(), 1000 + accounts.indexOf(r.split("/")[0].toLowerCase())]));
 const log = [];
 const tokens = new Map(); // token → { repositories, permissions }
+const tokenRequests = []; // { installation, repositories, permissions, status }, in order
 const pulls = [];
 const runs = new Map(); // `${owner}/${repo}@${sha}` → [{ id, name, status, conclusion, suite, log? }]
 const moveOnMerge = new Set(); // `${owner}/${repo}:${branch}`
 const threads = new Map(); // `${owner}/${repo}#${number}` → [{ path, line, … }]
+const reviewRules = new Map(); // `${owner}/${repo}:${branch}` → required approving reviews
 const queues = new Map(); // `${owner}/${repo}:${branch}` → { then, reason, delayMs }
 const publicRepos = new Set(); // `${owner}/${repo}`, lower case: the rest are private
+let failBody = false;
 let lastNumber = 0;
 let lastRun = 0;
 
@@ -101,9 +116,12 @@ const headOf = (p) => {
   }
 };
 const pullJson = (p) => ({
-  number: p.number, html_url: p.html_url, state: p.state, merged: Boolean(p.merged), title: p.title,
+  number: p.number, html_url: p.html_url, state: p.state, merged: Boolean(p.merged), title: p.title, body: p.body ?? null,
   head: { ref: p.head, sha: headOf(p) }, base: { ref: p.base },
+  assignees: (p.assignees ?? []).map((login) => ({ login })), requested_reviewers: (p.requestedReviewers ?? []).map((login) => ({ login })),
+  reviews: p.reviews ?? [],
 });
+const approvalsNeeded = (p) => reviewRules.get(`${p.owner}/${p.repo}:${p.base}`.toLowerCase()) ?? 0;
 
 function checkRunsFor(owner, repo, sha) {
   const key = `${owner}/${repo}@${sha}`;
@@ -245,7 +263,16 @@ createServer((req, res) => {
     const deny = (g) => send(res, g[0], { message: g[1] });
     let m;
 
-    if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson) });
+    if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson), tokens: tokenRequests });
+    if (req.method === "POST" && url.pathname === "/_setBody") {
+      const p = pulls.find((x) => x.number === body.number);
+      if (p) p.body = body.body;
+      return send(res, p ? 200 : 404, {});
+    }
+    if (req.method === "POST" && url.pathname === "/_failBody") {
+      failBody = Boolean(body?.on);
+      return send(res, 200, { failBody });
+    }
     if (req.method === "POST" && url.pathname === "/_deleteBranch") {
       git(bare(body.owner, body.repo), "branch", "-D", body.branch);
       return send(res, 200, {});
@@ -263,6 +290,10 @@ createServer((req, res) => {
       const key = `${body.owner}/${body.repo}:${body.branch ?? "main"}`.toLowerCase();
       if (body.then === "off") queues.delete(key);
       else queues.set(key, { then: body.then ?? "merge", reason: body.reason, delayMs: body.delayMs });
+      return send(res, 204);
+    }
+    if (req.method === "POST" && url.pathname === "/_reviews") {
+      reviewRules.set(`${body.owner}/${body.repo}:${body.branch ?? "main"}`.toLowerCase(), body.count);
       return send(res, 204);
     }
     if (req.method === "POST" && url.pathname === "/_threads") {
@@ -333,8 +364,13 @@ createServer((req, res) => {
       });
     }
     if (req.method === "POST" && url.pathname === "/login/oauth/access_token") {
+      // A refresh (grant_type refresh_token) of `ghr_fake_<login>` gives that login a fresh pair.
+      if (body?.grant_type === "refresh_token") {
+        const who = /^ghr_fake_([\w-]+)$/.exec(body.refresh_token ?? "")?.[1];
+        return send(res, 200, who ? { access_token: `ghu_fake_${who}`, refresh_token: `ghr_fake_${who}`, expires_in: 28800, token_type: "bearer" } : { error: "bad_refresh_token" });
+      }
       const login = /^as-([\w-]+)$/.exec(body?.code ?? body?.device_code ?? "")?.[1];
-      return send(res, 200, login ? { access_token: `ghu_fake_${login}`, token_type: "bearer" } : { error: "bad_verification_code" });
+      return send(res, 200, login ? { access_token: `ghu_fake_${login}`, refresh_token: `ghr_fake_${login}`, expires_in: 28800, token_type: "bearer" } : { error: "bad_verification_code" });
     }
     const me = /^Bearer ghu_fake_([\w-]+)$/.exec(req.headers.authorization ?? "")?.[1];
     if (req.method === "GET" && url.pathname === "/user") {
@@ -392,6 +428,12 @@ createServer((req, res) => {
     if (req.method === "POST" && (m = url.pathname.match(/^\/app\/installations\/(\d+)\/access_tokens$/))) {
       const why = verifyJwt(req.headers.authorization);
       if (why) return send(res, 401, { message: why });
+      const asked = { installation: Number(m[1]), repositories: body?.repositories, permissions: body?.permissions };
+      if (values["no-workflows"] && body?.permissions && "workflows" in body.permissions) {
+        tokenRequests.push({ ...asked, status: 422 });
+        return send(res, 422, { message: "The permissions requested are not granted to this installation.", documentation_url: "https://docs.github.com/rest/apps/apps#create-an-installation-access-token-for-an-app" });
+      }
+      tokenRequests.push({ ...asked, status: 201 });
       const token = `ghs_${randomBytes(18).toString("hex")}`;
       tokens.set(token, { repositories: body?.repositories, permissions: body?.permissions, installation: Number(m[1]) });
       return send(res, 201, { token, expires_at: new Date(Date.now() + 3600_000).toISOString() });
@@ -409,6 +451,27 @@ createServer((req, res) => {
       pulls.push(p);
       return send(res, 201, pullJson(p));
     }
+    if (req.method === "POST" && (m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)\/(\d+)\/(assignees|requested_reviewers|reviews)$/))) {
+      const p = pulls.find((x) => x.owner === m[1] && x.repo === m[2] && x.number === Number(m[4]));
+      if (m[5] === "reviews") {
+        const user = /^Bearer ghu_fake_([\w-]+)$/.exec(req.headers.authorization ?? "")?.[1];
+        if (!user) {
+          const g = grant(req, m[2], "pull_requests", "write");
+          if (g) return deny(g);
+          return send(res, 422, { message: "Unprocessable Entity", errors: ["Can not approve your own pull request"] });
+        }
+        if (!p) return send(res, 404, { message: "Not Found" });
+        const review = { id: (p.reviews ?? []).length + 1, user: { login: user }, state: body.event === "APPROVE" ? "APPROVED" : body.event, commit_id: body.commit_id ?? null, body: body.body ?? "" };
+        (p.reviews ??= []).push(review);
+        return send(res, 200, review);
+      }
+      const g = grant(req, m[2], "pull_requests", "write");
+      if (g) return deny(g);
+      if (!p) return send(res, 404, { message: "Not Found" });
+      if (m[5] === "assignees") (p.assignees ??= []).push(...body.assignees);
+      else (p.requestedReviewers ??= []).push(...body.reviewers);
+      return send(res, 201, pullJson(p));
+    }
     if ((m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)(\/merge)?$/))) {
       const p = pulls.find((x) => x.owner === m[1] && x.repo === m[2] && x.number === Number(m[3]));
       const g = grant(req, m[2], "pull_requests", req.method === "GET" ? "read" : "write");
@@ -417,12 +480,18 @@ createServer((req, res) => {
       if (req.method === "PATCH") {
         if (body.state === "open" && p.state === "merged") return send(res, 422, { message: "Validation Failed: state cannot be changed. The pull request is merged." });
         if (body.state === "open" && p.state === "closed" && !headOf(p)) return send(res, 422, { message: `Validation Failed: state cannot be changed. The ${p.head} branch has been deleted.` });
+        if (typeof body.body === "string") {
+          if (failBody) return send(res, 422, { message: "Validation Failed: body is too long (maximum is 65536 characters)" });
+          p.body = body.body;
+        }
         Object.assign(p, body.state === "closed" || body.state === "open" ? { state: body.state } : {});
         return send(res, 200, pullJson(p));
       }
       if (req.method === "PUT" && m[4]) {
         if (p.state !== "open") return send(res, 405, { message: "Pull Request is not mergeable" });
         if (queueOf(p)) return send(res, 405, { message: "Repository rule violations found\n\nChanges must be made through the merge queue" });
+        const approved = (p.reviews ?? []).filter((r) => r.state === "APPROVED").length;
+        if (approved < approvalsNeeded(p)) return send(res, 405, { message: `Repository rule violations found\n\nAt least ${approvalsNeeded(p)} approving review is required by reviewers with write access.` });
         if (body.sha && body.sha !== headOf(p)) return send(res, 409, { message: "Head branch was modified. Review and try the merge again." });
         try {
           const sha = squash(p, body.commit_title ?? p.title);
@@ -437,7 +506,11 @@ createServer((req, res) => {
       const g = grant(req, m[2], "contents", "read");
       if (g) return deny(g);
       const q = queues.get(`${m[1]}/${m[2]}:${decodeURIComponent(m[3])}`.toLowerCase());
-      return send(res, 200, q ? [{ type: "merge_queue", ruleset_source_type: "Repository", ruleset_source: `${m[1]}/${m[2]}`, ruleset_id: 1, parameters: { merge_method: "SQUASH" } }] : []);
+      const needed = reviewRules.get(`${m[1]}/${m[2]}:${decodeURIComponent(m[3])}`.toLowerCase()) ?? 0;
+      return send(res, 200, [
+        ...(q ? [{ type: "merge_queue", ruleset_source_type: "Repository", ruleset_source: `${m[1]}/${m[2]}`, ruleset_id: 1, parameters: { merge_method: "SQUASH" } }] : []),
+        ...(needed ? [{ type: "pull_request", ruleset_source_type: "Repository", ruleset_source: `${m[1]}/${m[2]}`, ruleset_id: 2, parameters: { required_approving_review_count: needed, dismiss_stale_reviews_on_push: false, require_code_owner_review: false, require_last_push_approval: false, required_review_thread_resolution: false } }] : []),
+      ]);
     }
     if ((m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/git\/(ref|refs)\/heads\/(.+)$/))) {
       const g = grant(req, m[2], "contents", req.method === "GET" ? "read" : "write");

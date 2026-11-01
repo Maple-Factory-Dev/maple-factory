@@ -3,7 +3,7 @@
 import Foundation
 
 public enum Wire {
-    public static let protocolVersion: UInt32 = 1
+    public static let protocolVersion: UInt32 = 2
 
     /// Any JSON value, for fields the protocol passes through untouched.
     public enum JSONValue: Codable, Hashable, Sendable {
@@ -550,6 +550,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// How a recurring task's interval is shown.
+    public enum RecurringUnit: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Every N hours.
+        case hours
+        /// Every N days.
+        case days
+        /// Every N weeks.
+        case weeks
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RecurringUnit] = [.hours, .days, .weeks]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "hours": self = .hours
+            case "days": self = .days
+            case "weeks": self = .weeks
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .hours: "hours"
+            case .days: "days"
+            case .weeks: "weeks"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RecurringUnit, b: RecurringUnit) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// Where a repo's Set up with AI run is.
     public enum RepoSetupState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Its agent is reading the repo.
@@ -1002,6 +1047,86 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum PushPlatform: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Apple Push Notification service (iPhone, iPad).
+        case apns
+        /// Firebase Cloud Messaging (Android).
+        case fcm
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PushPlatform] = [.apns, .fcm]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "apns": self = .apns
+            case "fcm": self = .fcm
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .apns: "apns"
+            case .fcm: "fcm"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PushPlatform, b: PushPlatform) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    public enum PushEnvironment: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// A development build (APNs' sandbox).
+        case sandbox
+        /// An App Store or TestFlight build.
+        case production
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PushEnvironment] = [.sandbox, .production]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "sandbox": self = .sandbox
+            case "production": self = .production
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .sandbox: "sandbox"
+            case .production: "production"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PushEnvironment, b: PushEnvironment) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum HandReason: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Review rounds ran out.
         case reviewLoop
@@ -1009,7 +1134,7 @@ public enum Wire {
         case proofBurden
         /// Needs more input than the plan has.
         case needsInput
-        /// The fix goes over the size budget.
+        /// The task goes over its budget: the change's size, or the time or money spent on it.
         case overBudget
         /// Its session ended in a way that needs a person.
         case sessionEnded
@@ -1055,6 +1180,67 @@ public enum Wire {
         }
 
         public static func == (a: HandReason, b: HandReason) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    /// What an agent shared on a task, which decides how the apps show it.
+    public enum ArtifactKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// An HTML page, run sandboxed with no network.
+        case html
+        /// A PNG, JPEG, WebP or GIF.
+        case image
+        /// An SVG drawing, shown like an HTML page.
+        case svg
+        /// A PDF.
+        case pdf
+        /// Markdown text.
+        case markdown
+        /// Plain text.
+        case text
+        /// CSV or JSON, shown as text.
+        case data
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [ArtifactKind] = [.html, .image, .svg, .pdf, .markdown, .text, .data]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "html": self = .html
+            case "image": self = .image
+            case "svg": self = .svg
+            case "pdf": self = .pdf
+            case "markdown": self = .markdown
+            case "text": self = .text
+            case "data": self = .data
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .html: "html"
+            case .image: "image"
+            case .svg: "svg"
+            case .pdf: "pdf"
+            case .markdown: "markdown"
+            case .text: "text"
+            case .data: "data"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: ArtifactKind, b: ArtifactKind) -> Bool { a.rawValue == b.rawValue }
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
@@ -2418,8 +2604,10 @@ public enum Wire {
         public var via: String?
         /// Logins of the org members this comment @mentions, worked out by the server. Never the author.
         public var mentions: [String]?
+        /// The id of the comment that starts its thread. Replies to a reply sit under that same root.
+        public var replyTo: String?
 
-        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil) {
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil, replyTo: String? = nil) {
             self.id = id
             self.author = author
             self.text = text
@@ -2427,6 +2615,7 @@ public enum Wire {
             self.anchor = anchor
             self.via = via
             self.mentions = mentions
+            self.replyTo = replyTo
         }
     }
 
@@ -2712,6 +2901,36 @@ public enum Wire {
             version = try c.decode(UInt32.self, forKey: .version)
             visualMatch = try c.decodeIfPresent(Double.self, forKey: .visualMatch)
             differences = try c.decodeIfPresent([String].self, forKey: .differences) ?? []
+        }
+    }
+
+    /// A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.
+    public struct Artifact: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+        public var kind: ArtifactKind
+        public var summary: String?
+        /// Its upload's link, /attachments/<id>/<name> (members fetch it there).
+        public var file: String
+        public var mime: String
+        public var bytes: UInt64
+        /// The role of the agent that shared it.
+        public var by: String
+        public var at: UInt64
+        /// 1 for the first share, one more each time the same title is shared again.
+        public var version: UInt32
+
+        public init(id: String, title: String, kind: ArtifactKind, summary: String? = nil, file: String, mime: String, bytes: UInt64, by: String, at: UInt64, version: UInt32) {
+            self.id = id
+            self.title = title
+            self.kind = kind
+            self.summary = summary
+            self.file = file
+            self.mime = mime
+            self.bytes = bytes
+            self.by = by
+            self.at = at
+            self.version = version
         }
     }
 
@@ -3062,6 +3281,8 @@ public enum Wire {
         public var risk: Risk?
         public var autoReview: AutoReview?
         public var mockups: [Mockup]
+        /// Files its agents shared: charts, images, pages. Empty on older tasks.
+        public var artifacts: [Artifact]
         public var tickets: [TicketLink]
         public var shareable: Bool
         /// claude or codex: what builds it.
@@ -3099,7 +3320,7 @@ public enum Wire {
         /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
         public var mergeForecast: MergeForecast?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3132,6 +3353,7 @@ public enum Wire {
             self.risk = risk
             self.autoReview = autoReview
             self.mockups = mockups
+            self.artifacts = artifacts
             self.tickets = tickets
             self.shareable = shareable
             self.agent = agent
@@ -3188,6 +3410,7 @@ public enum Wire {
             risk = try c.decodeIfPresent(Risk.self, forKey: .risk)
             autoReview = try c.decodeIfPresent(AutoReview.self, forKey: .autoReview)
             mockups = try c.decodeIfPresent([Mockup].self, forKey: .mockups) ?? []
+            artifacts = try c.decodeIfPresent([Artifact].self, forKey: .artifacts) ?? []
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             shareable = try c.decode(Bool.self, forKey: .shareable)
             agent = try c.decode(String.self, forKey: .agent)
@@ -3255,8 +3478,12 @@ public enum Wire {
         public var autoMerges: Bool?
         /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
         public var scoutItems: UInt32?
+        /// Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60.
+        public var taskMinutes: UInt32?
+        /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
+        public var taskCostUsd: Double?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -3266,6 +3493,8 @@ public enum Wire {
             self.autoFixMerges = autoFixMerges
             self.autoMerges = autoMerges
             self.scoutItems = scoutItems
+            self.taskMinutes = taskMinutes
+            self.taskCostUsd = taskCostUsd
         }
 
         public init(from decoder: Decoder) throws {
@@ -3279,6 +3508,8 @@ public enum Wire {
             autoFixMerges = try c.decodeIfPresent(Bool.self, forKey: .autoFixMerges)
             autoMerges = try c.decodeIfPresent(Bool.self, forKey: .autoMerges)
             scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
+            taskMinutes = try c.decodeIfPresent(UInt32.self, forKey: .taskMinutes)
+            taskCostUsd = try c.decodeIfPresent(Double.self, forKey: .taskCostUsd)
         }
     }
 
@@ -3723,11 +3954,14 @@ public enum Wire {
         public var login: String
         public var viewing: String?
         public var since: UInt64
+        /// True when every app the person has open is the iPhone or Android app.
+        public var mobile: Bool?
 
-        public init(login: String, viewing: String? = nil, since: UInt64) {
+        public init(login: String, viewing: String? = nil, since: UInt64, mobile: Bool? = nil) {
             self.login = login
             self.viewing = viewing
             self.since = since
+            self.mobile = mobile
         }
     }
 
@@ -3837,6 +4071,53 @@ public enum Wire {
         }
     }
 
+    /// A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online.
+    public struct Recurring: Codable, Hashable, Sendable {
+        public var id: String
+        public var goal: String
+        public var title: String
+        /// The prompt: each run's task brief.
+        public var brief: String
+        /// One of the goal's repos. None: the goal's own.
+        public var repo: String?
+        /// claude or codex.
+        public var agent: String
+        /// The interval in minutes (60 at least).
+        public var every: UInt32
+        /// How `every` is shown: hours, days or weeks.
+        public var unit: RecurringUnit
+        /// The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST.
+        public var firstAt: UInt64
+        /// An IANA time zone, e.g. America/New_York.
+        public var timeZone: String
+        /// When it next runs (ms).
+        public var nextAt: UInt64
+        public var paused: Bool
+        public var lastRunAt: UInt64?
+        /// The task its last run started. While that one is still open, a due run is skipped.
+        public var lastTask: String?
+        /// Who saved it last; its runs are started on their behalf.
+        public var by: String
+
+        public init(id: String, goal: String, title: String, brief: String, repo: String? = nil, agent: String, every: UInt32, unit: RecurringUnit, firstAt: UInt64, timeZone: String, nextAt: UInt64, paused: Bool, lastRunAt: UInt64? = nil, lastTask: String? = nil, by: String) {
+            self.id = id
+            self.goal = goal
+            self.title = title
+            self.brief = brief
+            self.repo = repo
+            self.agent = agent
+            self.every = every
+            self.unit = unit
+            self.firstAt = firstAt
+            self.timeZone = timeZone
+            self.nextAt = nextAt
+            self.paused = paused
+            self.lastRunAt = lastRunAt
+            self.lastTask = lastTask
+            self.by = by
+        }
+    }
+
     /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
     public struct Draft: Codable, Hashable, Sendable {
         public var id: String
@@ -3910,6 +4191,66 @@ public enum Wire {
         public init(goal: String, following: Bool) {
             self.goal = goal
             self.following = following
+        }
+    }
+
+    /// One quiet-hours window: on these days, from `start` to `end`.
+    public struct QuietWindow: Codable, Hashable, Sendable {
+        /// The days it starts on, 0 Sunday to 6 Saturday.
+        public var days: [UInt16]
+        /// Minutes after midnight (0–1439) it starts, in the schedule's time zone.
+        public var start: UInt16
+        /// Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day.
+        public var end: UInt16
+
+        public init(days: [UInt16] = [], start: UInt16, end: UInt16) {
+            self.days = days
+            self.start = start
+            self.end = end
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            days = try c.decodeIfPresent([UInt16].self, forKey: .days) ?? []
+            start = try c.decode(UInt16.self, forKey: .start)
+            end = try c.decode(UInt16.self, forKey: .end)
+        }
+    }
+
+    /// One of your phones registered for push notifications. Its token is never sent back.
+    public struct PushDevice: Codable, Hashable, Sendable {
+        /// Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding.
+        public var id: String
+        public var platform: PushPlatform
+        public var environment: PushEnvironment
+        public var createdAt: UInt64
+        public var lastSeen: UInt64
+
+        public init(id: String, platform: PushPlatform, environment: PushEnvironment, createdAt: UInt64, lastSeen: UInt64) {
+            self.id = id
+            self.platform = platform
+            self.environment = environment
+            self.createdAt = createdAt
+            self.lastSeen = lastSeen
+        }
+    }
+
+    /// Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.
+    public struct QuietHours: Codable, Hashable, Sendable {
+        /// An IANA time zone, like America/Toronto.
+        public var timeZone: String
+        /// Up to 7 windows.
+        public var windows: [QuietWindow]
+
+        public init(timeZone: String, windows: [QuietWindow] = []) {
+            self.timeZone = timeZone
+            self.windows = windows
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            timeZone = try c.decode(String.self, forKey: .timeZone)
+            windows = try c.decodeIfPresent([QuietWindow].self, forKey: .windows) ?? []
         }
     }
 
@@ -4236,6 +4577,109 @@ public enum Wire {
             outcomes = try c.decode(StatsFindingOutcomes.self, forKey: .outcomes)
             byAgent = try c.decodeIfPresent([StatsFindingAgent].self, forKey: .byAgent) ?? []
             recent = try c.decodeIfPresent([StatsFindingRow].self, forKey: .recent) ?? []
+        }
+    }
+
+    /// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
+    public struct GoalTally: Codable, Hashable, Sendable {
+        public var goal: String
+        public var merged: UInt32
+        public var cancelled: UInt32
+        public var closed: UInt32
+        public var total: UInt32
+
+        public init(goal: String, merged: UInt32, cancelled: UInt32, closed: UInt32, total: UInt32) {
+            self.goal = goal
+            self.merged = merged
+            self.cancelled = cancelled
+            self.closed = closed
+            self.total = total
+        }
+    }
+
+    /// One task on a day report.
+    public struct ReportItem: Codable, Hashable, Sendable {
+        public var id: String
+        /// The task in the Factory: <factory>/t/<id>.
+        public var url: String
+        public var title: String
+        /// Its goal's name.
+        public var goal: String?
+        public var owner: String
+        public var pr: UInt32?
+        /// Its pull request on GitHub; none for a local repo.
+        public var prUrl: String?
+        /// When it merged or was approved; for pending and in-progress rows, when it last changed.
+        public var at: UInt64?
+        /// What happened: "approved the plan", "review"…
+        public var note: String?
+
+        public init(id: String, url: String, title: String, goal: String? = nil, owner: String, pr: UInt32? = nil, prUrl: String? = nil, at: UInt64? = nil, note: String? = nil) {
+            self.id = id
+            self.url = url
+            self.title = title
+            self.goal = goal
+            self.owner = owner
+            self.pr = pr
+            self.prUrl = prUrl
+            self.at = at
+            self.note = note
+        }
+    }
+
+    /// A day report's section; empty ones are left out.
+    public struct ReportSection: Codable, Hashable, Sendable {
+        /// merged, reviewed, pendingReview or inProgress.
+        public var key: String
+        public var title: String
+        public var items: [ReportItem]
+
+        public init(key: String, title: String, items: [ReportItem] = []) {
+            self.key = key
+            self.title = title
+            self.items = items
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = try c.decode(String.self, forKey: .key)
+            title = try c.decode(String.self, forKey: .title)
+            items = try c.decodeIfPresent([ReportItem].self, forKey: .items) ?? []
+        }
+    }
+
+    /// What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal.
+    public struct DayReport: Codable, Hashable, Sendable {
+        public var login: String
+        public var since: UInt64
+        public var until: UInt64
+        /// "EOD - Fri, Oct 31".
+        public var title: String
+        public var sections: [ReportSection]
+        /// The report as Markdown, ready to paste.
+        public var markdown: String
+        /// The report as Slack mrkdwn, ready to paste.
+        public var slack: String
+
+        public init(login: String, since: UInt64, until: UInt64, title: String, sections: [ReportSection] = [], markdown: String, slack: String) {
+            self.login = login
+            self.since = since
+            self.until = until
+            self.title = title
+            self.sections = sections
+            self.markdown = markdown
+            self.slack = slack
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            login = try c.decode(String.self, forKey: .login)
+            since = try c.decode(UInt64.self, forKey: .since)
+            until = try c.decode(UInt64.self, forKey: .until)
+            title = try c.decode(String.self, forKey: .title)
+            sections = try c.decodeIfPresent([ReportSection].self, forKey: .sections) ?? []
+            markdown = try c.decode(String.self, forKey: .markdown)
+            slack = try c.decode(String.self, forKey: .slack)
         }
     }
 
@@ -5498,18 +5942,20 @@ public enum Wire {
         }
     }
 
-    /// The answer to `task.token_request`.
+    /// The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write).
     public struct ServerToRunnerTaskToken: Codable, Hashable, Sendable {
         public var reqId: String
         public var token: String?
         public var error: String?
         public var code: String?
+        public var settingsUrl: String?
 
-        public init(reqId: String, token: String? = nil, error: String? = nil, code: String? = nil) {
+        public init(reqId: String, token: String? = nil, error: String? = nil, code: String? = nil, settingsUrl: String? = nil) {
             self.reqId = reqId
             self.token = token
             self.error = error
             self.code = code
+            self.settingsUrl = settingsUrl
         }
     }
 
@@ -5889,6 +6335,45 @@ public enum Wire {
         }
     }
 
+    /// The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`.
+    public struct ClientMessageRecurringSave: Codable, Hashable, Sendable {
+        /// nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent.
+        public var recurring: Recurring
+
+        public init(recurring: Recurring) {
+            self.recurring = recurring
+        }
+    }
+
+    /// The goal's lead or an admin.
+    public struct ClientMessageRecurringDelete: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now.
+    public struct ClientMessageRecurringPause: Codable, Hashable, Sendable {
+        public var id: String
+        public var paused: Bool
+
+        public init(id: String, paused: Bool) {
+            self.id = id
+            self.paused = paused
+        }
+    }
+
+    /// The goal's lead or an admin: start a run now; its schedule is kept.
+    public struct ClientMessageRecurringRunNow: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
     public struct ClientMessageRepoSetupStart: Codable, Hashable, Sendable {
         public var repo: String
@@ -5907,6 +6392,40 @@ public enum Wire {
 
         public init(repo: String) {
             self.repo = repo
+        }
+    }
+
+    /// Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`.
+    public struct ClientMessageQuietHoursSet: Codable, Hashable, Sendable {
+        /// None: no quiet hours.
+        public var quietHours: QuietHours?
+
+        public init(quietHours: QuietHours? = nil) {
+            self.quietHours = quietHours
+        }
+    }
+
+    /// Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`.
+    public struct ClientMessagePushRegister: Codable, Hashable, Sendable {
+        public var platform: PushPlatform
+        public var token: String
+        public var environment: PushEnvironment
+
+        public init(platform: PushPlatform, token: String, environment: PushEnvironment) {
+            self.platform = platform
+            self.token = token
+            self.environment = environment
+        }
+    }
+
+    /// Remove one of your push devices, by its token or its id. Answered with `push.devices`.
+    public struct ClientMessagePushUnregister: Codable, Hashable, Sendable {
+        public var token: String?
+        public var id: String?
+
+        public init(token: String? = nil, id: String? = nil) {
+            self.token = token
+            self.id = id
         }
     }
 
@@ -6297,15 +6816,19 @@ public enum Wire {
         }
     }
 
+    /// Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.
     public struct ClientMessageTaskComment: Codable, Hashable, Sendable {
         public var id: String
         public var text: String
         public var anchor: String?
+        /// The id of a comment on this task to reply to; a reply to a reply goes under its root.
+        public var replyTo: String?
 
-        public init(id: String, text: String, anchor: String? = nil) {
+        public init(id: String, text: String, anchor: String? = nil, replyTo: String? = nil) {
             self.id = id
             self.text = text
             self.anchor = anchor
+            self.replyTo = replyTo
         }
     }
 
@@ -6483,6 +7006,15 @@ public enum Wire {
         }
     }
 
+    /// Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.
+    public struct ClientMessageTaskRecheckGitHub: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Run one of the pull request's CI checks again, by name.
     public struct ClientMessageTaskRerunCheck: Codable, Hashable, Sendable {
         public var id: String
@@ -6561,6 +7093,45 @@ public enum Wire {
         }
     }
 
+    /// Your day report for [since, until), your local day's bounds in ms, answered with `report`.
+    public struct ClientMessageReportGet: Codable, Hashable, Sendable {
+        public var since: UInt64
+        public var until: UInt64
+
+        public init(since: UInt64, until: UInt64) {
+            self.since = since
+            self.until = until
+        }
+    }
+
+    /// Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.
+    public struct ClientMessageTasksOlder: Codable, Hashable, Sendable {
+        /// One goal's tasks. None: every goal's.
+        public var goal: String?
+        /// Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start.
+        public var before: UInt64?
+        /// The previous page's last task ID, to page past tasks updated in the same millisecond.
+        public var beforeId: String?
+        /// Page size: 50 by default, 200 at most.
+        public var limit: UInt32?
+
+        public init(goal: String? = nil, before: UInt64? = nil, beforeId: String? = nil, limit: UInt32? = nil) {
+            self.goal = goal
+            self.before = before
+            self.beforeId = beforeId
+            self.limit = limit
+        }
+    }
+
+    /// One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`.
+    public struct ClientMessageTaskGet: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// App (macOS, web) → server.
     public enum ClientMessage: Codable, Hashable, Sendable {
         case subscribe
@@ -6584,8 +7155,16 @@ public enum Wire {
         case draftGoal(ClientMessageDraftGoal)
         case draftCancel(ClientMessageDraftCancel)
         case goalScout(ClientMessageGoalScout)
+        case recurringSave(ClientMessageRecurringSave)
+        case recurringDelete(ClientMessageRecurringDelete)
+        case recurringPause(ClientMessageRecurringPause)
+        case recurringRunNow(ClientMessageRecurringRunNow)
         case repoSetupStart(ClientMessageRepoSetupStart)
         case repoSetupCancel(ClientMessageRepoSetupCancel)
+        case quietHoursSet(ClientMessageQuietHoursSet)
+        case pushRegister(ClientMessagePushRegister)
+        case pushUnregister(ClientMessagePushUnregister)
+        case pushDevices
         case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
@@ -6631,6 +7210,7 @@ public enum Wire {
         case taskQueue(ClientMessageTaskQueue)
         case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
+        case taskRecheckGitHub(ClientMessageTaskRecheckGitHub)
         case taskRerunCheck(ClientMessageTaskRerunCheck)
         case taskCheckLog(ClientMessageTaskCheckLog)
         case taskSplit(ClientMessageTaskSplit)
@@ -6638,6 +7218,9 @@ public enum Wire {
         case taskCheckedIt(ClientMessageTaskCheckedIt)
         case taskMockupChange(ClientMessageTaskMockupChange)
         case statsGet(ClientMessageStatsGet)
+        case reportGet(ClientMessageReportGet)
+        case tasksOlder(ClientMessageTasksOlder)
+        case taskGet(ClientMessageTaskGet)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -6667,8 +7250,16 @@ public enum Wire {
             case "draft.goal": self = .draftGoal(try ClientMessageDraftGoal(from: decoder))
             case "draft.cancel": self = .draftCancel(try ClientMessageDraftCancel(from: decoder))
             case "goal.scout": self = .goalScout(try ClientMessageGoalScout(from: decoder))
+            case "recurring.save": self = .recurringSave(try ClientMessageRecurringSave(from: decoder))
+            case "recurring.delete": self = .recurringDelete(try ClientMessageRecurringDelete(from: decoder))
+            case "recurring.pause": self = .recurringPause(try ClientMessageRecurringPause(from: decoder))
+            case "recurring.runNow": self = .recurringRunNow(try ClientMessageRecurringRunNow(from: decoder))
             case "repo.setup.start": self = .repoSetupStart(try ClientMessageRepoSetupStart(from: decoder))
             case "repo.setup.cancel": self = .repoSetupCancel(try ClientMessageRepoSetupCancel(from: decoder))
+            case "quietHours.set": self = .quietHoursSet(try ClientMessageQuietHoursSet(from: decoder))
+            case "push.register": self = .pushRegister(try ClientMessagePushRegister(from: decoder))
+            case "push.unregister": self = .pushUnregister(try ClientMessagePushUnregister(from: decoder))
+            case "push.devices": self = .pushDevices
             case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
@@ -6714,6 +7305,7 @@ public enum Wire {
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
             case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
+            case "task.recheckGitHub": self = .taskRecheckGitHub(try ClientMessageTaskRecheckGitHub(from: decoder))
             case "task.rerunCheck": self = .taskRerunCheck(try ClientMessageTaskRerunCheck(from: decoder))
             case "task.checkLog": self = .taskCheckLog(try ClientMessageTaskCheckLog(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
@@ -6721,6 +7313,9 @@ public enum Wire {
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
             case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
             case "stats.get": self = .statsGet(try ClientMessageStatsGet(from: decoder))
+            case "report.get": self = .reportGet(try ClientMessageReportGet(from: decoder))
+            case "tasks.older": self = .tasksOlder(try ClientMessageTasksOlder(from: decoder))
+            case "task.get": self = .taskGet(try ClientMessageTaskGet(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -6790,12 +7385,35 @@ public enum Wire {
             case .goalScout(let body):
                 try c.encode("goal.scout", forKey: .type)
                 try body.encode(to: encoder)
+            case .recurringSave(let body):
+                try c.encode("recurring.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringDelete(let body):
+                try c.encode("recurring.delete", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringPause(let body):
+                try c.encode("recurring.pause", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringRunNow(let body):
+                try c.encode("recurring.runNow", forKey: .type)
+                try body.encode(to: encoder)
             case .repoSetupStart(let body):
                 try c.encode("repo.setup.start", forKey: .type)
                 try body.encode(to: encoder)
             case .repoSetupCancel(let body):
                 try c.encode("repo.setup.cancel", forKey: .type)
                 try body.encode(to: encoder)
+            case .quietHoursSet(let body):
+                try c.encode("quietHours.set", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushRegister(let body):
+                try c.encode("push.register", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushUnregister(let body):
+                try c.encode("push.unregister", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushDevices:
+                try c.encode("push.devices", forKey: .type)
             case .goalFollow(let body):
                 try c.encode("goal.follow", forKey: .type)
                 try body.encode(to: encoder)
@@ -6930,6 +7548,9 @@ public enum Wire {
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
                 try body.encode(to: encoder)
+            case .taskRecheckGitHub(let body):
+                try c.encode("task.recheckGitHub", forKey: .type)
+                try body.encode(to: encoder)
             case .taskRerunCheck(let body):
                 try c.encode("task.rerunCheck", forKey: .type)
                 try body.encode(to: encoder)
@@ -6951,6 +7572,15 @@ public enum Wire {
             case .statsGet(let body):
                 try c.encode("stats.get", forKey: .type)
                 try body.encode(to: encoder)
+            case .reportGet(let body):
+                try c.encode("report.get", forKey: .type)
+                try body.encode(to: encoder)
+            case .tasksOlder(let body):
+                try c.encode("tasks.older", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskGet(let body):
+                try c.encode("task.get", forKey: .type)
+                try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
             }
@@ -6965,7 +7595,12 @@ public enum Wire {
         /// The most recent session ends (last 7 days, newest first).
         public var ended: [EndedSession]
         public var goals: [Goal]
+        /// Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`.
         public var tasks: [Task]
+        /// Each goal's task counts over every task, also those left out. None: an older server, which sends every task.
+        public var tallies: [GoalTally]?
+        /// How many finished tasks the snapshot left out. None: an older server.
+        public var olderTasks: UInt32?
         public var policy: RiskPolicy
         public var acceptances: [RiskAcceptance]
         /// The org's prompt additions. None: an older server.
@@ -6977,6 +7612,8 @@ public enum Wire {
         public var online: [Presence]
         public var notes: [Note]
         public var follows: [GoalFollow]
+        /// Your quiet hours. None: none set, or an older server.
+        public var quietHours: QuietHours?
         public var intake: [IntakeRequest]
         public var repos: [OrgRepo]
         /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
@@ -6991,6 +7628,8 @@ public enum Wire {
         public var setupRuns: [RepoSetupRun]?
         /// Each goal's latest Scout run. None: an older server.
         public var scoutRuns: [ScoutRun]?
+        /// Every goal's recurring tasks. None: an older server.
+        public var recurring: [Recurring]?
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
         /// Runner releases, newest first, with their notes (What's new). None: an older server.
@@ -7007,7 +7646,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -7015,6 +7654,8 @@ public enum Wire {
             self.ended = ended
             self.goals = goals
             self.tasks = tasks
+            self.tallies = tallies
+            self.olderTasks = olderTasks
             self.policy = policy
             self.acceptances = acceptances
             self.prompts = prompts
@@ -7023,6 +7664,7 @@ public enum Wire {
             self.online = online
             self.notes = notes
             self.follows = follows
+            self.quietHours = quietHours
             self.intake = intake
             self.repos = repos
             self.repoOwners = repoOwners
@@ -7031,6 +7673,7 @@ public enum Wire {
             self.scripts = scripts
             self.setupRuns = setupRuns
             self.scoutRuns = scoutRuns
+            self.recurring = recurring
             self.runnerLatest = runnerLatest
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
@@ -7050,6 +7693,8 @@ public enum Wire {
             ended = try c.decodeIfPresent([EndedSession].self, forKey: .ended) ?? []
             goals = try c.decodeIfPresent([Goal].self, forKey: .goals) ?? []
             tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
+            tallies = try c.decodeIfPresent([GoalTally].self, forKey: .tallies)
+            olderTasks = try c.decodeIfPresent(UInt32.self, forKey: .olderTasks)
             policy = try c.decode(RiskPolicy.self, forKey: .policy)
             acceptances = try c.decodeIfPresent([RiskAcceptance].self, forKey: .acceptances) ?? []
             prompts = try c.decodeIfPresent(PromptAdditions.self, forKey: .prompts)
@@ -7058,6 +7703,7 @@ public enum Wire {
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
+            quietHours = try c.decodeIfPresent(QuietHours.self, forKey: .quietHours)
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
@@ -7066,6 +7712,7 @@ public enum Wire {
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
             setupRuns = try c.decodeIfPresent([RepoSetupRun].self, forKey: .setupRuns)
             scoutRuns = try c.decodeIfPresent([ScoutRun].self, forKey: .scoutRuns)
+            recurring = try c.decodeIfPresent([Recurring].self, forKey: .recurring)
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
@@ -7120,6 +7767,28 @@ public enum Wire {
         }
     }
 
+    /// A page of older finished tasks `tasks.older` asked for, newest first, to that connection only.
+    public struct ServerToClientTasksPage: Codable, Hashable, Sendable {
+        /// The goal asked for. None: every goal.
+        public var goal: String?
+        public var tasks: [Task]
+        /// There are older ones still: ask again from this page's last task.
+        public var more: Bool
+
+        public init(goal: String? = nil, tasks: [Task] = [], more: Bool) {
+            self.goal = goal
+            self.tasks = tasks
+            self.more = more
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            goal = try c.decodeIfPresent(String.self, forKey: .goal)
+            tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
+            more = try c.decode(Bool.self, forKey: .more)
+        }
+    }
+
     public struct ServerToClientGoalUpdated: Codable, Hashable, Sendable {
         public var goal: Goal
 
@@ -7170,6 +7839,23 @@ public enum Wire {
         }
     }
 
+    /// A recurring task was saved or ran.
+    public struct ServerToClientRecurringUpdated: Codable, Hashable, Sendable {
+        public var recurring: Recurring
+
+        public init(recurring: Recurring) {
+            self.recurring = recurring
+        }
+    }
+
+    public struct ServerToClientRecurringDeleted: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// How a repo's Set up with AI run is going.
     public struct ServerToClientRepoSetupUpdated: Codable, Hashable, Sendable {
         public var run: RepoSetupRun
@@ -7190,6 +7876,30 @@ public enum Wire {
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
+        }
+    }
+
+    /// Your push devices, to your apps only.
+    public struct ServerToClientPushDevices: Codable, Hashable, Sendable {
+        public var devices: [PushDevice]
+
+        public init(devices: [PushDevice] = []) {
+            self.devices = devices
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            devices = try c.decodeIfPresent([PushDevice].self, forKey: .devices) ?? []
+        }
+    }
+
+    /// Your quiet hours changed, to your apps only.
+    public struct ServerToClientQuietHoursUpdated: Codable, Hashable, Sendable {
+        /// None: cleared.
+        public var quietHours: QuietHours?
+
+        public init(quietHours: QuietHours? = nil) {
+            self.quietHours = quietHours
         }
     }
 
@@ -7413,6 +8123,15 @@ public enum Wire {
         }
     }
 
+    /// The day report `report.get` asked for, to that connection only.
+    public struct ServerToClientReport: Codable, Hashable, Sendable {
+        public var report: DayReport
+
+        public init(report: DayReport) {
+            self.report = report
+        }
+    }
+
     /// The CI check log `task.checkLog` asked for, to that connection only.
     public struct ServerToClientCheckLog: Codable, Hashable, Sendable {
         /// The task.
@@ -7455,14 +8174,19 @@ public enum Wire {
         case machineAgentLogin(ServerToClientMachineAgentLogin)
         case taskUpdated(ServerToClientTaskUpdated)
         case taskRemoved(ServerToClientTaskRemoved)
+        case tasksPage(ServerToClientTasksPage)
         case goalUpdated(ServerToClientGoalUpdated)
         case noteUpdated(ServerToClientNoteUpdated)
         case intakeUpdated(ServerToClientIntakeUpdated)
         case noteRemoved(ServerToClientNoteRemoved)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
+        case recurringUpdated(ServerToClientRecurringUpdated)
+        case recurringDeleted(ServerToClientRecurringDeleted)
         case repoSetupUpdated(ServerToClientRepoSetupUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
+        case pushDevices(ServerToClientPushDevices)
+        case quietHoursUpdated(ServerToClientQuietHoursUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
         case promptsUpdated(ServerToClientPromptsUpdated)
@@ -7479,6 +8203,7 @@ public enum Wire {
         case sessionEnded(ServerToClientSessionEnded)
         case sessionEvents(ServerToClientSessionEvents)
         case stats(ServerToClientStats)
+        case report(ServerToClientReport)
         case checkLog(ServerToClientCheckLog)
         case error(ServerToClientError)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -7495,14 +8220,19 @@ public enum Wire {
             case "machine.agent_login": self = .machineAgentLogin(try ServerToClientMachineAgentLogin(from: decoder))
             case "task.updated": self = .taskUpdated(try ServerToClientTaskUpdated(from: decoder))
             case "task.removed": self = .taskRemoved(try ServerToClientTaskRemoved(from: decoder))
+            case "tasks.page": self = .tasksPage(try ServerToClientTasksPage(from: decoder))
             case "goal.updated": self = .goalUpdated(try ServerToClientGoalUpdated(from: decoder))
             case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
             case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
+            case "recurring.updated": self = .recurringUpdated(try ServerToClientRecurringUpdated(from: decoder))
+            case "recurring.deleted": self = .recurringDeleted(try ServerToClientRecurringDeleted(from: decoder))
             case "repo.setup.updated": self = .repoSetupUpdated(try ServerToClientRepoSetupUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
+            case "push.devices": self = .pushDevices(try ServerToClientPushDevices(from: decoder))
+            case "quietHours.updated": self = .quietHoursUpdated(try ServerToClientQuietHoursUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
             case "prompts.updated": self = .promptsUpdated(try ServerToClientPromptsUpdated(from: decoder))
@@ -7519,6 +8249,7 @@ public enum Wire {
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "session.events": self = .sessionEvents(try ServerToClientSessionEvents(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
+            case "report": self = .report(try ServerToClientReport(from: decoder))
             case "checkLog": self = .checkLog(try ServerToClientCheckLog(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
             default: self = .unknown(type)
@@ -7546,6 +8277,9 @@ public enum Wire {
             case .taskRemoved(let body):
                 try c.encode("task.removed", forKey: .type)
                 try body.encode(to: encoder)
+            case .tasksPage(let body):
+                try c.encode("tasks.page", forKey: .type)
+                try body.encode(to: encoder)
             case .goalUpdated(let body):
                 try c.encode("goal.updated", forKey: .type)
                 try body.encode(to: encoder)
@@ -7564,11 +8298,23 @@ public enum Wire {
             case .scoutUpdated(let body):
                 try c.encode("scout.updated", forKey: .type)
                 try body.encode(to: encoder)
+            case .recurringUpdated(let body):
+                try c.encode("recurring.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringDeleted(let body):
+                try c.encode("recurring.deleted", forKey: .type)
+                try body.encode(to: encoder)
             case .repoSetupUpdated(let body):
                 try c.encode("repo.setup.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .followsUpdated(let body):
                 try c.encode("follows.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushDevices(let body):
+                try c.encode("push.devices", forKey: .type)
+                try body.encode(to: encoder)
+            case .quietHoursUpdated(let body):
+                try c.encode("quietHours.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)
@@ -7617,6 +8363,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .stats(let body):
                 try c.encode("stats", forKey: .type)
+                try body.encode(to: encoder)
+            case .report(let body):
+                try c.encode("report", forKey: .type)
                 try body.encode(to: encoder)
             case .checkLog(let body):
                 try c.encode("checkLog", forKey: .type)

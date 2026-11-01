@@ -157,7 +157,8 @@ async fn diff_report(dir: &Path, base: &str) -> Result<DiffReport> {
     let mut commits = Vec::new();
     // The commits share what's left of one message after the whole-branch patch; once a commit's
     // patch doesn't fit, it and every later one come without theirs.
-    let mut room = (crate::protocol::MAX_MESSAGE - crate::protocol::ENVELOPE).saturating_sub(crate::protocol::json_len(&patch) + files.iter().map(|f| f.path.len() + 48).sum::<usize>());
+    let mut room = (crate::protocol::MAX_MESSAGE - crate::protocol::ENVELOPE)
+        .saturating_sub(crate::protocol::json_len(&patch) + files.iter().map(|f| f.path.len() + 48).sum::<usize>());
     for record in log.split('\x1e').map(|r| r.trim_start_matches('\n')).filter(|r| !r.is_empty()) {
         let mut f = record.splitn(5, '\x1f');
         let (Some(sha), Some(author), Some(at), Some(subject)) = (f.next(), f.next(), f.next(), f.next()) else { continue };
@@ -165,7 +166,12 @@ async fn diff_report(dir: &Path, base: &str) -> Result<DiffReport> {
         // A merge commit shows what it brought in from its first parent.
         let show = ["show", "--no-color", "--no-ext-diff", "--no-renames", "--diff-merges=first-parent", "--format="];
         let files = numstat(&git(dir, &[&show[..], &["--numstat", sha]].concat(), None).await?);
-        let meta = 128 + sha.len() + crate::protocol::json_len(subject) + body.as_deref().map_or(0, crate::protocol::json_len) + author.len() + files.iter().map(|f| f.path.len() + 48).sum::<usize>();
+        let meta = 128
+            + sha.len()
+            + crate::protocol::json_len(subject)
+            + body.as_deref().map_or(0, crate::protocol::json_len)
+            + author.len()
+            + files.iter().map(|f| f.path.len() + 48).sum::<usize>();
         if meta > room {
             break;
         }
@@ -242,7 +248,9 @@ pub async fn run_merge_check(sessions: Sessions, c: MergeCheck) {
     let checked = merge_check(&expand_home(&c.cwd), &c.base).await;
     sessions.emit(Outbound::Wire(match checked {
         Ok(conflicts) => crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: true, clean: conflicts.is_empty(), conflicts, message: None },
-        Err(e) => crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: false, clean: false, conflicts: vec![], message: Some(format!("{e:#}")) },
+        Err(e) => {
+            crate::wire::RunnerMessage::TaskMergeCheck { task_id: c.task_id, ok: false, clean: false, conflicts: vec![], message: Some(format!("{e:#}")) }
+        }
     }));
 }
 
@@ -399,7 +407,8 @@ pub async fn run_cleanup(sessions: Sessions, c: Cleanup) {
 /// it there, with the script's output as the reason.
 async fn cleanup(emit: Emit<'_>, cwds: &[String], c: &Cleanup, path: Option<&str>) -> Outbound {
     use crate::worktree_scripts::{Phase, command};
-    let cleaned = |ok: bool, branch_deleted: bool, message: String| Outbound::TaskCleaned { task_id: c.task_id.clone(), ok, branch_deleted, message: Some(message) };
+    let cleaned =
+        |ok: bool, branch_deleted: bool, message: String| Outbound::TaskCleaned { task_id: c.task_id.clone(), ok, branch_deleted, message: Some(message) };
     let scripts = c.scripts.as_ref();
     let dir = expand_home(&c.cwd);
     let archive = command(scripts, Phase::Archive);
@@ -421,7 +430,8 @@ async fn cleanup(emit: Emit<'_>, cwds: &[String], c: &Cleanup, path: Option<&str
             }
         }
     }
-    let work = crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads, delete_remote: c.delete_remote };
+    let work =
+        crate::worktrees::TaskWork { cwd: &c.cwd, repo_dir: &c.repo_dir, branch: &c.branch, merged: c.merged, heads: &c.heads, delete_remote: c.delete_remote };
     match crate::worktrees::remove_task(cwds, work).await {
         Ok(removed) => {
             tracing::info!("task {}: {}", c.task_id, removed.message);
@@ -499,6 +509,14 @@ pub struct TokenReply {
     pub token: Option<String>,
     pub error: Option<String>,
     pub code: Option<String>,
+    /// The app's permissions page on GitHub (push tokens), to link to when GitHub refuses a push.
+    pub settings_url: Option<String>,
+}
+
+/// An app token, and where its permissions are changed.
+struct AppToken {
+    token: String,
+    settings_url: Option<String>,
 }
 
 /// Sends a message to the hub (the session list's outbox, or a fake in tests).
@@ -519,7 +537,7 @@ enum NoApp {
     NotInstalled(String),
 }
 
-async fn token(emit: Emit<'_>, task_id: &str, owner: &str, repo: &str, purpose: Option<&'static str>) -> Result<std::result::Result<String, NoApp>> {
+async fn token(emit: Emit<'_>, task_id: &str, owner: &str, repo: &str, purpose: Option<&'static str>) -> Result<std::result::Result<AppToken, NoApp>> {
     let req_id = Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
     PENDING.lock().unwrap().insert(req_id.clone(), tx);
@@ -531,7 +549,7 @@ async fn token(emit: Emit<'_>, task_id: &str, owner: &str, repo: &str, purpose: 
         _ => bail!("The control plane didn't send a GitHub token in time."),
     };
     match (reply.token, reply.error, reply.code.as_deref()) {
-        (Some(t), None, _) if !t.is_empty() => Ok(Ok(t)),
+        (Some(t), None, _) if !t.is_empty() => Ok(Ok(AppToken { token: t, settings_url: reply.settings_url })),
         (_, Some(e), Some("not_installed" | "no_app")) => Ok(Err(NoApp::NotInstalled(e))),
         (_, Some(e), _) => Err(anyhow!(e)),
         _ => bail!("The control plane sent back an empty token."),
@@ -683,7 +701,12 @@ async fn commit_with_hooks(dir: &Path, title: &str) -> Result<Option<crate::wire
     }
     let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if git(dir, &["commit", "--quiet", "--dry-run", "--no-verify", "-m", title], None).await.is_err() {
-        let why = printed.lines().map(|l| l.trim_start_matches("fatal: ").trim_start_matches("error: ")).filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(" ");
+        let why = printed
+            .lines()
+            .map(|l| l.trim_start_matches("fatal: ").trim_start_matches("error: "))
+            .filter(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         bail!("Couldn't commit: {}", if why.is_empty() { "git commit failed" } else { why.trim() });
     }
     // Unstaged again, so the worktree is as the builder left it.
@@ -767,11 +790,11 @@ async fn push(emit: Emit<'_>, task_id: &str, dir: &Path, branch: &str, fallback:
     let refspec = format!("HEAD:refs/heads/{branch}");
     let no_app = match target {
         Ok((owner, repo)) => match token(emit, task_id, &owner, &repo, purpose).await? {
-            Ok(token) => {
+            Ok(AppToken { token, settings_url }) => {
                 let url = push_url(&owner, &repo, &token, std::env::var(PUSH_URL_ENV).ok().as_deref());
                 git(dir, &["-c", "credential.helper=", "push", "--quiet", &url, &refspec], Some(&token))
                     .await
-                    .map_err(|e| anyhow!("Couldn't push {branch} to {owner}/{repo}: {e}"))?;
+                    .map_err(|e| app_push_error(branch, &owner, &repo, &format!("{e:#}"), settings_url.as_deref()))?;
                 tracing::info!("task {task_id}: pushed {branch} to {owner}/{repo}");
                 return Ok(Pushed { how: "app", owner: Some(owner), repo: Some(repo), reason: None });
             }
@@ -792,6 +815,20 @@ async fn push(emit: Emit<'_>, task_id: &str, dir: &Path, branch: &str, fallback:
     git(dir, &["push", "--quiet", "origin", &refspec], None).await.map_err(|e| anyhow!("Couldn't push {branch} to origin: {e}"))?;
     tracing::info!("task {task_id}: pushed {branch} to origin with this machine's credentials");
     Ok(Pushed { how: "fallback", owner: None, repo: None, reason: Some(reason) })
+}
+
+/// A failed app push as the task's error: GitHub refusing a workflow change because the app lacks Workflows: write says so,
+/// with where to approve it; anything else is the plain "Couldn't push".
+fn app_push_error(branch: &str, owner: &str, repo: &str, stderr: &str, settings_url: Option<&str>) -> anyhow::Error {
+    // "refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission"
+    if stderr.contains("without `workflows` permission") {
+        let at = settings_url.map(|u| format!(" ({u})")).unwrap_or_default();
+        return anyhow!(
+            "GitHub refused to push {branch} to {owner}/{repo} because it changes .github/workflows and the Maple GitHub App doesn't \
+             have the Workflows: write permission. Approve it in the app's settings{at} and on the installation, then retry."
+        );
+    }
+    anyhow!("Couldn't push {branch} to {owner}/{repo}: {stderr}")
 }
 
 // ---- handing off ----
@@ -1212,7 +1249,7 @@ pub(crate) async fn fetch_base(
     let mut source = "origin".to_string();
     if let Some((owner, repo)) = parse_github(&origin) {
         // Without the app there (a public repo, or one this machine can reach itself): origin.
-        if let Ok(t) = token(emit, task_id, &owner, &repo, Some("fetch")).await? {
+        if let Ok(AppToken { token: t, .. }) = token(emit, task_id, &owner, &repo, Some("fetch")).await? {
             source = fetch_url(&owner, &repo, &t, fetch_override);
             secret = Some(t);
         }
@@ -1284,6 +1321,22 @@ async fn git(dir: &Path, args: &[&str], secret: Option<&str>) -> Result<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_push_refused_for_workflows_names_the_permission() {
+        let url = "https://github.com/organizations/acme/settings/apps/maple/permissions";
+        let refused = "! [remote rejected] HEAD -> mf-1 (refusing to allow a GitHub App to create or update workflow \
+                       `.github/workflows/ci.yml` without `workflows` permission) failed to push some refs to 'https://github.com/acme/widgets.git'";
+        let msg = format!("{:#}", app_push_error("mf-1", "acme", "widgets", refused, Some(url)));
+        assert!(msg.contains("Workflows: write") && msg.contains(url) && msg.contains(".github/workflows"), "{msg}");
+        assert!(!msg.contains("Couldn't push"), "{msg}");
+        // Without the link it still names the permission.
+        let msg = format!("{:#}", app_push_error("mf-1", "acme", "widgets", refused, None));
+        assert!(msg.contains("Workflows: write") && !msg.contains("()"), "{msg}");
+        // Anything else stays the generic failure.
+        let msg = format!("{:#}", app_push_error("mf-1", "acme", "widgets", "Could not resolve host: github.com", Some(url)));
+        assert_eq!(msg, "Couldn't push mf-1 to acme/widgets: Could not resolve host: github.com");
+    }
 
     #[test]
     fn parses_github_remotes() {
@@ -1399,7 +1452,7 @@ mod tests {
         let root = tmp(tag);
         let (bare, work) = (root.join("origin.git"), root.join("work"));
         std::fs::create_dir_all(&work).unwrap();
-        sh(&root, &["init", "--quiet", "--bare", bare.to_str().unwrap()]);
+        sh(&root, &["init", "--quiet", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
         sh(&work, &["init", "--quiet", "-b", "main"]);
         for (k, v) in [("user.name", "Test Person"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")] {
             sh(&work, &["config", k, v]);
@@ -1443,7 +1496,10 @@ mod tests {
         let out = finish(emit, &failing).await.unwrap();
         let (ok, checks) = checks_of(&out);
         assert!(!ok);
-        assert_eq!(checks.iter().map(|c| (c.command.as_str(), c.code)).collect::<Vec<_>>(), [("echo linting", Some(0)), ("echo \"a.txt:1 offence ($MAPLE_PHASE)\"; exit 3", Some(3))]);
+        assert_eq!(
+            checks.iter().map(|c| (c.command.as_str(), c.code)).collect::<Vec<_>>(),
+            [("echo linting", Some(0)), ("echo \"a.txt:1 offence ($MAPLE_PHASE)\"; exit 3", Some(3))]
+        );
         assert_eq!(checks[1].output.trim(), "a.txt:1 offence (checks)");
         let Outbound::TaskFinished { message, commit, .. } = &out else { unreachable!() };
         assert!(message.as_deref().unwrap().contains("exited 3"), "{message:?}");
@@ -1699,7 +1755,10 @@ mod tests {
         commit(&wt, "c.txt", "mine\n", "work only HEAD has");
         let mine = sh(&wt, &["rev-parse", "HEAD"]);
         let err = format!("{:#}", existing(&cwd, &again).await.unwrap_err());
-        assert!(err.contains("is detached at") && err.contains("not on the task's branch agent/fix-1a2b") && err.contains("1 commit not on the branch"), "{err}");
+        assert!(
+            err.contains("is detached at") && err.contains("not on the task's branch agent/fix-1a2b") && err.contains("1 commit not on the branch"),
+            "{err}"
+        );
         assert_eq!(sh(&wt, &["branch", "--show-current"]).trim(), "");
         assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), mine);
 
@@ -1819,7 +1878,10 @@ mod tests {
     /// A commit on `branch` in the bare repo `bare`, as another machine's push would make.
     fn commit_on(bare: &Path, branch: &str) {
         let tip = sh(bare, &["rev-parse", branch]);
-        let c = sh(bare, &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", &format!("{tip}^{{tree}}"), "-p", &tip, "-m", "someone else's push"]);
+        let c = sh(
+            bare,
+            &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", &format!("{tip}^{{tree}}"), "-p", &tip, "-m", "someone else's push"],
+        );
         sh(bare, &["update-ref", &format!("refs/heads/{branch}"), &c]);
     }
 
@@ -1949,7 +2011,7 @@ mod tests {
             sent.lock().unwrap().push(serde_json::to_string(&m).unwrap());
             if let Outbound::TaskTokenRequest { req_id, purpose, .. } = m {
                 assert_eq!(purpose, Some("fetch"));
-                resolve(&req_id, TokenReply { token: Some(token.into()), error: None, code: None });
+                resolve(&req_id, TokenReply { token: Some(token.into()), error: None, code: None, settings_url: None });
             }
         }
     }
@@ -2124,7 +2186,12 @@ mod tests {
         let c = cleanup_of(&repo, &wt, &head, Some("echo 'docker compose down: no such project'; exit 1"), Some("echo never"));
         let (ok, _, message) = cleaned(&cleanup(&emit, &[], &c, None).await);
         assert!(!ok);
-        assert!(message.contains("teardown script (`echo 'docker compose down: no such project'; exit 1`) failed with exit code 1:\ndocker compose down: no such project"), "{message}");
+        assert!(
+            message.contains(
+                "teardown script (`echo 'docker compose down: no such project'; exit 1`) failed with exit code 1:\ndocker compose down: no such project"
+            ),
+            "{message}"
+        );
         assert!(wt.join("a.txt").exists());
         // A session still in it: nothing runs.
         let c = cleanup_of(&repo, &wt, &head, Some("touch ../ran"), None);

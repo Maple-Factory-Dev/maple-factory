@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import type { RiskPolicy, Task } from "../src/wire.ts";
 import { DEFAULT_POLICY, assess, matchesGlob, validPolicy } from "../src/factory/policy.ts";
 import { plannerPrompt } from "../src/factory/prompts.ts";
-import { areaFromCheck, checksProblem, clampInt, cleanOwners, formFromPolicy, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, syncDraft, webhookUrl } from "../web/app/settings.js";
+import { areaFromCheck, checksProblem, clampInt, cleanOwners, formFromPolicy, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, serverVersionInfo, syncDraft, webhookUrl } from "../web/app/settings.js";
 
 const policy = structuredClone(DEFAULT_POLICY);
 
@@ -260,4 +260,20 @@ test("the planner's prompt lists the enabled risk checks, with their level and p
   assert.match(p, /- Migrations \(medium\): touches db\/migrations\/\*\*/);
   assert.doesNotMatch(p, /Billing/);
   assert.doesNotMatch(p, /auth, payments, migrations and public APIs are high/);
+});
+
+test("the Version card reads up to date when there's no newer maple-server", () => {
+  assert.deepEqual(serverVersionInfo("0.78.0", null), { version: "maple-server 0.78.0", status: "Up to date", update: null });
+});
+
+test("the Version card says a newer maple-server is out, and how this factory gets it", () => {
+  const how = "Run `maple update` on the machine it was installed from.";
+  assert.deepEqual(serverVersionInfo("0.78.0", { version: "0.79.0", how }),
+    { version: "maple-server 0.78.0", status: "0.79.0 is out", update: { version: "0.79.0", how } });
+});
+
+test("the Version card reads unknown for a server too old to send its version", () => {
+  const info = serverVersionInfo(null, null);
+  assert.equal(info.version, "Unknown");
+  assert.equal(info.update, null);
 });

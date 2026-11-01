@@ -38,13 +38,17 @@ struct GoalOverviewSectionsTests {
             task("ASK", state: .planning, needsYou: true, question: "Which token store?"),
             task("MERGED", state: .merged),
             task("GONE", state: .cancelled),
+            task("CLOSED", state: .closed),
         ], today: today)
         #expect(sections.needsYou.map(\.id) == ["ASK"])
         #expect(ids(sections.drafts) == ["DRAFT"])
         #expect(ids(sections.queued) == ["QUEUED"])
-        #expect(ids(sections.planning) == ["PLAN", "PARKED", "WAITING"])
+        #expect(ids(sections.planning) == ["PLAN", "WAITING"])
         #expect(ids(sections.inMotion) == ["BUILD", "REVIEW"])
         #expect(ids(sections.recentlyLanded) == ["MERGED"])
+        // Backlogged and closed tasks show in no section.
+        #expect(!everyID(sections).contains("PARKED"))
+        #expect(!everyID(sections).contains("CLOSED"))
     }
 
     @Test(arguments: TaskState.allCases)
@@ -58,8 +62,13 @@ struct GoalOverviewSectionsTests {
         ]
         let all = everyID(Sections(tasks: tasks, today: today))
         #expect(Set(all).count == all.count)
-        // Open tasks all show; only cancelled ones (and old merges) drop out.
-        #expect(all.count == (taskState == .cancelled ? 0 : tasks.count))
+        // Open tasks all show; cancelled and closed ones (and old merges) drop out, and backlogged
+        // ones show only when they need you.
+        switch taskState {
+        case .cancelled, .closed: #expect(all.isEmpty)
+        case .backlog: #expect(Set(all) == ["B", "D", "E"])
+        default: #expect(all.count == tasks.count)
+        }
     }
 
     @Test func needsYouOrdersHandsThenQuestionsThenApprovalsThenReviews() {
@@ -74,6 +83,18 @@ struct GoalOverviewSectionsTests {
         #expect(sections.needsYou.map(\.reason) == [.hand, .question, .approval, .approval, .review])
         #expect(sections.needsYou.first?.why == "Can't record the video")
         #expect(sections.needsYou[1].why == "Which?")
+    }
+
+    @Test func backloggedTaskThatNeedsYouStillShowsUnderNeedsYou() {
+        let sections = Sections(tasks: [
+            task("HAND", state: .backlog, hand: true),
+            task("ASK", state: .backlog, needsYou: true, question: "Still wanted?"),
+            task("PARKED", state: .backlog),
+        ], today: today)
+        #expect(sections.needsYou.map(\.id) == ["HAND", "ASK"])
+        #expect(sections.needsYou.map(\.reason) == [.hand, .question])
+        #expect(sections.planning.isEmpty)
+        #expect(!everyID(sections).contains("PARKED"))
     }
 
     @Test func pendingMergeWaitsOnYou() {
@@ -114,6 +135,7 @@ struct GoalOverviewSectionsTests {
 
     @Test func quietWhenOnlyMergesAndCancellations() {
         #expect(Sections(tasks: [task("M", state: .merged), task("C", state: .cancelled)], today: today).isQuiet)
+        #expect(Sections(tasks: [task("B", state: .backlog), task("X", state: .closed)], today: today).isQuiet)
         #expect(!Sections(tasks: [task("D", state: .drafting)], today: today).isQuiet)
     }
 
@@ -124,5 +146,39 @@ struct GoalOverviewSectionsTests {
                          PlanStep(text: "c", file: "", progress: .pending)]
         #expect(Sections.steps(building)?.done == 1)
         #expect(Sections.steps(building)?.total == 3)
+    }
+}
+
+/// Which Overview sections are folded, as @AppStorage keeps it.
+struct OverviewCollapseTests {
+    @Test func defaultCollapsesOnlyLanded() {
+        let collapse = OverviewCollapse(raw: OverviewCollapse.defaultRaw)
+        #expect(collapse.collapsed == [.landed])
+        #expect(collapse == OverviewCollapse())
+        for section in OverviewSection.allCases where section != .landed { #expect(!collapse.isCollapsed(section)) }
+    }
+
+    @Test func togglingRoundTripsThroughTheStoredString() {
+        let raw = OverviewCollapse(raw: OverviewCollapse.defaultRaw).toggling(.drafts).raw
+        #expect(raw == "drafts,landed")
+        let reread = OverviewCollapse(raw: raw)
+        #expect(reread.isCollapsed(.drafts))
+        #expect(reread.isCollapsed(.landed))
+        let back = reread.toggling(.drafts).toggling(.landed).raw
+        #expect(back == "")
+        #expect(OverviewCollapse(raw: back).collapsed.isEmpty)
+    }
+
+    @Test func unknownAndEmptyKeysAreIgnored() {
+        let collapse = OverviewCollapse(raw: "queue,,bogus, inMotion ,")
+        #expect(collapse.collapsed == [.queue, .inMotion])
+        #expect(OverviewCollapse(raw: "").collapsed.isEmpty)
+    }
+
+    @Test func togglingOneSectionLeavesTheOthersAlone() {
+        let start = OverviewCollapse(collapsed: [.queue, .landed])
+        let next = start.toggling(.needsYou)
+        #expect(next.collapsed == [.queue, .landed, .needsYou])
+        #expect(next.toggling(.queue).collapsed == [.landed, .needsYou])
     }
 }

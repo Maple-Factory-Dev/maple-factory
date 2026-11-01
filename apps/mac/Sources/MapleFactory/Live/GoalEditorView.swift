@@ -23,6 +23,8 @@ struct GoalEditorView: View {
     @State private var prefixEdited = false
     @State private var repoFilter = ""
     @State private var team = ""
+    /// Who it's for; empty until `me` is known, then the creator.
+    @State private var lead = ""
     /// The day it's due, or none.
     @State private var due: Date?
     /// Fields you've typed in, and whether Create was clicked: problems show for those.
@@ -47,7 +49,7 @@ struct GoalEditorView: View {
             switch self {
             case .basics: "Basics"
             case .code: "Code"
-            case .team: "Team & due date"
+            case .team: "Lead, team & due date"
             case .look: "Look"
             case .prompts: "Agent instructions"
             }
@@ -56,7 +58,7 @@ struct GoalEditorView: View {
             switch self {
             case .basics: "What the goal is called, and the prefix its task ids start with."
             case .code: "Where its tasks change code. Each task gets its own branch and worktree."
-            case .team: "Optional. Who follows it, and when it should be done."
+            case .team: "Who it's for, who follows it, and when it should be done."
             case .look: "Its color in the sidebar, on the board and on the timeline."
             case .prompts: "Optional. Extra instructions for this goal's planner, builder and reviewer."
             }
@@ -86,6 +88,7 @@ struct GoalEditorView: View {
         _repo = State(initialValue: (goal.repos.isEmpty ? [goal.repo].compactMap { $0 } : goal.repos).joined(separator: ", "))
         _base = State(initialValue: goal.base ?? "")
         _team = State(initialValue: goal.team ?? "")
+        _lead = State(initialValue: goal.lead)
         _due = State(initialValue: goal.due.map { Date(timeIntervalSince1970: Double($0) / 1000) })
         _prompts = State(initialValue: goal.prompts ?? LiveAdapter.noPrompts)
         let choice = GoalColors.choice(for: goal.color)
@@ -123,13 +126,15 @@ struct GoalEditorView: View {
         switch section {
         case .basics: problems[.name] == nil && problems[.prefix] == nil
         case .code: problems[.code] == nil
-        case .team: !team.trimmed.isEmpty || due != nil
+        case .team: true
         case .look: true
         case .prompts: LiveAdapter.prompts(prompts) != nil
         }
     }
 
-    /// Its lead or an admin; whoever makes a goal leads it.
+    /// Its lead or an admin; whoever makes a goal can set it up, even for someone else. The lead it had when
+    /// the editor opened (a new goal's creator), not the one picked here, as goal.save checks, so changing
+    /// both in one save isn't half refused.
     private var canEditPrompts: Bool {
         client.me?.role == "admin" || (editing?.lead ?? client.me?.login) == client.me?.login
     }
@@ -222,6 +227,8 @@ struct GoalEditorView: View {
                     color = GoalColors.choice(for: value)
                 }
             case "builder": prompts.builder = value
+            // `goalfill:lead:octocat`, as picking them in the Lead menu would.
+            case "lead": lead = value
             case "section": jumpTo = Section.allCases.first { "\($0)" == value }
             case "create": save()
             default: break
@@ -446,8 +453,59 @@ struct GoalEditorView: View {
         }
     }
 
+    /// Who it's picked as: the one chosen here, else the goal's lead, else whoever's making it.
+    private var shownLead: String { lead.isEmpty ? (editing?.lead ?? client.me?.login ?? "") : lead }
+
+    /// The factory's members, you first, then by name.
+    private var leadChoices: [Wire.Member] {
+        let me = client.me?.login
+        return client.members.sorted { a, b in
+            if (a.login == me) != (b.login == me) { return a.login == me }
+            return (a.name ?? a.login).localizedCaseInsensitiveCompare(b.name ?? b.login) == .orderedAscending
+        }
+    }
+
+    private func leadName(_ login: String) -> String {
+        if login == client.me?.login { return "You" }
+        return client.members.first { $0.login == login }?.name ?? login
+    }
+
+    private var leadRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            label("Lead")
+            HStack(spacing: 10) {
+                // A menu's label draws only text, so the lead's avatar sits beside it.
+                AgentAvatar(agent: LiveAdapter.person(shownLead, members: client.members), size: 20)
+                Menu {
+                    ForEach(leadChoices, id: \.login) { member in
+                        Button {
+                            lead = member.login
+                        } label: {
+                            if member.login == shownLead { Image(systemName: "checkmark") }
+                            Text(member.login == client.me?.login ? "You (@\(member.login))" : "\(member.name ?? member.login) (@\(member.login))")
+                        }
+                    }
+                } label: {
+                    Text(leadName(shownLead))
+                }
+                .fixedSize()
+                .disabled(!canEditPrompts)
+                Text("Who it's for: they can change its agent instructions, accept risk and archive it.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !canEditPrompts {
+                Label("Only \(editing?.lead ?? "its lead") or an admin can hand it to someone else.", systemImage: "lock")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textFaint)
+            }
+        }
+    }
+
     private var teamAndDue: some View {
         VStack(alignment: .leading, spacing: 14) {
+            leadRow
             VStack(alignment: .leading, spacing: 6) {
                 label("Team")
                 HStack(spacing: 10) {
@@ -678,10 +736,14 @@ struct GoalEditorView: View {
     }
 
     /// Back to the page you were on; a goal just made opens instead, unless a draft is waiting on it.
+    /// Renaming the goal you're on keeps you on it, under its new name.
     private func close(savedAs goal: Wire.Goal?) {
         withAnimation(.snappy(duration: 0.2)) {
             state.goalSheet = nil
             if editing == nil, let goal, !state.isComposing { state.destination = .goal(goal.name) }
+            if let editing, let goal, goal.name != editing.name, state.destination == .goal(editing.name) {
+                state.destination = .goal(goal.name)
+            }
         }
     }
 
@@ -694,7 +756,7 @@ struct GoalEditorView: View {
             prefix: prefix,
             color: color.hex,
             summary: summary.trimmed,
-            lead: editing?.lead ?? client.me?.login ?? "",
+            lead: lead.isEmpty ? (editing?.lead ?? client.me?.login ?? "") : lead,
             due: due.map(Self.noonMillis),
             repo: source == .repo ? repos.first : nil,
             repos: source == .repo ? repos : [],

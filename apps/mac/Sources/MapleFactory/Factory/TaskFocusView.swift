@@ -15,6 +15,8 @@ struct TaskFocusView: View {
     enum Tab { case overview, diff, session }
 
     static let demoTab = Notification.Name("TaskFocusView.demoTab")
+    /// `jump:<section>` in a demo script: what clicking that link in the summary strip does.
+    static let demoJump = Notification.Name("TaskFocusView.demoJump")
 
     private let mainWidth: CGFloat = 720
     private let railWidth: CGFloat = 300
@@ -140,7 +142,7 @@ struct TaskFocusView: View {
                             VStack(alignment: .leading, spacing: 28) {
                                 decisionCards
                                 switch tab {
-                                case .overview, .session: mainColumn
+                                case .overview, .session: mainColumn(proxy)
                                 case .diff: DiffView(task: task, files: diffFiles).frame(height: 720)
                                 }
                                 infoCards
@@ -149,7 +151,7 @@ struct TaskFocusView: View {
                         } else {
                             // A wide window's diff has a layout of its own (diffLayout).
                             HStack(alignment: .top, spacing: 40) {
-                                mainColumn.frame(maxWidth: mainWidth, alignment: .leading)
+                                mainColumn(proxy).frame(maxWidth: mainWidth, alignment: .leading)
                                 rail.frame(width: railWidth)
                             }
                         }
@@ -162,10 +164,16 @@ struct TaskFocusView: View {
                 .frame(maxWidth: .infinity)
                 // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort`
                 // at its effort, `-scroll details` at the rail's details.
+                .onReceive(NotificationCenter.default.publisher(for: Self.demoJump)) { note in
+                    if note.object as? String == "changes" { withAnimation(.snappy(duration: 0.2)) { tab = .diff } }
+                    if let name = note.object as? String, let target = TaskPageLayout.Section.allCases.first(where: { $0.anchor == name || $0.rawValue == name }) {
+                        jump(target, proxy)
+                    }
+                }
                 .task {
-                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details"].contains(target) else { return }
+                    guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details", "artifacts", "plan", "brief", "review"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
-                    proxy.scrollTo(target, anchor: target == "doneWhen" ? .top : .bottom)
+                    proxy.scrollTo(target, anchor: ["doneWhen", "artifacts", "plan", "brief", "review"].contains(target) ? .top : .bottom)
                 }
               }
             }
@@ -234,6 +242,8 @@ struct TaskFocusView: View {
                     .foregroundStyle(Theme.textMuted)
             }
             TaskOrigin(task: task)
+            // The next step for a draft, a queued plan or a parked task, one click from the title.
+            TaskActionBar(task: task)
         }
     }
 
@@ -320,44 +330,122 @@ struct TaskFocusView: View {
 
     // MARK: Main column
 
-    private var mainColumn: some View {
+    private var layout: TaskPageLayout.Layout { TaskPageLayout.sections(for: task.state) }
+
+    private func folding(_ section: TaskPageLayout.Section) -> Binding<Bool> {
+        Binding(
+            get: { appState.isFolded(task.id, section, byDefault: layout.folded.contains(section)) },
+            set: { appState.setFolded(task.id, section, $0) }
+        )
+    }
+
+    /// The summary strip's jump: open a folded section, then scroll to it.
+    private func jump(_ section: TaskPageLayout.Section, _ proxy: ScrollViewProxy) {
+        withAnimation(.snappy(duration: 0.2)) { appState.setFolded(task.id, section, false) }
+        Task {
+            try? await Task.sleep(for: .milliseconds(60))
+            withAnimation(.snappy(duration: 0.3)) { proxy.scrollTo(section.anchor, anchor: .top) }
+        }
+    }
+
+    /// The main column, in the order its stage puts first (TaskPageLayout).
+    private func mainColumn(_ proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 32) {
+            ForEach(layout.sections, id: \.self) { section in
+                self.section(section, proxy)
+            }
+        }
+    }
+
+    @ViewBuilder private func section(_ section: TaskPageLayout.Section, _ proxy: ScrollViewProxy) -> some View {
+        switch section {
+        case .banners: banners
+        case .reviewSummary:
+            if !task.doneWhen.isEmpty || task.autoReview != nil || task.pr != nil || !diffFiles.isEmpty {
+                ReviewSummaryStrip(task: task, files: diffFiles, sections: available) { target in
+                    jump(target, proxy)
+                } onOpenChanges: {
+                    withAnimation(.snappy(duration: 0.2)) { tab = .diff }
+                }
+            }
+        case .doneWhen:
+            if !task.doneWhen.isEmpty { DoneWhenSection(task: task).id(section.anchor) }
+        case .autoReview:
+            if let review = task.autoReview, !(task.state == .cancelled && review.rounds.isEmpty) {
+                AutoReviewSection(task: task, review: review).id(section.anchor)
+            }
+        case .artifacts:
+            if !task.artifacts.isEmpty { ArtifactsSection(task: task).id(section.anchor) }
+        case .mockups:
+            if !task.mockups.isEmpty { MockupsSection(task: task).id(section.anchor) }
+        case .brief:
+            if hasBrief {
+                if layout.folded.contains(.brief) {
+                    FoldableSection(title: task.spec?.isEmpty == false ? "Spec" : "Brief", summary: task.briefSummary, folded: folding(.brief)) {
+                        briefBody
+                    }
+                    .id(section.anchor)
+                } else {
+                    TaskSection(title: task.spec?.isEmpty == false ? "Spec" : "Brief") { briefBody }.id(section.anchor)
+                }
+            }
+        case .plan:
+            if !task.plan.isEmpty {
+                if layout.folded.contains(.plan) {
+                    FoldableSection(title: "Plan", summary: task.planSummary, folded: folding(.plan)) {
+                        PlanSection(task: task, titled: false)
+                    }
+                    .id(section.anchor)
+                } else {
+                    PlanSection(task: task).id(section.anchor)
+                }
+            }
+        case .timeline:
+            TaskTimeline(task: task, comments: comments, requests: requests)
+        }
+    }
+
+    private var hasBrief: Bool { task.spec?.isEmpty == false || !task.brief.isEmpty }
+
+    /// The sections the summary strip can jump to: the ones this task has.
+    private var available: [TaskPageLayout.Section] {
+        var out: [TaskPageLayout.Section] = []
+        if !task.doneWhen.isEmpty { out.append(.doneWhen) }
+        if task.autoReview != nil { out.append(.autoReview) }
+        if !task.artifacts.isEmpty { out.append(.artifacts) }
+        if !task.plan.isEmpty { out.append(.plan) }
+        if hasBrief { out.append(.brief) }
+        return out
+    }
+
+    @ViewBuilder private var briefBody: some View {
+        if let spec = task.spec, !spec.isEmpty {
+            MarkdownPreview(source: spec, baseSize: 14)
+                .padding(18)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Theme.cardBG)
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+                )
+        } else {
+            MarkdownPreview(source: task.brief, baseSize: 14)
+        }
+    }
+
+    /// Since-last-viewed, stranded, live, question and raised-hand notices: on top at every stage.
+    @ViewBuilder private var banners: some View {
+        let liveStranded = appState.liveStranded(task.id)
         VStack(alignment: .leading, spacing: 32) {
             SinceLastViewedBanner(task: task)
             if let found = appState.stranded(task.id) {
                 StrandedTaskBanner(machine: found.machine, session: found.session)
             }
-            let liveStranded = appState.liveStranded(task.id)
             if let live = liveStranded {
                 LiveStrandedBanner(task: task, name: live.name, why: live.why, lastSeen: live.lastSeen)
             }
             if task.liveLog != nil, liveStranded == nil, task.state == .planning || task.state == .building { LiveStrip(task: task) }
             if let question = task.question, task.hand == nil { QuestionBlock(task: task, question: question) }
             if let hand = task.hand { HandRaiseCard(task: task, hand: hand, showsTask: false) }
-            if let review = task.autoReview, !(task.state == .cancelled && review.rounds.isEmpty) { AutoReviewSection(task: task, review: review) }
-
-            if !task.brief.isEmpty, task.spec == nil {
-                TaskSection(title: "Brief") {
-                    MarkdownPreview(source: task.brief, baseSize: 14)
-                }
-            }
-
-            if let spec = task.spec, !spec.isEmpty {
-                TaskSection(title: "Spec") {
-                    MarkdownPreview(source: spec, baseSize: 14)
-                        .padding(18)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Theme.cardBG)
-                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
-                        )
-                }
-            }
-
-            if !task.mockups.isEmpty { MockupsSection(task: task) }
-            if !task.plan.isEmpty { PlanSection(task: task) }
-            if !task.doneWhen.isEmpty { DoneWhenSection(task: task).id("doneWhen") }
-
-            TaskTimeline(task: task, comments: comments, requests: requests)
         }
     }
 
@@ -507,12 +595,7 @@ struct TaskFocusView: View {
                     }
                 }
             }
-            detailRow("Owner") {
-                HStack(spacing: 6) {
-                    AgentAvatar(agent: task.owner, size: 18)
-                    Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
-                }
-            }
+            detailRow("Owner") { OwnerMenu(task: task, avatarSize: 18) }
             agentRows
             if appState.isLive {
                 if let worker = task.worker {

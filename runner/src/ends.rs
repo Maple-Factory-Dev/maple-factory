@@ -36,14 +36,7 @@ const AUTH_SIGNS: &[&str] = &[
 ];
 
 /// Lines agents print when the plan's limit is reached, lowercased.
-const LIMIT_SIGNS: &[&str] = &[
-    "usage limit",
-    "you've hit your limit",
-    "5-hour limit reached",
-    "weekly limit reached",
-    "rate_limit_error",
-    "limit will reset",
-];
+const LIMIT_SIGNS: &[&str] = &["usage limit", "you've hit your limit", "5-hour limit reached", "weekly limit reached", "rate_limit_error", "limit will reset"];
 
 pub fn classify(seen: &Seen) -> (EndCause, Option<String>) {
     if seen.requested {
@@ -68,10 +61,10 @@ pub fn classify(seen: &Seen) -> (EndCause, Option<String>) {
         }
         return (EndCause::Signaled, Some(name));
     }
-    if let Some(slept) = seen.slept {
-        if seen.vanished || seen.status.is_some_and(|s| s != 0) {
-            return (EndCause::MachineSlept, Some(format!("the machine slept for {} just before", minutes(slept))));
-        }
+    if let Some(slept) = seen.slept
+        && (seen.vanished || seen.status.is_some_and(|s| s != 0))
+    {
+        return (EndCause::MachineSlept, Some(format!("the machine slept for {} just before", minutes(slept))));
     }
     if seen.vanished {
         return (EndCause::Unknown, Some("its tmux session disappeared while the server kept running".into()));

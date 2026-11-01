@@ -17,19 +17,21 @@ struct UpdateToastView: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                if let url = updater.releaseNotesURL {
-                    Text("\(UpdatePhase.releaseNotesLinkLabel) ↗")
+                if updater.releaseNotesURL != nil {
+                    Text(UpdatePhase.releaseNotesLinkLabel)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.accent)
                         .contentShape(Rectangle())
-                        .onTapGesture { NSWorkspace.shared.open(url) }
+                        .onTapGesture { updater.openReleaseNotes() }
                         .pointerStyle(.link)
-                        .help("See the release notes")
+                        .help("Read the release notes")
                 }
             }
             .fixedSize()
             Spacer(minLength: 8)
-            if offersButton(phase) {
+            // Both are always laid out, so the slot is as wide as the button and the toast keeps
+            // one width from the offer through the download to Restarting….
+            ZStack(alignment: .leading) {
                 Text(UpdatePhase.updateToastButtonLabel)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Theme.onAccent)
@@ -38,10 +40,10 @@ struct UpdateToastView: View {
                     .background(Capsule().fill(Theme.accent))
                     .contentShape(Capsule())
                     .onTapGesture { updater.updateAndRestart() }
-                    .transition(.opacity)
-            } else {
+                    .opacity(offersButton(phase) ? 1 : 0)
+                    .allowsHitTesting(offersButton(phase))
                 progress(phase)
-                    .transition(.opacity)
+                    .opacity(offersButton(phase) ? 0 : 1)
             }
             Image(systemName: "xmark")
                 .font(.system(size: 9.5, weight: .semibold))
@@ -53,7 +55,7 @@ struct UpdateToastView: View {
         }
         .padding(.leading, 14)
         .padding(.trailing, 10)
-        // 440 at least, wider once the progress (which outgrows the button) takes its place.
+        // 440 at least. The progress fits in the button's slot, so the toast keeps one width.
         .frame(minWidth: 440)
         .frame(height: 50)
         .fixedSize(horizontal: true, vertical: false)
@@ -76,21 +78,15 @@ struct UpdateToastView: View {
     }
 
     private func progress(_ phase: UpdatePhase) -> some View {
-        HStack(spacing: 8) {
-            // Kept in place once it's done (Restarting…), so the toast holds its width to the end.
-            Group {
-                if let fraction = phase.progress { ProgressView(value: fraction) } else { ProgressView() }
-            }
-            .progressViewStyle(.linear)
-            .controlSize(.mini)
-            .tint(Theme.accent)
-            .frame(width: 70)
-            .opacity(phase.isBusy ? 1 : 0)
+        HStack(spacing: 6) {
+            // Kept in place once it's done (Restarting…), so the slot holds its layout to the end.
+            UpdateRing(fraction: phase.progress)
+                .padding(1)
+                .opacity(phase.isBusy ? 1 : 0)
             Text(phase.updateToastProgressLabel ?? "")
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
-                .frame(minWidth: 96, alignment: .leading)
         }
         .fixedSize()
     }

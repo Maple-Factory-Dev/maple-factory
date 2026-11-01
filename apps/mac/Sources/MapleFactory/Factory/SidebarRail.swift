@@ -30,6 +30,7 @@ struct SidebarRail: View {
             nav("Inbox", icon: "tray", destination: .inbox, badge: state.myInbox.count)
             nav("Requests", icon: "tray.and.arrow.down", destination: .intake, badge: state.newIntake, badgeColor: Theme.State.building)
             nav("My tasks", icon: "checkmark.circle", destination: .myTasks)
+            nav("Day report", icon: "doc.text", destination: .dayReport)
             nav("Needs a hand", icon: "hand.raised", destination: .needsHand, badge: state.handRaises.count, badgeColor: Theme.State.cancelled)
             nav("Activity", icon: "waveform.path.ecg", destination: .activity)
             nav("Scratchpad", icon: "note.text", destination: .scratchpad, detail: "\(state.notes.count) notes")
@@ -38,7 +39,7 @@ struct SidebarRail: View {
                 nav("Statistics", icon: "chart.bar.xaxis", destination: .statistics)
             }
             item("Notifications", detail: Notifier.shared.statusText,
-                 dot: Notifier.shared.isSnoozed ? Theme.State.awaitingApproval : nil) {
+                 dot: Notifier.shared.isSnoozed || Notifier.shared.isQuiet ? Theme.State.awaitingApproval : nil) {
                 Menu {
                     NotificationMenu()
                 } label: {
@@ -146,8 +147,8 @@ struct SidebarRail: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// The sidebar footer's update, folded down to an icon: a ring fills while it downloads, and a
-    /// click does what the footer's button would.
+    /// The sidebar footer's update, folded down to an icon: the toast's ring fills while it downloads
+    /// (and spins while checking or when the size isn't known), and a click does what the footer's button would.
     @ViewBuilder private var updateItem: some View {
         let updater = Updater.shared
         let phase = updater.phase
@@ -155,7 +156,7 @@ struct SidebarRail: View {
             item(phase.title, detail: phase.detail) {
                 ZStack {
                     if phase.isBusy {
-                        ProgressRing(progress: phase.progress ?? 0, color: Theme.accent, size: 20)
+                        UpdateRing(fraction: phase.progress, size: 20)
                         Image(systemName: "arrow.down")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(Theme.text.opacity(0.75))

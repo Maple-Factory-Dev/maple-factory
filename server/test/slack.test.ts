@@ -276,6 +276,73 @@ test("no machine online: the thread is told so", async () => {
   }
 });
 
+// ---- What's in flight ----
+
+/** Tasks in both goals: building, queued (WEB-3 ahead of WEB-2), in review, and a merged one. */
+function inFlight(f: ReturnType<typeof factory>) {
+  const base = { owner: "dana", brief: "", createdAt: 1, updatedAt: 1, plan: [], planVersion: 1, doneWhen: [], approvals: [], approvalsNeeded: 1, reviews: [], reviewsNeeded: 1,
+    comments: [], changes: [], events: [], mockups: [], artifacts: [], tickets: [], shareable: false, agent: "claude", after: [], followUps: [] };
+  const save = (id: string, goal: string, state: string, more: Record<string, unknown> = {}) => f.store.saveTask({ ...base, id, goal, title: `Task ${id}`, state, ...more } as never);
+  save("WEB-1", "web", "building", { worker: { role: "builder", agent: "claude", machine: "m1", session: "s", startedAt: Date.now() - 5 * 60_000 } });
+  save("WEB-2", "web", "building", { queueRank: 2 });
+  save("WEB-3", "web", "building", { queueRank: 1 });
+  save("WEB-4", "web", "reviewing", { pr: { number: 9, state: "open", branch: "b", base: "main", checks: [] } });
+  save("WEB-5", "web", "merged");
+  save("MOB-1", "mob", "building", { worker: { role: "builder", agent: "claude", machine: "m1", session: "s2", startedAt: Date.now() } });
+  f.store.set("slack:channel:C1", JSON.stringify({ goals: ["web"] }));
+}
+
+test("@Maple status replies with the channel's work in flight, with no agent, even with no machine online", async () => {
+  for (const [text, online] of [["<@UBOT> status", true], ["<@UBOT> what's in progress?", false]] as const) {
+    const f = factory();
+    try {
+      inFlight(f);
+      if (!online) (f.engine as any).hooks.machines = async () => [{ id: "m1", name: "m1", owner: "me", online: false, health: null, sessions: [] }];
+      await slackEvents(signed("/integrations/slack/events", mention("Ev1", text)), f.env, f.ctx);
+      await f.settle();
+      assert.equal(f.sent.filter((c) => c.type === "draft.run").length, 0, `${text}: no draft.run`);
+      assert.equal(f.posts().length, 1);
+      const reply = f.posts()[0];
+      assert.equal(reply.thread_ts, "50.0001");
+      const said = reply.blocks.map((b: any) => b.text.text).join("\n");
+      assert.match(said, /\*Building\*\n• \*WEB-1\*[^\n]*running 5m/);
+      assert.match(said, /\*Queued\*\n• \*WEB-3\*[^\n]*#1 in line[^\n]*\n• \*WEB-2\*[^\n]*#2 in line/);
+      assert.match(said, /\*In review\*\n• \*WEB-4\*[^\n]*PR #9/);
+      assert.ok(!said.includes("WEB-5"), "merged work isn't in flight");
+      assert.ok(!said.includes("MOB-1"), "another goal's work isn't this channel's");
+      assert.ok(f.engine.slack.lastMention(), "the mention is noted");
+    } finally {
+      f.restore();
+    }
+  }
+});
+
+test("a free-form ask's prompt carries the factory's work in flight", async () => {
+  const f = factory();
+  try {
+    inFlight(f);
+    const run = await asked(f);
+    const block = /<factory>\n([^]*?)\n<\/factory>/.exec(run.prompt)?.[1] ?? "";
+    for (const id of ["WEB-1", "WEB-2", "WEB-3", "WEB-4"]) assert.ok(block.includes(id), `${id} is in the <factory> block`);
+    assert.ok(!block.includes("MOB-1") && !block.includes("WEB-5"));
+    assert.match(run.prompt, /Answer questions about tasks, progress, the queue or reviews from that block/);
+  } finally {
+    f.restore();
+  }
+});
+
+test("no machine online: the reply says `@Maple status` still works", async () => {
+  const f = factory();
+  try {
+    (f.engine as any).hooks.machines = async () => [{ id: "m1", name: "m1", owner: "me", online: false, health: null, sessions: [] }];
+    await slackEvents(signed("/integrations/slack/events", mention()), f.env, f.ctx);
+    await f.settle();
+    assert.match(f.posts()[0].text, /`@Maple status` still works/);
+  } finally {
+    f.restore();
+  }
+});
+
 // ---- Create task ----
 
 test("Create task makes exactly one task in the proposed goal, its brief linking the thread's file, and starts planning", async () => {

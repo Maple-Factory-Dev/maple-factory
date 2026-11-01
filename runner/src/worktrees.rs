@@ -309,6 +309,7 @@ pub async fn create(cwd: &str, req: &Request) -> Result<String> {
 /// (`origin/agent/<name>`, pushed by the machine the task ran on before Retry moved it here) is
 /// branched from that. A local branch that origin's has moved past (the task went away and came
 /// back) is moved up to it first. Returns its path, `~`-abbreviated.
+#[cfg(test)]
 pub async fn create_from(root: &Path, name: &str, start: &str) -> Result<String> {
     create_with(root, name, start, None).await
 }
@@ -1231,7 +1232,10 @@ mod tests {
         sh(&repo, &["push", "--quiet", "origin", "main", "agent/fix"]);
         sh(&repo, &["remote", "set-head", "origin", "main"]);
         // Someone else pushed to the branch: that commit isn't in the PR or in main.
-        let other = sh(&bare, &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", "agent/fix^{tree}", "-p", "agent/fix", "-m", "someone else's push"]);
+        let other = sh(
+            &bare,
+            &["-c", "user.name=O", "-c", "user.email=o@example.com", "commit-tree", "agent/fix^{tree}", "-p", "agent/fix", "-m", "someone else's push"],
+        );
         sh(&bare, &["update-ref", "refs/heads/agent/fix", &other]);
         let heads = [head];
         let w = TaskWork { delete_remote: true, ..work(&wts, &repos, true, &heads) };
@@ -1239,7 +1243,11 @@ mod tests {
         let done = remove_task(&[], w).await.unwrap();
         assert!(done.branch_deleted && !wt.exists(), "{}", done.message);
         finish(done.deleting).await;
-        assert!(done.message.ends_with(&format!("kept branch agent/fix on origin (its tip {} isn't in the pull request or main)", &other[..7])), "{}", done.message);
+        assert!(
+            done.message.ends_with(&format!("kept branch agent/fix on origin (its tip {} isn't in the pull request or main)", &other[..7])),
+            "{}",
+            done.message
+        );
         assert_eq!(sh(&bare, &["rev-parse", "agent/fix"]), other);
 
         // That commit merged into main after all: now the leftover goes (the local branch already has).
@@ -1363,9 +1371,17 @@ mod tests {
         let wts = wt.to_string_lossy().into_owned();
         sh(&repo, &["merge", "--quiet", "--ff-only", "agent/fix"]);
         std::fs::write(wt.join("new.txt"), "untracked\n").unwrap();
+        // Enough to delete that git can't finish before the timer's first tick, even on a busy machine.
+        for d in 0..20 {
+            let dir = wt.join(format!("junk/{d}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            for f in 0..200 {
+                std::fs::write(dir.join(f.to_string()), "x").unwrap();
+            }
+        }
         NO_RENAME.lock().unwrap().push(canonical(&wt));
         // Out of time: killed partway, and the message says Force remove finishes it.
-        let err = take_away(&repo, &wt, true, &wts, Duration::from_nanos(1)).await.unwrap_err().to_string();
+        let err = take_away(&repo, &wt, true, &wts, Duration::ZERO).await.unwrap_err().to_string();
         assert!(err.contains("may be partly deleted") && err.contains("Force remove will finish it"), "{err}");
         // `git worktree remove --force`, with time to finish: no background delete.
         let (done, deleting) = remove_checked(&nobody(), &wts, true).await.unwrap();
@@ -1752,7 +1768,16 @@ mod tests {
     }
 
     fn scripts(create: Option<&str>, setup: Option<&str>) -> crate::worktree_scripts::WorktreeScripts {
-        crate::worktree_scripts::WorktreeScripts { create: create.map(String::from), preflight: None, preflight_watch: None, setup: setup.map(String::from), checks: None, teardown: None, archive: None, timeout_secs: Some(30) }
+        crate::worktree_scripts::WorktreeScripts {
+            create: create.map(String::from),
+            preflight: None,
+            preflight_watch: None,
+            setup: setup.map(String::from),
+            checks: None,
+            teardown: None,
+            archive: None,
+            timeout_secs: Some(30),
+        }
     }
 
     fn for_task<'a>(s: &'a crate::worktree_scripts::WorktreeScripts, env: &'a [(String, String)]) -> crate::worktree_scripts::ForTask<'a> {
@@ -1812,7 +1837,15 @@ mod tests {
                 lines.lock().unwrap().push(text);
             }
         };
-        let t = crate::worktree_scripts::ForTask { scripts: s, task_id: "MF-12", repo: Some("acme/app"), base: Some("main"), env: &[], emit: Some(&emit), path: None };
+        let t = crate::worktree_scripts::ForTask {
+            scripts: s,
+            task_id: "MF-12",
+            repo: Some("acme/app"),
+            base: Some("main"),
+            env: &[],
+            emit: Some(&emit),
+            path: None,
+        };
         let r = create_with(repo, name, "main", Some(&t)).await;
         (r, lines.into_inner().unwrap())
     }

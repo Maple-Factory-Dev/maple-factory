@@ -9,6 +9,7 @@ import { postMessage, updateMessage, type Blocks, type SlackAction, type SlackAs
 import { lastJson } from "./drafts.ts";
 import { goalMayFetch } from "./repos.ts";
 import type { Store } from "./store.ts";
+import { wantsStatus, workSummary } from "./slack-status.ts";
 
 /** The id an ask goes by on the runner (its token requests and its worktree's name). */
 export const SLACK_PREFIX = "slack-";
@@ -279,13 +280,19 @@ export class SlackAsks {
     this.store.set("slack:lastMention", String(Date.now()));
     const { goals, note } = this.channelGoals(input.channel);
     if (!goals.length) return void (await this.post(input.channel, input.threadTs, "This factory has no goals yet, so there's no code for me to look at."));
+    const work = workSummary(this.store.tasks(), this.store.queued(), goals, Date.now());
+    if (wantsStatus(input.question)) {
+      // Answered from the factory's own state: no agent, so no machine needs to be online.
+      const said = note ? `${work}\n\n_${note}_` : work;
+      return void (await this.post(input.channel, input.threadTs, said.slice(0, 3000), sections(said)));
+    }
     const asked = words(`${input.question} ${input.thread.map((l) => l.text).join(" ")}`);
     const score = (g: Goal) => [...words(`${g.name} ${g.summary}`)].filter((w) => asked.has(w)).length;
     const goal = goals.reduce((best, g) => (score(g) > score(best) ? g : best), goals[0]);
     const machines = (await this.deps.machines()).filter((m) => m.online && !this.deps.paused(m)).sort((a, b) => a.sessions.length - b.sessions.length);
     const agent = ["claude", "codex"].find((a) => machines.some((m) => this.deps.hasAgent(m, a)));
     const machine = agent && machines.find((m) => this.deps.hasAgent(m, agent));
-    if (!agent || !machine) return void (await this.post(input.channel, input.threadTs, "No machine is online to look into this right now (I answer with an agent on one of the factory's runners). Mention me again once one is."));
+    if (!agent || !machine) return void (await this.post(input.channel, input.threadTs, "No machine is online to look into this right now (I answer with an agent on one of the factory's runners). Mention me again once one is. `@Maple status` still works: it says what's building and queued."));
     const replyTs = await this.post(input.channel, input.threadTs, "Looking into it…");
     if (!replyTs) return;
     const ask: Ask = {
@@ -295,7 +302,7 @@ export class SlackAsks {
     };
     this.save(ask);
     this.deps.wakeIn(ASK_MS + 1000);
-    const command: ServerToRunner = { type: "draft.run", id: ask.id, agent, prompt: askPrompt(ask, goal, goals), repo: goal.folder ? null : goal.repo ?? null, folder: goal.folder ?? null, base: goal.base ?? null };
+    const command: ServerToRunner = { type: "draft.run", id: ask.id, agent, prompt: askPrompt(ask, goal, goals, work), repo: goal.folder ? null : goal.repo ?? null, folder: goal.folder ?? null, base: goal.base ?? null };
     if (!(await this.deps.toRunner(machine.id, command))) {
       ask.expiresAt = 0;
       this.save(ask);
@@ -379,7 +386,7 @@ export class SlackAsks {
   }
 }
 
-function askPrompt(ask: Ask, goal: Goal, goals: Goal[]): string {
+function askPrompt(ask: Ask, goal: Goal, goals: Goal[], work: string): string {
   const thread = ask.thread.map((l) => `${l.author}: ${l.text.replace(/\n+/g, "\n  ")}`).join("\n");
   const list = goals.map((g) => `- ${g.id} · ${g.name}${g.summary ? `: ${g.summary.replace(/\s+/g, " ").slice(0, 300)}` : ""}`).join("\n");
   const files = ask.attachments.length ? `\n\nFiles posted in the thread (they'll be attached to a task if one is made):\n${ask.attachments.map((f) => `- ${f.name} (${f.mime})`).join("\n")}` : "";
@@ -394,7 +401,12 @@ ${ask.requester} asked: ${ask.question || "(see the thread)"}${files}
 The goals this channel works on:
 ${list}
 
-Answer from the code: short, specific and friendly, in Slack's mrkdwn (*bold*, \`code\`, bullet lines; no headings or tables). Name the files where it helps.
+<factory>
+${work}
+</factory>
+That's the factory's live work in these goals right now (tasks being built, queued in order, in review, in planning or waiting on a person). Answer questions about tasks, progress, the queue or reviews from that block, not the code, and cite task ids. You can't see anything about the work beyond it.
+
+Answer questions about the code from the code: short, specific and friendly, in Slack's mrkdwn (*bold*, \`code\`, bullet lines; no headings or tables). Name the files where it helps.
 
 If the thread asks for a change or describes a bug worth building, also propose one task in the best-suited of those goals. Don't propose one for a plain question.
 

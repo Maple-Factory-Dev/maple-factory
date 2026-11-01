@@ -5,17 +5,20 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus } from "./wire.ts";
+import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
+import { Push, deviceId } from "./push.ts";
 import { Integrations } from "./integrations/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
+import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { statsWindow, summarize } from "./factory/stats.ts";
+import { dayReport } from "./factory/report.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
 import { githubAppInfo } from "./github.ts";
@@ -34,11 +37,14 @@ interface Client {
   /** The task this connection's app is showing. */
   viewing?: string | null;
   since?: number;
+  /** The iPhone or Android app: it opened the socket with `x-maple-client: mobile`. */
+  mobile?: boolean;
 }
 
 export class OrgHub extends DurableObject<Env> {
   private store: Store;
   private engine: Engine;
+  private push: Push;
   private intake: Intake;
   private secrets: Secrets;
   private integrations: Integrations;
@@ -61,8 +67,10 @@ export class OrgHub extends DurableObject<Env> {
         event: (kind, error) => this.integrationEvent(kind, error),
       }),
     });
+    this.push = new Push(env, this.store);
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
+      taskSaved: (old, task) => ctx.waitUntil(this.push.taskSaved(old, task, () => this.members()).catch((e) => console.error("push:", e))),
       sendTo: (login, message) => this.sendTo(login, message),
       machines: () => this.machines(),
       members: () => this.members(),
@@ -76,6 +84,7 @@ export class OrgHub extends DurableObject<Env> {
         token: async () => (await this.integrations.config("slack"))?.botToken ?? null,
         problem: (text) => ctx.waitUntil(this.integrationEvent("slack", text)),
       },
+      userToken: (login) => userToken(env, login),
     }, this.intake, this.secrets);
   }
 
@@ -92,6 +101,8 @@ export class OrgHub extends DurableObject<Env> {
     await this.recheckConnected();
     await this.engine.pollCI();
     await this.engine.mergeDue();
+    await this.engine.checkBudgets();
+    await this.engine.runRecurring();
     await this.engine.pump();
     await this.engine.slack.sweep();
     await this.checkRunnerRelease();
@@ -202,7 +213,7 @@ export class OrgHub extends DurableObject<Env> {
         const member = JSON.parse(request.headers.get("x-member") ?? "null") as Member;
         const pair = new WebSocketPair();
         this.ctx.acceptWebSocket(pair[1], ["client"]);
-        pair[1].serializeAttachment({ member, subscribed: false } satisfies Client);
+        pair[1].serializeAttachment({ member, subscribed: false, mobile: isMobileClient(request.headers.get("x-maple-client")) } satisfies Client);
         await this.armRunnerCheck();
         await this.armGitHubStatusCheck();
         await this.armRecheck();
@@ -272,6 +283,12 @@ export class OrgHub extends DurableObject<Env> {
         this.broadcast({ type: "machine.removed", id });
         return new Response(null, { status: 204 });
       }
+      case "/push-devices": return Response.json({ devices: this.store.pushDeviceCount() });
+      case "/push-changed": {
+        // push.ts turned the relay on or off: read the credential again now, not in 30 s.
+        this.push.forget();
+        return new Response(null, { status: 204 });
+      }
       case "/revoked": {
         // auth.ts revoked someone (they left the org): their apps and terminals close now.
         await this.cutOff(await request.text());
@@ -303,6 +320,23 @@ export class OrgHub extends DurableObject<Env> {
         if (new URL(request.url).searchParams.has("stale")) await this.ctx.storage.delete(["runner:checkedAt", "ghstatus:checkedAt"]);
         await this.alarm();
         return Response.json({ alarm: await this.ctx.storage.getAlarm(), now: Date.now() });
+      }
+      case "/dev/age-tasks": {
+        // Local dev (the Worker checked), for e2e-snapshot-window: set tasks' state and updatedAt as if they finished long ago.
+        const { tasks } = (await request.json()) as { tasks: { id: string; state: Task["state"]; updatedAt: number }[] };
+        for (const t of tasks) {
+          const task = this.store.task(t.id);
+          if (task) this.store.saveTask({ ...task, state: t.state, updatedAt: t.updatedAt });
+        }
+        return new Response(null, { status: 204 });
+      }
+      case "/dev/age-sessions": {
+        // Local dev (the Worker checked), for a task's time budget: its sessions (and any over-budget nudge) as if `ms` earlier.
+        const { task, ms } = (await request.json()) as { task: string; ms: number };
+        this.store.ageSessions(task, ms);
+        const priv = this.store.private(task);
+        if (priv.budgetAskedAt != null) this.store.savePrivate(task, { ...priv, budgetAskedAt: priv.budgetAskedAt - ms });
+        return new Response(null, { status: 204 });
       }
       case "/intake": {
         // A new request from an integration or the API (the Worker checked who's asking).
@@ -364,6 +398,14 @@ export class OrgHub extends DurableObject<Env> {
         const events = this.store.statEvents(summary.since).filter((e) => !summary.goal || e.goal === summary.goal);
         return Response.json({ ...summary, events });
       }
+      case "/report": {
+        // The Worker passes who's asking as `login`; since and until are their local day's bounds (ms).
+        const login = url.searchParams.get("login") ?? "";
+        const since = Number(url.searchParams.get("since"));
+        const until = Number(url.searchParams.get("until"));
+        if (!login || !Number.isFinite(since) || !Number.isFinite(until) || until <= since) return new Response("Pass since and until (ms), since first.", { status: 400 });
+        return Response.json(this.report(login, since, until));
+      }
       case "/threads": {
         try {
           return Response.json(await this.engine.threads(url.searchParams.get("task") ?? ""));
@@ -413,6 +455,13 @@ export class OrgHub extends DurableObject<Env> {
     const events = [...this.store.statRoundsBefore(merged, since), ...recent];
     const costs = this.store.sessionCosts(since, goal || null);
     return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs });
+  }
+
+  /** `login`'s day report for [since, until) (at most two days, so a stray range can't read the whole log). */
+  private report(login: string, since: number, until: number) {
+    const end = Math.min(until, since + 2 * 86_400_000);
+    const events = this.store.statEvents(since).filter((e) => e.at < end);
+    return dayReport(login, since, end, this.store.tasks(), events, this.store.goals(), this.env.PUBLIC_URL ?? "");
   }
 
   private latest: { version: string | null; at: number } | null = null;
@@ -537,8 +586,14 @@ export class OrgHub extends DurableObject<Env> {
     return null;
   }
 
+  /** Someone's push devices as the apps see them: never the token. */
+  private async pushDevices(login: string): Promise<PushDevice[]> {
+    return Promise.all(this.store.pushDevices(login).map(async (d) => ({ id: await deviceId(d.token), platform: d.platform, environment: d.environment, createdAt: d.createdAt, lastSeen: d.lastSeen })));
+  }
+
   /** Closes a revoked person's feed sockets and terminals, and tells everyone the members changed. */
   private async cutOff(login: string) {
+    this.store.removePushDevices(login);
     for (const ws of this.ctx.getWebSockets("client")) {
       if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
     }
@@ -564,18 +619,15 @@ export class OrgHub extends DurableObject<Env> {
     }));
   }
 
-  /** One entry per person with the app open: the most recent of their connections' views. */
+  /** One entry per person with the app open: the most recent of their connections' views, and whether they're only on a phone. */
   private online(except?: WebSocket): Presence[] {
-    const people = new Map<string, Presence>();
+    const connections: Connection[] = [];
     for (const ws of this.ctx.getWebSockets("client")) {
       if (ws === except) continue;
       const c = ws.deserializeAttachment() as Client;
-      if (!c.subscribed) continue;
-      const seen = people.get(c.member.login);
-      const since = c.since ?? 0;
-      if (!seen || (c.viewing && (!seen.viewing || since > seen.since))) people.set(c.member.login, { login: c.member.login, viewing: c.viewing ?? null, since });
+      if (c.subscribed) connections.push({ login: c.member.login, viewing: c.viewing, since: c.since, mobile: c.mobile });
     }
-    return [...people.values()];
+    return aggregatePresence(connections);
   }
 
   async webSocketClose(ws: WebSocket) {
@@ -618,7 +670,8 @@ export class OrgHub extends DurableObject<Env> {
         ws.serializeAttachment({ ...client, viewing: msg.viewing ?? null, since: Date.now() });
         this.broadcast({ type: "presence", online: this.online() });
         return;
-      case "subscribe":
+      case "subscribe": {
+        const window = this.store.snapshotTasks();
         ws.serializeAttachment({ ...client, subscribed: true, since: Date.now() });
         this.broadcast({ type: "presence", online: this.online() });
         this.send(ws, {
@@ -629,7 +682,9 @@ export class OrgHub extends DurableObject<Env> {
           machines: await this.machines(),
           ended: await this.recentEnds(),
           goals: this.store.goals(),
-          tasks: this.store.tasks(),
+          tasks: window.tasks,
+          tallies: this.store.tallies(),
+          olderTasks: window.left,
           policy: this.store.policy(),
           acceptances: this.store.acceptances(),
           prompts: this.store.prompts(),
@@ -638,6 +693,7 @@ export class OrgHub extends DurableObject<Env> {
           online: this.online(),
           notes: this.store.notes(client.member.login),
           follows: this.store.follows(client.member.login),
+          quietHours: this.store.quietHours(client.member.login),
           intake: this.intake.list(),
           secrets: this.secrets.list(),
           repos: this.store.repos(),
@@ -646,6 +702,7 @@ export class OrgHub extends DurableObject<Env> {
           scripts: this.store.repoScripts(),
           setupRuns: this.engine.setupRuns(),
           scoutRuns: this.engine.scoutRuns(),
+          recurring: this.engine.recurring(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
@@ -658,6 +715,19 @@ export class OrgHub extends DurableObject<Env> {
         // The app's repos change on GitHub's side; read them again when they're an hour old.
         if (Date.now() - this.store.reposAt() > 3_600_000) this.ctx.waitUntil(this.engine.refreshRepos().catch(() => {}));
         return;
+      }
+      case "tasks.older": {
+        // Finished tasks the snapshot left out, for whoever asked; nothing changed, so nothing to broadcast.
+        const page = this.store.olderTasks(msg.goal ?? null, msg.before ?? null, msg.beforeId ?? null, msg.limit ?? null);
+        this.send(ws, { type: "tasks.page", goal: msg.goal ?? null, tasks: page.tasks, more: page.more });
+        return;
+      }
+      case "task.get": {
+        const task = this.store.task(msg.id);
+        if (!task) return this.send(ws, { type: "error", message: `No task ${msg.id}.`, requestId: `task.get:${msg.id}` });
+        this.send(ws, { type: "task.updated", task });
+        return;
+      }
       case "session.open":
       case "session.kill":
       case "session.resize": {
@@ -791,6 +861,36 @@ export class OrgHub extends DurableObject<Env> {
         this.sendTo(client.member.login, { type: "follows.updated", follows: this.store.follows(client.member.login) });
         return;
       }
+      case "push.register": {
+        const { platform, token, environment } = msg;
+        if (platform !== "apns" && platform !== "fcm") return this.send(ws, { type: "error", message: "A push device is apns or fcm.", requestId: "push.register" });
+        if (environment !== "sandbox" && environment !== "production") return this.send(ws, { type: "error", message: "A push device's environment is sandbox or production.", requestId: "push.register" });
+        if (typeof token !== "string" || !/^[A-Za-z0-9:_\-.]{8,4096}$/.test(token)) return this.send(ws, { type: "error", message: "That isn't a push token.", requestId: "push.register" });
+        try {
+          this.store.registerPushDevice(client.member.login, { platform, token, environment });
+        } catch (e) {
+          return this.send(ws, { type: "error", message: (e as Error).message, requestId: "push.register" });
+        }
+        return this.sendTo(client.member.login, { type: "push.devices", devices: await this.pushDevices(client.member.login) });
+      }
+      case "push.unregister": {
+        const login = client.member.login;
+        if (msg.token) this.store.removePushDevice(msg.token, login);
+        else if (msg.id) for (const d of this.store.pushDevices(login)) if ((await deviceId(d.token)) === msg.id) this.store.removePushDevice(d.token, login);
+        return this.sendTo(login, { type: "push.devices", devices: await this.pushDevices(login) });
+      }
+      case "push.devices":
+        return this.send(ws, { type: "push.devices", devices: await this.pushDevices(client.member.login) });
+      case "quietHours.set": {
+        let quietHours;
+        try {
+          quietHours = this.store.setQuietHours(client.member.login, msg.quietHours ?? null);
+        } catch (e) {
+          return this.send(ws, { type: "error", message: (e as Error).message, requestId: "quietHours.set" });
+        }
+        this.sendTo(client.member.login, { type: "quietHours.updated", quietHours });
+        return;
+      }
       case "note.delete": {
         const existing = this.store.note(msg.id);
         if (!existing || existing.owner !== client.member.login) return;
@@ -801,6 +901,11 @@ export class OrgHub extends DurableObject<Env> {
       case "stats.get": {
         if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
         this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
+        return;
+      }
+      case "report.get": {
+        // Anyone signed in, for themselves: their own tasks and the approvals they gave.
+        this.send(ws, { type: "report", report: this.report(client.member.login, msg.since, msg.until) });
         return;
       }
       case "task.checkLog": {

@@ -34,6 +34,31 @@ struct FactoryLoadingTests {
         #expect(AppState.destinationAfterSnapshot(.goal("Search"), goals: ["Billing", "Search"], focusedGoal: nil) == nil)
         #expect(AppState.destinationAfterSnapshot(.myTasks, goals: [], focusedGoal: nil) == nil)
     }
+
+    @Test func renamedGoalFollowsItsNewName() {
+        #expect(AppState.destinationAfterSnapshot(.goal("Old"), goals: ["Billing", "New"], focusedGoal: "Billing",
+                                                  renamed: ["Old": "New"]) == .goal("New"))
+        #expect(AppState.destinationAfterSnapshot(.goal("Old"), goals: ["Billing", "New"], focusedGoal: nil,
+                                                  renamed: ["Old": "New"]) == .goal("New"))
+    }
+
+    @Test func chainedRenameResolves() {
+        // FactoryClient collapses A→B→C to A→C; the newest name is the one in the sidebar.
+        #expect(AppState.destinationAfterSnapshot(.goal("A"), goals: ["Billing", "C"], focusedGoal: nil,
+                                                  renamed: ["A": "C", "B": "C"]) == .goal("C"))
+    }
+
+    @Test func rememberedPageFollowsRename() {
+        #expect(AppState.destinationAfterSnapshot(.goal("Auth overhaul"), goals: ["Billing", "New"], focusedGoal: nil,
+                                                  remembered: .goal("Old"), renamed: ["Old": "New"]) == .goal("New"))
+    }
+
+    @Test func deletedGoalStillFallsBack() {
+        #expect(AppState.destinationAfterSnapshot(.goal("Gone"), goals: ["Billing", "Search"], focusedGoal: "Search",
+                                                  renamed: ["Old": "New"]) == .goal("Search"))
+        #expect(AppState.destinationAfterSnapshot(.goal("Old"), goals: ["Billing"], focusedGoal: nil,
+                                                  renamed: ["Old": "Deleted later"]) == .goal("Billing"))
+    }
 }
 
 /// Relaunching reopens the page this factory was last on, while it's still there.

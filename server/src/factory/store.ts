@@ -2,8 +2,9 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
+import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
 
 /// What the server knows about a task that the apps don't need.
@@ -54,6 +55,11 @@ export interface TaskPrivate {
   checks?: import("../github.ts").Check[];
   /** When its pull request was opened or found, so CI that never shows up stops being waited for. */
   prOpenedAt?: number;
+  /** What it had used when a person last gave it more budget (an overBudget budget hand answered with anything
+   *  but Cancel); its next limit is one budget on from there. */
+  budgetBase?: import("./policy.ts").BudgetBase | null;
+  /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
+  budgetAskedAt?: number | null;
   /** Cancelled with its goal's archive, to have its worktree removed (when nothing would be lost). */
   discard?: boolean;
 }
@@ -87,6 +93,19 @@ export interface SessionCostRow {
 
 export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null };
 
+/** How far back the snapshot sends finished tasks. */
+export const SNAPSHOT_WINDOW_MS = 14 * 24 * 3_600_000;
+const FINISHED_SQL = "'merged', 'cancelled', 'closed'";
+
+export const MAX_PUSH_DEVICES = 10;
+export type PushPlatform = "apns" | "fcm";
+export type PushEnvironment = "sandbox" | "production";
+export interface PushDeviceRow { login: string; platform: PushPlatform; token: string; environment: PushEnvironment; createdAt: number; lastSeen: number }
+const deviceRow = (r: Record<string, string | number>): PushDeviceRow => ({
+  login: r.login as string, platform: r.platform as PushPlatform, token: r.token as string,
+  environment: r.environment as PushEnvironment, createdAt: r.created_at as number, lastSeen: r.last_seen as number,
+});
+
 export class Store {
   private sql: SqlStorage;
 
@@ -105,12 +124,19 @@ export class Store {
         started INTEGER NOT NULL, ended INTEGER, cause TEXT, kind TEXT NOT NULL DEFAULT 'personal'
       );
       CREATE INDEX IF NOT EXISTS sessions_task ON sessions (task);
+      CREATE INDEX IF NOT EXISTS tasks_goal_updated ON tasks (goal, updated);
       CREATE TABLE IF NOT EXISTS machine_settings (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, updated INTEGER NOT NULL, doc TEXT NOT NULL, reply_url TEXT);
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
       CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
+      CREATE TABLE IF NOT EXISTS quiet_hours (login TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS push_devices (
+        token TEXT PRIMARY KEY, login TEXT NOT NULL COLLATE NOCASE, platform TEXT NOT NULL, environment TEXT NOT NULL,
+        created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS push_devices_login ON push_devices (login);
       CREATE TABLE IF NOT EXISTS stats_events (
         id TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, task TEXT NOT NULL, goal TEXT NOT NULL,
         role TEXT, actor TEXT, detail TEXT NOT NULL DEFAULT '{}'
@@ -122,6 +148,8 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS session_costs_updated ON session_costs (updated);
       CREATE TABLE IF NOT EXISTS repo_scripts (repo TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS recurring (id TEXT PRIMARY KEY, goal TEXT NOT NULL, doc TEXT NOT NULL, next_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS recurring_next ON recurring (next_at);
     `);
     // A repo's prompt additions came later: added once, to a table made before them.
     if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
@@ -202,6 +230,12 @@ export class Store {
       }));
   }
 
+  /** A task's sessions' spend: what its cost budget adds up. */
+  taskCosts(task: string): { session: string; costUsd: number | null }[] {
+    return this.sql.exec<{ session: string; cost_usd: number | null }>("SELECT session, cost_usd FROM session_costs WHERE task = ?", task)
+      .toArray().map((r) => ({ session: r.session, costUsd: r.cost_usd }));
+  }
+
   // Goals
 
   goals(): Goal[] {
@@ -221,6 +255,51 @@ export class Store {
 
   tasks(): Task[] {
     return this.sql.exec<{ doc: string }>("SELECT doc FROM tasks ORDER BY updated DESC").toArray().map((r) => taskDoc(r.doc));
+  }
+
+  /**
+   * What the apps' snapshot holds: every unfinished task, and finished ones updated in the last
+   * SNAPSHOT_WINDOW_MS. Sending every task ever made outgrew a WebSocket message (MF-212).
+   */
+  snapshotTasks(now = Date.now()): { tasks: Task[]; left: number } {
+    const since = now - SNAPSHOT_WINDOW_MS;
+    const tasks = this.sql
+      .exec<{ doc: string }>(`SELECT doc FROM tasks WHERE state NOT IN (${FINISHED_SQL}) OR updated >= ? ORDER BY updated DESC`, since)
+      .toArray()
+      .map((r) => taskDoc(r.doc));
+    const left = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tasks WHERE state IN (${FINISHED_SQL}) AND updated < ?`, since).one().n;
+    return { tasks, left };
+  }
+
+  /**
+   * Finished tasks updated before `before` (or at it, with an ID before `beforeId`), newest first:
+   * the ones the snapshot leaves out, a page at a time. No `before`: the snapshot's window start.
+   */
+  olderTasks(goal: string | null, before: number | null, beforeId: string | null, limit: number | null, now = Date.now()): { tasks: Task[]; more: boolean } {
+    const n = Math.min(Math.max(Math.floor(limit ?? 50), 1), 200);
+    const at = before ?? now - SNAPSHOT_WINDOW_MS;
+    const where = [`state IN (${FINISHED_SQL})`, beforeId != null ? "(updated < ? OR (updated = ? AND id < ?))" : "updated < ?"];
+    const args: (string | number)[] = beforeId != null ? [at, at, beforeId] : [at];
+    if (goal != null) {
+      where.push("goal = ?");
+      args.push(goal);
+    }
+    const rows = this.sql
+      .exec<{ doc: string }>(`SELECT doc FROM tasks WHERE ${where.join(" AND ")} ORDER BY updated DESC, id DESC LIMIT ?`, ...args, n + 1)
+      .toArray();
+    return { tasks: rows.slice(0, n).map((r) => taskDoc(r.doc)), more: rows.length > n };
+  }
+
+  /** Each goal's task counts over every task, for progress the snapshot alone can't show. */
+  tallies(): GoalTally[] {
+    const byGoal = new Map<string, GoalTally>();
+    for (const r of this.sql.exec<{ goal: string; state: string; n: number }>("SELECT goal, state, COUNT(*) AS n FROM tasks GROUP BY goal, state").toArray()) {
+      const t = byGoal.get(r.goal) ?? { goal: r.goal, merged: 0, cancelled: 0, closed: 0, total: 0 };
+      if (r.state === "merged" || r.state === "cancelled" || r.state === "closed") t[r.state] += r.n;
+      t.total += r.n;
+      byGoal.set(r.goal, t);
+    }
+    return [...byGoal.values()].sort((a, b) => a.goal.localeCompare(b.goal));
   }
 
   /** Tasks whose next session hasn't started (to plan, build or review), front of the queue first. */
@@ -314,6 +393,16 @@ export class Store {
     ).toArray();
   }
 
+  /** Every session a task has had, ended or running: what its time budget adds up. */
+  taskSessions(task: string): TaskSession[] {
+    return this.sql.exec("SELECT * FROM sessions WHERE task = ?", task).toArray() as unknown as TaskSession[];
+  }
+
+  /** Local dev only (/dev/age-sessions): moves a task's sessions `ms` into the past. */
+  ageSessions(task: string, ms: number) {
+    this.sql.exec("UPDATE sessions SET started = started - ?, ended = ended - ? WHERE task = ?", ms, ms, task);
+  }
+
   liveSessions(): TaskSession[] {
     return this.sql.exec("SELECT * FROM sessions WHERE ended IS NULL").toArray() as unknown as TaskSession[];
   }
@@ -388,6 +477,40 @@ export class Store {
     this.sql.exec("DELETE FROM notes WHERE id = ?", id);
   }
 
+  // Recurring tasks: a goal's saved prompts that start a new task every interval.
+
+  recurringAll(): Recurring[] {
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM recurring ORDER BY goal, id").toArray().map((r) => JSON.parse(r.doc));
+  }
+
+  recurring(id: string): Recurring | null {
+    const row = this.sql.exec<{ doc: string }>("SELECT doc FROM recurring WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.doc) : null;
+  }
+
+  saveRecurring(r: Recurring) {
+    this.sql.exec(
+      "INSERT INTO recurring (id, goal, doc, next_at) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET goal = excluded.goal, doc = excluded.doc, next_at = excluded.next_at",
+      r.id, r.goal, JSON.stringify(r), r.nextAt,
+    );
+  }
+
+  deleteRecurring(id: string) {
+    this.sql.exec("DELETE FROM recurring WHERE id = ?", id);
+  }
+
+  /** The unpaused recurring tasks due by `now`, soonest first. */
+  dueRecurring(now: number): Recurring[] {
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM recurring WHERE next_at <= ? ORDER BY next_at", now).toArray()
+      .map((r) => JSON.parse(r.doc) as Recurring).filter((r) => !r.paused);
+  }
+
+  /** When the next unpaused recurring task is due, if any. */
+  nextRecurringAt(): number | null {
+    const next = this.recurringAll().filter((r) => !r.paused).map((r) => r.nextAt);
+    return next.length ? Math.min(...next) : null;
+  }
+
   // Follows: only what people chose; the apps work out the rest (goals they lead, work in, or are on the team for).
 
   follows(login: string): GoalFollow[] {
@@ -400,6 +523,62 @@ export class Store {
       "INSERT INTO goal_follows (login, goal, following) VALUES (?, ?, ?) ON CONFLICT (login, goal) DO UPDATE SET following = excluded.following",
       login, goal, following ? 1 : 0,
     );
+  }
+
+  // Quiet hours: each person's own weekly schedule, the same on every device.
+
+  quietHours(login: string): QuietHours | null {
+    const row = this.sql.exec<{ json: string }>("SELECT json FROM quiet_hours WHERE login = ?", login).toArray()[0];
+    return row ? JSON.parse(row.json) : null;
+  }
+
+  /** Saves (or with null, clears) someone's quiet hours; a schedule that isn't valid throws, and nothing is saved. */
+  setQuietHours(login: string, q: QuietHours | null): QuietHours | null {
+    if (q === null) {
+      this.sql.exec("DELETE FROM quiet_hours WHERE login = ?", login);
+      return null;
+    }
+    const tidy = validateQuietHours(q);
+    this.sql.exec(
+      "INSERT INTO quiet_hours (login, json, updated_at) VALUES (?, ?, ?) ON CONFLICT (login) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
+      login, JSON.stringify(tidy), Date.now(),
+    );
+    return tidy;
+  }
+
+  // Push devices (push.ts): each person's phones, for the maplefactory.dev relay. Tokens go to the
+  // relay only; the apps see a device's platform and dates, never its token.
+
+  pushDevices(login: string): PushDeviceRow[] {
+    return this.sql.exec<Record<string, string | number>>("SELECT * FROM push_devices WHERE login = ? ORDER BY created_at", login).toArray().map(deviceRow);
+  }
+
+  pushDeviceCount(): number {
+    return Number(this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM push_devices").one().n);
+  }
+
+  /** Registers (or refreshes) a token for `login`; a token someone else had moves to them. Throws past the cap. */
+  registerPushDevice(login: string, d: { platform: PushPlatform; token: string; environment: PushEnvironment }): void {
+    const at = Date.now();
+    const mine = this.sql.exec("SELECT 1 FROM push_devices WHERE token = ? AND login = ?", d.token, login).toArray().length > 0;
+    if (!mine && this.pushDevices(login).length >= MAX_PUSH_DEVICES) throw new Error(`You can register at most ${MAX_PUSH_DEVICES} devices; remove one first.`);
+    this.sql.exec(
+      `INSERT INTO push_devices (token, login, platform, environment, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (token) DO UPDATE SET login = excluded.login, platform = excluded.platform, environment = excluded.environment, last_seen = excluded.last_seen`,
+      d.token, login, d.platform, d.environment, at, at,
+    );
+  }
+
+  /** Removes one of `login`'s tokens (only theirs); with no login, whoever's it was (the relay said it's gone). */
+  removePushDevice(token: string, login?: string): boolean {
+    const rows = login
+      ? this.sql.exec("DELETE FROM push_devices WHERE token = ? AND login = ? RETURNING token", token, login)
+      : this.sql.exec("DELETE FROM push_devices WHERE token = ? RETURNING token", token);
+    return rows.toArray().length > 0;
+  }
+
+  removePushDevices(login: string): void {
+    this.sql.exec("DELETE FROM push_devices WHERE login = ?", login);
   }
 
   // Policy
@@ -541,7 +720,7 @@ function goalDoc(doc: string): Goal {
 /** A stored task, with fields added since it was saved. Tasks from before the queue keep their order. */
 function taskDoc(doc: string): Task {
   const task = JSON.parse(doc) as Task;
-  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], suggestedTitle: task.suggestedTitle ?? null, priority: task.priority ?? null, followUpOf: task.followUpOf ?? null, queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
+  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], artifacts: task.artifacts ?? [], suggestedTitle: task.suggestedTitle ?? null, priority: task.priority ?? null, followUpOf: task.followUpOf ?? null, queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
 }
 
 /** Front of the queue first; ties by age. */

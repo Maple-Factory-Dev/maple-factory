@@ -8,6 +8,7 @@ import type { SessionCostRow } from "./store.ts";
 export type StatKind =
   | "plan.submitted" // detail: version
   | "plan.approved" // detail: version
+  | "changes.approved" // actor: who approved the changes in review
   | "steer" // detail: state
   | "question.asked"
   | "question.answered" // detail: waitMs
@@ -19,7 +20,8 @@ export type StatKind =
   | "session.ended" // detail: cause (an end nobody chose that stopped the task)
   | "merged" // detail: auto, cycleMs
   | "cancelled" // detail: state
-  | "closed"; // detail: proposed (finished with nothing to merge)
+  | "closed" // detail: proposed (finished with nothing to merge)
+  | "budget.reached"; // detail: over (time or cost), minutes, costUsd, allowMinutes, allowCostUsd
 
 export interface StatEvent {
   id: string;

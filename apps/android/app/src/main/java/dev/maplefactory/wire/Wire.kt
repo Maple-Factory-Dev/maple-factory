@@ -24,7 +24,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-const val PROTOCOL_VERSION: Int = 1
+const val PROTOCOL_VERSION: Int = 2
 
 /** How the factory's JSON reads and writes: unknown keys skipped, nulls left out, lists and maps always sent. */
 val WireJson: Json = Json {
@@ -254,6 +254,22 @@ enum class ScoutState(val raw: String) {
     object Serializer : WireEnumSerializer<ScoutState>("ScoutState", entries, { it.raw }, Unknown)
 }
 
+/** How a recurring task's interval is shown. */
+@Serializable(with = RecurringUnit.Serializer::class)
+enum class RecurringUnit(val raw: String) {
+    /** Every N hours. */
+    Hours("hours"),
+    /** Every N days. */
+    Days("days"),
+    /** Every N weeks. */
+    Weeks("weeks"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<RecurringUnit>("RecurringUnit", entries, { it.raw }, Unknown)
+}
+
 /** Where a repo's Set up with AI run is. */
 @Serializable(with = RepoSetupState.Serializer::class)
 enum class RepoSetupState(val raw: String) {
@@ -412,6 +428,32 @@ enum class FindingStatus(val raw: String) {
     object Serializer : WireEnumSerializer<FindingStatus>("FindingStatus", entries, { it.raw }, Unknown)
 }
 
+@Serializable(with = PushPlatform.Serializer::class)
+enum class PushPlatform(val raw: String) {
+    /** Apple Push Notification service (iPhone, iPad). */
+    Apns("apns"),
+    /** Firebase Cloud Messaging (Android). */
+    Fcm("fcm"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<PushPlatform>("PushPlatform", entries, { it.raw }, Unknown)
+}
+
+@Serializable(with = PushEnvironment.Serializer::class)
+enum class PushEnvironment(val raw: String) {
+    /** A development build (APNs' sandbox). */
+    Sandbox("sandbox"),
+    /** An App Store or TestFlight build. */
+    Production("production"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<PushEnvironment>("PushEnvironment", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = HandReason.Serializer::class)
 enum class HandReason(val raw: String) {
     /** Review rounds ran out. */
@@ -420,7 +462,7 @@ enum class HandReason(val raw: String) {
     ProofBurden("proofBurden"),
     /** Needs more input than the plan has. */
     NeedsInput("needsInput"),
-    /** The fix goes over the size budget. */
+    /** The task goes over its budget: the change's size, or the time or money spent on it. */
     OverBudget("overBudget"),
     /** Its session ended in a way that needs a person. */
     SessionEnded("sessionEnded"),
@@ -431,6 +473,30 @@ enum class HandReason(val raw: String) {
     ;
 
     object Serializer : WireEnumSerializer<HandReason>("HandReason", entries, { it.raw }, Unknown)
+}
+
+/** What an agent shared on a task, which decides how the apps show it. */
+@Serializable(with = ArtifactKind.Serializer::class)
+enum class ArtifactKind(val raw: String) {
+    /** An HTML page, run sandboxed with no network. */
+    Html("html"),
+    /** A PNG, JPEG, WebP or GIF. */
+    Image("image"),
+    /** An SVG drawing, shown like an HTML page. */
+    Svg("svg"),
+    /** A PDF. */
+    Pdf("pdf"),
+    /** Markdown text. */
+    Markdown("markdown"),
+    /** Plain text. */
+    Text("text"),
+    /** CSV or JSON, shown as text. */
+    Data("data"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<ArtifactKind>("ArtifactKind", entries, { it.raw }, Unknown)
 }
 
 @Serializable(with = MockupStatus.Serializer::class)
@@ -1049,6 +1115,8 @@ data class Comment(
     val via: String? = null,
     /** Logins of the org members this comment @mentions, worked out by the server. Never the author. */
     val mentions: List<String>? = null,
+    /** The id of the comment that starts its thread. Replies to a reply sit under that same root. */
+    val replyTo: String? = null,
 )
 
 /** Steering: someone redirecting the planner or builder mid-flight. */
@@ -1183,6 +1251,24 @@ data class Mockup(
     val version: Long,
     val visualMatch: Double? = null,
     val differences: List<String> = emptyList(),
+)
+
+/** A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version. */
+@Serializable
+data class Artifact(
+    val id: String,
+    val title: String,
+    val kind: ArtifactKind,
+    val summary: String? = null,
+    /** Its upload's link, /attachments/<id>/<name> (members fetch it there). */
+    val file: String,
+    val mime: String,
+    val bytes: Long,
+    /** The role of the agent that shared it. */
+    val by: String,
+    val at: Long,
+    /** 1 for the first share, one more each time the same title is shared again. */
+    val version: Long,
 )
 
 @Serializable
@@ -1401,6 +1487,8 @@ data class Task(
     val risk: Risk? = null,
     val autoReview: AutoReview? = null,
     val mockups: List<Mockup> = emptyList(),
+    /** Files its agents shared: charts, images, pages. Empty on older tasks. */
+    val artifacts: List<Artifact> = emptyList(),
     val tickets: List<TicketLink> = emptyList(),
     val shareable: Boolean,
     /** claude or codex: what builds it. */
@@ -1468,6 +1556,10 @@ data class RiskPolicy(
     val autoMerges: Boolean? = null,
     /** The most leftovers one Scout run turns into drafted plans (1–10). None: 3. */
     val scoutItems: Long? = null,
+    /** Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60. */
+    val taskMinutes: Long? = null,
+    /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
+    val taskCostUsd: Double? = null,
 )
 
 /** An MCP server the factory adds to every session, alongside its own `maple` server. */
@@ -1697,6 +1789,8 @@ data class Presence(
     val login: String,
     val viewing: String? = null,
     val since: Long,
+    /** True when every app the person has open is the iPhone or Android app. */
+    val mobile: Boolean? = null,
 )
 
 /** A goal Draft with AI suggests making. */
@@ -1750,6 +1844,36 @@ data class ScoutRun(
     val error: String? = null,
 )
 
+/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. */
+@Serializable
+data class Recurring(
+    val id: String,
+    val goal: String,
+    val title: String,
+    /** The prompt: each run's task brief. */
+    val brief: String,
+    /** One of the goal's repos. None: the goal's own. */
+    val repo: String? = null,
+    /** claude or codex. */
+    val agent: String,
+    /** The interval in minutes (60 at least). */
+    val every: Long,
+    /** How `every` is shown: hours, days or weeks. */
+    val unit: RecurringUnit,
+    /** The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST. */
+    val firstAt: Long,
+    /** An IANA time zone, e.g. America/New_York. */
+    val timeZone: String,
+    /** When it next runs (ms). */
+    val nextAt: Long,
+    val paused: Boolean,
+    val lastRunAt: Long? = null,
+    /** The task its last run started. While that one is still open, a due run is skipped. */
+    val lastTask: String? = null,
+    /** Who saved it last; its runs are started on their behalf. */
+    val by: String,
+)
+
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
 @Serializable
 data class Draft(
@@ -1782,6 +1906,37 @@ data class Draft(
 data class GoalFollow(
     val goal: String,
     val following: Boolean,
+)
+
+/** One quiet-hours window: on these days, from `start` to `end`. */
+@Serializable
+data class QuietWindow(
+    /** The days it starts on, 0 Sunday to 6 Saturday. */
+    val days: List<Int> = emptyList(),
+    /** Minutes after midnight (0–1439) it starts, in the schedule's time zone. */
+    val start: Int,
+    /** Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day. */
+    val end: Int,
+)
+
+/** One of your phones registered for push notifications. Its token is never sent back. */
+@Serializable
+data class PushDevice(
+    /** Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding. */
+    val id: String,
+    val platform: PushPlatform,
+    val environment: PushEnvironment,
+    val createdAt: Long,
+    val lastSeen: Long,
+)
+
+/** Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices. */
+@Serializable
+data class QuietHours(
+    /** An IANA time zone, like America/Toronto. */
+    val timeZone: String,
+    /** Up to 7 windows. */
+    val windows: List<QuietWindow> = emptyList(),
 )
 
 @Serializable
@@ -1962,6 +2117,59 @@ data class StatsFindings(
     val byAgent: List<StatsFindingAgent> = emptyList(),
     /** Newest first, up to 60. */
     val recent: List<StatsFindingRow> = emptyList(),
+)
+
+/** How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out). */
+@Serializable
+data class GoalTally(
+    val goal: String,
+    val merged: Long,
+    val cancelled: Long,
+    val closed: Long,
+    val total: Long,
+)
+
+/** One task on a day report. */
+@Serializable
+data class ReportItem(
+    val id: String,
+    /** The task in the Factory: <factory>/t/<id>. */
+    val url: String,
+    val title: String,
+    /** Its goal's name. */
+    val goal: String? = null,
+    val owner: String,
+    val pr: Long? = null,
+    /** Its pull request on GitHub; none for a local repo. */
+    val prUrl: String? = null,
+    /** When it merged or was approved; for pending and in-progress rows, when it last changed. */
+    val at: Long? = null,
+    /** What happened: "approved the plan", "review"… */
+    val note: String? = null,
+)
+
+/** A day report's section; empty ones are left out. */
+@Serializable
+data class ReportSection(
+    /** merged, reviewed, pendingReview or inProgress. */
+    val key: String,
+    val title: String,
+    val items: List<ReportItem> = emptyList(),
+)
+
+/** What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal. */
+@Serializable
+data class DayReport(
+    val login: String,
+    val since: Long,
+    val until: Long,
+    /** "EOD - Fri, Oct 31". */
+    val title: String,
+    val sections: List<ReportSection> = emptyList(),
+    /** The report as Markdown, ready to paste. */
+    val markdown: String,
+    /** The report as Slack mrkdwn, ready to paste. */
+    val slack: String,
 )
 
 /** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
@@ -2599,13 +2807,14 @@ sealed class ServerToRunner {
         /** Merged, and its branch may still be on origin: delete it there too, if it's one of `heads` or already in the default branch. */
         val deleteRemote: Boolean? = null,
     ) : ServerToRunner()
-    /** The answer to `task.token_request`. */
+    /** The answer to `task.token_request`. A push token carries `settingsUrl`, the app's permissions page, for the runner to link to when GitHub refuses a push the token isn't allowed (a workflow change without Workflows: write). */
     @Serializable
     data class TaskToken(
         val reqId: String,
         val token: String? = null,
         val error: String? = null,
         val code: String? = null,
+        val settingsUrl: String? = null,
     ) : ServerToRunner()
     /** The answer to `secrets.request`: `values` by name, or `error` with a `code`. */
     @Serializable
@@ -2791,6 +3000,28 @@ sealed class ClientMessage {
     data class GoalScout(
         val goal: String,
     ) : ClientMessage()
+    /** The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`. */
+    @Serializable
+    data class RecurringSave(
+        /** nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent. */
+        val recurring: dev.maplefactory.wire.Recurring,
+    ) : ClientMessage()
+    /** The goal's lead or an admin. */
+    @Serializable
+    data class RecurringDelete(
+        val id: String,
+    ) : ClientMessage()
+    /** The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now. */
+    @Serializable
+    data class RecurringPause(
+        val id: String,
+        val paused: Boolean,
+    ) : ClientMessage()
+    /** The goal's lead or an admin: start a run now; its schedule is kept. */
+    @Serializable
+    data class RecurringRunNow(
+        val id: String,
+    ) : ClientMessage()
     /** Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`. */
     @Serializable
     data class RepoSetupStart(
@@ -2803,6 +3034,27 @@ sealed class ClientMessage {
     data class RepoSetupCancel(
         val repo: String,
     ) : ClientMessage()
+    /** Set your quiet hours (on every device), or clear them. Answered with `quietHours.updated` to your apps, or an `error`. */
+    @Serializable
+    data class QuietHoursSet(
+        /** None: no quiet hours. */
+        val quietHours: dev.maplefactory.wire.QuietHours? = null,
+    ) : ClientMessage()
+    /** Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`. */
+    @Serializable
+    data class PushRegister(
+        val platform: dev.maplefactory.wire.PushPlatform,
+        val token: String,
+        val environment: dev.maplefactory.wire.PushEnvironment,
+    ) : ClientMessage()
+    /** Remove one of your push devices, by its token or its id. Answered with `push.devices`. */
+    @Serializable
+    data class PushUnregister(
+        val token: String? = null,
+        val id: String? = null,
+    ) : ClientMessage()
+    /** List your push devices. Answered with `push.devices`. */
+    data object PushDevices : ClientMessage()
     /** Follow a goal (it's in your sidebar) or stop following it. */
     @Serializable
     data class GoalFollow(
@@ -2999,11 +3251,14 @@ sealed class ClientMessage {
     data class TaskBacklog(
         val id: String,
     ) : ClientMessage()
+    /** Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation. */
     @Serializable
     data class TaskComment(
         val id: String,
         val text: String,
         val anchor: String? = null,
+        /** The id of a comment on this task to reply to; a reply to a reply goes under its root. */
+        val replyTo: String? = null,
     ) : ClientMessage()
     /** A change request for the planner or builder. */
     @Serializable
@@ -3097,6 +3352,11 @@ sealed class ClientMessage {
     data class TaskRerunChecks(
         val id: String,
     ) : ClientMessage()
+    /** Read the pull request and its CI from GitHub again, for a webhook that didn't arrive. */
+    @Serializable
+    data class TaskRecheckGitHub(
+        val id: String,
+    ) : ClientMessage()
     /** Run one of the pull request's CI checks again, by name. */
     @Serializable
     data class TaskRerunCheck(
@@ -3139,6 +3399,29 @@ sealed class ClientMessage {
         val days: Long,
         val goal: String? = null,
     ) : ClientMessage()
+    /** Your day report for [since, until), your local day's bounds in ms, answered with `report`. */
+    @Serializable
+    data class ReportGet(
+        val since: Long,
+        val until: Long,
+    ) : ClientMessage()
+    /** Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only. */
+    @Serializable
+    data class TasksOlder(
+        /** One goal's tasks. None: every goal's. */
+        val goal: String? = null,
+        /** Only tasks updated before this (ms), or at it with an ID before `beforeId`: the last task of the previous page. None: the snapshot's window start. */
+        val before: Long? = null,
+        /** The previous page's last task ID, to page past tasks updated in the same millisecond. */
+        val beforeId: String? = null,
+        /** Page size: 50 by default, 200 at most. */
+        val limit: Long? = null,
+    ) : ClientMessage()
+    /** One task by ID, also one the snapshot left out: answered with `task.updated` to this connection only, or an `error`. */
+    @Serializable
+    data class TaskGet(
+        val id: String,
+    ) : ClientMessage()
     /** A message this build doesn't know yet; newer servers and runners may send them. */
     data class Unknown(val type: String) : ClientMessage()
 
@@ -3165,8 +3448,16 @@ sealed class ClientMessage {
             "draft.goal" -> json.decodeFromJsonElement(DraftGoal.serializer(), body)
             "draft.cancel" -> json.decodeFromJsonElement(DraftCancel.serializer(), body)
             "goal.scout" -> json.decodeFromJsonElement(GoalScout.serializer(), body)
+            "recurring.save" -> json.decodeFromJsonElement(RecurringSave.serializer(), body)
+            "recurring.delete" -> json.decodeFromJsonElement(RecurringDelete.serializer(), body)
+            "recurring.pause" -> json.decodeFromJsonElement(RecurringPause.serializer(), body)
+            "recurring.runNow" -> json.decodeFromJsonElement(RecurringRunNow.serializer(), body)
             "repo.setup.start" -> json.decodeFromJsonElement(RepoSetupStart.serializer(), body)
             "repo.setup.cancel" -> json.decodeFromJsonElement(RepoSetupCancel.serializer(), body)
+            "quietHours.set" -> json.decodeFromJsonElement(QuietHoursSet.serializer(), body)
+            "push.register" -> json.decodeFromJsonElement(PushRegister.serializer(), body)
+            "push.unregister" -> json.decodeFromJsonElement(PushUnregister.serializer(), body)
+            "push.devices" -> PushDevices
             "goal.follow" -> json.decodeFromJsonElement(GoalFollow.serializer(), body)
             "goal.archive" -> json.decodeFromJsonElement(GoalArchive.serializer(), body)
             "machine.settings" -> json.decodeFromJsonElement(MachineSettings.serializer(), body)
@@ -3212,6 +3503,7 @@ sealed class ClientMessage {
             "task.queue" -> json.decodeFromJsonElement(TaskQueue.serializer(), body)
             "task.rankDraft" -> json.decodeFromJsonElement(TaskRankDraft.serializer(), body)
             "task.rerunChecks" -> json.decodeFromJsonElement(TaskRerunChecks.serializer(), body)
+            "task.recheckGitHub" -> json.decodeFromJsonElement(TaskRecheckGitHub.serializer(), body)
             "task.rerunCheck" -> json.decodeFromJsonElement(TaskRerunCheck.serializer(), body)
             "task.checkLog" -> json.decodeFromJsonElement(TaskCheckLog.serializer(), body)
             "task.split" -> json.decodeFromJsonElement(TaskSplit.serializer(), body)
@@ -3219,6 +3511,9 @@ sealed class ClientMessage {
             "task.checkedIt" -> json.decodeFromJsonElement(TaskCheckedIt.serializer(), body)
             "task.mockupChange" -> json.decodeFromJsonElement(TaskMockupChange.serializer(), body)
             "stats.get" -> json.decodeFromJsonElement(StatsGet.serializer(), body)
+            "report.get" -> json.decodeFromJsonElement(ReportGet.serializer(), body)
+            "tasks.older" -> json.decodeFromJsonElement(TasksOlder.serializer(), body)
+            "task.get" -> json.decodeFromJsonElement(TaskGet.serializer(), body)
             else -> Unknown(type)
         }
 
@@ -3244,8 +3539,16 @@ sealed class ClientMessage {
             is DraftGoal -> "draft.goal" to json.encodeToJsonElement(DraftGoal.serializer(), value)
             is DraftCancel -> "draft.cancel" to json.encodeToJsonElement(DraftCancel.serializer(), value)
             is GoalScout -> "goal.scout" to json.encodeToJsonElement(GoalScout.serializer(), value)
+            is RecurringSave -> "recurring.save" to json.encodeToJsonElement(RecurringSave.serializer(), value)
+            is RecurringDelete -> "recurring.delete" to json.encodeToJsonElement(RecurringDelete.serializer(), value)
+            is RecurringPause -> "recurring.pause" to json.encodeToJsonElement(RecurringPause.serializer(), value)
+            is RecurringRunNow -> "recurring.runNow" to json.encodeToJsonElement(RecurringRunNow.serializer(), value)
             is RepoSetupStart -> "repo.setup.start" to json.encodeToJsonElement(RepoSetupStart.serializer(), value)
             is RepoSetupCancel -> "repo.setup.cancel" to json.encodeToJsonElement(RepoSetupCancel.serializer(), value)
+            is QuietHoursSet -> "quietHours.set" to json.encodeToJsonElement(QuietHoursSet.serializer(), value)
+            is PushRegister -> "push.register" to json.encodeToJsonElement(PushRegister.serializer(), value)
+            is PushUnregister -> "push.unregister" to json.encodeToJsonElement(PushUnregister.serializer(), value)
+            is PushDevices -> "push.devices" to null
             is GoalFollow -> "goal.follow" to json.encodeToJsonElement(GoalFollow.serializer(), value)
             is GoalArchive -> "goal.archive" to json.encodeToJsonElement(GoalArchive.serializer(), value)
             is MachineSettings -> "machine.settings" to json.encodeToJsonElement(MachineSettings.serializer(), value)
@@ -3291,6 +3594,7 @@ sealed class ClientMessage {
             is TaskQueue -> "task.queue" to json.encodeToJsonElement(TaskQueue.serializer(), value)
             is TaskRankDraft -> "task.rankDraft" to json.encodeToJsonElement(TaskRankDraft.serializer(), value)
             is TaskRerunChecks -> "task.rerunChecks" to json.encodeToJsonElement(TaskRerunChecks.serializer(), value)
+            is TaskRecheckGitHub -> "task.recheckGitHub" to json.encodeToJsonElement(TaskRecheckGitHub.serializer(), value)
             is TaskRerunCheck -> "task.rerunCheck" to json.encodeToJsonElement(TaskRerunCheck.serializer(), value)
             is TaskCheckLog -> "task.checkLog" to json.encodeToJsonElement(TaskCheckLog.serializer(), value)
             is TaskSplit -> "task.split" to json.encodeToJsonElement(TaskSplit.serializer(), value)
@@ -3298,6 +3602,9 @@ sealed class ClientMessage {
             is TaskCheckedIt -> "task.checkedIt" to json.encodeToJsonElement(TaskCheckedIt.serializer(), value)
             is TaskMockupChange -> "task.mockupChange" to json.encodeToJsonElement(TaskMockupChange.serializer(), value)
             is StatsGet -> "stats.get" to json.encodeToJsonElement(StatsGet.serializer(), value)
+            is ReportGet -> "report.get" to json.encodeToJsonElement(ReportGet.serializer(), value)
+            is TasksOlder -> "tasks.older" to json.encodeToJsonElement(TasksOlder.serializer(), value)
+            is TaskGet -> "task.get" to json.encodeToJsonElement(TaskGet.serializer(), value)
             is Unknown -> value.type to null
         }
     }
@@ -3315,7 +3622,12 @@ sealed class ServerToClient {
         /** The most recent session ends (last 7 days, newest first). */
         val ended: List<dev.maplefactory.wire.EndedSession> = emptyList(),
         val goals: List<dev.maplefactory.wire.Goal> = emptyList(),
+        /** Every unfinished task, and merged, cancelled or closed ones updated in the last 14 days. Older ones come with `tasks.older` and `task.get`. */
         val tasks: List<dev.maplefactory.wire.Task> = emptyList(),
+        /** Each goal's task counts over every task, also those left out. None: an older server, which sends every task. */
+        val tallies: List<dev.maplefactory.wire.GoalTally>? = null,
+        /** How many finished tasks the snapshot left out. None: an older server. */
+        val olderTasks: Long? = null,
         val policy: dev.maplefactory.wire.RiskPolicy,
         val acceptances: List<dev.maplefactory.wire.RiskAcceptance> = emptyList(),
         /** The org's prompt additions. None: an older server. */
@@ -3327,6 +3639,8 @@ sealed class ServerToClient {
         val online: List<dev.maplefactory.wire.Presence> = emptyList(),
         val notes: List<dev.maplefactory.wire.Note> = emptyList(),
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
+        /** Your quiet hours. None: none set, or an older server. */
+        val quietHours: dev.maplefactory.wire.QuietHours? = null,
         val intake: List<dev.maplefactory.wire.IntakeRequest> = emptyList(),
         val repos: List<dev.maplefactory.wire.OrgRepo> = emptyList(),
         /** Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server. */
@@ -3341,6 +3655,8 @@ sealed class ServerToClient {
         val setupRuns: List<dev.maplefactory.wire.RepoSetupRun>? = null,
         /** Each goal's latest Scout run. None: an older server. */
         val scoutRuns: List<dev.maplefactory.wire.ScoutRun>? = null,
+        /** Every goal's recurring tasks. None: an older server. */
+        val recurring: List<dev.maplefactory.wire.Recurring>? = null,
         /** The newest released runner version, when there's a release. */
         val runnerLatest: String? = null,
         /** Runner releases, newest first, with their notes (What's new). None: an older server. */
@@ -3379,6 +3695,15 @@ sealed class ServerToClient {
     data class TaskRemoved(
         val id: String,
     ) : ServerToClient()
+    /** A page of older finished tasks `tasks.older` asked for, newest first, to that connection only. */
+    @Serializable
+    data class TasksPage(
+        /** The goal asked for. None: every goal. */
+        val goal: String? = null,
+        val tasks: List<dev.maplefactory.wire.Task> = emptyList(),
+        /** There are older ones still: ask again from this page's last task. */
+        val more: Boolean,
+    ) : ServerToClient()
     @Serializable
     data class GoalUpdated(
         val goal: dev.maplefactory.wire.Goal,
@@ -3405,6 +3730,15 @@ sealed class ServerToClient {
     data class ScoutUpdated(
         val run: dev.maplefactory.wire.ScoutRun,
     ) : ServerToClient()
+    /** A recurring task was saved or ran. */
+    @Serializable
+    data class RecurringUpdated(
+        val recurring: dev.maplefactory.wire.Recurring,
+    ) : ServerToClient()
+    @Serializable
+    data class RecurringDeleted(
+        val id: String,
+    ) : ServerToClient()
     /** How a repo's Set up with AI run is going. */
     @Serializable
     data class RepoSetupUpdated(
@@ -3414,6 +3748,17 @@ sealed class ServerToClient {
     @Serializable
     data class FollowsUpdated(
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
+    ) : ServerToClient()
+    /** Your push devices, to your apps only. */
+    @Serializable
+    data class PushDevices(
+        val devices: List<dev.maplefactory.wire.PushDevice> = emptyList(),
+    ) : ServerToClient()
+    /** Your quiet hours changed, to your apps only. */
+    @Serializable
+    data class QuietHoursUpdated(
+        /** None: cleared. */
+        val quietHours: dev.maplefactory.wire.QuietHours? = null,
     ) : ServerToClient()
     /** Who's online and what they're looking at, whenever it changes. */
     @Serializable
@@ -3508,6 +3853,11 @@ sealed class ServerToClient {
     data class Stats(
         val summary: dev.maplefactory.wire.StatsSummary,
     ) : ServerToClient()
+    /** The day report `report.get` asked for, to that connection only. */
+    @Serializable
+    data class Report(
+        val report: dev.maplefactory.wire.DayReport,
+    ) : ServerToClient()
     /** The CI check log `task.checkLog` asked for, to that connection only. */
     @Serializable
     data class CheckLog(
@@ -3539,14 +3889,19 @@ sealed class ServerToClient {
             "machine.agent_login" -> json.decodeFromJsonElement(MachineAgentLogin.serializer(), body)
             "task.updated" -> json.decodeFromJsonElement(TaskUpdated.serializer(), body)
             "task.removed" -> json.decodeFromJsonElement(TaskRemoved.serializer(), body)
+            "tasks.page" -> json.decodeFromJsonElement(TasksPage.serializer(), body)
             "goal.updated" -> json.decodeFromJsonElement(GoalUpdated.serializer(), body)
             "note.updated" -> json.decodeFromJsonElement(NoteUpdated.serializer(), body)
             "intake.updated" -> json.decodeFromJsonElement(IntakeUpdated.serializer(), body)
             "note.removed" -> json.decodeFromJsonElement(NoteRemoved.serializer(), body)
             "draft.updated" -> json.decodeFromJsonElement(DraftUpdated.serializer(), body)
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
+            "recurring.updated" -> json.decodeFromJsonElement(RecurringUpdated.serializer(), body)
+            "recurring.deleted" -> json.decodeFromJsonElement(RecurringDeleted.serializer(), body)
             "repo.setup.updated" -> json.decodeFromJsonElement(RepoSetupUpdated.serializer(), body)
             "follows.updated" -> json.decodeFromJsonElement(FollowsUpdated.serializer(), body)
+            "push.devices" -> json.decodeFromJsonElement(PushDevices.serializer(), body)
+            "quietHours.updated" -> json.decodeFromJsonElement(QuietHoursUpdated.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "policy.updated" -> json.decodeFromJsonElement(PolicyUpdated.serializer(), body)
             "prompts.updated" -> json.decodeFromJsonElement(PromptsUpdated.serializer(), body)
@@ -3563,6 +3918,7 @@ sealed class ServerToClient {
             "session.ended" -> json.decodeFromJsonElement(SessionEnded.serializer(), body)
             "session.events" -> json.decodeFromJsonElement(SessionEvents.serializer(), body)
             "stats" -> json.decodeFromJsonElement(Stats.serializer(), body)
+            "report" -> json.decodeFromJsonElement(Report.serializer(), body)
             "checkLog" -> json.decodeFromJsonElement(CheckLog.serializer(), body)
             "error" -> json.decodeFromJsonElement(Error.serializer(), body)
             else -> Unknown(type)
@@ -3575,14 +3931,19 @@ sealed class ServerToClient {
             is MachineAgentLogin -> "machine.agent_login" to json.encodeToJsonElement(MachineAgentLogin.serializer(), value)
             is TaskUpdated -> "task.updated" to json.encodeToJsonElement(TaskUpdated.serializer(), value)
             is TaskRemoved -> "task.removed" to json.encodeToJsonElement(TaskRemoved.serializer(), value)
+            is TasksPage -> "tasks.page" to json.encodeToJsonElement(TasksPage.serializer(), value)
             is GoalUpdated -> "goal.updated" to json.encodeToJsonElement(GoalUpdated.serializer(), value)
             is NoteUpdated -> "note.updated" to json.encodeToJsonElement(NoteUpdated.serializer(), value)
             is IntakeUpdated -> "intake.updated" to json.encodeToJsonElement(IntakeUpdated.serializer(), value)
             is NoteRemoved -> "note.removed" to json.encodeToJsonElement(NoteRemoved.serializer(), value)
             is DraftUpdated -> "draft.updated" to json.encodeToJsonElement(DraftUpdated.serializer(), value)
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
+            is RecurringUpdated -> "recurring.updated" to json.encodeToJsonElement(RecurringUpdated.serializer(), value)
+            is RecurringDeleted -> "recurring.deleted" to json.encodeToJsonElement(RecurringDeleted.serializer(), value)
             is RepoSetupUpdated -> "repo.setup.updated" to json.encodeToJsonElement(RepoSetupUpdated.serializer(), value)
             is FollowsUpdated -> "follows.updated" to json.encodeToJsonElement(FollowsUpdated.serializer(), value)
+            is PushDevices -> "push.devices" to json.encodeToJsonElement(PushDevices.serializer(), value)
+            is QuietHoursUpdated -> "quietHours.updated" to json.encodeToJsonElement(QuietHoursUpdated.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is PolicyUpdated -> "policy.updated" to json.encodeToJsonElement(PolicyUpdated.serializer(), value)
             is PromptsUpdated -> "prompts.updated" to json.encodeToJsonElement(PromptsUpdated.serializer(), value)
@@ -3599,6 +3960,7 @@ sealed class ServerToClient {
             is SessionEnded -> "session.ended" to json.encodeToJsonElement(SessionEnded.serializer(), value)
             is SessionEvents -> "session.events" to json.encodeToJsonElement(SessionEvents.serializer(), value)
             is Stats -> "stats" to json.encodeToJsonElement(Stats.serializer(), value)
+            is Report -> "report" to json.encodeToJsonElement(Report.serializer(), value)
             is CheckLog -> "checkLog" to json.encodeToJsonElement(CheckLog.serializer(), value)
             is Error -> "error" to json.encodeToJsonElement(Error.serializer(), value)
             is Unknown -> value.type to null
