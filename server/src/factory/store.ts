@@ -61,6 +61,9 @@ export interface TaskPrivate {
   budgetBase?: import("./policy.ts").BudgetBase | null;
   /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
   budgetAskedAt?: number | null;
+  /** Over budget with the policy's "handOff": its work is being pushed so a follow-up draft can be filed and the
+   *  task cancelled; what its agent said in its overBudget hand (null: no hand came, the factory stepped in). */
+  budgetHandOff?: { summary: string | null } | null;
   /** The last answer a person gave its agent (to `ask`, a raised hand, or in a comment thread), since it last
    *  asked; what lets the builder `attest` Done when items for them. Cleared by a new `ask` or `raise_hand`. */
   lastAnswer?: { who: string; text: string; at: number } | null;
