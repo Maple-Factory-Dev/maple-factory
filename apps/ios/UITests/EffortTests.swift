@@ -15,6 +15,7 @@ final class EffortTests: XCTestCase {
         XCTAssertTrue(chip.waitForExistence(timeout: 30), "a task in an effort should show its chip")
         XCTAssertTrue(app.staticTexts["Effort Offline"].exists || app.otherElements["Effort Offline"].exists
                       || app.descendants(matching: .any)["Effort Offline"].exists, "the chip should name Offline")
+        for _ in 0..<4 where chip.frame.maxY > app.frame.height * 0.7 { app.swipeUp(velocity: .slow) }
         snap(app, "goal-rows")
     }
 
