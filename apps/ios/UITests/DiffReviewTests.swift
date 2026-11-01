@@ -3,10 +3,11 @@ import XCTest
 /// In the demo: long-press a line of API-31's diff → Add note, twice (an added line and a removed one),
 /// then Submit review sends them as one review: the bar goes, and the Timeline shows the change request.
 ///   xcodebuild test -scheme "Maple Factory" -only-testing:MapleFactoryUITests/DiffReviewTests …
+@MainActor
 final class DiffReviewTests: XCTestCase {
     func testNoteLinesAndSubmitReview() {
         let app = XCUIApplication()
-        app.launchArguments = ["-demo", "YES"]
+        app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goal", "g-api"]
         app.launch()
         open(app, "API-31")
         app.buttons["Diff"].tap()
@@ -61,7 +62,7 @@ final class DiffReviewTests: XCTestCase {
 
     private func open(_ app: XCUIApplication, _ id: String) {
         let row = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", id)).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 20), "the inbox should list \(id)")
+        XCTAssertTrue(row.waitForExistence(timeout: 20), "the goal should list \(id)")
         row.tap()
         XCTAssertTrue(app.navigationBars[id].waitForExistence(timeout: 10))
     }
