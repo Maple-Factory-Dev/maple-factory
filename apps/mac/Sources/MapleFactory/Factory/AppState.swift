@@ -2075,6 +2075,31 @@ final class AppState {
         }
     }
 
+    /// Reads the task's pull request and CI from GitHub again, for a webhook that never came.
+    func recheckGitHub(_ id: String) {
+        if let client, isLive {
+            client.send(.taskRecheckGitHub(.init(id: id)))
+            showToast("Checking GitHub…", icon: "arrow.triangle.2.circlepath")
+            return
+        }
+        showToast("Checking GitHub…", icon: "arrow.triangle.2.circlepath")
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.snappy(duration: 0.3)) {
+                self.update(id) { task in
+                    guard var pr = task.pr else { return }
+                    if pr.checks.isEmpty { pr.checks = [CICheck(name: "test", status: .passed, duration: "1:12")] }
+                    for index in pr.checks.indices where pr.checks[index].status == .running || pr.checks[index].status == .queued {
+                        pr.checks[index].status = .passed
+                        pr.checks[index].duration = "1:\(20 + index * 7)"
+                    }
+                    task.pr = pr
+                    task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Rechecked CI on GitHub", when: "now"), at: 0)
+                }
+            }
+        }
+    }
+
     /// Splits an over-budget task into `parts`: the original keeps everything up to its current step,
     /// and the remaining steps become new tasks queued for planning.
     func split(_ id: String, into parts: Int) {
@@ -2371,6 +2396,9 @@ final class AppState {
             case "model": setAgent(parts[1], agent: parts.count > 2 ? parts[2] : task(parts[1]).builder, model: parts.count > 3 ? parts[3] : nil)
             case "startnow": startNow(parts[1])
             case "rerun": rerunFailedChecks(parts[1])
+            // Recheck on the PR card; `nochecks:<id>` empties its checks first, to show it with none reported.
+            case "recheck": recheckGitHub(parts[1])
+            case "nochecks": update(parts[1]) { $0.pr?.checks = [] }
             // A PR card check row's View Log (`checklog:<id>:<check>`) and Re-run (`reruncheck:<id>:<check>`).
             case "checklog": showCheckLog(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
             case "reruncheck": rerunCheck(parts[1], check: parts.dropFirst(2).joined(separator: ":"))
