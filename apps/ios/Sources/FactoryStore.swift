@@ -889,6 +889,8 @@ final class FactoryStore {
         case .taskRerunChecks(let m):
             let failed = feed.task(m.id)?.pr?.checks.filter { $0.status == .failed }.map(\.name) ?? []
             demoRerun(m.id, checks: failed, text: "re-ran the failed checks")
+        case .recurringSave, .recurringPause, .recurringRunNow, .recurringDelete:
+            demoRecurring(message)
         default:
             break
         }
@@ -920,6 +922,64 @@ extension FactoryStore {
                     task.pr!.checks[index].duration = "1m \(10 + index * 7)s"
                 }
             }
+        }
+    }
+}
+
+// MARK: Recurring tasks
+
+extension FactoryStore {
+    /// A goal's recurring tasks: running ones first, then soonest next run.
+    func recurring(goal: String) -> [Wire.Recurring] { feed.recurring(goal: goal) }
+
+    /// Add or change a recurring task (a new one has a new id); the server works out its next run.
+    func saveRecurring(_ item: Wire.Recurring) { send(.recurringSave(.init(recurring: item))) }
+
+    /// Pause or resume one; resuming moves its next run to the next due time from now.
+    func pauseRecurring(id: String, paused: Bool) { send(.recurringPause(.init(id: id, paused: paused))) }
+
+    /// Start a run now; its schedule is kept.
+    func runRecurringNow(id: String) {
+        let title = feed.recurring[id]?.title
+        send(.recurringRunNow(.init(id: id)))
+        notice = .toast(title.map { "Started a run of \($0)" } ?? "Started a run", taskId: nil)
+    }
+
+    /// Gone from the list right away, as on the Mac; the server confirms with `recurring.deleted`.
+    func deleteRecurring(id: String) {
+        feed.recurring[id] = nil
+        send(.recurringDelete(.init(id: id)))
+    }
+
+    /// The demo answers the recurring messages the way the server would.
+    fileprivate func demoRecurring(_ message: Wire.ClientMessage) {
+        func update(_ id: String, _ change: (inout Wire.Recurring) -> Void) {
+            guard var item = feed.recurring[id] else { return }
+            change(&item)
+            feed.apply(.recurringUpdated(.init(recurring: item)))
+        }
+        switch message {
+        case .recurringSave(let m):
+            var item = m.recurring
+            item.nextAt = item.firstAt
+            item.by = me
+            if let was = feed.recurring[item.id] { item.lastTask = was.lastTask; item.lastRunAt = was.lastRunAt; item.paused = was.paused }
+            feed.apply(.recurringUpdated(.init(recurring: item)))
+        case .recurringPause(let m):
+            update(m.id) { $0.paused = m.paused }
+        case .recurringRunNow(let m):
+            guard let item = feed.recurring[m.id], let goal = feed.goal(item.goal) else { return }
+            let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
+            let task = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id, title: item.title, state: .planning, owner: item.by,
+                                 brief: item.brief, createdAt: DemoData.now, updatedAt: DemoData.now, planVersion: 0, approvalsNeeded: 1, reviewsNeeded: 1,
+                                 events: [.init(who: "factory", text: "started it from the recurring task \(item.title)", at: DemoData.now)],
+                                 shareable: false, agent: item.agent, repo: item.repo)
+            feed.apply(.taskUpdated(.init(task: task)))
+            update(m.id) { $0.lastTask = task.id; $0.lastRunAt = DemoData.now }
+        case .recurringDelete(let m):
+            feed.apply(.recurringDeleted(.init(id: m.id)))
+        default:
+            break
         }
     }
 }

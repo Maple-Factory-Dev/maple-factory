@@ -316,6 +316,7 @@ struct GoalView: View {
     @Environment(FactoryStore.self) private var store
     /// `-newTask YES` opens the New task sheet, for screenshots.
     @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
+    @State private var showRecurring = UserDefaults.standard.bool(forKey: "recurring")
     let id: String
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .closed, .cancelled]
@@ -407,6 +408,10 @@ struct GoalView: View {
                     }
                     if let repo = goal.repo { LabeledContent("Repo", value: repo) }
                     Toggle("Follow", isOn: Binding(get: { store.feed.following(goal) }, set: { store.follow(goal.id, $0) }))
+                    NavigationLink(value: RecurringRoute(goal: id)) {
+                        LabeledContent { Text("\(store.recurring(goal: id).count)").accessibilityIdentifier("recurring-count") } label: { Label("Recurring", systemImage: "clock.arrow.circlepath") }
+                    }
+                    .accessibilityIdentifier("goal-recurring")
                 }
                 GoalSettingsSection(goal: goal)
                 ForEach(Self.stages, id: \.self) { stage in
@@ -435,6 +440,9 @@ struct GoalView: View {
                 if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
             }
             .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
+            .navigationDestination(for: RecurringRoute.self) { RecurringView(goalID: $0.goal) }
+            // `-recurring YES` opens the goal's recurring tasks, for screenshots.
+            .navigationDestination(isPresented: $showRecurring) { RecurringView(goalID: id) }
             // `-loadOlder YES` presses Load older once, for screenshots.
             .task { if UserDefaults.standard.bool(forKey: "loadOlder") { store.loadOlder(goal: id) } }
         } else {
