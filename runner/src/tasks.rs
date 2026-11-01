@@ -485,6 +485,10 @@ async fn cleanup_scripts(emit: Emit<'_>, cwds: &[String], c: &Cleanup, dir: &Pat
     let ctx = scripts.context(&root, dir, &c.branch);
     let mut ran = Vec::new();
     for phase in [Phase::Teardown, Phase::Archive] {
+        if phase == Phase::Archive {
+            // Nothing left running in it when the archive script takes it (remove_task does this otherwise).
+            ran.extend(crate::worktrees::stopped_line(&crate::worktrees::stop_leftovers(&target).await));
+        }
         if let Some(r) = run(Some(scripts.scripts), phase, &ctx).await? {
             ran.push(r.line());
         }

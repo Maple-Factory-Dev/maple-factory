@@ -315,7 +315,16 @@ fn session_for(pid: u32, parents: &HashMap<u32, u32>, sessions: &[SessionProc]) 
 
 /// Whether `pid` is one of `roots` or was started (at any depth) by one of them.
 pub async fn descends_from(pid: u32, roots: &HashSet<u32>) -> bool {
+    descends_in(pid, roots, &parents().await)
+}
+
+/// The `pids` that are one of `roots` or were started (at any depth) by one, from a single `ps`.
+pub async fn descending_from(pids: &[u32], roots: &HashSet<u32>) -> HashSet<u32> {
     let parents = parents().await;
+    pids.iter().copied().filter(|&pid| descends_in(pid, roots, &parents)).collect()
+}
+
+fn descends_in(pid: u32, roots: &HashSet<u32>, parents: &HashMap<u32, u32>) -> bool {
     let mut cur = pid;
     for _ in 0..64 {
         if roots.contains(&cur) {
