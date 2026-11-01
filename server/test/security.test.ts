@@ -84,12 +84,42 @@ test("an oversized attachment without content-length gets 413, without reading i
   assert.ok(pulled.bytes <= MAX_ATTACHMENT + 2 * MB, `read ${pulled.bytes / MB} MB`);
 });
 
-test("an oversized proof without content-length gets 413, without reading it all", async () => {
+test("a proof without content-length is refused (411), without reading it", async () => {
   const { body, pulled } = chunked(60 * MB);
   const env = { DB: await machineDb("mfr_right") } as unknown as Env;
   const res = await uploadProof(post("https://f.test/runner/proof/MF-1?runner=m1&name=a.mp4", body, { authorization: "Bearer mfr_right" }, "PUT"), env, "MF-1");
+  assert.equal(res.status, 411);
+  assert.ok(pulled.bytes <= 2 * MB, `read ${pulled.bytes / MB} MB`);
+});
+
+test("a proof whose content-length is over 95 MB gets 413, without reading it", async () => {
+  const { body, pulled } = chunked(60 * MB);
+  const env = { DB: await machineDb("mfr_right") } as unknown as Env;
+  const headers = { authorization: "Bearer mfr_right", "content-length": String(96 * MB) };
+  const res = await uploadProof(post("https://f.test/runner/proof/MF-1?runner=m1&name=a.mp4", body, headers, "PUT"), env, "MF-1");
   assert.equal(res.status, 413);
-  assert.ok(pulled.bytes <= 27 * MB, `read ${pulled.bytes / MB} MB`);
+  assert.ok(pulled.bytes <= 2 * MB, `read ${pulled.bytes / MB} MB`);
+});
+
+test("an image proof over 20 MB gets 413 after reading only its first bytes", async () => {
+  let left = 21 * MB;
+  const pulled = { bytes: 0 };
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (left <= 0) return c.close();
+      const chunk = new Uint8Array(MB);
+      if (!pulled.bytes) chunk.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      left -= MB;
+      pulled.bytes += MB;
+      c.enqueue(chunk);
+    },
+  });
+  const env = { DB: await machineDb("mfr_right") } as unknown as Env;
+  const headers = { authorization: "Bearer mfr_right", "content-length": String(21 * MB) };
+  const res = await uploadProof(post("https://f.test/runner/proof/MF-1?runner=m1&name=a.png", body, headers, "PUT"), env, "MF-1");
+  assert.equal(res.status, 413);
+  assert.match(await res.text(), /20 MB/);
+  assert.ok(pulled.bytes <= 3 * MB, `read ${pulled.bytes / MB} MB`);
 });
 
 test("an oversized icon without content-length gets 413, without reading it all", async () => {

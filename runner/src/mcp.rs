@@ -488,7 +488,7 @@ fn tools() -> Value {
                 "kind": { "type": "string", "enum": PROOF_KINDS, "description": "One the item names after Proof:." },
                 "summary": { "type": "string", "maxLength": MAX_PROOF_SUMMARY, "description": "One line: what the evidence shows." },
                 "text": { "type": "string", "description": "The evidence itself, up to 64 KB. Give this or file." },
-                "file": { "type": "string", "description": "A PNG, JPEG, WebP or text file (at most 5 MB), or an MP4, MOV or WebM video (at most 25 MB), under ~/.cache/maple-proof/<branch>/. Give this or text." },
+                "file": { "type": "string", "description": "A PNG, JPEG, WebP or text file (at most 20 MB), or an MP4, MOV or WebM video (at most 95 MB), under ~/.cache/maple-proof/<branch>/. Keep screenshots and recordings at full resolution: don't shrink or trim them to fit. Give this or text." },
             }, "required": ["criterion", "kind", "summary"] },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
         },

@@ -3,11 +3,12 @@ import SwiftUI
 /// What the proof lightbox shows: a screenshot (and its upload, for Open in Preview) or a recording from where it was.
 enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
-    case video(URL, poster: NSImage?, caption: String, at: Double = 0)
+    /// `size`: the recording's own size (its track's, turned upright), which the lightbox fits by.
+    case video(URL, poster: NSImage?, size: CGSize? = nil, caption: String, at: Double = 0)
 
     var caption: String {
         switch self {
-        case let .image(_, caption, _), let .video(_, _, caption, _): caption
+        case let .image(_, caption, _), let .video(_, _, _, caption, _): caption
         }
     }
 }

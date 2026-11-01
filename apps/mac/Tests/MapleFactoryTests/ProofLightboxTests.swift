@@ -13,9 +13,10 @@ struct ProofLightboxTests {
         state.closeLightbox()
         #expect(state.lightbox == nil)
 
-        state.showLightbox(.video(URL(filePath: "/tmp/run.mp4"), poster: nil, caption: "Run", at: 3))
-        guard case let .video(_, _, _, at) = state.lightbox else { Issue.record("Not a video"); return }
+        state.showLightbox(.video(URL(filePath: "/tmp/run.mp4"), poster: nil, size: CGSize(width: 1920, height: 1080), caption: "Run", at: 3))
+        guard case let .video(_, _, size, _, at) = state.lightbox else { Issue.record("Not a video"); return }
         #expect(at == 3)
+        #expect(size == CGSize(width: 1920, height: 1080))
     }
 
     @Test func tinyImageStaysAtItsOwnSize() {
@@ -29,8 +30,42 @@ struct ProofLightboxTests {
         #expect(ProofLightboxView.fit(CGSize(width: 1000, height: 4000), in: CGSize(width: 1200, height: 800)) == CGSize(width: 200, height: 800))
     }
 
-    @Test func tinyVideoGrowsToFillTheRoom() {
-        #expect(ProofLightboxView.fit(CGSize(width: 320, height: 200), in: CGSize(width: 1200, height: 800), upscale: true) == CGSize(width: 1200, height: 750))
+    @Test func videoGrowsToFillTheRoomButAtMostTwiceItsSize() {
+        let up = ProofLightboxView.maxVideoUpscale
+        #expect(up == 2)
+        // 480×300 into 1200×800 would be 2.5×: it stops at 2×.
+        #expect(ProofLightboxView.fit(CGSize(width: 480, height: 300), in: CGSize(width: 1200, height: 800), upscale: up) == CGSize(width: 960, height: 600))
+        // 800×500 needs only 1.5× to fill it.
+        #expect(ProofLightboxView.fit(CGSize(width: 800, height: 500), in: CGSize(width: 1200, height: 800), upscale: up) == CGSize(width: 1200, height: 750))
+        // A 1920×1080 recording in a smaller room shrinks to fit.
+        #expect(ProofLightboxView.fit(CGSize(width: 1920, height: 1080), in: CGSize(width: 1200, height: 800), upscale: up) == CGSize(width: 1200, height: 675))
+    }
+
+    @Test func inlineWidthIsTheLeastOfColumnCapAndMedia() {
+        #expect(ProofViews.maxWidth == 720)
+        // A 1920×1080 recording in a wide column: the 720pt cap, well past the old 380.
+        #expect(ProofViews.inlineWidth(column: 900, media: CGSize(width: 1920, height: 1080)) == 720)
+        // A narrow column wins.
+        #expect(ProofViews.inlineWidth(column: 540, media: CGSize(width: 1920, height: 1080)) == 540)
+        // A small capture stays at its own width.
+        #expect(ProofViews.inlineWidth(column: 900, media: CGSize(width: 400, height: 300)) == 400)
+        // Before the size is known, the cap.
+        #expect(ProofViews.inlineWidth(column: .infinity, media: nil) == 720)
+    }
+
+    @Test func aRotatedRecordingIsPortrait() {
+        // A phone's portrait clip: stored 1920×1080 and turned a quarter on playback.
+        let upright = ProofViews.upright(CGSize(width: 1920, height: 1080), transform: CGAffineTransform(rotationAngle: .pi / 2))
+        #expect(upright == CGSize(width: 1080, height: 1920))
+        #expect(ProofViews.aspect(upright) < 1)
+        #expect(ProofViews.upright(CGSize(width: 1920, height: 1080), transform: .identity) == CGSize(width: 1920, height: 1080))
+        #expect(ProofViews.aspect(nil) == 1.6)
+    }
+
+    @Test func thePosterIsTwiceTheShownWidthAtMostAndNeverPastTheRecording() {
+        #expect(ProofViews.posterSize(CGSize(width: 1920, height: 1080)) == CGSize(width: 1440, height: 810))
+        #expect(ProofViews.posterSize(CGSize(width: 1080, height: 1920)) == CGSize(width: 1080, height: 1920))
+        #expect(ProofViews.posterSize(CGSize(width: 640, height: 400)) == CGSize(width: 640, height: 400))
     }
 
     @Test func emptySizesFitToNothing() {

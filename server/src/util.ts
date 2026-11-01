@@ -88,6 +88,37 @@ export async function readCapped(request: Request, max: number): Promise<Uint8Ar
   return out;
 }
 
+/** The first bytes of a stream, at least `min` of them unless it ends sooner, and a stream of the whole
+ *  thing again (those bytes re-emitted ahead of the rest): for sniffing what an upload is and then
+ *  passing it on without holding it all. */
+export async function peek(body: ReadableStream<Uint8Array>, min: number): Promise<{ head: Uint8Array; stream: ReadableStream<Uint8Array> }> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let done = false;
+  while (size < min) {
+    const r = await reader.read();
+    if (r.done) { done = true; break; }
+    chunks.push(r.value);
+    size += r.value.byteLength;
+  }
+  const head = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) { head.set(c, at); at += c.byteLength; }
+  let sent = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(c) {
+      if (!sent) { sent = true; if (head.byteLength) return c.enqueue(head); }
+      if (done) return c.close();
+      const r = await reader.read();
+      if (r.done) c.close();
+      else c.enqueue(r.value);
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  });
+  return { head, stream };
+}
+
 /** What every HTML page the Worker makes sends: it can't be framed (clickjacking), sniffed, or name
  *  itself to other sites in a referrer. */
 export const PAGE_HEADERS: Readonly<Record<string, string>> = {
