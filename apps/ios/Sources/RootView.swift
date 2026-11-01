@@ -314,8 +314,6 @@ struct GoalRow: View {
                     // Finished tasks the snapshot left out still count as done.
                     Text("\(open.count) open · \(tasks.count - open.count + (store.feed.older[goal.id]?.finished ?? 0)) done").font(.caption).foregroundStyle(.secondary)
                 }
-                Spacer()
-                Avatar(login: goal.lead, url: store.feed.member(goal.lead)?.avatarUrl, size: 22)
             }
         }
     }
