@@ -2455,6 +2455,7 @@ export class Engine {
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
     if (name !== "get_task" && this.store.private(task.id).handingOff) return { error: "The task is being handed off to another machine; stop here." };
+    const handingOffBefore = name === "raise_hand" && !!this.store.private(task.id).budgetHandOff;
     try {
       const out = this.run(task, s, name, args);
       // A plan whose risk level needs no approval goes straight to building.
@@ -2463,7 +2464,8 @@ export class Engine {
       this.save(task);
       if (unapproved) this.hooks.waitUntil(this.pump());
       if (name === "submit_review") await this.autoMerge(task);
-      if (name === "raise_hand" && this.store.private(task.id).budgetHandOff) await this.pushBudgetHandOff(task);
+      // Only the hand that started this budget hand-off pushes, never a later one while it's in flight.
+      if (name === "raise_hand" && !handingOffBefore && this.store.private(task.id).budgetHandOff && !this.store.private(task.id).handingOff) await this.pushBudgetHandOff(task);
       // Off the tool's critical path: a share never waits on, or fails with, GitHub.
       if (name === "share_artifact") this.hooks.waitUntil(this.syncPullArtifacts(task.id));
       return { result: out };
@@ -2673,6 +2675,7 @@ export class Engine {
         });
         // Asked to hand off over budget: what it says is carried into the follow-up, and nobody is asked.
         if (reason === "overBudget" && this.store.private(task.id).budgetAskedAt != null && overBudgetMode(this.store.policy()) === "handOff") {
+          if (this.store.private(task.id).budgetHandOff) return { summary: "It's already being handed off. End your turn now." };
           this.event(task, s.role, "said where it is, to hand it off over budget");
           // The push and the follow-up come after this reply (tool()).
           this.store.savePrivate(task.id, { ...this.store.private(task.id), budgetHandOff: { summary: str(a.summary, "summary") }, lastAnswer: null });
@@ -3500,8 +3503,9 @@ export class Engine {
     if (isFinished(task.state)) return;
     const nothing = !msg.ok && /nothing to carry/.test(msg.message ?? "");
     if (priv.budgetHandOff) {
-      if (msg.ok || nothing) this.hooks.waitUntil(this.fileBudgetHandOff(task, msg.ok ? msg.commit ?? null : null, true));
-      else this.budgetHandOffFailed(task, msg.message ?? "no reason given");
+      if (msg.ok) this.hooks.waitUntil(this.fileBudgetHandOff(task, msg.commit ?? null, "pushed"));
+      else if (nothing) this.hooks.waitUntil(this.fileBudgetHandOff(task, null, "nothing"));
+      else this.budgetHandOffFailed(task, `pushing its work failed (${msg.message ?? "no reason given"})`);
       return;
     }
     if (!msg.ok && !nothing) {
@@ -3523,11 +3527,16 @@ export class Engine {
   }
 
   private async pushBudgetHandOff(task: Task) {
+    const priv = this.store.private(task.id);
+    // Filed straight away only when there's truly no worktree; one its machine can't be reached for keeps its work.
+    if (!task.machine || !priv.worktree || !priv.repoDir || task.state === "planning") return this.fileBudgetHandOff(task, null, "noWorktree");
     if (await this.handOff(task, "factory")) return;
-    await this.fileBudgetHandOff(task, null, false);
+    this.event(task, "factory", `couldn't reach ${task.machine} to push its work, to hand it off over budget`);
+    this.budgetHandOffFailed(task, `its machine (${task.machine}) couldn't be reached to push its work`);
   }
 
-  /** Its push failed: an ordinary overBudget hand instead, so nothing is lost and a person decides. */
+  /** It couldn't be handed off (`why`: its push failed, its machine is out of reach, no goal to file into): an
+   *  ordinary overBudget hand instead, so nothing is lost and a person decides. */
   private budgetHandOffFailed(task: Task, why: string) {
     const priv = this.store.private(task.id);
     const summary = priv.budgetHandOff?.summary;
@@ -3536,7 +3545,7 @@ export class Engine {
     const policy = this.store.policy();
     const use = this.budget(task);
     const more = use.over === "cost" ? `another ${dollars(budgetCostUsd(policy) ?? 0)}` : `another ${minutesText(budgetMinutes(policy) ?? 0)}`;
-    this.raise(task, "factory", "overBudget", `It's used ${budgetText(use)} and couldn't be handed off: pushing its work failed (${why}).${summary ? ` Its ${task.worker?.role ?? "agent"} said: ${summary}` : ""}`, [
+    this.raise(task, "factory", "overBudget", `It's used ${budgetText(use)} and couldn't be handed off: ${why}.${summary ? ` Its ${task.worker?.role ?? "agent"} said: ${summary}` : ""}`, [
       { title: "Give it more budget", detail: `Let it carry on for ${more}, then ask again.`, recommended: true },
       { title: BUDGET_CANCEL, detail: "Stop the task; its branch stays.", recommended: false },
     ]);
@@ -3546,18 +3555,24 @@ export class Engine {
   /** Files "Continue <id>: <title>", a draft follow-up with what a person needs to decide whether to reinvest:
    *  its branch and pushed commit, the brief, the plan and Done when so far, its agent's word and the budget used.
    *  Then cancels it, its branch kept. */
-  private async fileBudgetHandOff(task: Task, commit: string | null, pushed: boolean) {
+  private async fileBudgetHandOff(task: Task, commit: string | null, how: "pushed" | "nothing" | "noWorktree") {
     const priv = this.store.private(task.id);
     const summary = priv.budgetHandOff?.summary ?? null;
     this.store.savePrivate(task.id, { ...priv, budgetHandOff: null });
     const goal = this.store.goal(task.goal);
-    if (!goal || goal.archived) return this.budgetHandOffFailed(task, goal ? `${goal.name} is archived` : "its goal isn't there any more");
+    if (!goal || goal.archived) {
+      const why = goal ? `${goal.name} is archived` : "its goal isn't there any more";
+      const work = how === "pushed" ? `its work was pushed${commit ? ` (${commit.slice(0, 7)})` : ""}, but` : "";
+      return this.budgetHandOffFailed(task, `${work} no follow-up could be filed, since ${why}`.trim());
+    }
     const use = this.budget(task);
     const head = commit ?? task.pr?.head ?? null;
-    const branch = pushed || task.pr ? task.branch ?? `agent/${branchName(task)}` : null;
+    const branch = how === "pushed" || task.pr ? task.branch ?? `agent/${branchName(task)}` : null;
     const where = branch
       ? `Its work is on \`${branch}\`${head ? ` at ${head.slice(0, 7)}` : ""}${task.pr?.url ? ` (${task.pr.url})` : ""}; carry on from there.`
-      : "Nothing was pushed: it was handed off before any work was committed.";
+      : how === "nothing"
+        ? "Nothing was pushed: it had no changes to carry, so there's no branch to carry on from."
+        : `Nothing was pushed: it was handed off while ${task.state === "planning" ? "planning" : "it had no worktree"}, before any work was done.`;
     const steps = task.plan.map((p, i) => `${i + 1}. [${p.progress === "done" ? "x" : " "}] ${p.text}${p.progress === "active" ? " (in progress)" : ""}`);
     const done = task.doneWhen.map((d, i) => `${i + 1}. [${d.status === "proven" ? "x" : " "}] ${d.text}${d.evidence?.summary ? ` — ${d.evidence.summary}` : ""}`);
     const left = task.plan.filter((p) => p.progress !== "done").length;

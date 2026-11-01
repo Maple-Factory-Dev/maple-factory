@@ -44,6 +44,8 @@ function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<stri
   const typed: string[] = [];
   const commands: Record<string, unknown>[] = [];
   const wakes: number[] = [];
+  /** Set `runner.down` to make the machine unreachable for commands. */
+  const runner = { down: false };
   const hooks = {
     broadcast: () => {},
     sendTo: () => {},
@@ -58,7 +60,10 @@ function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<stri
     get: () => ({
       fetch: async (url: string, init: RequestInit) => {
         if (url.endsWith("/input")) typed.push(JSON.parse(String(init.body)).text);
-        if (url.endsWith("/command")) commands.push(JSON.parse(String(init.body)));
+        if (url.endsWith("/command")) {
+          if (runner.down) return new Response(null, { status: 503 });
+          commands.push(JSON.parse(String(init.body)));
+        }
         return new Response(null);
       },
     }),
@@ -79,7 +84,7 @@ function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<stri
   const clock = { at: T0 };
   const check = () => at(clock, () => engine.checkBudgets());
   const t = () => store.task("MF-1")!;
-  return { store, engine, typed, commands, wakes, clock, check, t };
+  return { store, engine, typed, commands, wakes, clock, check, t, runner };
 }
 
 test("budgetUse adds up ended and live sessions' time and their costs, and a base moves the limit one budget on", () => {
@@ -345,9 +350,60 @@ test("handOff: a planning task with no worktree goes straight to a draft and is 
   await tick();
   assert.ok(!f.commands.some((c) => c.type === "task.handoff"), "nothing to push");
   const [draft] = followUps(f);
-  assert.match(draft.brief, /Nothing was pushed/);
+  assert.match(draft.brief, /Nothing was pushed: it was handed off while planning/);
   assert.match(draft.brief, /bigger than the brief thought/);
   assert.equal(f.t().state, "cancelled");
+});
+
+test("handOff: with its machine out of reach, the worktree's work isn't cancelled away; an overBudget hand instead", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  f.runner.down = true;
+  await raiseHand(f, "Half done.");
+  await tick();
+  assert.equal(followUps(f).length, 0, "nothing filed");
+  assert.equal(f.t().state, "building", "not cancelled");
+  assert.ok(f.t().worker, "its worker stays");
+  const hand = f.t().hand!;
+  assert.equal(hand.reason, "overBudget");
+  assert.match(hand.summary, /couldn't be handed off: its machine \(mac\) couldn't be reached to push its work\..*Half done\./);
+  assert.equal(f.store.private("MF-1").budgetHandOff, null);
+  assert.equal(f.store.private("MF-1").worktree, "~/w");
+});
+
+test("handOff: a second hand while the push is in flight sends no second task.handoff", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  f.clock.at = T0 + 10 * MIN;
+  await f.check(); // the factory steps in and pushes
+  await raiseHand(f, "Late word.");
+  await at(f.clock, () => f.engine.fromRunner("mac", { type: "mcp.request", session: "s1", tool: "raise_hand", args: { reason: "blocked", summary: "x", options: [] } } as never));
+  assert.equal(f.commands.filter((c) => c.type === "task.handoff").length, 1);
+});
+
+test("handOff: nothing to carry files a draft that says nothing was pushed, not that work is on a branch", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  await raiseHand(f, "Didn't get anywhere.");
+  await at(f.clock, () => f.engine.fromRunner("mac", { type: "task.handed_off", taskId: "MF-1", ok: false, message: "nothing to carry" } as never));
+  await tick();
+  const [draft] = followUps(f);
+  assert.match(draft.brief, /Nothing was pushed: it had no changes to carry/);
+  assert.doesNotMatch(draft.brief, /Its work is on/);
+  assert.equal(f.t().state, "cancelled");
+});
+
+test("handOff: pushed, but its goal is archived: the hand says the work was pushed, not that the push failed", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  await raiseHand(f, "Half done.");
+  f.store.saveGoal({ ...f.store.goal("g")!, archived: true });
+  await at(f.clock, () => f.engine.fromRunner("mac", { type: "task.handed_off", taskId: "MF-1", ok: true, commit: "abc1234def" } as never));
+  await tick();
+  assert.equal(followUps(f).length, 0);
+  const hand = f.t().hand!;
+  assert.match(hand.summary, /its work was pushed \(abc1234\), but no follow-up could be filed, since G is archived/);
+  assert.doesNotMatch(hand.summary, /pushing its work failed/);
 });
 
 test("ask mode is unchanged: the agent's overBudget hand is raised for a person", async () => {
