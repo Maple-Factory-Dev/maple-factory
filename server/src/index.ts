@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/cloudflare";
 import type { Env } from "./env.ts";
 import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadArtifact, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
-import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine } from "./machines.ts";
+import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine, unenroll } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { remove as removeName, set as setName } from "./name.ts";
 import { get as getErrorReports, set as setErrorReports } from "./error-reports.ts";
@@ -59,6 +59,7 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
 
     // Runners: enroll with a code, then connect with their own token.
     if (path === "/runner/enroll" && request.method === "POST") return enroll(request, env);
+    if (path === "/runner/unenroll" && request.method === "POST") return unenroll(request, env);
     if (path === "/runner/connect") {
       const id = url.searchParams.get("runner") ?? "";
       if (!isUpgrade(request)) return text("Expected a WebSocket.", 426);
