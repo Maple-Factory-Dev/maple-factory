@@ -674,6 +674,11 @@ pub fn install_command() -> String {
     format!("npx --yes playwright@{PLAYWRIGHT} install chromium")
 }
 
+/// The command that installs the system libraries Playwright's Chromium needs (Linux; needs root).
+pub fn install_deps_command() -> String {
+    format!("npx --yes playwright@{PLAYWRIGHT} install-deps chromium")
+}
+
 /// How long installing Playwright's Chromium may take (a download of a couple hundred MB).
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -1663,6 +1668,7 @@ mod tests {
         assert_eq!((height_for(1280), height_for(390)), (800, 844));
         assert_eq!((slug("#tasks"), slug("/settings/projects"), slug("/")), ("tasks".to_string(), "settings-projects".to_string(), "home".to_string()));
         assert_eq!(install_command(), format!("npx --yes playwright@{PLAYWRIGHT} install chromium"));
+        assert_eq!(install_deps_command(), format!("npx --yes playwright@{PLAYWRIGHT} install-deps chromium"));
     }
 
     /// Answers every upload with a key made from its name, and keeps the names in order.
