@@ -58,7 +58,10 @@ struct MapleFactoryApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: launchWidth, height: launchHeight)
         .commands {
-            CommandGroup(after: .appInfo) {
+            // The custom About window in place of the standard panel; Check for Updates… sits with it, since
+            // a group placed after .appInfo would hang off the one this replaces.
+            CommandGroup(replacing: .appInfo) {
+                AboutMenuItem()
                 Button("Check for Updates…") { Updater.shared.checkForUpdates() }
                     .disabled(!Updater.shared.canCheck)
             }
@@ -104,6 +107,14 @@ struct MapleFactoryApp: App {
                     .disabled(!client.isSignedIn)
             }
         }
+
+        Window("About Maple Factory", id: AboutView.windowID) {
+            AboutView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .restorationBehavior(.disabled)
 
         Settings {
             OrgSettingsView()

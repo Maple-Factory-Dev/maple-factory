@@ -113,7 +113,28 @@ final class Updater: NSObject {
         }
     }
 
-    func checkForUpdates() { updater?.checkForUpdates() }
+    /// Under MAPLE_UPDATE_DEMO a check replays the demo, so the About window's button can be seen working.
+    func checkForUpdates() {
+        if let updater { updater.checkForUpdates() } else { startDemo() }
+    }
+
+    /// Whether this build can run a check: Sparkle's, or the demo's when it isn't mid-check.
+    var canCheckNow: Bool { available ? canCheck : (isDemo && !phase.isBusy) }
+
+    /// Whether checks are the MAPLE_UPDATE_DEMO play-through rather than Sparkle.
+    var isDemo: Bool { ["1", "uptodate"].contains(ProcessInfo.processInfo.environment["MAPLE_UPDATE_DEMO"]) }
+
+    /// The last check's answer in words, for Settings › Updates and the About window alike.
+    var status: String { Self.status(result: result, lastChecked: lastChecked) }
+
+    static func status(result: String??, lastChecked: Date?) -> String {
+        switch result {
+        case .some(.some(let version)): return "\(version) is available"
+        case .some(.none): return "Up to date"
+        case .none:
+            return lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet"
+        }
+    }
 
     /// The release notes for the update on offer, for the What's new sheet: every release since the installed one.
     /// The demo's spans a few published releases, up to this build's (the latest published release under
@@ -217,6 +238,8 @@ final class Updater: NSObject {
             }
             await step(.checking, for: 2)
             await step(.available(version: "0.2.0"))
+            self?.lastChecked = .now
+            self?.result = .some("0.2.0")
             // Waits for Update (the footer) or Update & Restart (the toast), like a real offer.
             while !(self?.demoInstall ?? true), !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -237,6 +260,8 @@ final class Updater: NSObject {
             try? await Task.sleep(for: .seconds(1.5))
             guard let self, !Task.isCancelled else { return }
             self.show(.upToDate)
+            self.lastChecked = .now
+            self.result = .some(nil)
             self.demo = nil
         }
     }

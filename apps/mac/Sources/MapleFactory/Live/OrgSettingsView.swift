@@ -546,7 +546,7 @@ struct UpdateSettings: View {
         SettingsPane("Updates", subtitle: "Maple Factory updates itself from maplefactory.dev. Runners and the factory's server update on their own.") {
             SettingsSection("Maple Factory", caption: updater.available ? nil : "This build doesn't update itself (it isn't a release build).") {
                 SettingsValueRow("Version", value: updater.version)
-                SettingsButtonRow("Check for updates", value: updater.available ? status : nil, button: "Check Now", disabled: !updater.canCheck) {
+                SettingsButtonRow("Check for updates", value: updater.available ? updater.status : nil, button: "Check Now", disabled: !updater.canCheck) {
                     updater.checkForUpdates()
                 }
             }
@@ -559,14 +559,6 @@ struct UpdateSettings: View {
                 }
             }
             .disabled(!updater.available)
-        }
-    }
-
-    private var status: String {
-        switch updater.result {
-        case .some(.some(let version)): return "\(version) is available"
-        case .some(.none): return "Up to date"
-        case .none: return updater.lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet"
         }
     }
 }
