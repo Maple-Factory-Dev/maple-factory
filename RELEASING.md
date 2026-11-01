@@ -25,6 +25,8 @@ aren't secret and can be plain Environment variables. Nothing here is ever commi
 | `MAPLE_RELEASE_KEY_PEM` | release-runner, release-server (`scripts/feed.mjs`) | The Ed25519 release key's PKCS#8 PEM text (escaped `\n` newlines work too). Signs the feed's manifests; its public half is `RELEASE_PUBLIC_KEY` in `runner/src/update.rs` and `installer/maple.mjs`, checked before every release. | `MAPLE_RELEASE_KEY` (a path), then `~/.config/maple-factory/release-key.pem` |
 | `CLOUDFLARE_API_TOKEN` | feed uploads (`wrangler r2 object put/get`), release-server's bundle, release-site | A Cloudflare API token: Workers R2 Storage Edit (both release buckets), Workers Scripts Edit and Workers KV Storage Edit (the site), Workers Routes Edit on the maplefactory.dev zone. | `wrangler login` |
 | `CLOUDFLARE_ACCOUNT_ID` (variable) | same | The Cloudflare account. Required with the token: neither `wrangler.jsonc` names an account, and the scripts stop before any upload if the token is set without it. | `wrangler login` |
+| `RELEASE_APP_ID` (variable) | `.github/workflows/release-server.yml` | The ID of the GitHub App the release workflow pushes as. The App needs Contents: write on this repo and must be on `main`'s bypass list, so it can push the version bump and the `server-v` tags. | none: releases from a Mac push as you |
+| `RELEASE_APP_PRIVATE_KEY` | same | That App's private key (the `.pem` text). A dry run doesn't use it. | |
 | `APPLE_CERT_P12` | `scripts/ci/import-signing-cert.sh` | Base64 of a `.p12` holding the "Developer ID Application" certificate and its private key. | the login keychain |
 | `APPLE_CERT_PASSWORD` | same | The `.p12`'s export password. | |
 | `SIGN_IDENTITY` (variable) | release-runner (feed), release.mjs | `Developer ID Application: Andrea Fomera (TU4485Z3KR)`. | release.mjs defaults to it |
@@ -54,6 +56,8 @@ aren't secret and can be plain Environment variables. Nothing here is ever commi
   rotating it is a Screenie change too.
 - **`CLOUDFLARE_API_TOKEN`**: Cloudflare dashboard › My Profile › API Tokens › Roll (or create a new one
   with the scopes above), update the secret, delete the old token.
+- **`RELEASE_APP_PRIVATE_KEY`**: the App's settings › Private keys › Generate a private key, update the
+  secret with the new `.pem`, then delete the old key there.
 - **`APPLE_CERT_P12` / `APPLE_CERT_PASSWORD`**: when the certificate nears expiry (Developer ID certs last
   five years) or leaks. Create a Developer ID Application certificate at developer.apple.com, export it
   with its key from Keychain Access as `.p12` with a new password, `base64 -i cert.p12 | pbcopy`, update
@@ -78,6 +82,24 @@ Mac or in CI) diffs against the same thing. `.claude/skills/loop-releases` reads
 | `mac-v<version>` | `release.mjs build` (not in a rehearsal with `MAPLE_RELEASES_DIR`, or with `--no-tag`) | the tree the app was built from; `symbols` rebuilds from it (older releases: local `mac-built-<version>`) |
 | `site-v<short sha>` | `release-site.mjs`, after a deploy answers | every site deploy |
 | `site-deployed` | same (the one tag pushed with `--force`) | the site that's live now |
+
+## In CI
+
+`.github/workflows/release-server.yml` releases maple-server from GitHub Actions: Actions › Release maple-server ›
+Run workflow (or `gh workflow run release-server.yml -f bump=minor -f channel=beta -f dry_run=true`), or another
+workflow calls it with `uses: ./.github/workflows/release-server.yml` and `secrets: inherit`. It runs in the
+`release` environment, one run at a time, and:
+
+1. runs the loop-releases checks (protocol types, `tsc`, `node --check` on `server/web/app/*.js`, the server
+   tests); a failure stops it before anything is bumped;
+2. bumps `server/` (`bump`: minor or patch), commits `maple-server <v>: <subjects since the last server-v tag>`
+   and pushes it to `main` as the release App, retrying on a race;
+3. runs `release-server.mjs --to feed` (`--channel beta` for `channel: beta`), then checks the tag on origin
+   and that `latest.json` or `beta.json` lists the version. The job summary has the version, tag and feed URL.
+
+A beta run still takes a `server-v<v>` tag: tags mark released trees, whatever the channel.
+`dry_run: true` bumps only on the runner, publishes to a `dir:` feed and uploads it as the
+`maple-server-<v>-feed` artifact; it pushes no commit and no tag, and needs only `MAPLE_RELEASE_KEY_PEM`.
 
 ## Rehearsing
 
