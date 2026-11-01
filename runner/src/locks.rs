@@ -256,87 +256,6 @@ pub fn waiting_line(name: &str, position: usize, holders: &[Holder]) -> String {
     format!("Waiting for {name} · {position} ahead{who}")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn who(task: &str) -> Holder {
-        Holder { session: Some(Uuid::new_v4()), task: Some(task.into()), pid: None, since: 0 }
-    }
-
-    #[test]
-    fn one_slot_serves_waiters_in_order() {
-        let locks = Locks::new(HashMap::new());
-        let a = locks.enqueue("sim", 1, who("MF-1"));
-        let b = locks.enqueue("sim", 1, who("MF-2"));
-        let c = locks.enqueue("sim", 1, who("MF-3"));
-        assert_eq!(a.state(), State::Granted);
-        assert!(matches!(b.state(), State::Queued { position: 1, ref holders } if holders[0].task.as_deref() == Some("MF-1")));
-        assert!(matches!(c.state(), State::Queued { position: 2, .. }));
-        drop(a);
-        assert_eq!(b.state(), State::Granted);
-        assert!(matches!(c.state(), State::Queued { position: 1, .. }));
-        drop(b);
-        assert_eq!(c.state(), State::Granted);
-    }
-
-    #[test]
-    fn two_slots_admit_two_at_once() {
-        let locks = Locks::new(HashMap::new());
-        let a = locks.enqueue("db", 2, who("MF-1"));
-        let b = locks.enqueue("db", 2, who("MF-2"));
-        let c = locks.enqueue("db", 2, who("MF-3"));
-        assert_eq!(a.state(), State::Granted);
-        assert_eq!(b.state(), State::Granted);
-        assert!(matches!(c.state(), State::Queued { position: 1, ref holders } if holders.len() == 2));
-        drop(b);
-        assert_eq!(c.state(), State::Granted);
-    }
-
-    #[test]
-    fn a_waiter_that_leaves_frees_its_place() {
-        let locks = Locks::new(HashMap::new());
-        let a = locks.enqueue("sim", 1, who("MF-1"));
-        let b = locks.enqueue("sim", 1, who("MF-2"));
-        let c = locks.enqueue("sim", 1, who("MF-3"));
-        drop(b);
-        assert!(matches!(c.state(), State::Queued { position: 1, .. }));
-        drop(a);
-        assert_eq!(c.state(), State::Granted);
-        drop(c);
-        assert_eq!(locks.snapshot()["locks"], json!([]));
-    }
-
-    #[test]
-    fn the_machine_override_beats_slots() {
-        let locks = Locks::new(HashMap::from([("sim".to_string(), 1)]));
-        let a = locks.enqueue("sim", 3, who("MF-1"));
-        let b = locks.enqueue("sim", 3, who("MF-2"));
-        assert_eq!(a.state(), State::Granted);
-        assert!(matches!(b.state(), State::Queued { .. }));
-        // Raising it on the machine lets the waiter in.
-        locks.set_overrides(HashMap::from([("sim".to_string(), 2)]));
-        assert_eq!(b.state(), State::Granted);
-        assert_eq!(locks.snapshot()["locks"][0]["slots"], 2);
-    }
-
-    #[test]
-    fn parses_overrides() {
-        let o = parse_overrides("ios-simulator = 2\n\"rails-test-db\" = 1\nbad = \"x\"\nzero = 0\n");
-        assert_eq!(o.get("ios-simulator"), Some(&2));
-        assert_eq!(o.get("rails-test-db"), Some(&1));
-        assert_eq!(o.get("bad"), None);
-        assert_eq!(o.get("zero"), Some(&1));
-    }
-
-    #[test]
-    fn waiting_line_names_the_holder() {
-        let terminal = Holder { session: None, task: None, pid: Some(1), since: 0 };
-        assert_eq!(waiting_line("ios-simulator", 1, &[who("MF-327")]), "Waiting for ios-simulator · 1 ahead (MF-327 has it)");
-        assert_eq!(waiting_line("demo", 2, &[terminal]), "Waiting for demo · 2 ahead (your terminal has it)");
-    }
-}
-
 /// The child `lock` runs, for the signal handler to pass SIGINT/SIGTERM on to.
 static CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
@@ -457,4 +376,85 @@ pub fn list_cli(tmux_socket: &str) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn who(task: &str) -> Holder {
+        Holder { session: Some(Uuid::new_v4()), task: Some(task.into()), pid: None, since: 0 }
+    }
+
+    #[test]
+    fn one_slot_serves_waiters_in_order() {
+        let locks = Locks::new(HashMap::new());
+        let a = locks.enqueue("sim", 1, who("MF-1"));
+        let b = locks.enqueue("sim", 1, who("MF-2"));
+        let c = locks.enqueue("sim", 1, who("MF-3"));
+        assert_eq!(a.state(), State::Granted);
+        assert!(matches!(b.state(), State::Queued { position: 1, ref holders } if holders[0].task.as_deref() == Some("MF-1")));
+        assert!(matches!(c.state(), State::Queued { position: 2, .. }));
+        drop(a);
+        assert_eq!(b.state(), State::Granted);
+        assert!(matches!(c.state(), State::Queued { position: 1, .. }));
+        drop(b);
+        assert_eq!(c.state(), State::Granted);
+    }
+
+    #[test]
+    fn two_slots_admit_two_at_once() {
+        let locks = Locks::new(HashMap::new());
+        let a = locks.enqueue("db", 2, who("MF-1"));
+        let b = locks.enqueue("db", 2, who("MF-2"));
+        let c = locks.enqueue("db", 2, who("MF-3"));
+        assert_eq!(a.state(), State::Granted);
+        assert_eq!(b.state(), State::Granted);
+        assert!(matches!(c.state(), State::Queued { position: 1, ref holders } if holders.len() == 2));
+        drop(b);
+        assert_eq!(c.state(), State::Granted);
+    }
+
+    #[test]
+    fn a_waiter_that_leaves_frees_its_place() {
+        let locks = Locks::new(HashMap::new());
+        let a = locks.enqueue("sim", 1, who("MF-1"));
+        let b = locks.enqueue("sim", 1, who("MF-2"));
+        let c = locks.enqueue("sim", 1, who("MF-3"));
+        drop(b);
+        assert!(matches!(c.state(), State::Queued { position: 1, .. }));
+        drop(a);
+        assert_eq!(c.state(), State::Granted);
+        drop(c);
+        assert_eq!(locks.snapshot()["locks"], json!([]));
+    }
+
+    #[test]
+    fn the_machine_override_beats_slots() {
+        let locks = Locks::new(HashMap::from([("sim".to_string(), 1)]));
+        let a = locks.enqueue("sim", 3, who("MF-1"));
+        let b = locks.enqueue("sim", 3, who("MF-2"));
+        assert_eq!(a.state(), State::Granted);
+        assert!(matches!(b.state(), State::Queued { .. }));
+        // Raising it on the machine lets the waiter in.
+        locks.set_overrides(HashMap::from([("sim".to_string(), 2)]));
+        assert_eq!(b.state(), State::Granted);
+        assert_eq!(locks.snapshot()["locks"][0]["slots"], 2);
+    }
+
+    #[test]
+    fn parses_overrides() {
+        let o = parse_overrides("ios-simulator = 2\n\"rails-test-db\" = 1\nbad = \"x\"\nzero = 0\n");
+        assert_eq!(o.get("ios-simulator"), Some(&2));
+        assert_eq!(o.get("rails-test-db"), Some(&1));
+        assert_eq!(o.get("bad"), None);
+        assert_eq!(o.get("zero"), Some(&1));
+    }
+
+    #[test]
+    fn waiting_line_names_the_holder() {
+        let terminal = Holder { session: None, task: None, pid: Some(1), since: 0 };
+        assert_eq!(waiting_line("ios-simulator", 1, &[who("MF-327")]), "Waiting for ios-simulator · 1 ahead (MF-327 has it)");
+        assert_eq!(waiting_line("demo", 2, &[terminal]), "Waiting for demo · 2 ahead (your terminal has it)");
+    }
 }
