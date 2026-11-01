@@ -573,4 +573,11 @@ extension FactoryTask {
             .joined(separator: "-")
         return "\(id.lowercased())-\(slug)"
     }
+
+    /// Whether the plan's step changes (`PlanStep.change`, measured against the version
+    /// before) are news: only while a revised plan (v2+) waits on approval. Once it's
+    /// approved, the marks are history and the plain current steps are what matter.
+    var planChangesFresh: Bool {
+        planVersion > 1 && state == .awaitingApproval && plan.contains { $0.change != nil }
+    }
 }

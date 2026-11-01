@@ -34,13 +34,16 @@ struct PlanSection: View {
     /// Off when a folding header above already names the plan.
     var titled = true
 
-    @SwiftUI.State private var showChanges = true
+    /// The reader's own Show/Hide choice; nil follows `task.planChangesFresh`. Cleared
+    /// when the plan version or task state moves, so a new revision shows its changes again.
+    @SwiftUI.State private var showChangesOverride: Bool? = nil
     @SwiftUI.State private var hovered: Int? = nil
     @SwiftUI.State private var tweaking: Int? = nil
     @SwiftUI.State private var tweakText = ""
     @FocusState private var tweakFocused: Bool
 
     private var hasChanges: Bool { task.plan.contains { $0.change != nil } }
+    private var showChanges: Bool { showChangesOverride ?? task.planChangesFresh }
     private var doneCount: Int { task.plan.filter { $0.progress == .done }.count }
 
     var body: some View {
@@ -54,6 +57,8 @@ struct PlanSection: View {
                 }
             }
         }
+        .onChange(of: task.planVersion) { showChangesOverride = nil }
+        .onChange(of: task.state) { showChangesOverride = nil }
     }
 
     private var header: some View {
@@ -79,7 +84,7 @@ struct PlanSection: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
                     .contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.snappy(duration: 0.2)) { showChanges.toggle() } }
+                    .onTapGesture { withAnimation(.snappy(duration: 0.2)) { showChangesOverride = !showChanges } }
             }
         }
     }
