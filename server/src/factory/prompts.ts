@@ -75,6 +75,16 @@ function comments(task: Task) {
   return "\n\n## Discussion so far\n" + recent.map((c) => `- ${c.author}${c.replyTo ? ` (in thread ${c.replyTo})` : ""}: ${c.text}`).join("\n");
 }
 
+/** What the planner knows for \`requires\`: the repo's path rules and the tags of its owner's machines. */
+export type Routing = { rules: string[]; machines: { name: string; tags: string[]; online: boolean }[] };
+
+function routingSection(r: Routing | null): string {
+  if (!r) return "";
+  const rules = r.rules.length ? `\n  The repo's path rules add tags on their own for the steps' files: ${r.rules.map((l) => `\`${l}\``).join(", ")}.` : "";
+  const machines = r.machines.length ? `\n  The owner's machines: ${r.machines.map((m) => `${m.name} (${m.tags.length ? m.tags.join(", ") : "no tags"}${m.online ? "" : ", offline"})`).join("; ")}.` : "";
+  return rules + machines;
+}
+
 /** The org's enabled risk checks, for the planner to judge and cite. */
 function riskChecks(checks: SensitiveArea[]) {
   const on = checks.filter((c) => c.enabled);
@@ -86,7 +96,7 @@ function riskChecks(checks: SensitiveArea[]) {
   return `\n\n## Risk checks\nThe org's checks; each one that applies raises the change to at least its level. Path checks are also matched against the diff's files once there's code.\n${on.map(line).join("\n")}`;
 }
 
-export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = []): string {
+export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = [], routing: Routing | null = null): string {
   const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
@@ -103,6 +113,7 @@ Read the repository (this worktree) to understand where the change goes. Then ca
 - doneWhen: 2–5 checks that prove it works, each with the proof kind the builder will produce (tests, terminal, screenshot or video).
 - risk: low, medium or high, with reasons; in \`areas\`, name each risk check above that applies (its exact name), and say why in \`reasons\`.
 - footprint: your estimate of files and lines changed.
+- requires (optional): machine tags the build needs, e.g. \`["macos"]\` when a step builds or tests the Mac or iOS app (apps/mac, apps/ios, Xcode). Only a machine with every tag builds it; leave it out when any machine will do.${routingSection(routing)}
 - mockups: for UI changes, at least one screen mockup as a small self-contained HTML page (inline CSS, no scripts) of the changed screen,
   with numbered callouts in its notes; for CLI or API changes, a terminal mockup (lines with style command/output/highlight/dim/error,
   and callout numbers on the lines that change). Skip mockups for pure refactors.
