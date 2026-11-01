@@ -6,6 +6,11 @@ import MapleKit
 enum DemoData {
     static var now: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
     private static func ago(_ minutes: Double) -> UInt64 { now - UInt64(minutes * 60_000) }
+    /// `hour` o'clock yesterday, so Activity always has a Yesterday section.
+    private static func yesterday(_ hour: Double) -> UInt64 {
+        let start = Calendar.current.date(byAdding: .day, value: -1, to: Calendar.current.startOfDay(for: Date()))!
+        return UInt64((start.timeIntervalSince1970 + hour * 3600) * 1000)
+    }
 
     static let me = "andrea"
     /// `-demoRole member` signs the demo in as a plain member, to see what a non-admin sees; admin otherwise.
@@ -85,6 +90,12 @@ enum DemoData {
                 ]
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-studio", session: "s1", startedAt: ago(25))
                 t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory", "Only the last one"], role: .builder, at: ago(9))
+                t.events = [
+                    .init(who: "planner", text: "wrote plan v1", at: yesterday(16)),
+                    .init(who: me, text: "approved the plan", at: yesterday(17.5)),
+                    .init(who: "builder", text: "proved FeedCache round-trips a snapshot", at: ago(15)),
+                    .init(who: "builder", text: "asked whether the cache is per factory", at: ago(9)),
+                ]
                 t.doneWhen = [
                     .init(text: "FeedCache round-trips a snapshot", proof: .tests, status: .proven,
                           evidence: .init(kind: .tests, summary: "FeedCacheTests: 4 passed", command: "xcodebuild test -only-testing:MapleFactoryTests/FeedCacheTests", passed: 4, failed: 0, by: "builder", at: ago(15))),
@@ -122,6 +133,11 @@ enum DemoData {
                 t.doneWhen = [.init(text: "Server tests cover the limit and Retry-After", proof: .tests, status: .proven,
                                     evidence: .init(kind: .tests, summary: "14 tests pass", command: "npm test -- ratelimit", output: ["✓ allows 600 a minute", "✓ answers 429 with Retry-After: 12", "Tests: 14 passed"], passed: 14, failed: 0, by: "builder", at: ago(22)))]
                 t.mergeAt = now + 8 * 60_000
+                t.events = [
+                    .init(who: "kit", text: "created the task", at: yesterday(10)),
+                    .init(who: "reviewer", text: "requested changes: 2 findings", at: ago(40)),
+                    .init(who: "reviewer", text: "passed round 2", at: ago(20)),
+                ]
             },
             task("BIL-7", goal: "g-web", title: "Invoice PDFs with line items", state: .building, owner: "sam", updated: 35) { t in
                 t.brief = "Render each invoice as a PDF with its usage line items."
@@ -143,6 +159,10 @@ enum DemoData {
             },
             task("APP-9", goal: "g-app", title: "Sign in with GitHub's device flow", state: .merged, updated: 60 * 26) { t in
                 t.brief = "Sign in on the phone with a code, like the Mac app."
+                t.events = [
+                    .init(who: "sam", text: "approved the change", at: yesterday(14)),
+                    .init(who: "factory", text: "merged #398", at: yesterday(14.2)),
+                ]
             },
             // Both stranded on Kit's MacBook Air, which went offline: Machines offers to move them.
             task("BIL-8", goal: "g-web", title: "Receipt emails after a payment", state: .building, updated: 300) { t in
