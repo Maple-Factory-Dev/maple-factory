@@ -35,6 +35,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // SocketSizeTest builds and decodes a 40 MiB snapshot.
+        unitTests.all { it.maxHeapSize = "2g" }
     }
 }
 
