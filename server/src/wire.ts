@@ -339,6 +339,10 @@ export interface MachineSettings {
   agentCaps?: AgentCap[] | null;
   /** Caps stop only teammates' work; the owner's own tasks keep running past them. */
   capsTeamOnly?: boolean | null;
+  /** Tags the owner added by hand (e.g. gpu, big-disk): lowercase a-z, 0-9 and dashes. */
+  extraTags?: string[] | null;
+  /** Detected capabilities the owner hides. */
+  hiddenTags?: string[] | null;
 }
 
 /** A machine as the apps see it. */
@@ -359,6 +363,10 @@ export interface Machine {
   usage: AgentUsage[];
   /** The runner update someone asked for, while it runs and for a few minutes after. */
   update?: MachineUpdate | null;
+  /** What the runner last detected it can do (macos, linux, arm64, xcode, ios-simulator, playwright, docker, node…). */
+  capabilities?: string[] | null;
+  /** The tags shown: capabilities minus the owner's hidden ones, plus their extra ones, sorted. */
+  tags?: string[] | null;
 }
 
 /** A runner update in progress on a machine, or how it just ended. */
@@ -1813,6 +1821,14 @@ export interface RunnerMessage_Hello {
   sessions: LiveSession[];
   /** Sessions that ended since the last connection, causes included. */
   ended: SessionEnd[];
+  /** Capability tags it detected (macos, linux, arm64, x86_64, xcode, ios-simulator, playwright, docker, node). */
+  capabilities?: string[] | null;
+}
+
+/** The capability tags changed since the hello (detected again on a timer or a health recheck). */
+export interface RunnerMessage_Capabilities {
+  type: "capabilities";
+  capabilities: string[];
 }
 
 export interface RunnerMessage_Health {
@@ -2023,8 +2039,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Capabilities | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","capabilities","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";

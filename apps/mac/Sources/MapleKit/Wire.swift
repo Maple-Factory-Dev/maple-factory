@@ -2320,8 +2320,12 @@ public enum Wire {
         public var agentCaps: [AgentCap]?
         /// Caps stop only teammates' work; the owner's own tasks keep running past them.
         public var capsTeamOnly: Bool?
+        /// Tags the owner added by hand (e.g. gpu, big-disk): lowercase a-z, 0-9 and dashes.
+        public var extraTags: [String]?
+        /// Detected capabilities the owner hides.
+        public var hiddenTags: [String]?
 
-        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, pauseNew: Bool? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil) {
+        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, pauseNew: Bool? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil, extraTags: [String]? = nil, hiddenTags: [String]? = nil) {
             self.capacity = capacity
             self.teamSlots = teamSlots
             self.lendIdle = lendIdle
@@ -2333,6 +2337,8 @@ public enum Wire {
             self.weeklyCap = weeklyCap
             self.agentCaps = agentCaps
             self.capsTeamOnly = capsTeamOnly
+            self.extraTags = extraTags
+            self.hiddenTags = hiddenTags
         }
     }
 
@@ -2354,8 +2360,12 @@ public enum Wire {
         public var usage: [AgentUsage]
         /// The runner update someone asked for, while it runs and for a few minutes after.
         public var update: MachineUpdate?
+        /// What the runner last detected it can do (macos, linux, arm64, xcode, ios-simulator, playwright, docker, node…).
+        public var capabilities: [String]?
+        /// The tags shown: capabilities minus the owner's hidden ones, plus their extra ones, sorted.
+        public var tags: [String]?
 
-        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = [], update: MachineUpdate? = nil) {
+        public init(id: String, name: String, owner: String, online: Bool, lastSeen: UInt64? = nil, version: String? = nil, os: String? = nil, health: Health? = nil, sessions: [LiveSession] = [], settings: MachineSettings? = nil, capacity: UInt32? = nil, usage: [AgentUsage] = [], update: MachineUpdate? = nil, capabilities: [String]? = nil, tags: [String]? = nil) {
             self.id = id
             self.name = name
             self.owner = owner
@@ -2369,6 +2379,8 @@ public enum Wire {
             self.capacity = capacity
             self.usage = usage
             self.update = update
+            self.capabilities = capabilities
+            self.tags = tags
         }
 
         public init(from decoder: Decoder) throws {
@@ -2386,6 +2398,8 @@ public enum Wire {
             capacity = try c.decodeIfPresent(UInt32.self, forKey: .capacity)
             usage = try c.decodeIfPresent([AgentUsage].self, forKey: .usage) ?? []
             update = try c.decodeIfPresent(MachineUpdate.self, forKey: .update)
+            capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities)
+            tags = try c.decodeIfPresent([String].self, forKey: .tags)
         }
     }
 
@@ -5434,8 +5448,10 @@ public enum Wire {
         public var sessions: [LiveSession]
         /// Sessions that ended since the last connection, causes included.
         public var ended: [SessionEnd]
+        /// Capability tags it detected (macos, linux, arm64, x86_64, xcode, ios-simulator, playwright, docker, node).
+        public var capabilities: [String]?
 
-        public init(runnerId: String, hostname: String, os: String, arch: String, version: String, sessions: [LiveSession] = [], ended: [SessionEnd] = []) {
+        public init(runnerId: String, hostname: String, os: String, arch: String, version: String, sessions: [LiveSession] = [], ended: [SessionEnd] = [], capabilities: [String]? = nil) {
             self.runnerId = runnerId
             self.hostname = hostname
             self.os = os
@@ -5443,6 +5459,7 @@ public enum Wire {
             self.version = version
             self.sessions = sessions
             self.ended = ended
+            self.capabilities = capabilities
         }
 
         public init(from decoder: Decoder) throws {
@@ -5454,6 +5471,21 @@ public enum Wire {
             version = try c.decode(String.self, forKey: .version)
             sessions = try c.decodeIfPresent([LiveSession].self, forKey: .sessions) ?? []
             ended = try c.decodeIfPresent([SessionEnd].self, forKey: .ended) ?? []
+            capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities)
+        }
+    }
+
+    /// The capability tags changed since the hello (detected again on a timer or a health recheck).
+    public struct RunnerMessageCapabilities: Codable, Hashable, Sendable {
+        public var capabilities: [String]
+
+        public init(capabilities: [String] = []) {
+            self.capabilities = capabilities
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities) ?? []
         }
     }
 
@@ -5836,6 +5868,7 @@ public enum Wire {
     /// Runner → server.
     public enum RunnerMessage: Codable, Hashable, Sendable {
         case hello(RunnerMessageHello)
+        case capabilities(RunnerMessageCapabilities)
         case health(RunnerMessageHealth)
         case sessionOpened(RunnerMessageSessionOpened)
         case sessionError(RunnerMessageSessionError)
@@ -5869,6 +5902,7 @@ public enum Wire {
             let type = try decoder.container(keyedBy: TypeKey.self).decode(String.self, forKey: .type)
             switch type {
             case "hello": self = .hello(try RunnerMessageHello(from: decoder))
+            case "capabilities": self = .capabilities(try RunnerMessageCapabilities(from: decoder))
             case "health": self = .health(try RunnerMessageHealth(from: decoder))
             case "session.opened": self = .sessionOpened(try RunnerMessageSessionOpened(from: decoder))
             case "session.error": self = .sessionError(try RunnerMessageSessionError(from: decoder))
@@ -5902,6 +5936,9 @@ public enum Wire {
             switch self {
             case .hello(let body):
                 try c.encode("hello", forKey: .type)
+                try body.encode(to: encoder)
+            case .capabilities(let body):
+                try c.encode("capabilities", forKey: .type)
                 try body.encode(to: encoder)
             case .health(let body):
                 try c.encode("health", forKey: .type)

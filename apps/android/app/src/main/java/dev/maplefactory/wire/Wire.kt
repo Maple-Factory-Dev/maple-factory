@@ -964,6 +964,10 @@ data class MachineSettings(
     val agentCaps: List<AgentCap>? = null,
     /** Caps stop only teammates' work; the owner's own tasks keep running past them. */
     val capsTeamOnly: Boolean? = null,
+    /** Tags the owner added by hand (e.g. gpu, big-disk): lowercase a-z, 0-9 and dashes. */
+    val extraTags: List<String>? = null,
+    /** Detected capabilities the owner hides. */
+    val hiddenTags: List<String>? = null,
 )
 
 /** A machine as the apps see it. */
@@ -985,6 +989,10 @@ data class Machine(
     val usage: List<AgentUsage> = emptyList(),
     /** The runner update someone asked for, while it runs and for a few minutes after. */
     val update: MachineUpdate? = null,
+    /** What the runner last detected it can do (macos, linux, arm64, xcode, ios-simulator, playwright, docker, node…). */
+    val capabilities: List<String>? = null,
+    /** The tags shown: capabilities minus the owner's hidden ones, plus their extra ones, sorted. */
+    val tags: List<String>? = null,
 )
 
 /** A runner update in progress on a machine, or how it just ended. */
@@ -2580,6 +2588,13 @@ sealed class RunnerMessage {
         val sessions: List<dev.maplefactory.wire.LiveSession> = emptyList(),
         /** Sessions that ended since the last connection, causes included. */
         val ended: List<dev.maplefactory.wire.SessionEnd> = emptyList(),
+        /** Capability tags it detected (macos, linux, arm64, x86_64, xcode, ios-simulator, playwright, docker, node). */
+        val capabilities: List<String>? = null,
+    ) : RunnerMessage()
+    /** The capability tags changed since the hello (detected again on a timer or a health recheck). */
+    @Serializable
+    data class Capabilities(
+        val capabilities: List<String> = emptyList(),
     ) : RunnerMessage()
     @Serializable
     data class Health(
@@ -2770,6 +2785,7 @@ sealed class RunnerMessage {
     object Serializer : WireUnionSerializer<RunnerMessage>("RunnerMessage") {
         override fun decode(json: Json, type: String, body: JsonObject): RunnerMessage = when (type) {
             "hello" -> json.decodeFromJsonElement(Hello.serializer(), body)
+            "capabilities" -> json.decodeFromJsonElement(Capabilities.serializer(), body)
             "health" -> json.decodeFromJsonElement(Health.serializer(), body)
             "session.opened" -> json.decodeFromJsonElement(SessionOpened.serializer(), body)
             "session.error" -> json.decodeFromJsonElement(SessionError.serializer(), body)
@@ -2799,6 +2815,7 @@ sealed class RunnerMessage {
 
         override fun encode(json: Json, value: RunnerMessage): Pair<String, JsonElement?> = when (value) {
             is Hello -> "hello" to json.encodeToJsonElement(Hello.serializer(), value)
+            is Capabilities -> "capabilities" to json.encodeToJsonElement(Capabilities.serializer(), value)
             is Health -> "health" to json.encodeToJsonElement(Health.serializer(), value)
             is SessionOpened -> "session.opened" to json.encodeToJsonElement(SessionOpened.serializer(), value)
             is SessionError -> "session.error" to json.encodeToJsonElement(SessionError.serializer(), value)
