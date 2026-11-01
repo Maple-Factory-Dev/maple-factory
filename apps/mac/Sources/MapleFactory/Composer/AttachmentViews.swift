@@ -70,6 +70,8 @@ struct MarkdownTextView: NSViewRepresentable {
     var upload: ((PastedFile) async throws -> FactoryClient.Attachment)?
     /// Arrows, Return, Tab and Esc for the @ picker while it's open; true when it took the key.
     var onKey: ((MentionKey) -> Bool)? = nil
+    /// Shift-Tab: hand focus back to the field before the editor. Without it, the text view keeps the key.
+    var onBacktab: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -144,6 +146,10 @@ struct MarkdownTextView: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.insertBacktab(_:)), let onBacktab = parent.onBacktab {
+                onBacktab()
+                return true
+            }
             guard let onKey = parent.onKey else { return false }
             let key: MentionKey? = switch selector {
             case #selector(NSResponder.moveUp(_:)): .up

@@ -343,6 +343,8 @@ struct MarkdownEditor: View {
     @Binding var text: String
     var placeholder = "Write in Markdown…"
     var minHeight: CGFloat = 320
+    /// Shift-Tab in the editor; the New task brief uses it to go back to the title.
+    var onBacktab: (() -> Void)? = nil
 
     @State private var previewing = false
     @State private var selection = NSRange(location: 0, length: 0)
@@ -401,7 +403,7 @@ struct MarkdownEditor: View {
                         // the text view's own paste.
                         MarkdownTextView(text: $text, selection: $selection, upload: client.flatMap { client in
                             client.isSignedIn ? { file in try await client.upload(data: file.data, filename: file.name, mime: file.mime) } : nil
-                        }, onKey: { mentionKey($0) || taskKey($0) })
+                        }, onKey: { mentionKey($0) || taskKey($0) }, onBacktab: onBacktab)
                     }
                 }
             }
