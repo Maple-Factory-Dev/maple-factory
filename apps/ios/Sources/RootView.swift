@@ -156,17 +156,19 @@ struct InboxView: View {
 
     private var entries: [InboxEntry] {
         store.feed.inbox(for: store.me).filter { entry in
-            (!mineOnly || entry.assignee == store.me)
-                && (search.isEmpty || matches(entry))
+            !mineOnly || entry.assignee == store.me
         }
     }
 
-    private func matches(_ entry: InboxEntry) -> Bool {
-        let task = store.feed.task(entry.task)
-        return [entry.task, entry.message, task?.title ?? ""].contains { $0.localizedCaseInsensitiveContains(search) }
+    var body: some View {
+        Group { if search.isEmpty { list } else { SearchResults(query: search) } }
+            .navigationTitle("Inbox")
+            .searchable(text: $search, prompt: "Tasks and goals")
+            .refreshable { await store.refresh() }
+            .overlay { if !store.feed.hasSnapshot { ProgressView() } }
     }
 
-    var body: some View {
+    private var list: some View {
         List {
             Section {
                 ConnectionBar()
@@ -198,10 +200,6 @@ struct InboxView: View {
                 }
             }
         }
-        .navigationTitle("Inbox")
-        .searchable(text: $search, prompt: "Tasks, people, messages")
-        .refreshable { await store.refresh() }
-        .overlay { if !store.feed.hasSnapshot { ProgressView() } }
     }
 }
 
@@ -237,10 +235,21 @@ struct GoalsView: View {
     @State private var composing = false
 
     var body: some View {
-        let goals = store.feed.activeGoals.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.prefix.localizedCaseInsensitiveContains(search) }
+        Group { if search.isEmpty { list } else { SearchResults(query: search) } }
+        .navigationTitle("Goals")
+        .searchable(text: $search, prompt: "Tasks and goals")
+        .refreshable { await store.refresh() }
+        .toolbar {
+            if defaultGoal != nil { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
+        }
+        .sheet(isPresented: $composing) { if let goal = defaultGoal { NewTaskView(goal: goal.id) } }
+    }
+
+    private var list: some View {
+        let goals = store.feed.activeGoals
         let following = goals.filter { store.feed.following($0) }
         let others = goals.filter { !store.feed.following($0) }
-        List {
+        return List {
             Section { ConnectionBar() }.listRowBackground(Color.clear)
             if !following.isEmpty {
                 Section("Following") { ForEach(following) { GoalRow(goal: $0) } }
@@ -249,13 +258,6 @@ struct GoalsView: View {
                 Section("Other goals") { ForEach(others) { GoalRow(goal: $0) } }
             }
         }
-        .navigationTitle("Goals")
-        .searchable(text: $search)
-        .refreshable { await store.refresh() }
-        .toolbar {
-            if defaultGoal != nil { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
-        }
-        .sheet(isPresented: $composing) { if let goal = defaultGoal { NewTaskView(goal: goal.id) } }
     }
 
     /// Where a new task from here starts: the first goal you follow, else the first goal.

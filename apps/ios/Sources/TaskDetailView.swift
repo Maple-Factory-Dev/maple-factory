@@ -128,9 +128,9 @@ struct TimeCard: View {
                 bar(times)
                 ForEach(times.stages) { stage in
                     HStack(spacing: 8) {
-                        Circle().fill(stage.stage.color).frame(width: 8, height: 8)
+                        Circle().fill(Theme.state(stage.stage)).frame(width: 8, height: 8)
                         Text(stage.stage.title)
-                        if stage.open { Text("now").font(.caption2.weight(.semibold)).foregroundStyle(stage.stage.color) }
+                        if stage.open { Text("now").font(.caption2.weight(.semibold)).foregroundStyle(Theme.state(stage.stage)) }
                         Spacer(minLength: 8)
                         Text(Self.detail(stage)).foregroundStyle(.secondary).monospacedDigit()
                     }
@@ -155,8 +155,8 @@ struct TimeCard: View {
                 ForEach(times.stages) { stage in
                     let width = geo.size.width * CGFloat(stage.total) / CGFloat(total)
                     let waitShare = stage.total == 0 ? 0 : CGFloat(stage.waiting) / CGFloat(stage.total)
-                    Rectangle().fill(stage.stage.color).frame(width: width * (1 - waitShare))
-                    Rectangle().fill(stage.stage.color.opacity(0.3)).frame(width: width * waitShare)
+                    Rectangle().fill(Theme.state(stage.stage)).frame(width: width * (1 - waitShare))
+                    Rectangle().fill(Theme.state(stage.stage).opacity(0.3)).frame(width: width * waitShare)
                 }
             }
         }
