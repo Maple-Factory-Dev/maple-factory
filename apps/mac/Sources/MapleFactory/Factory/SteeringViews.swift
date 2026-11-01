@@ -59,6 +59,14 @@ struct PlanSection: View {
         }
         .onChange(of: task.planVersion) { showChangesOverride = nil }
         .onChange(of: task.state) { showChangesOverride = nil }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoToggle)) { _ in toggleChanges() }
+    }
+
+    /// A demo script's `planchanges:toggle`: the Show / Hide changes link clicked.
+    static let demoToggle = Notification.Name("PlanSection.demoToggle")
+
+    private func toggleChanges() {
+        withAnimation(.snappy(duration: 0.2)) { showChangesOverride = !showChanges }
     }
 
     private var header: some View {
@@ -84,7 +92,7 @@ struct PlanSection: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
                     .contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.snappy(duration: 0.2)) { showChangesOverride = !showChanges } }
+                    .onTapGesture { toggleChanges() }
             }
         }
     }

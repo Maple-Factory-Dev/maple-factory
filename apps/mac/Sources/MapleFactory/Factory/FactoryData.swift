@@ -205,18 +205,19 @@ enum FactoryData {
             brief: "Pull the duplicated session and role checks out of 34 route handlers into a single middleware.",
             plan: [
                 PlanStep(text: "Inventory auth checks across route handlers", file: "app/api/**/route.ts", progress: .done),
-                PlanStep(text: "Create withAuth middleware with role options", file: "lib/auth/middleware.ts", progress: .done),
+                PlanStep(text: "Create withAuth middleware with role options", file: "lib/auth/middleware.ts", change: .modified(from: "Create a requireRole wrapper for each route"), progress: .done),
                 PlanStep(text: "Migrate /api/projects routes", file: "app/api/projects", progress: .done),
                 PlanStep(text: "Migrate /api/billing routes", file: "app/api/billing", progress: .active),
                 PlanStep(text: "Migrate the remaining routes", file: "app/api", progress: .pending),
-                PlanStep(text: "Delete the inline requireSession checks", file: "lib/auth/legacy.ts", progress: .pending),
+                PlanStep(text: "Delete the inline requireSession checks", file: "lib/auth/legacy.ts", change: .added, progress: .pending),
                 PlanStep(text: "Tests for each role and the unauthenticated path", file: "tests/middleware.test.ts", progress: .pending),
             ],
             activity: [
                 ActivityItem(who: "Chris", text: "Queued a change for after step 4", when: "6m"),
                 ActivityItem(who: "Maple-2", text: "Finished step 3 · 12 routes migrated", when: "9m"),
-                ActivityItem(who: "Andrea Fomera", text: "Approved the plan", when: "52m"),
+                ActivityItem(who: "Andrea Fomera", text: "Approved plan v3", when: "52m"),
             ],
+            planVersion: 3,
             changeRequests: [
                 ChangeRequest(author: chris, text: "Reuse the existing withSession helper instead of adding a second wrapper.",
                               status: .queued, when: "6m", timing: "Applies after step 4"),
