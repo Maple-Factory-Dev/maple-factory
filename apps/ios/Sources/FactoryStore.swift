@@ -551,6 +551,19 @@ final class FactoryStore {
     func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id, version: feed.runnerLatest))) }
     /// A nickname everyone sees; empty goes back to its id.
     func renameMachine(_ machine: Wire.Machine, name: String) { send(.machineRename(.init(machine: machine.id, name: name))) }
+    /// Slots, team sharing and pause, as the Mac's machine settings sheet saves them.
+    func saveMachineSettings(_ machine: Wire.Machine, settings: Wire.MachineSettings, handOff: Bool) {
+        send(.machineSettings(.init(machine: machine.id, settings: settings, handOff: handOff)))
+    }
+    /// The swipe's Pause and Resume: pausing holds back new work only, with no end; resuming clears it.
+    func setPaused(_ machine: Wire.Machine, _ paused: Bool) {
+        var settings = machine.settings ?? Wire.MachineSettings(teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false)
+        settings.paused = paused
+        settings.pauseNew = paused ? true : nil
+        settings.pausedUntil = nil
+        saveMachineSettings(machine, settings: settings, handOff: false)
+        if paused { notice = .toast("Paused new work on \(machine.name)", taskId: nil) }
+    }
     /// Moves a task off its offline or paused machine: it re-queues first and carries on from its last push.
     func moveTask(_ id: String) {
         let pushed = feed.task(id)?.pr != nil
@@ -730,6 +743,10 @@ final class FactoryStore {
             guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
             let name = m.name.trimmingCharacters(in: .whitespacesAndNewlines)
             machine.name = name.isEmpty ? machine.id : name
+            feed.apply(.machineUpdated(.init(machine: machine)))
+        case .machineSettings(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            machine.settings = m.settings
             feed.apply(.machineUpdated(.init(machine: machine)))
         case .taskMove(let m):
             // The task re-queues: its session leaves the stuck machine.

@@ -83,6 +83,71 @@ final class MachineActionsTests: XCTestCase {
         XCTAssertTrue(app.buttons["Rename…"].waitForExistence(timeout: 5), "Rename on your own machine")
     }
 
+    /// The Studio is the demo user's: swipe to Pause shows the badge, Resume clears it; Settings… keeps a team-slots change.
+    func testPauseResumeAndSettingsOnYourMachine() {
+        let app = launch()
+        let studio = app.descendants(matching: .any)["machine-m-studio"]
+        XCTAssertTrue(studio.waitForExistence(timeout: 20))
+        XCTAssertFalse(studio.label.contains("Paused"), studio.label)
+
+        studio.swipeLeft()
+        let pause = app.buttons["Pause"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 5), "your machine's swipe should offer Pause")
+        XCTAssertTrue(app.collectionViews.buttons["Settings"].exists, "and Settings")
+        snap(app, "machines-swipe-pause")
+        pause.tap()
+        XCTAssertTrue(app.staticTexts["Paused new work on Andrea's Mac Studio"].waitForExistence(timeout: 5), "pausing toasts")
+        XCTAssertTrue(waitFor(studio, label: "Paused · new work"), "the Paused badge should show: \(studio.label)")
+        snap(app, "machines-paused")
+
+        studio.swipeLeft()
+        let resume = app.buttons["Resume"]
+        XCTAssertTrue(resume.waitForExistence(timeout: 5), "a paused machine's swipe should offer Resume")
+        resume.tap()
+        XCTAssertTrue(waitFor(studio, label: "Paused", present: false), "Resume should clear the badge: \(studio.label)")
+
+        // Settings…: Team slots goes from 1 to 2, saves, and is still 2 when it opens again.
+        openSettings(app, studio)
+        let slots = app.steppers["settings-team-slots"]
+        XCTAssertTrue(slots.waitForExistence(timeout: 5))
+        let more = slots.buttons["settings-team-slots-Increment"]
+        XCTAssertEqual(more.value as? String, "1", "the Studio starts with one team slot")
+        snap(app, "machine-settings-sheet")
+        more.tap()
+        XCTAssertEqual(more.value as? String, "2")
+        app.buttons["settings-save"].tap()
+        XCTAssertTrue(slots.waitForNonExistence(timeout: 5), "Save should close the sheet")
+        openSettings(app, studio)
+        XCTAssertTrue(slots.waitForExistence(timeout: 5))
+        XCTAssertEqual(more.value as? String, "2", "team slots should still be 2 after reopening")
+        app.buttons["settings-cancel"].tap()
+    }
+
+    /// As a plain member, Sam's Build Mini offers neither Pause nor Settings….
+    func testNoPauseOrSettingsOnOthersMachines() {
+        let app = launch("-demoRole", "member")
+        let mini = app.descendants(matching: .any)["machine-m-mini"]
+        XCTAssertTrue(mini.waitForExistence(timeout: 20))
+        mini.swipeLeft()
+        XCTAssertFalse(app.buttons["Pause"].waitForExistence(timeout: 2), "no Pause swipe on Sam's machine")
+        XCTAssertFalse(app.collectionViews.buttons["Settings"].exists, "no Settings swipe on Sam's machine")
+        mini.press(forDuration: 1.2)
+        XCTAssertFalse(app.buttons["Settings…"].waitForExistence(timeout: 2), "no Settings… on Sam's machine")
+        dismissMenu(app)
+    }
+
+    private func openSettings(_ app: XCUIApplication, _ machine: XCUIElement) {
+        machine.press(forDuration: 1.2)
+        let item = app.buttons["Settings…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "the long-press menu should offer Settings…")
+        item.tap()
+    }
+
+    private func waitFor(_ element: XCUIElement, label part: String, present: Bool = true) -> Bool {
+        let predicate = NSPredicate(format: present ? "label CONTAINS %@" : "NOT (label CONTAINS %@)", part)
+        return XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: 5) == .completed
+    }
+
     private func launch(_ extra: String...) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "YES", "-tab", "machines", "-demoUpdateSeconds", "3"] + extra

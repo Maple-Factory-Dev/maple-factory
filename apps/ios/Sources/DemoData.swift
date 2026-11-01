@@ -229,6 +229,7 @@ enum DemoData {
                                           activity: .init(state: .waiting, message: "Asked a question", at: ago(9))),
                                     .init(session: .init(id: "s2", agent: "claude", cwd: "~/maple/worktrees/app-16", startedAt: ago(6), taskId: "APP-16"),
                                           activity: .init(state: .waiting, message: "Claude needs your permission to use Bash", question: permissionQuestion, at: ago(2)))],
+                         settings: .init(teamSlots: 1, lendIdle: false, loadCap: 0.85, paused: false),
                          capacity: 4, usage: noUsage ? [] : [claude(observed: ago(9))]),
             Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
                          health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),

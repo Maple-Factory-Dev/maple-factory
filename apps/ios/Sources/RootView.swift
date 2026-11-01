@@ -512,9 +512,21 @@ struct MachineRows: View {
     @State private var renaming = false
     @State private var nickname = ""
     @State private var moving: String?
+    @State private var settings = false
 
     var body: some View {
         header
+            .swipeActions(edge: .trailing) {
+                if store.canManage(machine) {
+                    if paused {
+                        Button("Resume", systemImage: "play.fill") { store.setPaused(machine, false) }.tint(Theme.approve)
+                    } else {
+                        Button("Pause", systemImage: "pause.fill") { store.setPaused(machine, true) }.tint(Theme.warning)
+                    }
+                    Button("Settings", systemImage: "slider.horizontal.3") { settings = true }.tint(.gray)
+                }
+            }
+            .sheet(isPresented: $settings) { MachineSettingsSheet(machine: machine) }
             // One dialog for the machine's sessions: Move, from a session's button or swipe.
             .confirmationDialog("Move \(moving ?? "") off \(machine.name)?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } }),
                                 titleVisibility: .visible, presenting: moving) { id in
@@ -584,7 +596,17 @@ struct MachineRows: View {
         HStack(spacing: 10) {
             Image(systemName: "desktopcomputer").font(.title3).foregroundStyle(machine.online ? Theme.approve : .secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(machine.name).font(.body.weight(.medium)).accessibilityIdentifier("machine-name-\(machine.id)")
+                HStack(spacing: 6) {
+                    Text(machine.name).font(.body.weight(.medium)).accessibilityIdentifier("machine-name-\(machine.id)")
+                    if let pausedLabel {
+                        Text(pausedLabel)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.warning)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Theme.warning.opacity(0.15)))
+                            .accessibilityIdentifier("machine-paused-\(machine.id)")
+                    }
+                }
                 Text([machine.owner, machine.os, machine.version.map { "runner \($0)" }].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -602,6 +624,7 @@ struct MachineRows: View {
                     nickname = machine.name
                     renaming = true
                 }
+                Button("Settings…", systemImage: "slider.horizontal.3") { settings = true }
             }
         }
         .alert("Rename \(machine.name)", isPresented: $renaming) {
@@ -611,6 +634,18 @@ struct MachineRows: View {
         } message: {
             Text("A nickname everyone sees in place of \(machine.id). Leave it empty to go back to that.")
         }
+    }
+
+    private var paused: Bool { machine.settings?.paused ?? false }
+
+    /// "Paused", what it holds back and until when, while the machine is paused.
+    private var pausedLabel: String? {
+        guard let s = machine.settings, s.paused else { return nil }
+        var label = s.pauseNew == true ? "Paused · new work" : "Paused"
+        if let until = s.pausedUntil {
+            label += " until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))"
+        }
+        return label
     }
 
     /// A newer runner, with Update for its owner or an admin, and the update while it runs.
