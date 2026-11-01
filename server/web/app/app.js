@@ -1,7 +1,8 @@
 // Maple Factory on the web: review on the go. The same live feed as the apps (/client/connect, signed
 // in by the session cookie): the inbox, and a task's plan, mockups, diff, review and proofs, with the
 // decisions a person makes on them; new tasks and drafts, and the scratchpad. Nothing here touches
-// terminals or machines, except to answer an agent's permission prompt with Yes or No.
+// terminals or machines, except to answer an agent's permission prompt with Yes or No and to pause or resume a
+// machine its owner (or an admin) manages.
 //
 // Every string from the factory goes in with textContent; agents' screen mockups render in an iframe
 // with an empty sandbox (no scripts, no same-origin).
@@ -13,7 +14,7 @@ import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected,
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { inQuietHours } from "./quiet-hours.js";
-import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
+import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
@@ -581,7 +582,7 @@ function tasksView() {
         : loadOlderLink())));
 }
 
-// ---- machines: read-only; what each one is doing, how loaded it is and how much plan it has left ----
+// ---- machines: what each one is doing, how loaded it is and how much plan it has left; its owner (or an admin) can pause it ----
 
 const ACTIVITY_TITLE = { working: "Working", waiting: "Waiting on someone", done: "Done its turn", idle: "Idle" };
 
@@ -608,6 +609,7 @@ function machineCard(m, now) {
         h("div", { class: "sub muted" }, [m.owner === state.me?.login ? "Yours" : name(m.owner), m.os, m.version && `runner ${m.version}`].filter(Boolean).join(" · "))),
       h("span", { class: `pill status-pill ${st.kind}` }, h("span", { class: "pill-dot", "aria-hidden": "true" }), st.label)),
     st.detail && h("div", { class: "machine-detail muted" }, st.detail),
+    canManage(m, state.me) && pauseControl(m),
     m.sessions.length > 0 && h("div", { class: "machine-sessions" }, m.sessions.map((s) => sessionLine(s))),
     gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
     usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
@@ -618,6 +620,53 @@ function machineCard(m, now) {
         bar(r.used / 100, r.cap == null ? null : r.cap / 100, `${r.label}: ${r.usedText} used${r.cap == null ? "" : `, cap ${r.cap}%`}`),
         h("span", { class: "usage-num" }, r.usedText),
         h("span", { class: "usage-reset faint" }, r.resets)))))));
+}
+
+// The open Pause panels, by machine id, so a live redraw (about once a second here) doesn't close one.
+const pausing = new Map();
+const PAUSE_LENGTHS = [["hour", "1 hour"], ["tomorrow", "Until tomorrow"], ["resume", "Until I resume"]];
+
+/** Pause (and its choices) or Resume, for a machine the viewer can manage. */
+function pauseControl(m) {
+  if (m.settings?.paused) {
+    return h("div", { class: "machine-control" },
+      h("button", { class: "btn small", "data-action": "resume", onclick: () => send({ type: "machine.settings", machine: m.id, settings: resumeSettings(m) }) }, "Resume"));
+  }
+  const p = pausing.get(m.id);
+  if (!p) {
+    return h("div", { class: "machine-control" },
+      h("button", { class: "btn small", "data-action": "pause", onclick: () => { pausing.set(m.id, { scope: "new", length: "hour", handOff: true }); render(); } }, "Pause"));
+  }
+  const teammates = teammatesTasks(m, state.tasks.values());
+  const offerHandOff = p.scope === "all" && teammates.length > 0;
+  const help = p.scope === "new"
+    ? "No new tasks start here. Tasks already on this machine keep going until they're done."
+    : offerHandOff && p.handOff
+      ? "Their work so far is pushed and they carry on elsewhere. Your own sessions finish what they're doing."
+      : "Running sessions finish what they're doing; nothing starts here while it's paused.";
+  const set = (patch) => { Object.assign(p, patch); render(); };
+  const confirm = () => {
+    const msg = { type: "machine.settings", machine: m.id, settings: pauseSettings(m, { scope: p.scope, until: pauseUntil(p.length, Date.now()) }) };
+    if (offerHandOff) msg.handOff = p.handOff;
+    if (send(msg)) { pausing.delete(m.id); render(); }
+  };
+  return h("div", { class: "machine-control pause-panel" },
+    h("div", { class: "pause-row" },
+      h("span", { class: "pause-label" }, "Hold back"),
+      h("div", { class: "segmented", role: "radiogroup", "aria-label": "Hold back" },
+        [["new", "New work"], ["all", "Everything"]].map(([v, label]) =>
+          h("button", { type: "button", role: "radio", "aria-checked": String(p.scope === v), class: p.scope === v ? "on" : null, "data-scope": v, onclick: () => set({ scope: v }) }, label)))),
+    h("label", { class: "pause-row" },
+      h("span", { class: "pause-label" }, "For"),
+      h("select", { "aria-label": "Pause for", onchange: (e) => set({ length: e.target.value }) },
+        PAUSE_LENGTHS.map(([v, label]) => h("option", { value: v, selected: p.length === v }, label)))),
+    offerHandOff && h("label", { class: "checkrow" },
+      h("input", { type: "checkbox", checked: p.handOff, onchange: (e) => set({ handOff: e.target.checked }) }),
+      h("span", {}, `Hand off ${teammates.length === 1 ? "1 teammate's task" : `${teammates.length} teammates' tasks`} (${teammates.map((t) => t.id).join(", ")})`)),
+    h("div", { class: "pause-help muted" }, help),
+    h("div", { class: "pause-actions" },
+      h("button", { class: "btn small", onclick: () => { pausing.delete(m.id); render(); } }, "Cancel"),
+      h("button", { class: "btn small primary", "data-action": "confirm-pause", onclick: confirm }, "Pause")));
 }
 
 function sessionLine(s) {

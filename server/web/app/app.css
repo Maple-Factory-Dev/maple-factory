@@ -511,6 +511,17 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .status-pill.updating { --tone: var(--building); }
 .status-pill.paused, .status-pill.limit { --tone: var(--awaiting); }
 .status-pill.offline { --tone: var(--closed); }
+.machine-control { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pause-panel { flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--awaiting) 35%, transparent); background: color-mix(in srgb, var(--awaiting) 7%, transparent); }
+.pause-row { display: flex; gap: 10px; align-items: center; font-size: 14px; }
+.pause-label { width: 70px; flex: none; font-size: 12px; font-weight: 600; color: var(--muted); }
+.pause-row select { flex: 1; min-width: 0; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--stroke); background: var(--fill); }
+.pause-help { font-size: 13px; }
+.pause-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.segmented { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--fill); border: 1px solid var(--stroke); }
+.segmented button { border: 0; background: none; padding: 3px 12px; border-radius: 7px; font-size: 13px; font-weight: 550; cursor: pointer; color: var(--muted); }
+.segmented button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .machine-sessions { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--stroke); padding-top: 10px; }
 .machine-session { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; min-width: 0; }
 .machine-session > div { min-width: 0; }
