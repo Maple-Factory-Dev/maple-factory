@@ -76,7 +76,10 @@ pub async fn report(sessions: crate::sessions::Sessions, recheck: std::sync::Arc
     loop {
         tokio::select! {
             _ = tick.tick() => {}
-            _ = recheck.notified() => sampler.agents_checked = None,
+            _ = recheck.notified() => {
+                sampler.agents_checked = None;
+                crate::capabilities::poke();
+            }
         }
         let health = sampler.sample().await;
         sessions.emit(crate::protocol::Outbound::Wire(crate::wire::RunnerMessage::Health { health: health.to_wire() }));
