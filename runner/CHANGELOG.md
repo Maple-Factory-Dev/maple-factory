@@ -5,7 +5,7 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
-## Unreleased
+## 0.90.0 — 2026-11-01
 
 `maple-runner uninstall` now removes the installed binary (~/.local/share/maple/bin/maple-runner and its ~/.local/bin link) along with the service, and says what's next. The new `maple-runner unenroll` takes the machine out of the factory with its own token, revokes that token and deletes ~/.config/maple/runner.json (`--local-only` skips the server for a machine that's offline for good); `uninstall --unenroll` does both. Repos and worktrees under ~/.local/share/maple/repos are always kept. Needs a factory that has `POST /runner/unenroll`.
 
