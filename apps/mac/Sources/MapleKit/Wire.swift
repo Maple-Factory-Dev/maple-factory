@@ -4706,6 +4706,58 @@ public enum Wire {
         }
     }
 
+    /// A merge a person made, and why the factory didn't make it.
+    public struct StatsManualMergeRow: Codable, Hashable, Sendable {
+        public var task: String
+        public var title: String
+        public var at: UInt64
+        /// Who merged it; none for a merge made on GitHub.
+        public var by: String?
+        /// autoMergeOff, classifier, risk, held, mergedFirst, github or unknown.
+        public var reason: String
+        /// Its risk level, when that's the reason.
+        public var level: String?
+        /// Change requests and review requests people sent while it was in review; 0 means merged as is.
+        public var changes: UInt32
+
+        public init(task: String, title: String, at: UInt64, by: String? = nil, reason: String, level: String? = nil, changes: UInt32) {
+            self.task = task
+            self.title = title
+            self.at = at
+            self.by = by
+            self.reason = reason
+            self.level = level
+            self.changes = changes
+        }
+    }
+
+    /// The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes.
+    public struct StatsManualMerges: Codable, Hashable, Sendable {
+        public var total: UInt32
+        public var asIs: UInt32
+        public var withChanges: UInt32
+        public var byReason: [StatsCount]
+        /// Newest first, up to 20.
+        public var recent: [StatsManualMergeRow]
+
+        public init(total: UInt32, asIs: UInt32, withChanges: UInt32, byReason: [StatsCount] = [], recent: [StatsManualMergeRow] = []) {
+            self.total = total
+            self.asIs = asIs
+            self.withChanges = withChanges
+            self.byReason = byReason
+            self.recent = recent
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            total = try c.decode(UInt32.self, forKey: .total)
+            asIs = try c.decode(UInt32.self, forKey: .asIs)
+            withChanges = try c.decode(UInt32.self, forKey: .withChanges)
+            byReason = try c.decodeIfPresent([StatsCount].self, forKey: .byReason) ?? []
+            recent = try c.decodeIfPresent([StatsManualMergeRow].self, forKey: .recent) ?? []
+        }
+    }
+
     /// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
     public struct GoalTally: Codable, Hashable, Sendable {
         public var goal: String
@@ -4837,8 +4889,10 @@ public enum Wire {
         public var costByAgent: [StatsCostRow]
         /// The findings breakdown; none from a server older than it.
         public var findings: StatsFindings?
+        /// Merges people made, by reason; none from a server older than it.
+        public var manualMerges: StatsManualMerges?
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil, manualMerges: StatsManualMerges? = nil) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -4859,6 +4913,7 @@ public enum Wire {
             self.costByRole = costByRole
             self.costByAgent = costByAgent
             self.findings = findings
+            self.manualMerges = manualMerges
         }
 
         public init(from decoder: Decoder) throws {
@@ -4883,6 +4938,7 @@ public enum Wire {
             costByRole = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByRole) ?? []
             costByAgent = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByAgent) ?? []
             findings = try c.decodeIfPresent(StatsFindings.self, forKey: .findings)
+            manualMerges = try c.decodeIfPresent(StatsManualMerges.self, forKey: .manualMerges)
         }
     }
 

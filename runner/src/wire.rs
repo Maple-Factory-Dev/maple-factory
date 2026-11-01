@@ -2481,6 +2481,39 @@ pub struct StatsFindings {
     pub recent: Vec<StatsFindingRow>,
 }
 
+/// A merge a person made, and why the factory didn't make it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsManualMergeRow {
+    pub task: String,
+    pub title: String,
+    pub at: u64,
+    /// Who merged it; none for a merge made on GitHub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// autoMergeOff, classifier, risk, held, mergedFirst, github or unknown.
+    pub reason: String,
+    /// Its risk level, when that's the reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Change requests and review requests people sent while it was in review; 0 means merged as is.
+    pub changes: u32,
+}
+
+/// The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsManualMerges {
+    pub total: u32,
+    pub as_is: u32,
+    pub with_changes: u32,
+    #[serde(default)]
+    pub by_reason: Vec<StatsCount>,
+    /// Newest first, up to 20.
+    #[serde(default)]
+    pub recent: Vec<StatsManualMergeRow>,
+}
+
 /// How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2590,6 +2623,9 @@ pub struct StatsSummary {
     /// The findings breakdown; none from a server older than it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub findings: Option<StatsFindings>,
+    /// Merges people made, by reason; none from a server older than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_merges: Option<StatsManualMerges>,
 }
 
 /// One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.
