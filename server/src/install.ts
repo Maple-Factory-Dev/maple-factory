@@ -45,9 +45,10 @@ mv "$tmp/maple-runner" "$bin/maple-runner"
 ln -sf "$bin/maple-runner" "$HOME/.local/bin/maple-runner"
 printf 'Installed %s\\n' "$bin/maple-runner"
 
-if ! command -v tmux >/dev/null 2>&1; then
-  printf '\\nmaple: agents run in tmux, which isn'"'"'t installed. Install it (brew install tmux, or apt install tmux) before sessions start.\\n' >&2
-fi
+# Checks for git, tmux, Node, the agent CLIs and Playwright, turns lingering on and installs
+# Playwright's pieces where that needs no password, and ends with what's still needed. A
+# missing tool never fails the install.
+doctor() { printf '\\n'; "$bin/maple-runner" doctor --fix || true; }
 
 # Linux without systemd (containers, some WSL): no service to install, so it's run by hand.
 service=yes
@@ -61,10 +62,13 @@ if [ -n "$CODE" ]; then
   "$bin/maple-runner" enroll --url "$ORIGIN" --code "$CODE"
   start
   printf '\\nThis machine is in the factory; it shows up under Machines.\\n'
+  doctor
 elif [ -f "$HOME/.config/maple/runner.json" ]; then
   start
+  doctor
 else
   printf '\\nNext: get a code from Machines → Add machine, then run\\n  %s enroll --url %s --code XXXX-XXXX && %s install\\n' "$bin/maple-runner" "$ORIGIN" "$bin/maple-runner"
+  doctor
 fi
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) printf '(Add ~/.local/bin to your PATH to run maple-runner by name.)\\n' ;; esac
 `;

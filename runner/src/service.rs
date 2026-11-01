@@ -227,10 +227,17 @@ impl Service {
         }
         if self.manager == Manager::Systemd {
             match linger_step(&current_user(), false) {
-                LingerStep::AlreadyOn => println!("{} lingering is on: maple-runner keeps running after you log out and starts at boot.", crate::style::ok("Linger:")),
-                LingerStep::Plan(LingerPlan::Run(_)) => println!("{} turned lingering on: maple-runner keeps running after you log out and starts at boot.", crate::style::ok("Linger:")),
+                LingerStep::AlreadyOn => {
+                    println!("{} lingering is on: maple-runner keeps running after you log out and starts at boot.", crate::style::ok("Linger:"))
+                }
+                LingerStep::Plan(LingerPlan::Run(_)) => {
+                    println!("{} turned lingering on: maple-runner keeps running after you log out and starts at boot.", crate::style::ok("Linger:"))
+                }
                 LingerStep::Plan(LingerPlan::Print(cmd)) => {
-                    println!("{} lingering is off, so the runner stops when you log out and won't start at boot. Run:\n    {cmd}", crate::style::warn("Linger:"))
+                    println!(
+                        "{} lingering is off, so the runner stops when you log out and won't start at boot. Run:\n    {cmd}",
+                        crate::style::warn("Linger:")
+                    )
                 }
                 LingerStep::Failed(cmd, e) => println!("{} couldn't turn lingering on ({e}). Run:\n    {cmd}", crate::style::warn("Linger:")),
             }

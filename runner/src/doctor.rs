@@ -109,12 +109,7 @@ pub fn render(checks: &[Check]) -> String {
 /// Where `cmd` is on the login shell's PATH (the one agents run with), or `None`.
 fn which(cmd: &str) -> Option<String> {
     let shell = crate::agents::login_shell();
-    let out = Command::new(&shell)
-        .args(["-lc", &format!("command -v {}", shell_quote(cmd))])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let out = Command::new(&shell).args(["-lc", &format!("command -v {}", shell_quote(cmd))]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     let path = String::from_utf8_lossy(&out.stdout).trim().lines().last().unwrap_or("").to_string();
     (out.status.success() && !path.is_empty()).then_some(path)
 }
@@ -268,10 +263,8 @@ mod tests {
 
     #[test]
     fn renders_the_still_needed_list() {
-        let checks = vec![
-            Check::new("git", true, "/usr/bin/git", vec![]),
-            Check::new("claude", false, "missing", vec!["npm i -g @anthropic-ai/claude-code".into()]),
-        ];
+        let checks =
+            vec![Check::new("git", true, "/usr/bin/git", vec![]), Check::new("claude", false, "missing", vec!["npm i -g @anthropic-ai/claude-code".into()])];
         let text = render(&checks);
         assert!(text.contains("Still needed:"), "{text}");
         assert!(text.contains("      npm i -g @anthropic-ai/claude-code\n"), "{text}");
