@@ -1534,7 +1534,7 @@ function pull(t) {
     navigator.clipboard?.writeText(name).then(() => toast(`Copied ${name}`), () => toast(`Couldn't copy ${name}`));
   } }, name);
   const checks = sum.total === 0
-    ? [h("div", { class: "pr-nochecks" }, h("span", { class: "faint" }, local ? "✓" : "◌"),
+    ? [h("div", { class: "pr-nochecks" }, h("span", { class: "faint" }, icon(local ? "check" : "clock")),
         h("span", { class: "muted" }, local ? "No CI: a local repo's change is checked by its proofs and review."
           : taskFinished(t) ? "No checks ran on this pull request." : "No checks reported yet.")),
       !local && !taskFinished(t) && h("div", { class: "pr-foot" }, footBtn("Recheck", "refresh-cw", recheck, "Read the pull request and its checks from GitHub again"))]
@@ -1557,7 +1557,7 @@ function pull(t) {
       h("span", { class: "spacer" }),
       local ? h("span", { class: "pr-local muted", title: "A local repo: the branch is on its origin, with no pull request page" }, "Local branch")
         : h("a", { class: "btn small pr-open-gh", href: pr.url, target: "_blank", rel: "noopener", title: pr.url }, octicon("github", 12), "Open on GitHub ↗")),
-    h("div", { class: "pr-title", title: t.title }, h("span", { class: "mono" }, `#${pr.number}`), " ", h("span", {}, t.title)),
+    h("div", { class: "pr-title", title: t.title }, pr.number > 0 && [h("span", { class: "mono" }, `#${pr.number}`), " "], h("span", {}, t.title)),
     h("span", { class: st.class }, octicon(st.icon, 13), st.label),
     h("div", { class: "pr-branches", title: `${pr.branch} into ${pr.base}` }, pill(pr.branch, "Head"), h("span", { class: "faint" }, "→"), pill(pr.base, "Base")),
     h("hr", { class: "pr-rule" }),

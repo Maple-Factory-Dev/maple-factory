@@ -730,8 +730,7 @@ details.fold[open] > .card { margin-top: 10px; }
 .seg-running { background: var(--gh-running); }
 .seg-queued { background: var(--gh-queued); }
 .check-list { padding: 3px; border-radius: 9px; border: 1px solid var(--stroke); background: color-mix(in srgb, var(--text) 2.5%, transparent); }
-.check-item + .check-item { border-top: 1px solid var(--stroke); margin-left: 30px; padding-left: 0; }
-.check-item + .check-item .check-row { margin-left: -30px; }
+.check-item + .check-item { background: linear-gradient(var(--stroke), var(--stroke)) 32px 0 / calc(100% - 32px) 1px no-repeat; }
 .check-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 32px; padding: 3px 6px; border-radius: 6px; font-size: 13px; }
 .check-row:hover { background: var(--fill); }
 .check-dot { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 10px; font-weight: 800; }
