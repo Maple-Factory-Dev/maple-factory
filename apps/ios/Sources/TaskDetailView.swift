@@ -85,7 +85,8 @@ struct TaskDetailView: View {
         if !task.brief.isEmpty {
             Card("Brief", icon: "doc.text") {
                 let brief = BriefContent.parse(task.brief)
-                Text(LocalizedStringKey(brief.text)).font(.callout)
+                MarkdownText(source: brief.text)
+                    .accessibilityElement(children: .contain)
                     // The brief as written (links and all), for the UI tests.
                     .accessibilityIdentifier("task.brief").accessibilityValue(task.brief)
                 if !brief.attachments.isEmpty { AttachmentGallery(attachments: brief.attachments) }
@@ -367,8 +368,17 @@ struct HandCard: View {
             ForEach(hand.options, id: \.title) { option in
                 Button { store.resolveHand(task.id, option: option.title, note: "") } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(option.title + (option.recommended ? " (recommended)" : "")).font(.callout.weight(.medium))
-                        Text(option.detail).font(.caption).foregroundStyle(.secondary)
+                        Text(option.title)
+                            .font(.callout.weight(.medium))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if option.recommended {
+                            Text("Recommended").font(.caption.weight(.medium))
+                        }
+                        Text(option.detail)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -457,12 +467,37 @@ struct QuestionCard: View {
     var body: some View {
         Card("The \(question.role.rawValue) asks", icon: "questionmark.bubble.fill") {
             Text(question.text).font(.callout)
-            HStack {
-                ForEach(question.options, id: \.self) { option in
-                    Button(option) { store.answer(task.id, text: option) }.buttonStyle(.bordered)
+            // Stacked, full-width and wrapping: an agent's options can be whole sentences.
+            VStack(spacing: 8) {
+                ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
+                    let parsed = Self.parse(option)
+                    Button { store.answer(task.id, text: option) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(parsed.label)
+                                .font(.callout.weight(.medium))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if parsed.recommended {
+                                Text("Recommended").font(.caption.weight(.medium))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(parsed.recommended ? Theme.approve : .secondary)
+                    .accessibilityIdentifier("question-option-\(index)")
                 }
             }
         }
+    }
+
+    /// Splits a trailing "(recommended)", in any case, off an option: it shows as a caption instead.
+    static func parse(_ option: String) -> (label: String, recommended: Bool) {
+        let trimmed = option.trimmingCharacters(in: .whitespaces)
+        let suffix = "(recommended)"
+        guard trimmed.lowercased().hasSuffix(suffix) else { return (option, false) }
+        let label = String(trimmed.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        return label.isEmpty ? (option, false) : (label, true)
     }
 }
 
@@ -902,7 +937,7 @@ struct TimelineSection: View {
                     Image(systemName: "arrow.uturn.right").foregroundStyle(Theme.warning).frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(change.author) asked for changes · \(change.status.rawValue)").font(.caption.weight(.semibold))
-                        Text(change.text).font(.callout)
+                        MarkdownText(source: change.text)
                     }
                 }
                 Spacer()
@@ -1008,34 +1043,56 @@ struct ActionBar: View {
     }
 }
 
+/// What every Comment, Steer, Request changes, Answer and Reply to hand opens: Markdown with a
+/// formatting bar and Write/Preview, and photos or files that upload as they're picked and go out
+/// linked at the end of the text (`![name](/attachments/…)`), so the agent gets them too.
 struct ComposeSheet: View {
+    @Environment(FactoryStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let compose: Compose
     @State private var text = ""
+    @State private var uploads = AttachmentUploads()
     @FocusState private var focused: Bool
+
+    private var message: String { FactoryStore.brief(text, attachments: uploads.attachments) }
+    private var canSend: Bool {
+        !uploads.uploading && (compose.optional || !message.isEmpty)
+    }
 
     var body: some View {
         NavigationStack {
-            TextField(compose.placeholder, text: $text, axis: .vertical)
-                .lineLimit(5...12)
-                .focused($focused)
-                .padding()
-                .frame(maxHeight: .infinity, alignment: .top)
-                .navigationTitle(compose.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(compose.send) {
-                            compose.action(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                            dismiss()
-                        }
-                        .disabled(!compose.optional && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    MarkdownField(placeholder: compose.placeholder, text: $text, identifier: "compose.text",
+                                  minHeight: 160, previewSource: message, focused: $focused)
+                    AttachmentTray(uploads: uploads, prefix: "compose")
+                    if uploads.uploading {
+                        Text("Send waits for the uploads to finish.").font(.footnote).foregroundStyle(.secondary)
+                    } else if uploads.failed {
+                        Text("Tap a photo that didn't go up to try again.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-                .onAppear { focused = true }
+                .padding()
+            }
+            .navigationTitle(compose.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(compose.send) {
+                        compose.action(message)
+                        dismiss()
+                    }
+                    .disabled(!canSend)
+                    .accessibilityIdentifier("compose.send")
+                }
+            }
+            .onAppear {
+                focused = !UserDefaults.standard.bool(forKey: "composeNoFocus")
+                uploads.injectTestAttachments(flag: "composeAttachment", store: store)
+            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large, .medium])
     }
 }
 

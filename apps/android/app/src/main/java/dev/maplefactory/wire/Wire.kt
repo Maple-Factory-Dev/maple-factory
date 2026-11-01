@@ -1937,7 +1937,7 @@ data class ScoutRun(
     val error: String? = null,
 )
 
-/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. */
+/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. With `once`, a scheduled task instead: it runs one time at `firstAt` and is then removed. */
 @Serializable
 data class Recurring(
     val id: String,
@@ -1965,6 +1965,8 @@ data class Recurring(
     val lastTask: String? = null,
     /** Who saved it last; its runs are started on their behalf. */
     val by: String,
+    /** A one-off: it runs once at `firstAt` and is then removed (its task is the record); `every` and `unit` are ignored. None: repeating. */
+    val once: Boolean? = null,
 )
 
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
@@ -3174,7 +3176,7 @@ sealed class ClientMessage {
     data class GoalScout(
         val goal: String,
     ) : ClientMessage()
-    /** The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`. */
+    /** The goal's lead or an admin: add a recurring or scheduled (`once`) task (a new id) or change one. A scheduled one's time can't be in the past. Answered with `recurring.updated`, or an `error`. */
     @Serializable
     data class RecurringSave(
         /** nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent. */
@@ -3191,7 +3193,7 @@ sealed class ClientMessage {
         val id: String,
         val paused: Boolean,
     ) : ClientMessage()
-    /** The goal's lead or an admin: start a run now; its schedule is kept. */
+    /** The goal's lead or an admin: start a run now; its schedule is kept. A scheduled (`once`) one is then removed. */
     @Serializable
     data class RecurringRunNow(
         val id: String,

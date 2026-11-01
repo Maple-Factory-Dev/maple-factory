@@ -13,6 +13,10 @@ final class LiveOlderTasksTests: XCTestCase {
         app.launchArguments = ["-onboardingURL", factory, "-onboardingContinue", "YES", "-tab", "goals", "-goal", goal]
         app.launch()
 
+        // Load older lives on All tasks, from the bottom of the goal's Overview.
+        let all = app.buttons["goal-all-tasks"]
+        XCTAssertTrue(scrollTo(all, in: app), "the goal should offer All tasks")
+        all.tap()
         let older = app.buttons["load-older"]
         XCTAssertTrue(scrollTo(older, in: app), "the goal should offer Load older")
         snap(app, "ios-load-older-before")

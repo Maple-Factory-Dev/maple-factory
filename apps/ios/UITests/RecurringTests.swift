@@ -26,21 +26,38 @@ final class RecurringTests: XCTestCase {
         add(shot)
     }
 
-    private var count: XCUIElement { app.staticTexts["recurring-count"] }
+    /// The count on the … menu's Recurring item: "Recurring (2)" reads "2". Closes the menu again.
+    private func recurringCount() -> String {
+        openMenu()
+        let item = app.buttons["goal-recurring"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "no Recurring in the … menu")
+        let label = item.label
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.95)).tap()
+        _ = item.waitForNonExistence(timeout: 3)
+        guard let open = label.firstIndex(of: "("), let close = label.firstIndex(of: ")") else { return label }
+        return String(label[label.index(after: open)..<close])
+    }
+
+    private func openMenu() {
+        let menu = app.buttons["goal-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), "no … menu")
+        menu.tap()
+    }
     private func row(_ id: String) -> XCUIElement { app.descendants(matching: .any)["recurring-row-\(id)"] }
     private var rows: XCUIElementQuery {
         app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'recurring-row-'"))
     }
 
     private func openRecurring() {
+        openMenu()
+        XCTAssertTrue(app.buttons["goal-recurring"].waitForExistence(timeout: 5))
         app.buttons["goal-recurring"].tap()
         XCTAssertTrue(app.navigationBars["Recurring"].waitForExistence(timeout: 10), "Recurring didn't open")
     }
 
     func testLeadPausesRunsAddsEditsAndDeletes() {
         open(goal: "g-app", title: "Mobile app", "-demoRole", "member")
-        XCTAssertTrue(count.waitForExistence(timeout: 10), "no Recurring row")
-        XCTAssertEqual(count.label, "2")
+        XCTAssertEqual(recurringCount(), "2")
         snap("goal-recurring-row")
 
         openRecurring()
@@ -85,8 +102,7 @@ final class RecurringTests: XCTestCase {
         XCTAssertTrue(added.waitForExistence(timeout: 5), "the new one isn't listed")
         XCTAssertEqual(rows.count, 3)
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(count.waitForExistence(timeout: 5))
-        XCTAssertEqual(count.label, "3", "GoalView's count didn't follow")
+        XCTAssertEqual(recurringCount(), "3", "GoalView's count didn't follow")
         openRecurring()
 
         // Edit it: rename.
@@ -114,14 +130,12 @@ final class RecurringTests: XCTestCase {
         XCTAssertEqual(rows.count, 2)
         snap("recurring-after-delete")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(count.waitForExistence(timeout: 5))
-        XCTAssertEqual(count.label, "2")
+        XCTAssertEqual(recurringCount(), "2")
     }
 
     func testMemberSeesItReadOnly() {
         open(goal: "g-api", title: "Public API", "-demoRole", "member")
-        XCTAssertTrue(count.waitForExistence(timeout: 10))
-        XCTAssertEqual(count.label, "1")
+        XCTAssertEqual(recurringCount(), "1")
         openRecurring()
         XCTAssertEqual(rows.count, 1)
         XCTAssertFalse(app.buttons["recurring-add"].exists, "a member has no + button")

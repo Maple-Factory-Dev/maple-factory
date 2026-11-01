@@ -7,8 +7,9 @@ import SwiftUI
 /// and folder, stay on the Mac.
 struct GoalSettingsSection: View {
     @Environment(FactoryStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let goal: Wire.Goal
+    /// After archiving: back to Goals.
+    var onArchive: () -> Void = {}
 
     @State private var confirmingArchive = false
 
@@ -82,7 +83,7 @@ struct GoalSettingsSection: View {
     /// Archives, then goes back to Goals, as the Mac goes back to All goals.
     private func archive(_ unfinished: Wire.UnfinishedTasks?) {
         store.archiveGoal(goal, archived: true, unfinished: unfinished)
-        dismiss()
+        onArchive()
     }
 
     /// "You accepted up to medium · 5m ago", or what Off means.
@@ -91,6 +92,23 @@ struct GoalSettingsSection: View {
         let who = acceptance.by == store.me ? "You" : store.feed.member(acceptance.by)?.name ?? acceptance.by
         let ago = When.ago(acceptance.at)
         return "\(who) accepted up to \(acceptance.upTo.rawValue) · \(ago == "now" ? "just now" : "\(ago) ago")"
+    }
+}
+
+struct GoalSettingsRoute: Hashable { let goal: String }
+
+/// Goal settings, from the goal page's … menu: its Merging section (auto-merge and archiving).
+struct GoalSettingsView: View {
+    @Environment(FactoryStore.self) private var store
+    let id: String
+    var onArchive: () -> Void = {}
+
+    var body: some View {
+        Form {
+            if let goal = store.feed.goal(id) { GoalSettingsSection(goal: goal, onArchive: onArchive) }
+        }
+        .navigationTitle("Goal settings")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

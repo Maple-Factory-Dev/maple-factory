@@ -1,6 +1,6 @@
 import XCTest
 
-/// A goal's Merging section in the demo factory. The demo user leads Mobile app (five unfinished
+/// A goal's Merging section in the demo factory, in Goal settings from the goal's … menu. The demo user leads Mobile app (five unfinished
 /// tasks); Kit leads Public API, which Kit let auto-merge up to low. As the lead: set Auto-merge to
 /// Medium and the caption says so; archive Mobile app, letting its tasks finish, and the app goes back
 /// to Goals without it. As a plain member (`-demoRole member`) on Public API: both are read-only.
@@ -17,6 +17,13 @@ final class GoalSettingsTests: XCTestCase {
         app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goal", goal] + extra
         app.launch()
         XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 60), "the goal didn't open")
+        XCTAssertFalse(archive.exists, "Archive belongs in Goal settings, not on the goal's first screen")
+        XCTAssertFalse(picker.exists, "Auto-merge belongs in Goal settings, not on the goal's first screen")
+        app.buttons["goal-menu"].tap()
+        let settings = app.buttons["goal-settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), "no Goal settings in the … menu")
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Goal settings"].waitForExistence(timeout: 5), "Goal settings didn't open")
     }
 
     private var picker: XCUIElement { app.buttons["auto-merge-picker"] }

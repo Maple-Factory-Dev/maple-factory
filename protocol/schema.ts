@@ -1012,7 +1012,7 @@ export const structs: Record<string, Struct> = {
     fieldDocs: { by: "Who started it; it runs on their machine.", tasks: "The tasks it sent to planning." },
   },
   Recurring: {
-    doc: "A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online.",
+    doc: "A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. With `once`, a scheduled task instead: it runs one time at `firstAt` and is then removed.",
     fields: {
       id: "string",
       goal: "string",
@@ -1029,8 +1029,10 @@ export const structs: Record<string, Struct> = {
       lastRunAt: "u64?",
       lastTask: "string?",
       by: "string",
+      once: "bool?",
     },
     fieldDocs: {
+      once: "A one-off: it runs once at `firstAt` and is then removed (its task is the record); `every` and `unit` are ignored. None: repeating.",
       brief: "The prompt: each run's task brief.",
       repo: "One of the goal's repos. None: the goal's own.",
       agent: "claude or codex.",
@@ -1605,13 +1607,13 @@ export const unions: Record<string, Union> = {
       "draft.cancel": { fields: { id: "string" } },
       "goal.scout": { doc: "Run Scout on a goal: its leftovers still worth doing come back as drafted plans.", fields: { goal: "string" } },
       "recurring.save": {
-        doc: "The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`.",
+        doc: "The goal's lead or an admin: add a recurring or scheduled (`once`) task (a new id) or change one. A scheduled one's time can't be in the past. Answered with `recurring.updated`, or an `error`.",
         fields: { recurring: "Recurring" },
         fieldDocs: { recurring: "nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent." },
       },
       "recurring.delete": { doc: "The goal's lead or an admin.", fields: { id: "string" } },
       "recurring.pause": { doc: "The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now.", fields: { id: "string", paused: "bool" } },
-      "recurring.runNow": { doc: "The goal's lead or an admin: start a run now; its schedule is kept.", fields: { id: "string" } },
+      "recurring.runNow": { doc: "The goal's lead or an admin: start a run now; its schedule is kept. A scheduled (`once`) one is then removed.", fields: { id: "string" } },
       "repo.setup.start": {
         doc: "Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.",
         fields: { repo: "string", agent: "string?" },

@@ -85,7 +85,7 @@ struct NoteWithAttachments: View {
     var body: some View {
         let content = BriefContent.parse(source)
         VStack(alignment: .leading, spacing: 8) {
-            if !content.text.isEmpty { Text(LocalizedStringKey(content.text)).font(.callout) }
+            if !content.text.isEmpty { MarkdownText(source: content.text) }
             if !content.attachments.isEmpty { AttachmentGallery(attachments: content.attachments, compact: compact) }
         }
     }

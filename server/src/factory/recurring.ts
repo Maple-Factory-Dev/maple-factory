@@ -1,6 +1,7 @@
 // Recurring tasks: a goal's saved prompt that starts a new task every N hours, days or weeks. The
 // OrgHub alarm runs the due ones (`run`), whether or not any app or machine is connected; each run is
-// an ordinary task sent to planning, so the queue hands it to whichever runner is online.
+// an ordinary task sent to planning, so the queue hands it to whichever runner is online. A `once` one
+// (a scheduled task) runs one time at its firstAt and is then removed: its task is the record.
 
 import type { Goal, Recurring, Task } from "../wire.ts";
 import type { Store } from "./store.ts";
@@ -21,6 +22,11 @@ export function everyText(r: Pick<Recurring, "every" | "unit">): string {
   const n = Math.max(1, Math.round(r.every / UNIT_MINUTES[r.unit]));
   const name = r.unit.slice(0, -1);
   return n === 1 ? `every ${name}` : `every ${n} ${r.unit}`;
+}
+
+/** "Nov 3, 2026, 9:00 AM EST": a scheduled one's time, in its time zone. */
+export function whenText(r: Pick<Recurring, "firstAt" | "timeZone">): string {
+  return new Date(r.firstAt).toLocaleString("en-US", { timeZone: r.timeZone || "UTC", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
 // Time zones, without a library: the zone's offset from what Intl says its wall clock reads.
@@ -75,6 +81,8 @@ type Hooks = {
   /** Note on a task (the last run's) why this run was skipped. */
   note(task: Task, text: string): void;
   updated(r: Recurring): void;
+  /** A scheduled (once) one ran and is gone. */
+  removed(r: Recurring): void;
 };
 
 export class Recurrings {
@@ -92,24 +100,30 @@ export class Recurrings {
     if (!r.brief.trim()) throw new Error("Say what each run should do.");
     const repo = r.repo ? goalRepos(goal).find((x) => x.toLowerCase() === r.repo!.toLowerCase()) : null;
     if (r.repo && !repo) throw new Error(`${goal.name} doesn't work in ${r.repo}; add it to the goal's repos first.`);
-    if (!Number.isInteger(r.every) || r.every < MIN_EVERY) throw new Error("A recurring task runs at most once an hour.");
-    if (!(r.unit in UNIT_MINUTES)) throw new Error("Every hours, days or weeks.");
+    const once = !!r.once;
+    // A one-off ignores its interval; keep whatever valid one it has so switching back to repeating is easy.
+    const every = once && !(Number.isInteger(r.every) && r.every >= MIN_EVERY) ? DAY_MINUTES : r.every;
+    const unit = once && !(r.unit in UNIT_MINUTES) ? "days" : r.unit;
+    if (!Number.isInteger(every) || every < MIN_EVERY) throw new Error("A recurring task runs at most once an hour.");
+    if (!(unit in UNIT_MINUTES)) throw new Error("Every hours, days or weeks.");
     const timeZone = r.timeZone?.trim() || "UTC";
     if (!validTimeZone(timeZone)) throw new Error(`${timeZone} isn't a time zone.`);
     if (!Number.isFinite(r.firstAt) || r.firstAt <= 0) throw new Error("Pick when it first runs.");
+    if (once && r.firstAt < now - NOW_LEEWAY) throw new Error("Pick a time from now on.");
     const saved: Recurring = {
       id: r.id, goal: goal.id, title, brief: r.brief.trim(), repo: repo ?? null, agent: r.agent || "claude",
-      every: r.every, unit: r.unit, firstAt: r.firstAt, timeZone, paused: !!r.paused,
+      every, unit, firstAt: r.firstAt, timeZone, paused: !!r.paused,
       nextAt: 0, lastRunAt: before?.lastRunAt ?? null, lastTask: before?.lastTask ?? null, by,
     };
-    saved.nextAt = nextRun(saved, now - NOW_LEEWAY);
+    if (once) saved.once = true;
+    saved.nextAt = once ? r.firstAt : nextRun(saved, now - NOW_LEEWAY);
     return saved;
   }
 
   /** Pause, or resume from the next due time from now. */
   pause(r: Recurring, paused: boolean, now: number): Recurring {
     const saved = { ...r, paused };
-    if (!paused) saved.nextAt = nextRun(r, now - NOW_LEEWAY);
+    if (!paused) saved.nextAt = r.once ? Math.max(r.firstAt, now) : nextRun(r, now - NOW_LEEWAY);
     return saved;
   }
 
@@ -130,6 +144,10 @@ export class Recurrings {
   /** Every due one: a run, or a skip while its last task is still open; then its next run. Returns the next due time. */
   async run(now: number): Promise<number | null> {
     for (const due of this.store.dueRecurring(now)) {
+      if (due.once) {
+        await this.runOnce(due, now);
+        continue;
+      }
       let r: Recurring = { ...due, nextAt: nextRun(due, now, true) };
       const open = this.lastOpen(due);
       const goal = this.store.goal(due.goal);
@@ -148,5 +166,29 @@ export class Recurrings {
       this.hooks.updated(r);
     }
     return this.store.nextRecurringAt();
+  }
+
+  /** A due scheduled one: its task, then it's removed. No skip-while-open rule: it only ever runs once.
+   *  If its goal is gone or the run fails, it's paused instead so nobody loses it. */
+  private async runOnce(due: Recurring, now: number) {
+    const goal = this.store.goal(due.goal);
+    if (goal && !goal.archived) {
+      try {
+        await this.start(due, now);
+        this.remove(due);
+        return;
+      } catch (e) {
+        console.warn(`scheduled ${due.id}: ${(e as Error).message}`);
+      }
+    }
+    const r = { ...due, paused: true };
+    this.store.saveRecurring(r);
+    this.hooks.updated(r);
+  }
+
+  /** A scheduled one is done: gone from the store, and from the apps. */
+  remove(r: Recurring) {
+    this.store.deleteRecurring(r.id);
+    this.hooks.removed(r);
   }
 }
