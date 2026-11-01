@@ -19,7 +19,7 @@ import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
-import { everyText, Recurrings } from "./recurring.ts";
+import { everyText, Recurrings, whenText } from "./recurring.ts";
 import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
@@ -222,6 +222,7 @@ export class Engine {
         this.save(task, false);
       },
       updated: (recurring) => hooks.broadcast({ type: "recurring.updated", recurring }),
+      removed: (r) => hooks.broadcast({ type: "recurring.deleted", id: r.id }),
     });
     this.setup = new RepoSetup(store, {
       broadcast: (message) => hooks.broadcast(message),
@@ -261,9 +262,9 @@ export class Engine {
 
   /** One recurring task's run: an ordinary task, sent to planning on its saver's behalf. */
   private async recurringRun(r: import("../wire.ts").Recurring, goal: Goal): Promise<Task> {
-    const brief = `${r.brief}\n\nRecurring: ${r.title}, ${everyText(r)}`;
+    const brief = r.once ? `${r.brief}\n\nScheduled: ${r.title}, ${whenText(r)}` : `${r.brief}\n\nRecurring: ${r.title}, ${everyText(r)}`;
     const task = this.newTask(goal, r.by, { title: r.title, brief, tickets: [], shareable: true, agent: r.agent || "claude", model: null, intake: null, repo: r.repo ?? null, after: [], effort: null });
-    this.event(task, "factory", `started by recurring "${r.title}" (${everyText(r)})`);
+    this.event(task, "factory", r.once ? `started by scheduled "${r.title}" (${whenText(r)})` : `started by recurring "${r.title}" (${everyText(r)})`);
     this.save(task);
     await audit(this.env, r.by, "task.created", task.id, { title: task.title, recurring: r.id });
     await this.startPlanning(task, r.by);
@@ -324,6 +325,10 @@ export class Engine {
           saved = msg.type === "recurring.pause" ? this.recurrings.pause(r, msg.paused, now()) : await this.recurrings.start(r, now());
         } catch (e) {
           fail((e as Error).message);
+        }
+        if (msg.type === "recurring.runNow" && r.once) {
+          this.recurrings.remove(r);
+          return this.runRecurring();
         }
         this.store.saveRecurring(saved);
         this.hooks.broadcast({ type: "recurring.updated", recurring: saved });

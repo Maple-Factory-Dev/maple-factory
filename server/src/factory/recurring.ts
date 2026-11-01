@@ -24,6 +24,11 @@ export function everyText(r: Pick<Recurring, "every" | "unit">): string {
   return n === 1 ? `every ${name}` : `every ${n} ${r.unit}`;
 }
 
+/** "Nov 3, 2026, 9:00 AM EST": a scheduled one's time, in its time zone. */
+export function whenText(r: Pick<Recurring, "firstAt" | "timeZone">): string {
+  return new Date(r.firstAt).toLocaleString("en-US", { timeZone: r.timeZone || "UTC", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+}
+
 // Time zones, without a library: the zone's offset from what Intl says its wall clock reads.
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
