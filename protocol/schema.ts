@@ -637,13 +637,14 @@ export const structs: Record<string, Struct> = {
   },
   WorktreeScripts: {
     doc: "A repo's own commands for its task worktrees, run by the runner through `/bin/sh -c` in the repo's main checkout, with MAPLE_* variables and the repo's secrets in the environment. Each is optional.",
-    fields: { create: "string?", preflight: "string?", preflightWatch: "string?", setup: "string?", checks: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?" },
+    fields: { create: "string?", preflight: "string?", preflightWatch: "string?", setup: "string?", checks: "string?", teardown: "string?", archive: "string?", timeoutSecs: "u32?", requirePaths: "string?" },
     fieldDocs: {
       create: "Makes the worktree in place of `git worktree add`: a git worktree on MAPLE_BRANCH at MAPLE_WORKTREE.",
       preflight: "Machine-level setup (runtimes, brew, services) run in the new worktree before setup: the first time a machine's checkout of the repo is used, and again when the command or a watched file changes.",
       preflightWatch: "Repo-relative paths, one per line, whose contents re-run preflight when they change. None: .ruby-version, .tool-versions, .node-version, .nvmrc, .python-version, Brewfile and mise.toml.",
       setup: "Runs once the worktree exists, before the agent starts.",
-      checks: "Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.",
+      checks: "Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. A line may start with `[macos] ` or `[xcode,macos] `: only a machine with those tags runs it.",
+      requirePaths: "Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags.",
       teardown: "Runs before the worktree is removed when a finished task is cleaned up.",
       archive: "Runs in place of the runner's own removal at cleanup; it owns the folder and the branch.",
       timeoutSecs: "How long each one may run (default 600).",
@@ -783,8 +784,10 @@ export const structs: Record<string, Struct> = {
       mergeForecast: "MergeForecast?",
       classification: "Classification?",
       findings: "Findings?",
+      requires: "string[]?",
     },
     fieldDocs: {
+      requires: "Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.",
       findings: "A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).",
       classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
       artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",

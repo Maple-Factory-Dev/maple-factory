@@ -1974,6 +1974,7 @@ mod tests {
             teardown: None,
             archive: None,
             timeout_secs: Some(30),
+            require_paths: None,
         }
     }
 

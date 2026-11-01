@@ -358,6 +358,7 @@ mod tests {
             teardown: None,
             archive: Some("  ".into()),
             timeout_secs: timeout,
+            require_paths: None,
         }
     }
 

@@ -1380,7 +1380,7 @@ data class WorktreeScripts(
     val preflightWatch: String? = null,
     /** Runs once the worktree exists, before the agent starts. */
     val setup: String? = null,
-    /** Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. */
+    /** Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. A line may start with `[macos] ` or `[xcode,macos] `: only a machine with those tags runs it. */
     val checks: String? = null,
     /** Runs before the worktree is removed when a finished task is cleaned up. */
     val teardown: String? = null,
@@ -1388,6 +1388,8 @@ data class WorktreeScripts(
     val archive: String? = null,
     /** How long each one may run (default 600). */
     val timeoutSecs: Long? = null,
+    /** Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags. */
+    val requirePaths: String? = null,
 )
 
 /** One repo's worktree scripts, and who last changed them. */
@@ -1614,6 +1616,8 @@ data class Task(
     val classification: Classification? = null,
     /** A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server). */
     val findings: Findings? = null,
+    /** Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine. */
+    val requires: List<String>? = null,
 )
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
