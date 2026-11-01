@@ -97,7 +97,7 @@ static REQUESTS: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(Default
 static CONTROL_PORT: OnceLock<Option<u16>> = OnceLock::new();
 
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::http_client()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .connect_timeout(Duration::from_secs(5))

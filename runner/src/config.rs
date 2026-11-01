@@ -158,7 +158,7 @@ struct EnrollResponse {
 pub async fn enroll(url: &str, code: &str, runner_id: &str, hostname: &str, test: bool) -> Result<Config> {
     let base = base_url(url)?;
     let endpoint = format!("{base}/runner/enroll");
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).user_agent(concat!("maple-runner/", env!("CARGO_PKG_VERSION"))).build()?;
+    let client = crate::http_client().timeout(Duration::from_secs(30)).user_agent(concat!("maple-runner/", env!("CARGO_PKG_VERSION"))).build()?;
     let body = EnrollRequest { code, runner_id, hostname, os: std::env::consts::OS, arch: std::env::consts::ARCH, version: env!("CARGO_PKG_VERSION"), test };
     let res = client.post(&endpoint).json(&body).send().await.with_context(|| format!("could not reach {endpoint}"))?;
     let status = res.status();
@@ -191,7 +191,7 @@ pub enum Unenrolled {
 pub async fn unenroll(cfg: &Config) -> Result<Unenrolled> {
     let base = base_url(&cfg.url)?;
     let endpoint = format!("{base}/runner/unenroll");
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).user_agent(concat!("maple-runner/", env!("CARGO_PKG_VERSION"))).build()?;
+    let client = crate::http_client().timeout(Duration::from_secs(30)).user_agent(concat!("maple-runner/", env!("CARGO_PKG_VERSION"))).build()?;
     let res = client
         .post(&endpoint)
         .bearer_auth(&cfg.token)

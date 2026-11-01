@@ -56,7 +56,7 @@ struct Origin {
 static ORIGIN: OnceLock<Origin> = OnceLock::new();
 
 pub(crate) static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::http_client()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(50))
