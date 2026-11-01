@@ -14,6 +14,8 @@ import { deliver } from "../src/trackers.ts";
 import { slackActions, slackCommand, slackEvents, wantsGoals } from "../src/slack.ts";
 import { manifest, merged, definition, slackSetupUrl, SLACK_SCOPES } from "../src/integrations/registry.ts";
 import type { Goal, ServerToRunner } from "../src/wire.ts";
+import { d1 } from "./d1.ts";
+import { linkApi } from "../src/slack-links.ts";
 
 const SECRET = "slack-signing-secret";
 const TOKEN = "xoxb-test-token";
@@ -38,7 +40,7 @@ const goal = (id: string, f: Partial<Goal> = {}): Goal => ({ id, name: id === "w
 type Call = { url: string; method: string; body: any };
 
 /** A factory with two goals and one online machine, a fake OrgHub in front of its engine, and Slack mocked. */
-function factory(opts: { config?: Record<string, string> | null } = {}) {
+function factory(opts: { config?: Record<string, string> | null; db?: D1Database } = {}) {
   const store = new Store(sqlStorage());
   store.saveGoal(goal("web"));
   store.saveGoal(goal("mob"));
@@ -47,8 +49,9 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
   const events: (string | null)[] = [];
   const config = opts.config === undefined ? { signingSecret: SECRET, botToken: TOKEN } : opts.config;
   const later: Promise<unknown>[] = [];
+  const asks: any[] = [];
   const env: any = {
-    DB: { prepare: () => ({ bind: () => ({ run: async () => {} }) }) },
+    DB: opts.db ?? { prepare: () => ({ bind: () => ({ run: async () => {} }) }) },
     MACHINE: { idFromName: (n: string) => n, get: () => ({ fetch: async (_: string, init: { body: string }) => (sent.push(JSON.parse(init.body)), new Response("ok")) }) },
     RELEASES: {
       put: async (key: string, body: Uint8Array, o: { httpMetadata: { contentType: string } }) => void r2.set(key, { body, type: o.httpMetadata.contentType }),
@@ -73,7 +76,7 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
         if (path === "/integrations/slack/config") return Response.json(config);
         if (path === "/integrations/slack/event") return events.push(body.error), new Response(null, { status: 204 });
         if (path === "/slack/seen") return Response.json({ seen: engine.slack.seen(body.id) });
-        if (path === "/slack/ask") await engine.slack.ask(body);
+        if (path === "/slack/ask") asks.push(body), await engine.slack.ask(body);
         if (path === "/slack/action") await engine.slack.action(body);
         if (path === "/slack/joined") await engine.slack.picker(body.channel, body.threadTs);
         if (path === "/intake") return Response.json(intake.create(body));
@@ -102,6 +105,8 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
     const api = /^https:\/\/slack\.com\/api\/([\w.]+)/.exec(url)?.[1];
     if (api === "chat.postMessage") return Response.json({ ok: true, ts: `${ts++}.0` });
     if (api === "chat.update") return Response.json({ ok: true });
+    if (api === "chat.postEphemeral") return Response.json({ ok: true, message_ts: "1.0" });
+    if (api === "auth.test") return Response.json({ ok: true, team: "Acme", user_id: "UBOT" });
     if (api === "conversations.replies") return Response.json({ ok: true, messages: thread });
     if (api === "users.info") return Response.json({ ok: true, user: { name: "x", profile: { display_name: url.includes("U1") ? "dana" : "sam" } } });
     return new Response("not mocked", { status: 500 });
@@ -113,7 +118,8 @@ function factory(opts: { config?: Record<string, string> | null } = {}) {
   };
   const posts = () => calls.filter((c) => c.url.endsWith("/chat.postMessage")).map((c) => c.body);
   const updates = () => calls.filter((c) => c.url.endsWith("/chat.update")).map((c) => c.body);
-  return { store, engine, intake, env, sent, r2, events, calls, posts, updates, ctx, settle, restore: () => (globalThis.fetch = realFetch) };
+  const whispers = () => calls.filter((c) => c.url.endsWith("/chat.postEphemeral")).map((c) => c.body);
+  return { store, engine, intake, env, sent, r2, events, calls, posts, updates, whispers, asks, ctx, settle, restore: () => (globalThis.fetch = realFetch) };
 }
 
 /** A request signed as Slack signs them (`v0:<timestamp>:<body>`). */
@@ -816,4 +822,110 @@ test("the bot token is optional and has to look like one", () => {
   assert.deepEqual(merged(slack, true, { signingSecret: "s" }, {}, {}), { signingSecret: "s" }, "slash-command-only still saves");
   assert.match(merged(slack, true, { signingSecret: "s", botToken: "xoxp-user" }, {}, {}) as string, /starts with xoxb-/);
   assert.deepEqual(merged(slack, true, { signingSecret: "s", botToken: "xoxb-1" }, {}, {}), { signingSecret: "s", botToken: "xoxb-1" });
+});
+
+// ---- Linking a Slack account (src/slack-links.ts) ----
+
+const teamMention = (id: string, text: string, user = "U2") =>
+  JSON.stringify({ type: "event_callback", event_id: id, team_id: "T1", authorizations: [{ user_id: "UBOT", team_id: "T1" }], event: { type: "app_mention", user, text, ts: "50.0002", thread_ts: "50.0001", channel: "C1" } });
+
+test("@Maple link whispers a one-time /link/slack URL; redeeming it as a member links them; later mentions carry their login", async () => {
+  const f = factory({ db: d1() });
+  try {
+    f.env.PUBLIC_URL = "https://factory.example";
+    await slackEvents(signed("/integrations/slack/events", teamMention("Ev1", "<@UBOT> link")), f.env, f.ctx);
+    await f.settle();
+    assert.equal(f.posts().length, 0, "nothing in the channel for everyone");
+    assert.equal(f.asks.length, 0, "no agent");
+    const [w] = f.whispers();
+    assert.equal(w.user, "U2");
+    assert.equal(w.channel, "C1");
+    const url = new URL(w.blocks[1].elements[0].url);
+    assert.equal(`${url.origin}${url.pathname}`, "https://factory.example/link/slack");
+    const code = url.searchParams.get("code")!;
+    console.log(`chat.postEphemeral → user ${w.user}: ${url.origin}${url.pathname}?code=<${code.length} chars>`);
+
+    const me = { login: "afomera", role: "member" } as never;
+    const post = (c: string) => linkApi(new Request("https://factory.example/api/slack/link", { method: "POST", body: JSON.stringify({ code: c }) }), f.env, me);
+    const res = (await post(code))!;
+    assert.equal(res.status, 200);
+    const linked = ((await res.json()) as any).slack;
+    assert.deepEqual([linked.user, linked.team, linked.name, linked.teamName], ["U2", "T1", "sam", "Acme"]);
+    console.log(`POST /api/slack/link as afomera → ${res.status} linked Slack @${linked.name} (${linked.teamName})`);
+    assert.equal((await post(code))!.status, 400, "the code is single use");
+
+    await slackEvents(signed("/integrations/slack/events", teamMention("Ev2", "<@UBOT> what's left on WEB-1?")), f.env, f.ctx);
+    await f.settle();
+    assert.equal(f.asks.at(-1).login, "afomera");
+    console.log(`signed mention → /slack/ask login=${f.asks.at(-1).login}`);
+    const run = f.sent.find((c) => c.type === "draft.run") as Extract<ServerToRunner, { type: "draft.run" }>;
+    assert.match(run.prompt, /The person asking is @afomera/);
+
+    // Another Slack user isn't linked: their asks carry no login.
+    await slackEvents(signed("/integrations/slack/events", teamMention("Ev3", "<@UBOT> what's left on WEB-1?", "U1")), f.env, f.ctx);
+    await f.settle();
+    assert.equal(f.asks.at(-1).login, null);
+
+    // @Maple unlink drops it, said only to them.
+    await slackEvents(signed("/integrations/slack/events", teamMention("Ev4", "<@UBOT> unlink")), f.env, f.ctx);
+    await f.settle();
+    assert.match(f.whispers().at(-1).text, /Unlinked: I no longer know you as @afomera/);
+    const audit = f.env.DB.sql.prepare("SELECT actor, action, target FROM audit ORDER BY id").all().map((r: any) => `${r.action} ${r.target}`);
+    assert.deepEqual(audit, ["slack.linked afomera", "slack.unlinked afomera"]);
+  } finally {
+    f.restore();
+  }
+});
+
+test("@Maple mine: a linked member gets only their work, with no agent; an unlinked person is told how to link", async () => {
+  const f = factory({ db: d1() });
+  try {
+    f.store.saveGoal({ ...goal("web"), lead: "afomera" });
+    const now = Date.now();
+    const t = (id: string, x: Record<string, unknown>) => (f.engine as any).newTask(f.store.goal("web"), x.owner, { title: `Task ${id}`, brief: "b", tickets: [], shareable: false, agent: "claude", model: null, intake: null, repo: null, after: [], effort: null });
+    const mine = t("a", { owner: "afomera" });
+    mine.state = "building";
+    mine.worker = { startedAt: now - 60_000, agent: "claude" };
+    f.store.saveTask(mine);
+    const theirs = t("b", { owner: "ana" });
+    theirs.state = "awaitingApproval";
+    f.store.saveTask(theirs);
+    const other = t("c", { owner: "ana" });
+    other.state = "building";
+    f.store.saveTask(other);
+
+    await slackEvents(signed("/integrations/slack/events", teamMention("Ev1", "<@UBOT> mine")), f.env, f.ctx);
+    await f.settle();
+    assert.match(f.posts().at(-1).text, /Mention me with `link`/);
+
+    const { startLink, redeem } = await import("../src/slack-links.ts");
+    await redeem(f.env, await startLink(f.env, "T1", "U2"), "afomera");
+    await slackEvents(signed("/integrations/slack/events", teamMention("Ev2", "<@UBOT> what's waiting on me?")), f.env, f.ctx);
+    await f.settle();
+    const said = f.posts().at(-1).text as string;
+    assert.match(said, new RegExp(`Your tasks in flight\\*\\n• \\*${mine.id}\\*`));
+    assert.match(said, new RegExp(`Plans waiting on your approval\\*\\n• \\*${theirs.id}\\*`));
+    assert.ok(!said.includes(other.id), "someone else's building task isn't listed");
+    assert.equal(f.sent.filter((c) => c.type === "draft.run").length, 0, "no agent");
+  } finally {
+    f.restore();
+  }
+});
+
+test("Create task by a linked clicker credits their login; the owner stays the answering machine's", async () => {
+  const f = factory({ db: d1() });
+  try {
+    const { startLink, redeem } = await import("../src/slack-links.ts");
+    await redeem(f.env, await startLink(f.env, "T1", "U2"), "afomera");
+    const run = await asked(f);
+    const payload = JSON.parse(decodeURIComponent(click("slack.create", run.id).slice("payload=".length)));
+    payload.team = { id: "T1" };
+    await slackActions(signed("/integrations/slack/actions", `payload=${encodeURIComponent(JSON.stringify(payload))}`, { type: "application/x-www-form-urlencoded" }), f.env, f.ctx);
+    await f.settle();
+    const task = f.store.tasks().find((t) => t.title.startsWith("Stream the export"))!;
+    assert.equal(task.owner, "me");
+    assert.ok(task.events.some((e) => /created from Slack .* by @afomera/.test(e.text)), task.events.map((e) => e.text).join(" | "));
+  } finally {
+    f.restore();
+  }
 });

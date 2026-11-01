@@ -61,3 +61,31 @@ export function wantsStatus(question: string): boolean {
   if (/^(what'?s|what is|what are|whats) (the )?(status|queue)( (here|now|right now|today))?$/.test(said)) return true;
   return /^((so|hey|ok|okay),? )?(what'?s|what is|what are|whats|what all is|what's all|anything|is anything|(show( me)?|list)( what'?s| what is)?) (currently |still |being )?(in progress|in flight|queued|being built|building|in the queue|on the queue|in review|being worked on|getting built|cooking)( (here|now|right now|today|at the moment))?$/.test(said);
 }
+
+/**
+ * One member's work as Slack mrkdwn, for `@Maple mine` and an ask's prompt: their own tasks in flight; plans and
+ * PRs in goals they lead that still wait on their approval or review (not their own tasks, not ones they've already
+ * approved or reviewed); and raised hands assigned to them or questions on their own tasks.
+ */
+export function mineSummary(tasks: Task[], goals: Goal[], login: string, now: number): string {
+  const me = login.toLowerCase();
+  const is = (who: string | null | undefined) => (who ?? "").toLowerCase() === me;
+  const leads = new Set(goals.filter((g) => is(g.lead)).map((g) => g.id));
+  const live = tasks.filter((t) => !IDLE.has(t.state));
+  const mine = live.filter((t) => is(t.owner));
+  const approve = live.filter((t) => t.state === "awaitingApproval" && leads.has(t.goal) && !is(t.owner) && !t.approvals.some(is) && t.approvals.length < t.approvalsNeeded);
+  const review = live.filter((t) => t.state === "reviewing" && leads.has(t.goal) && !is(t.owner) && !t.reviews.some(is) && t.reviews.length < t.reviewsNeeded);
+  const needs = live.filter((t) => (t.hand && is(t.hand.assignee)) || (!t.hand && t.question && is(t.owner)));
+  const state = (t: Task) => (t.state === "building" ? (t.worker ? `building ${since(t.worker.startedAt, now)}` : "queued") : t.state === "awaitingApproval" ? `approvals ${t.approvals.length}/${t.approvalsNeeded}` : t.state === "reviewing" ? `in review${t.pr ? ` · PR #${t.pr.number}` : ""}` : t.state);
+  const groups = [
+    group("Your tasks in flight", mine.map((t) => line(t, [state(t)]))),
+    group("Plans waiting on your approval", approve.map((t) => line(t, [t.owner, `approvals ${t.approvals.length}/${t.approvalsNeeded}`]))),
+    group("PRs waiting on your review", review.map((t) => line(t, [t.owner, ...(t.pr ? [`PR #${t.pr.number}`] : []), `reviews ${t.reviews.length}/${t.reviewsNeeded}`]))),
+    group("Waiting on you", needs.map((t) => line(t, [t.hand ? `hand raised (${t.hand.reason}): ${t.hand.summary.replace(/\s+/g, " ").slice(0, 140)}` : `question: ${t.question!.text.replace(/\s+/g, " ").slice(0, 140)}`]))),
+  ].filter((g): g is string => !!g);
+  if (!groups.length) return `Nothing is on your plate, @${login}: no tasks of yours in flight and nothing waiting on you.`;
+  return `Your work, @${login}:\n\n${groups.join("\n\n")}`;
+}
+
+/** What `@Maple mine` says to someone whose Slack account isn't linked. */
+export const LINK_HINT = "I don't know which factory member you are yet. Mention me with `link` and I'll send you a one-time link (only you see it) to connect your Slack account to your factory login.";

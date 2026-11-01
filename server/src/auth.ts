@@ -121,6 +121,7 @@ async function memberRow(env: Env, login: string) {
 export async function revokeMember(env: Env, login: string, by: string, notify = true) {
   await env.DB.prepare("DELETE FROM app_tokens WHERE login = ?").bind(login).run();
   await env.DB.prepare("DELETE FROM member_github_tokens WHERE login = ?").bind(login).run();
+  await env.DB.prepare("DELETE FROM slack_links WHERE login = ?").bind(login).run();
   await env.DB.prepare("UPDATE members SET revoked_at = ?, admin_granted_by = NULL, admin_granted_at = NULL WHERE login = ?").bind(Date.now(), login).run();
   await audit(env, by, "member.revoked", login);
   const { results } = await env.DB.prepare("SELECT id FROM machines WHERE owner = ?").bind(login).all<{ id: string }>();

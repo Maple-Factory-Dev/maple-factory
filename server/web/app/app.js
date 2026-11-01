@@ -466,7 +466,7 @@ function render() {
   if (!state.me) return;
   const r = route();
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === r.nav);
-  $("nav-settings").hidden = state.me.role !== "admin";
+  $("nav-settings").hidden = false;
   account();
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";

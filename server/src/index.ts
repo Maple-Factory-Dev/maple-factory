@@ -16,6 +16,8 @@ import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
 import { PROTOCOL_VERSION, type Machine, type SessionShare } from "./wire.ts";
 import { intakeApi, intakeKey } from "./intake-routes.ts";
 import { slackActions, slackCommand, slackEvents } from "./slack.ts";
+import { linkPage } from "./slack-link-routes.ts";
+import { linkApi, linkOf } from "./slack-links.ts";
 import { release } from "./releases.ts";
 import { applySettings } from "./settings.ts";
 import { handleSetup } from "./setup.ts";
@@ -34,7 +36,7 @@ export const MachineHub = Sentry.instrumentDurableObjectWithSentry((env: Env) =>
 
 /** Pages people open in a browser. Once the factory has a PUBLIC_URL, these move there from its other
  *  addresses (its workers.dev one), since GitHub sign-in only comes back to that one. */
-const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*)?$/;
+const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*|link\/slack)?$/;
 
 const isUpgrade = (request: Request) => request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
@@ -106,6 +108,7 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
 
     const me = await currentMember(request, env);
     if (path === "/") return home(request, env, me, me?.role === "admin" ? await serverUpdate(env) : null);
+    if (path === "/link/slack" && request.method === "GET") return linkPage(env, url, me);
     if (!me) return text("Sign in first.", 401);
     if (!sameOrigin(request)) return text("Bad origin.", 403);
 
@@ -168,7 +171,8 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
 
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;
-    if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local" });
+    if (path === "/api/me") return Response.json({ member: me, org: env.GITHUB_ORG || "local", slack: await linkOf(env, me.login).catch(() => null) });
+    if (path === "/api/slack/link") return (await linkApi(request, env, me)) ?? text("Not found.", 404);
     if (path === "/api/machines" && request.method === "GET") return orgHub(env).fetch("https://org/machines");
     if (path === "/api/usage/goals" && request.method === "GET") return orgHub(env).fetch("https://org/usage/goals");
     if (path === "/api/stats" && request.method === "GET") {

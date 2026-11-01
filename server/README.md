@@ -193,6 +193,17 @@ An ask whose machine goes offline, or whose 30 minutes run out, says so in place
 of an ask that never became a task are deleted from R2 when it's set aside (Not now) or forgotten. A Slack
 thread's replies don't reach the task's agent, so its accepted message points to the factory for the agent's questions.
 
+Linking (`src/slack-links.ts`): `@Maple link` mints a random one-time code (D1 `slack_link_codes`, SHA-256 only,
+10 minutes) for the Slack user and team in the signed event and sends it with `chat.postEphemeral` as
+`${PUBLIC_URL}/link/slack?code=…`. That page (signed in; sign-in comes back to it) confirms "Link Slack @ana in
+Acme to @login?" and POSTs the code to `/api/slack/link`, which pairs the Slack account with the session's member in
+`slack_links` (one row per member, a unique index per Slack account; relinking replaces either side). `@Maple unlink`
+and `DELETE /api/slack/link` (Settings › Account) unlink; both directions are audited (`slack.linked`,
+`slack.unlinked`), and revoking a member deletes their row. Every other mention carries the linked login on
+`SlackAsk.login`: `@Maple mine` answers from factory state (`mineSummary`), the agent's prompt says who's asking and
+lists their work, and Create task credits a linked clicker by login (the task's owner is still the answering
+machine's). `/api/me` returns `slack: {user, team, name, teamName, linkedAt} | null`.
+
 Every request source (Linear, Jira, the /maple response_url and @Maple's Slack threads) now hears when its task's
 plan is ready, not only when it merges: worth calling out in the next maple-server release notes.
 Secret values are stored sealed in OrgHub's SQLite (AES-GCM under a key `SECRETS_KEY` derives for them) and never
