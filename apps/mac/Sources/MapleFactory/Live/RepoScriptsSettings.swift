@@ -82,7 +82,8 @@ struct RepoScriptsDetail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header.padding(.horizontal, 36).padding(.top, 18).padding(.bottom, 10)
+            // The Settings window runs under its hidden title bar; start below the traffic lights.
+            header.padding(.horizontal, 36).padding(.top, SettingsKit.titlebarInset + 8).padding(.bottom, 10)
             ScrollView {
                 content.padding(.horizontal, 36).padding(.top, 8).padding(.bottom, 20)
             }
