@@ -132,7 +132,8 @@ export function budgetSection(use: BudgetUse | null): string {
   return `\n\n## Budget\nThis task has ${parts.join(" and ")} left (all its sessions count). As soon as it looks like you'll go past that (stuck proving something, say, or the fix keeps growing), call \`raise_hand\` with reason \`overBudget\`: where you are, what's left, and the options. Ask before you reach it, not after.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: string[] = [], budget: BudgetUse | null = null): string {
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: ChecksHere | string[] = [], budget: BudgetUse | null = null): string {
+  const here: ChecksHere = Array.isArray(checks) ? { run: checks, skipped: [] } : checks;
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
@@ -149,7 +150,7 @@ ${done}${moving(others)}${comments(task)}${changes(task)}${
     review?.length
       ? `\n\n## Review round ${task.autoReview!.rounds.length} asked for changes\n` + review.map((f) => `- [${f.severity}] (${f.id}) ${f.text}${f.file ? ` (${f.file})` : ""}`).join("\n")
       : ""
-  }${unmerged(task)}${checksSection(checks)}${budgetSection(budget)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
+  }${unmerged(task)}${checksSection(here)}${budgetSection(budget)}${resumed ? `\n\n## Picking up again\n${resumed.reason} Check \`git status\` and \`git log\` to see where you were, then carry on.` : ""}
 
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
@@ -159,7 +160,7 @@ ${THREADS}
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal. Each becomes a draft in this goal for a person to accept; don't build them yourself. (Proposing from planning closes a task; once it's building, it carries on.)
 If you're stuck on a decision only a person can make, call \`ask\`, end your turn and wait. If you can't meet a proof or the fix grows past the plan, call \`raise_hand\`.
 When a proof can't be produced here, ask with \`ask\` or \`raise_hand\` and offer an "Attest it for me" option. If the person picks it (or says to sign it off or skip it), call \`attest\` with those items straight away; don't ask them to do it in the app. Never use \`attest\` to get around a proof you could produce yourself.
-When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${checks.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
+When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${here.run.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
 }
 
 /** Comment threads: people talking to the session mid-flight, answered with \`reply\`. */
@@ -179,10 +180,19 @@ const ARTIFACTS = (task: Task, role: "builder" | "reviewer" = "builder") => {
 /** The builder's walkthrough artifact's title. */
 export const WALKTHROUGH = "Change walkthrough";
 
-/** The repo's checks, which a finish runs before anything is committed. */
-function checksSection(checks: string[]): string {
-  if (!checks.length) return "";
-  return `\n\n## Checks\nThese must exit 0 in the worktree before \`finish\` is accepted; run them yourself first and fix what they find:\n${checks.map((c) => `- \`${c}\``).join("\n")}\nIf one fails when you finish, nothing is committed or pushed and its output is typed into this session: fix it, then call \`finish\` again.`;
+/** The repo's checks split for the builder's machine: those its finish runs, and those it skips for want of a tag. */
+export type ChecksHere = { run: string[]; skipped: { command: string; missing: string[] }[] };
+
+/** The repo's checks, which a finish runs before anything is committed, and the ones this machine skips. */
+function checksSection({ run, skipped }: ChecksHere): string {
+  if (!run.length && !skipped.length) return "";
+  const ran = run.length
+    ? `These must exit 0 in the worktree before \`finish\` is accepted; run them yourself first and fix what they find:\n${run.map((c) => `- \`${c}\``).join("\n")}\nIf one fails when you finish, nothing is committed or pushed and its output is typed into this session: fix it, then call \`finish\` again.`
+    : "None of the repo's checks run on this machine.";
+  const skip = skipped.length
+    ? `\nSkipped on this machine: ${skipped.map((c) => `\`${c.command}\` (needs ${c.missing.join(", ")})`).join(", ")}. Don't try to run them here; CI or a machine with those tags covers them, so keep changes they'd check simple and say so in your summary.`
+    : "";
+  return `\n\n## Checks\n${ran}${skip}`;
 }
 
 /** The org's risk classifier, when its policy turns it on: the reviewer grades the diff against the org's prompt. */

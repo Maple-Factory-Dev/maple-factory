@@ -12,7 +12,7 @@ import type {
   Classification, McpConnector, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
-import { cleanTags } from "../machines.ts";
+import { cleanTags, TAG } from "../machines.ts";
 import { isAttachmentKey, pullAttachments } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
@@ -25,7 +25,7 @@ import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from 
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
 import { loginFor } from "../slack-links.ts";
-import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
+import { checkCommands, checksFor, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
 import { cycleSplit, findingDetail, manualReason, type StatKind } from "./stats.ts";
@@ -1476,6 +1476,12 @@ export class Engine {
       this.event(task, "factory", `renamed it from "${old}"`);
     }
     this.event(task, "factory", why);
+    // A plan that now needs a tag its planning machine lacks builds on one that has it: the planning worktree has no work in it.
+    if (task.machine && task.requires?.length) {
+      const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
+      const lacks = missingTags(task, from);
+      if (lacks.length) this.relocate(task, "factory", `${from?.name ?? task.machine} (it lacks ${lacks.join(", ")})`, null);
+    }
     this.stat(task, "plan.approved", { version: task.planVersion, approvals: task.approvals.length }, task.approvals.at(-1) ?? "factory");
     const goal = this.store.goal(task.goal);
     if (!goal) return;
@@ -1525,7 +1531,7 @@ export class Engine {
       if (capped) return capped;
       kind = machine.owner === task.owner ? "personal" : "team";
     } else {
-      const usable = machines.filter((m) => m.online && !this.store.settings(m.id).paused && this.hasAgent(m, task.agent) && !this.overCap(m, task.agent, task.owner));
+      const usable = machines.filter((m) => m.online && !this.store.settings(m.id).paused && !missingTags(task, m).length && this.hasAgent(m, task.agent) && !this.overCap(m, task.agent, task.owner));
       // Forced: any of its owner's own machines, full or not; never a teammate's past what they lend.
       const own = usable.filter((m) => m.owner === task.owner && (task.force || busy(m.id) < this.capacity(m)));
       machine = own.sort((a, b) => busy(a.id) - busy(b.id))[0];
@@ -1541,11 +1547,25 @@ export class Engine {
       }
       if (!machine) {
         // Named for its owner: a teammate reads it too, and it changes hands when the task does.
-        const mine = machines.filter((m) => m.owner === task.owner);
+        const owned = machines.filter((m) => m.owner === task.owner);
         const theirs = `${task.owner}'s machines`;
-        if (!mine.length) return task.shareable ? `Waiting for a free team slot (${task.owner} has no machines).` : `Waiting for one of ${theirs}: add one under Machines.`;
-        const online = mine.filter((m) => m.online);
+        if (!owned.length) return task.shareable ? `Waiting for a free team slot (${task.owner} has no machines).` : `Waiting for one of ${theirs}: add one under Machines.`;
         const listed = (ms: Machine[]) => ms.map((m) => m.name).join(", ");
+        // A task that needs tags only counts the owner's machines that have them all.
+        const mine = owned.filter((m) => !missingTags(task, m).length);
+        const needs = (task.requires ?? []).join(" and ");
+        const team = task.shareable ? ` or a team machine with ${needs}` : "";
+        if (!mine.length) {
+          const online = owned.filter((m) => m.online);
+          // Name the tags none of them has; when each has some but none has all, name them all.
+          const absent = (task.requires ?? []).filter((t) => !owned.some((m) => (m.tags ?? []).includes(t)));
+          const named = (absent.length ? absent : task.requires ?? []).join(" and ");
+          // Offline machines that never reported their tags might have it.
+          if (online.length && owned.some((m) => !m.online && m.tags == null)) return `None of ${task.owner}'s online machines (${listed(online)}) has ${named}; waiting for one that does${team}.`;
+          return `None of ${theirs} has ${named}: add one under Machines or tag one${task.shareable ? `; waiting for a team machine with ${needs}` : ""}.`;
+        }
+        const online = mine.filter((m) => m.online);
+        if (task.requires?.length && !online.length) return `Waiting for ${task.owner}'s machine with ${needs} (${listed(mine)}) to come online${team ? `,${team}` : ""}.`;
         if (!online.length) return task.shareable ? `${theirs} (${listed(mine)}) are offline; waiting for them or a team slot.` : `Waiting for one of ${theirs} (${listed(mine)}) to come online.`;
         const running = online.filter((m) => !this.store.settings(m.id).paused);
         if (!running.length) {
@@ -1567,7 +1587,7 @@ export class Engine {
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
     const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal))), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checksFor(this.store.scriptsFor(taskRepo(task, goal)), machine.tags ?? []), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -2552,13 +2572,16 @@ export class Engine {
       const refused = await this.checkArtifactUpload(s.task, args);
       if (refused) return { error: refused };
     }
+    // finish sends only the checks its machine can run, so it needs that machine's tags (read before the task, so it's current).
+    const machinesNow = name === "finish" ? await this.hooks.machines() : null;
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
     if (name !== "get_task" && this.store.private(task.id).handingOff) return { error: "The task is being handed off to another machine; stop here." };
     const handingOffBefore = name === "raise_hand" && !!this.store.private(task.id).budgetHandOff;
     try {
-      const out = this.run(task, s, name, args);
+      const here = task.machine ? machinesNow?.find((m) => m.id === task.machine) : undefined;
+      const out = this.run(task, s, name, args, here);
       // A plan whose risk level needs no approval goes straight to building.
       const unapproved = name === "submit_plan" && task.state === "awaitingApproval" && task.approvalsNeeded <= 0;
       if (unapproved) await this.approved(task, "queued it for building (its risk level needs no plan approval)");
@@ -2618,7 +2641,7 @@ export class Engine {
     return { summary: `Saved ${repo}'s setup.`, data: this.repoSetupView(repo) };
   }
 
-  private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>): { summary: string; data?: unknown } {
+  private run(task: Task, s: TaskSession, name: string, a: Record<string, unknown>, here?: Machine): { summary: string; data?: unknown } {
     const goal = this.store.goal(task.goal);
     switch (name) {
       case "get_task": {
@@ -2667,6 +2690,13 @@ export class Engine {
         });
         task.doneWhen = done.map((d) => ({ text: str(d.text, "doneWhen[].text"), proof: proofKind(d.proof), status: "pending", evidence: null }));
         task.planSummary = str(a.summary, "summary");
+        // Machine tags: the planner's own, plus what the repo's path rules give the steps' files.
+        const asked = arr(a.requires).map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+        const badTag = asked.find((t) => !TAG.test(t) || t.length > 32);
+        if (badTag != null) fail(`requires: "${badTag}" isn't a machine tag; tags are lowercase a-z, 0-9 and dashes, like macos or xcode.`);
+        const ruled = requiresFor(task.plan.map((st) => st.file), pathRules(this.store.scriptsFor(taskRepo(task, goal))));
+        const requires = [...new Set([...asked, ...ruled])].sort();
+        task.requires = requires.length ? requires : null;
         // A revised plan replaces (or drops) the earlier suggestion.
         const title = typeof a.title === "string" ? a.title.trim().slice(0, 120).trim() : "";
         task.suggestedTitle = title && title !== task.title ? title : null;
@@ -2878,7 +2908,9 @@ export class Engine {
         const priv = this.store.private(task.id);
         if (!priv.worktree || !priv.repoDir) fail("The factory doesn't know where this worktree came from; raise a hand.");
         this.store.savePrivate(task.id, { ...priv, finishing: true });
-        const checks = checkCommands(this.store.scriptsFor(taskRepo(task, goal ?? null)));
+        // Only the checks this machine can run: a `[macos] ` line is left to a Mac (or CI) when it's on Linux.
+        const { run: checks, skipped } = checksFor(this.store.scriptsFor(taskRepo(task, goal ?? null)), here?.tags ?? []);
+        const skipNote = skipped.length ? ` ${skipped.length} check${skipped.length === 1 ? "" : "s"} skipped on this machine (${skipped.map((c) => `needs ${c.missing.join(", ")}`).join("; ")}).` : "";
         task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";
         task.comments.push({ id: crypto.randomUUID(), author: "builder", text: str(a.summary, "summary"), at: now(), anchor: "Summary", via: null });
         this.hooks.waitUntil(this.toRunner(task.machine!, {
@@ -2892,8 +2924,8 @@ export class Engine {
           fallback: true,
           ...(checks.length ? { checks: checks.join("\n") } : {}),
         }));
-        if (checks.length) return { summary: `Finishing: the repo's checks run first (${checks.length}), then the factory commits and pushes and the review starts. End your turn now; if a check fails, it's typed into this session.` };
-        return { summary: "Finishing: the factory is committing and pushing, then the review starts. End your turn now." };
+        if (checks.length) return { summary: `Finishing: the repo's checks run first (${checks.length}), then the factory commits and pushes and the review starts.${skipNote} End your turn now; if a check fails, it's typed into this session.` };
+        return { summary: `Finishing: the factory is committing and pushing, then the review starts.${skipNote} End your turn now.` };
       }
 
       case "submit_review": {
@@ -3993,4 +4025,10 @@ export function openThreads(comments: Comment[]): { root: string; comments: Comm
     .filter((r) => threadTalksToAgent(comments, r))
     .map((r) => ({ root: r, comments: threadOf(comments, r) }))
     .filter((t) => t.comments.length && !isAgent(t.comments[t.comments.length - 1]!.author));
+}
+
+/** The tags a task needs that this machine doesn't have (all of them when the machine is gone). */
+export function missingTags(task: Pick<Task, "requires">, machine: Pick<Machine, "tags"> | null | undefined): string[] {
+  const have = new Set(machine?.tags ?? []);
+  return (task.requires ?? []).filter((t) => !machine || !have.has(t));
 }
