@@ -339,7 +339,7 @@ impl Service {
         if self.manager == Manager::Systemd {
             let user = current_user();
             if linger_enabled(&user) == Some(false) {
-                out += &format!("\n{}", crate::style::warn(linger_warning(&user)));
+                out += &format!("\n{:11}{}", "", crate::style::warn(linger_warning(&user)));
             }
         }
         out
