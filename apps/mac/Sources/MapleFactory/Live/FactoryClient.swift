@@ -553,9 +553,6 @@ import Foundation
             scoutRuns[update.run.goal] = update.run
         case .repoSetupUpdated(let update):
             setupRuns[update.run.repo.lowercased()] = update.run
-        // Phone push registrations; the Mac app doesn't show them yet.
-        case .pushDevices:
-            break
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()
