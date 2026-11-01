@@ -105,6 +105,9 @@ test("usage rows: labels, percentages, reset text and caps", () => {
     { label: "Fable week", used: 12, usedText: "12%", resets: "reset", cap: null, over: false },
   ]);
   assert.equal(codex.title, "Codex");
+  // A model's own weekly limit, as the runner reports it, reads as a week and gets no weekly cap.
+  const [scoped] = usageRows(machine({ settings: settings({ weeklyCap: 0.8 }), usage: [usage("claude", 1, 2, [{ label: "7d:fable", usedPercent: 90, name: "Fable", windowMinutes: 10080 }])] }), NOW);
+  assert.deepEqual(scoped.rows[2], { label: "Fable week", used: 90, usedText: "90%", resets: "", cap: null, over: false });
   assert.deepEqual(usageRows(machine(), NOW), []);
   // Past 100% the bar stays full; the number says how far.
   const [over] = usageRows(machine({ usage: [usage("claude", 104, 1)] }), NOW);
@@ -123,6 +126,8 @@ test("reset text and spans", () => {
   assert.equal(since(NOW - 3 * H, NOW), "3h ago");
   assert.equal(since(NOW - 2 * 24 * H, NOW), "2d ago");
   assert.equal(windowLabel({ label: "spend" }), "Spend");
+  assert.equal(windowLabel({ label: "7d" }), "Week");
+  assert.equal(windowLabel({ label: "7d:fable", name: "Fable" }), "Fable week");
 });
 
 test("meters: CPU load per core against the load cap, memory, disk, battery", () => {
