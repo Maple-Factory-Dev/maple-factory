@@ -13,7 +13,7 @@ nonisolated(unsafe) let AppDefaults: UserDefaults = Headless.isOn ? Headless.def
 /// `-appearance light|dark|both`, `-settle 1.5` (seconds before the shot), `-frames N` and `-fps 10`
 /// (a frame sequence, for video), `-timeout 60`, `-height 1000`, `-instance` (the defaults suite's name),
 /// `-keep YES` (leave that suite as the last run left it, to show a setting surviving a relaunch),
-/// `-window sheet|settings|settings-sheet` (shoot the main window's sheet, the Settings window, or its sheet, instead).
+/// `-window sheet|settings|settings-sheet|about` (shoot the main window's sheet, the Settings window, its sheet, or the About window, instead).
 /// `-snapshot` makes it a demo launch, so a signed-out run shows the mockup; `-mock NO` shows what a
 /// fresh install does instead: the connect-to-a-factory screen.
 enum Headless {
@@ -287,6 +287,7 @@ enum Headless {
             if AppDefaults.string(forKey: "window")?.hasPrefix("settings") == true {
                 self.settingsWindow.orderBack(nil)
             }
+            if AppDefaults.string(forKey: "window") == "about" { self.aboutWindow.orderBack(nil) }
             let frames = Int(self.number("frames", 0))
             async let recording: Void = self.record(frames: frames)
             while !self.state.scriptFinished { try? await Task.sleep(for: .milliseconds(100)) }
@@ -380,6 +381,7 @@ enum Headless {
         case "sheet": window?.attachedSheet
         case "settings": settingsWindow
         case "settings-sheet": settingsWindow.attachedSheet
+        case "about": aboutWindow
         default: window
         }
     }
@@ -394,6 +396,15 @@ enum Headless {
         settings.isExcludedFromWindowsMenu = true
         settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
         return settings
+    }()
+
+    /// The About window's content in a window of its own, kept off screen like Settings.
+    private lazy var aboutWindow: NSWindow = {
+        let about = NSWindow(contentViewController: NSHostingController(rootView: AboutView()))
+        about.setContentSize(AboutView.size)
+        about.isExcludedFromWindowsMenu = true
+        about.setFrame(Headless.offscreenFrame(size: about.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
+        return about
     }()
 
     /// The window's content as a bitmap: at the screen's scale, or `scale` (1 for video frames).
