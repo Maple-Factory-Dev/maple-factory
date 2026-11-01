@@ -248,6 +248,8 @@ struct FactoryTask: Identifiable {
     var model: String? = nil
     /// The machine its worktree is on, once it has one (live only).
     var machine: String? = nil
+    /// Machine tags it needs (macos, xcode…): only a machine with every one takes it (live only).
+    var requires: [String] = []
     /// Its last pushed commit (live only).
     var pushed: String? = nil
     /// Its git branch, once it has one (live only).

@@ -599,6 +599,19 @@ struct TaskFocusView: View {
             detailRow("Owner") { OwnerMenu(task: task, avatarSize: 18) }
             detailRow("Reviewers") { ReviewersRow(task: task) }
             agentRows
+            if !task.requires.isEmpty {
+                detailRow("Needs") {
+                    HStack(spacing: 4) {
+                        ForEach(task.requires, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .padding(.horizontal, 6).padding(.vertical, 1.5)
+                                .background(Capsule().fill(Theme.fill))
+                                .help("Only a machine tagged \(tag) runs it")
+                        }
+                    }
+                }
+            }
             if appState.isLive {
                 if let worker = task.worker {
                     detailRow("Runs on") {

@@ -27,7 +27,7 @@ struct RepoScriptsDetail: View {
     /// The fields as typed: commands as text, preflight's watched files and the checks one per line, the
     /// timeout as digits (blank: the default), and the prompts.
     struct Draft: Equatable {
-        var create = "", preflight = "", watch = "", setup = "", checks = "", teardown = "", archive = "", timeout = ""
+        var create = "", preflight = "", watch = "", setup = "", checks = "", requirePaths = "", teardown = "", archive = "", timeout = ""
         var prompts = Wire.PromptAdditions(planner: "", builder: "", reviewer: "")
 
         init() {}
@@ -37,6 +37,7 @@ struct RepoScriptsDetail: View {
             watch = s?.preflightWatch ?? ""
             setup = s?.setup ?? ""
             checks = s?.checks ?? ""
+            requirePaths = s?.requirePaths ?? ""
             teardown = s?.teardown ?? ""
             archive = s?.archive ?? ""
             timeout = s?.timeoutSecs.map(String.init) ?? ""
@@ -57,6 +58,38 @@ struct RepoScriptsDetail: View {
             let checks = Self.lines(checks)
             if checks.count > 20 { return "At most 20 checks." }
             if checks.contains(where: { $0.utf8.count > 4096 }) { return "A check is over 4 KB." }
+            for check in checks { if let problem = Self.checkProblem(check) { return problem } }
+            let rules = Self.lines(requirePaths)
+            if rules.count > 20 { return "At most 20 path rules." }
+            for rule in rules { if let problem = Self.ruleProblem(rule) { return problem } }
+            return nil
+        }
+        /// A machine tag: lowercase a-z, 0-9 and dashes, as the server's scriptsProblem checks.
+        static func isTag(_ t: String) -> Bool {
+            guard let first = t.unicodeScalars.first, t.count <= 32 else { return false }
+            let ok = { (c: Unicode.Scalar) in ("a"..."z").contains(c) || ("0"..."9").contains(c) }
+            return ok(first) && t.unicodeScalars.allSatisfy { ok($0) || $0 == "-" }
+        }
+        /// What's wrong with a check's `[tag,…] ` prefix, or none.
+        static func checkProblem(_ line: String) -> String? {
+            guard line.hasPrefix("[") else { return nil }
+            guard let close = line.firstIndex(of: "]") else { return "The check `\(line)` opens a [ but never closes it; write it like `[macos] xcodebuild test`." }
+            let tags = line[line.index(after: line.startIndex)..<close].split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+            let command = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
+            if tags.allSatisfy(\.isEmpty) { return "The check `\(line)` has an empty [ ]; name the machine tags it needs, like [macos]." }
+            if let bad = tags.first(where: { !isTag($0) }) { return "The check `\(line)` asks for the tag \"\(bad)\"; tags are lowercase a-z, 0-9 and dashes." }
+            if command.isEmpty { return "The check `\(line)` has machine tags but no command after them." }
+            return nil
+        }
+        /// What's wrong with a `glob tag[,tag]` path rule, or none.
+        static func ruleProblem(_ line: String) -> String? {
+            let parts = line.split(whereSeparator: \.isWhitespace)
+            guard parts.count == 2 else { return "The path rule `\(line)` should be a path and its tags, like `apps/mac/** macos`." }
+            let glob = String(parts[0])
+            if glob.hasPrefix("/") || glob.hasPrefix("~") || glob.split(whereSeparator: { $0 == "/" || $0 == "\\" }).contains("..") { return "The path rule's \(glob) isn't inside the repo; use a path relative to its root." }
+            if let bad = parts[1].split(separator: ",", omittingEmptySubsequences: false).map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !isTag($0) }) {
+                return "The path rule `\(line)` asks for the tag \"\(bad)\"; tags are lowercase a-z, 0-9 and dashes."
+            }
             return nil
         }
         /// One entry per line, trimmed, blank lines dropped.
@@ -66,7 +99,7 @@ struct RepoScriptsDetail: View {
         var wire: Wire.WorktreeScripts {
             let clean = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : s.trimmingCharacters(in: .whitespacesAndNewlines) }
             let joined = { (lines: [String]) in lines.isEmpty ? nil : lines.joined(separator: "\n") }
-            return .init(create: clean(create), preflight: clean(preflight), preflightWatch: joined(Self.lines(watch)), setup: clean(setup), checks: joined(Self.lines(checks)), teardown: clean(teardown), archive: clean(archive), timeoutSecs: timeoutSecs)
+            return .init(create: clean(create), preflight: clean(preflight), preflightWatch: joined(Self.lines(watch)), setup: clean(setup), checks: joined(Self.lines(checks)), teardown: clean(teardown), archive: clean(archive), timeoutSecs: timeoutSecs, requirePaths: joined(Self.lines(requirePaths)))
         }
     }
 
@@ -120,8 +153,10 @@ struct RepoScriptsDetail: View {
                 field("Preflight", "Sets the machine up for this repo: runtimes, brew bundle, services. Runs in the new worktree before setup, the first time this machine's checkout is used and again when the command or a watched file changes.", "mise install && brew bundle", $draft.preflight)
                 watchField
                 field("Setup", "Runs once the worktree exists, before the agent starts: install, seed, copy config.", "bin/worktree-setup", $draft.setup)
-                linesField("Checks", "Must exit cleanly before a builder's work is pushed: linters, formatters, lefthook. One command per line, run in the worktree.",
-                           "bundle exec rubocop\nlefthook run pre-commit --all-files", $draft.checks)
+                linesField("Checks", "Must exit cleanly before a builder's work is pushed: linters, formatters, lefthook. One command per line, run in the worktree. Start a line with [macos] (or [xcode,macos]) and only a machine with those tags runs it; elsewhere the builder is told it's skipped.",
+                           "bundle exec rubocop\nlefthook run pre-commit --all-files\n[macos] xcodebuild test -scheme App", $draft.checks)
+                linesField("Path requirements", "A task whose plan touches a matching file only runs on a machine with those tags: a path from the repo's root (** for any folders) and its tags, one rule per line (at most 20).",
+                           "apps/mac/** macos\napps/ios/** macos,xcode", $draft.requirePaths)
                 field("Teardown", "Runs before a finished task's worktree is removed: stop services, drop databases.", "bin/worktree-teardown", $draft.teardown)
                 field("Archive", "Runs instead of the removal when a finished task is cleaned up. It owns the folder and the branch.", "bin/worktree-archive", $draft.archive)
                 SettingsRow("Timeout", detail: draft.timeoutProblem, detailColor: Theme.State.cancelled) {

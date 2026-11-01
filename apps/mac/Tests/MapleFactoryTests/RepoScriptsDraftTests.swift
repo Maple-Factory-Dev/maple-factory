@@ -34,4 +34,30 @@ struct RepoScriptsDraftTests {
         draft.checks = (1...21).map { "check \($0)" }.joined(separator: "\n")
         #expect(draft.tooLong == "At most 20 checks.")
     }
+
+    @Test func checkPrefixesAndPathRulesMatchTheServer() {
+        var draft = RepoScriptsDetail.Draft(Wire.WorktreeScripts(checks: "npm test\n[macos] xcodebuild test", requirePaths: "apps/mac/** macos"))
+        #expect(draft.tooLong == nil)
+        #expect(draft.wire.requirePaths == "apps/mac/** macos")
+        draft.requirePaths = " apps/mac/** macos \n\n apps/ios/** macos,xcode\n"
+        #expect(draft.wire.requirePaths == "apps/mac/** macos\napps/ios/** macos,xcode")
+        draft.checks = "[macos xcodebuild test"
+        #expect(draft.tooLong?.contains("never closes it") == true)
+        draft.checks = "[] npm test"
+        #expect(draft.tooLong?.contains("empty [ ]") == true)
+        draft.checks = "[MacOS] xcodebuild"
+        #expect(draft.tooLong?.contains("the tag \"MacOS\"") == true)
+        draft.checks = "[macos]"
+        #expect(draft.tooLong?.contains("no command") == true)
+        draft.checks = "[xcode, macos] xcodebuild test"
+        #expect(draft.tooLong == nil)
+        draft.requirePaths = "apps/mac/**"
+        #expect(draft.tooLong?.contains("a path and its tags") == true)
+        draft.requirePaths = "../x/** macos"
+        #expect(draft.tooLong?.contains("isn't inside the repo") == true)
+        draft.requirePaths = "apps/mac/** Mac"
+        #expect(draft.tooLong?.contains("the tag \"Mac\"") == true)
+        draft.requirePaths = (1...21).map { "a\($0)/** macos" }.joined(separator: "\n")
+        #expect(draft.tooLong == "At most 20 path rules.")
+    }
 }
