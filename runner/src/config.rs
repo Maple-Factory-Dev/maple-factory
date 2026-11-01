@@ -177,6 +177,52 @@ pub async fn enroll(url: &str, code: &str, runner_id: &str, hostname: &str, test
     Ok(Config { url: base, runner_id: res.runner_id, token: res.token, test, repo_roots: None, repo_clone_days: None })
 }
 
+/// What `unenroll` found on the server.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unenrolled {
+    /// The server forgot the machine and revoked its token.
+    Forgotten,
+    /// The server didn't know this machine or token (401/404): already gone.
+    AlreadyGone,
+}
+
+/// Asks the server to forget this machine and revoke its token (`POST /runner/unenroll`),
+/// authenticated with the machine's own token. A 401 or 404 means it's already gone.
+pub async fn unenroll(cfg: &Config) -> Result<Unenrolled> {
+    let base = base_url(&cfg.url)?;
+    let endpoint = format!("{base}/runner/unenroll");
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).user_agent(concat!("maple-runner/", env!("CARGO_PKG_VERSION"))).build()?;
+    let res = client
+        .post(&endpoint)
+        .bearer_auth(&cfg.token)
+        .json(&serde_json::json!({ "runnerId": cfg.runner_id }))
+        .send()
+        .await
+        .with_context(|| format!("could not reach {endpoint}"))?;
+    let status = res.status();
+    if status.is_success() {
+        return Ok(Unenrolled::Forgotten);
+    }
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Unenrolled::AlreadyGone);
+    }
+    let text = res.text().await.unwrap_or_default();
+    let text = text.trim();
+    if text.is_empty() {
+        bail!("unenrolling failed: the server answered {status}");
+    }
+    bail!("unenrolling failed ({}): {text}", status.as_u16());
+}
+
+/// Deletes runner.json. Returns whether there was one to delete.
+pub fn forget(path: &Path) -> Result<bool> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
 /// Tidies up a code as typed: `abcd efgh` or `abcdefgh` → `ABCD-EFGH`.
 pub fn normalize_code(code: &str) -> String {
     let chars: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect();
@@ -273,6 +319,21 @@ mod tests {
         // Older files without `test` still load.
         std::fs::write(&path, r#"{"url":"http://localhost:8787","runnerId":"a","token":"t"}"#).unwrap();
         assert!(!Config::load(&path).unwrap().unwrap().test);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn forget_removes_the_config() {
+        let dir = std::env::temp_dir().join(format!("maple-forget-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("runner.json");
+        // Not enrolled: nothing to delete, and that's fine.
+        assert!(!forget(&path).unwrap());
+        let config = Config { url: "http://localhost:8787".into(), runner_id: "a".into(), token: "t".into(), test: false, repo_roots: None, repo_clone_days: None };
+        config.save(&path).unwrap();
+        assert!(forget(&path).unwrap());
+        assert!(!path.exists());
+        assert_eq!(Config::load(&path).unwrap(), None);
+        assert!(!forget(&path).unwrap());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

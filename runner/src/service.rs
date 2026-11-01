@@ -223,20 +223,34 @@ impl Service {
         Ok(())
     }
 
+    /// The installed binary, and the `~/.local/bin/maple-runner` link install.sh points at it.
+    fn installed_files(&self) -> (PathBuf, PathBuf) {
+        (installed_exe_in(&self.home), self.home.join(".local/bin/maple-runner"))
+    }
+
+    /// What `uninstall --dry-run` prints: every command and file a real uninstall touches.
+    pub fn uninstall_plan(&self) -> String {
+        let (exe, link) = self.installed_files();
+        let mut out = String::from("Would run:\n");
+        for cmd in &self.unload_commands() {
+            out += &format!("  {}\n", cmd.join(" "));
+        }
+        if self.manager == Manager::Systemd {
+            out += "  systemctl --user daemon-reload\n";
+        }
+        out += &format!("Would remove {}\n", self.file.display());
+        out += &format!("Would remove {}\n", exe.display());
+        out += &format!("Would remove {} (if it links to the installed copy)\n", link.display());
+        out += &format!("Would keep {} (repos and worktrees, so no work is lost)\n", self.home.join(".local/share/maple/repos").display());
+        out
+    }
+
     pub fn uninstall(&self, dry_run: bool) -> Result<()> {
-        let commands = self.unload_commands();
         if dry_run {
-            println!("Would run:");
-            for cmd in &commands {
-                println!("  {}", cmd.join(" "));
-            }
-            println!("Would remove {}", self.file.display());
-            if self.manager == Manager::Systemd {
-                println!("Would run:\n  systemctl --user daemon-reload");
-            }
+            print!("{}", self.uninstall_plan());
             return Ok(());
         }
-        for cmd in &commands {
+        for cmd in &self.unload_commands() {
             let _ = run(cmd);
         }
         match std::fs::remove_file(&self.file) {
@@ -247,8 +261,36 @@ impl Service {
         if self.manager == Manager::Systemd {
             let _ = run(&args(&["systemctl", "--user", "daemon-reload"]));
         }
-        println!("{} ~/.config/maple/runner.json is kept; delete it to forget this machine's token.", crate::style::ok("Uninstalled."));
+        for removed in self.remove_installed()? {
+            println!("{} {}", crate::style::ok("Removed"), crate::style::accent(removed.display()));
+        }
+        println!("{} The service and the installed maple-runner are gone.", crate::style::ok("Uninstalled."));
+        println!(
+            "{} ~/.local/share/maple/repos (repos and worktrees) is kept. This machine is still enrolled; run `maple-runner unenroll` to remove it from the factory and delete ~/.config/maple/runner.json.",
+            crate::style::dim("Next:")
+        );
         Ok(())
+    }
+
+    /// Removes the installed binary, its bin/ directory once empty, and the `~/.local/bin`
+    /// link if it points at that binary. Never touches repos/. Returns what was removed.
+    fn remove_installed(&self) -> Result<Vec<PathBuf>> {
+        let (exe, link) = self.installed_files();
+        let mut removed = Vec::new();
+        if std::fs::read_link(&link).is_ok_and(|target| target == exe) {
+            std::fs::remove_file(&link).with_context(|| format!("removing {}", link.display()))?;
+            removed.push(link);
+        }
+        match std::fs::remove_file(&exe) {
+            Ok(()) => removed.push(exe.clone()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("removing {}", exe.display())),
+        }
+        if let Some(bin) = exe.parent() {
+            // Only if empty: remove_dir refuses a directory with anything left in it.
+            let _ = std::fs::remove_dir(bin);
+        }
+        Ok(removed)
     }
 
     /// A one-line description of whether the service is installed and running.
@@ -744,6 +786,49 @@ mod tests {
         assert!(stop.contains("maple-runner install"), "{stop}");
         let start = svc.start(Duration::from_secs(1), false).err().unwrap().to_string();
         assert!(start.contains("maple-runner install"), "{start}");
+    }
+
+    #[test]
+    fn uninstall_plan_lists_everything() {
+        let svc = Service::new(Manager::Launchd, PathBuf::from("/Users/a"), 501);
+        let plan = svc.uninstall_plan();
+        assert!(plan.contains("launchctl bootout gui/501/dev.maplefactory.runner"), "{plan}");
+        assert!(plan.contains("Would remove /Users/a/Library/LaunchAgents/dev.maplefactory.runner.plist"), "{plan}");
+        assert!(plan.contains("Would remove /Users/a/.local/share/maple/bin/maple-runner\n"), "{plan}");
+        assert!(plan.contains("Would keep /Users/a/.local/share/maple/repos"), "{plan}");
+        let svc = Service::new(Manager::Systemd, PathBuf::from("/home/a"), 0);
+        let plan = svc.uninstall_plan();
+        assert!(plan.contains("systemctl --user disable --now maple-runner"), "{plan}");
+        assert!(plan.contains("systemctl --user daemon-reload"), "{plan}");
+        assert!(plan.contains("Would remove /home/a/.config/systemd/user/maple-runner.service"), "{plan}");
+        assert!(plan.contains("Would remove /home/a/.local/share/maple/bin/maple-runner"), "{plan}");
+    }
+
+    #[test]
+    fn removes_the_installed_copy_but_keeps_repos() {
+        let home = std::env::temp_dir().join(format!("maple-uninstall-test-{}", uuid::Uuid::new_v4()));
+        let svc = Service::new(Manager::Systemd, home.clone(), 0);
+        let (exe, link) = svc.installed_files();
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "bin").unwrap();
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+        let repo = home.join(".local/share/maple/repos/acme/app/README.md");
+        std::fs::create_dir_all(repo.parent().unwrap()).unwrap();
+        std::fs::write(&repo, "work").unwrap();
+
+        let removed = svc.remove_installed().unwrap();
+        assert_eq!(removed, vec![link.clone(), exe.clone()]);
+        assert!(!exe.exists() && !exe.parent().unwrap().exists() && std::fs::symlink_metadata(&link).is_err());
+        assert_eq!(std::fs::read_to_string(&repo).unwrap(), "work");
+        // Again: nothing left to remove, and that's fine.
+        assert!(svc.remove_installed().unwrap().is_empty());
+
+        // A ~/.local/bin/maple-runner that isn't our link stays.
+        std::fs::write(&link, "someone else's").unwrap();
+        assert!(svc.remove_installed().unwrap().is_empty());
+        assert!(link.exists());
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
