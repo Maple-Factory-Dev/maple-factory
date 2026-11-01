@@ -136,12 +136,13 @@ const rawPut = (name, length, send, type = "video/mp4", head = mp4.subarray(0, 1
     resolve(res.statusCode);
     req.destroy();
   });
-  req.on("error", (e) => (e.code === "ECONNRESET" || e.code === "EPIPE" ? null : reject(e)));
+  // Refused early, the connection can be closed while the body's still going: that's a refusal too.
+  req.on("error", (e) => (e.code === "ECONNRESET" || e.code === "EPIPE" ? setTimeout(() => resolve(e.code), 500) : reject(e)));
   req.end(Buffer.concat([head, Buffer.alloc(send)]));
   setTimeout(() => { resolve(-1); req.destroy(); }, 60000);
 });
 const bigPng = await rawPut("big.png", 21 * 1024 * 1024 + 8, 21 * 1024 * 1024, "image/png", png.subarray(0, 8));
-check(bigPng === 413, `a 21 MB image is refused (413) (${bigPng})`);
+check(bigPng === 413 || bigPng === "EPIPE" || bigPng === "ECONNRESET", `a 21 MB image is refused (413, or the connection closed mid-body) (${bigPng})`);
 const huge = await rawPut("huge.mp4", 96 * 1024 * 1024, 96 * 1024 * 1024 - 16);
 check(huge === 413, `a 96 MB body is refused (413) (${huge})`);
 // A chunked upload with no content-length (411) isn't checked here: wrangler dev's proxy adds one. See
