@@ -1,12 +1,10 @@
-// Linking a Slack account to the signed-in member (slack-links.ts): GET /link/slack is the confirm page the
-// ephemeral `@Maple link` button opens, POST /api/slack/link redeems its code for the session's member, and
-// DELETE /api/slack/link unlinks. Every link and unlink is audited.
+// GET /link/slack: the confirm page the ephemeral `@Maple link` button opens (slack-links.ts); its button POSTs
+// the code to /api/slack/link (linkApi there).
 
 import type { Env } from "./env.ts";
 import type { Member } from "./wire.ts";
 import { escape, page } from "./page.ts";
-import { linkOf, peek, redeem, unlink, type SlackAccount } from "./slack-links.ts";
-import { audit, text } from "./util.ts";
+import { peek, type SlackAccount } from "./slack-links.ts";
 
 const who = (a: SlackAccount) => `@${a.name ?? a.user}${a.teamName ? ` in ${a.teamName}` : ""}`;
 
@@ -45,21 +43,4 @@ export async function linkPage(env: Env, url: URL, me: Member | null): Promise<R
     heading: `Link Slack ${escape(who(slack))} to @${escape(me.login)}?`,
     lede: "Then @Maple knows it's you asking: it can list your work, see your tasks when you ask about them, and credit you for tasks you create from Slack.",
   });
-}
-
-/** POST and DELETE /api/slack/link. */
-export async function linkApi(request: Request, env: Env, me: Member): Promise<Response | null> {
-  if (request.method === "POST") {
-    const { code } = (await request.json().catch(() => ({}))) as { code?: unknown };
-    const linked = typeof code === "string" ? await redeem(env, code, me.login) : null;
-    if (!linked) return text("That link has expired or was used. Mention @Maple with `link` in Slack for a fresh one.", 400);
-    await audit(env, me.login, "slack.linked", me.login, { team: linked.team, user: linked.user });
-    return Response.json({ slack: linked });
-  }
-  if (request.method === "DELETE") {
-    const was = await linkOf(env, me.login);
-    if (await unlink(env, { login: me.login })) await audit(env, me.login, "slack.unlinked", me.login, was ? { team: was.team, user: was.user } : null);
-    return Response.json({ slack: null });
-  }
-  return null;
 }

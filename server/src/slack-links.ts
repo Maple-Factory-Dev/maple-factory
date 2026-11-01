@@ -4,6 +4,8 @@
 // source of the Slack identity, and the session the only source of the login.
 
 import type { Env } from "./env.ts";
+import type { Member } from "./wire.ts";
+import { audit, text } from "./util.ts";
 
 /** How long a link code works. */
 export const LINK_MS = 10 * 60_000;
@@ -87,4 +89,21 @@ export async function unlink(env: Env, by: { login: string } | { team: string; u
     ? await env.DB.prepare("DELETE FROM slack_links WHERE login = ? RETURNING login").bind(by.login).first<{ login: string }>()
     : await env.DB.prepare("DELETE FROM slack_links WHERE slack_team = ? AND slack_user = ? RETURNING login").bind(by.team, by.user).first<{ login: string }>();
   return row?.login ?? null;
+}
+
+/** POST /api/slack/link {code}: redeems it for the session's member; DELETE unlinks them. Both audited. */
+export async function linkApi(request: Request, env: Env, me: Member): Promise<Response | null> {
+  if (request.method === "POST") {
+    const { code } = (await request.json().catch(() => ({}))) as { code?: unknown };
+    const linked = typeof code === "string" ? await redeem(env, code, me.login) : null;
+    if (!linked) return text("That link has expired or was used. Mention @Maple with `link` in Slack for a fresh one.", 400);
+    await audit(env, me.login, "slack.linked", me.login, { team: linked.team, user: linked.user });
+    return Response.json({ slack: linked });
+  }
+  if (request.method === "DELETE") {
+    const was = await linkOf(env, me.login);
+    if (await unlink(env, { login: me.login })) await audit(env, me.login, "slack.unlinked", me.login, was ? { team: was.team, user: was.user } : null);
+    return Response.json({ slack: null });
+  }
+  return null;
 }
