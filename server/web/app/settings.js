@@ -201,6 +201,19 @@ export function syncDraft(draft, server) {
 // ---- the page ----
 
 /** The Settings page, wired to the app: `h` builds elements, `send` puts a message on the feed. */
+/** The factory's icon: what the server (src/icon.ts) takes, checked before uploading. */
+export const MAX_ICON = 2 * 1024 * 1024;
+export const ICON_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
+/** Why the server would refuse this file as the factory's icon, in its words; null when it's fine. */
+export function iconFileProblem(file) {
+  if (!file) return "Choose an image.";
+  if (file.size > MAX_ICON) return `The icon can be up to ${MAX_ICON / 1024 / 1024} MB.`;
+  if (!file.size) return "The image is empty.";
+  if (!ICON_TYPES.includes(file.type)) return "The icon is a PNG, JPEG or WebP image.";
+  return null;
+}
+
 export function createSettings({ state, h, send, toast, render, ago }) {
   const drafts = new Map(); // form → { server, value }
   const saving = new Map(); // what's been sent → the toast for when its *.updated comes back
@@ -213,6 +226,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   let push = null; // GET /api/push: { on, locked, enrolled, devices }, once loaded
   let slack; // GET /api/me's slack: the link, null when not linked; undefined until loaded
   let slackBusy = false;
+  let iconBusy = false;
 
   /** The form's draft, synced to the server's value for it. */
   const draft = (key, server) => {
@@ -273,8 +287,47 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       errorReportsCard(),
       pushCard(),
       versionCard(),
-      macOnly("The factory's icon"),
+      iconCard(),
     ];
+  }
+
+  /** The factory's icon (PUT/DELETE /api/icon): shown in the header, as the favicon and in the apps. */
+  function iconCard() {
+    const call = async (init, done, failed) => {
+      iconBusy = true;
+      render();
+      try {
+        const res = await fetch("/api/icon", init);
+        if (!res.ok) throw new Error(await res.text());
+        state.icon = (await res.json()).icon ?? null;
+        toast(done);
+      } catch (e) {
+        toast(e.message || failed);
+      }
+      iconBusy = false;
+      render();
+    };
+    const picker = h("input", { type: "file", accept: ICON_TYPES.join(","), hidden: true, onchange: (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      const problem = iconFileProblem(file);
+      if (problem) return toast(problem);
+      call({ method: "PUT", headers: { "content-type": file.type }, body: file }, "Icon updated.", "Couldn't change the icon.");
+    } });
+    const preview = h("span", { class: `leaf${state.icon ? " icon" : ""}`, "aria-hidden": "true",
+      style: `width:56px;height:56px;border-radius:12px;flex:none;${state.icon ? `background-image:url("${state.icon}")` : ""}` });
+    const remove = () => call({ method: "DELETE" }, "Icon removed.", "Couldn't remove the icon.");
+    return h("div", { class: "card set-card" },
+      h("div", { class: "set-row" },
+        h("span", { style: "display:flex;align-items:center;gap:14px" }, preview,
+          h("span", { class: "set-label" }, h("span", {}, "Icon"),
+            h("span", { class: "set-detail" }, "Shown in the header, the tab and the apps. A square PNG, JPEG or WebP, up to 2 MB."))),
+        h("span", { class: "set-inline", style: "flex:none" }, picker,
+          ...(ask("icon-remove", "Remove the icon?", "Remove", remove) ?? [
+            state.icon && h("button", { type: "button", class: "btn small danger-text", disabled: iconBusy, onclick: () => { confirming.add("icon-remove"); render(); } }, "Remove"),
+            h("button", { type: "button", class: "btn small primary", disabled: iconBusy, onclick: () => picker.click() },
+              iconBusy ? "Saving…" : state.icon ? "Replace" : "Upload")]))));
   }
 
   /** Whether the server and web app send crash and error reports (src/error-reports.ts). */

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import type { RiskPolicy, Task } from "../src/wire.ts";
 import { DEFAULT_POLICY, assess, matchesGlob, validPolicy } from "../src/factory/policy.ts";
 import { plannerPrompt } from "../src/factory/prompts.ts";
-import { areaFromCheck, checksProblem, clampInt, cleanOwners, formFromPolicy, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, serverVersionInfo, syncDraft, webhookUrl } from "../web/app/settings.js";
+import { areaFromCheck, checksProblem, clampInt, cleanOwners, formFromPolicy, iconFileProblem, integrationForm, integrationSave, integrationStatus, isDirty, keptValues, policyFromForm, serverVersionInfo, syncDraft, webhookUrl } from "../web/app/settings.js";
 
 const policy = structuredClone(DEFAULT_POLICY);
 
@@ -303,4 +303,13 @@ test("with 0 approvals and 0 reviews in the policy, assess asks for none at that
     assert.equal(a.approvals, 0);
     assert.equal(a.reviews, 0);
   }
+});
+
+test("an icon file is checked before it's uploaded, in the server's words", () => {
+  const file = (type: string, size = 1024) => ({ type, size });
+  for (const type of ["image/png", "image/jpeg", "image/webp"]) assert.equal(iconFileProblem(file(type)), null, type);
+  assert.equal(iconFileProblem(file("image/png", 2 * 1024 * 1024)), null);
+  assert.equal(iconFileProblem(file("image/png", 3 * 1024 * 1024)), "The icon can be up to 2 MB.");
+  assert.equal(iconFileProblem(file("image/png", 0)), "The image is empty.");
+  for (const type of ["image/gif", "image/svg+xml", ""]) assert.equal(iconFileProblem(file(type)), "The icon is a PNG, JPEG or WebP image.", type);
 });
