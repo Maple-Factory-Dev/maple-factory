@@ -50,7 +50,8 @@ export async function slackCommand(request: Request, env: Env): Promise<Response
 
   const form = new URLSearchParams(checked.raw);
   const said = (form.get("text") ?? "").trim();
-  if (!said) return Response.json({ response_type: "ephemeral", text: "Say what you need: `/maple the export button times out on big workspaces`" });
+  if (!said) return Response.json({ response_type: "ephemeral", text: "Say what you need: `/maple the export button times out on big workspaces`. `/maple help` lists everything I can do." });
+  if (wantsHelp(said)) return Response.json({ response_type: "ephemeral", text: HELP_TEXT });
   const [first, ...rest] = said.split("\n");
   const title = first.length > 90 ? `${first.slice(0, 87)}…` : first;
   const requester = form.get("user_name") ?? "someone";
@@ -145,18 +146,49 @@ export function wantsGoals(question: string): boolean {
   return /^((pick|change|set|which) )?goals?$/.test(said);
 }
 
+/**
+ * Whether a mention (or `/maple` text) asks what Maple can do: `help`, `help?`, `*help*`, `commands`,
+ * `what can you do`, `how do I use you`. A question that only mentions help ("help me fix the export
+ * bug") isn't one; it goes to the agent like any other question.
+ */
+export function wantsHelp(question: string): boolean {
+  const said = question.replace(/[*_`~]/g, "").replace(/[’‘]/g, "'").replace(/[\s.!?:]+$/, "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (/^(help|commands|list commands|show commands|what are your commands|what commands are there)$/.test(said)) return true;
+  if (/^(what )?(can|do) you do$/.test(said) || /^what (else )?can you (do|help with)$/.test(said)) return true;
+  return /^how (do|can|should) (i|we) use you$/.test(said);
+}
+
+/** Everything @Maple answers to, whispered for `@Maple help` and sent back for `/maple help`. */
+export const HELP_TEXT = [
+  "*Here's what I can do:*",
+  "• `@Maple <question>`: an agent reads the code and answers in the thread, and can propose a task for it",
+  "• `@Maple status`: what's building, in review and queued",
+  "• `@Maple mine`: what's waiting on you (link your account first)",
+  "• `@Maple goals`: pick which goals this channel follows",
+  "• `@Maple link` / `@Maple unlink`: connect or disconnect your Slack account and your factory login",
+  "• `@Maple help`: this list",
+  "• `/maple <what you need>`: file a request for the factory",
+].join("\n");
+
 /** A mention: its thread and files read and handed to OrgHub, or `@Maple goals` bringing the picker back. */
 async function mentioned(env: Env, slack: Record<string, string>, event: SlackEvent, team: string, request: Request) {
   const token = slack.botToken;
   if (!token) return integrationEvent(env, "slack", "Someone mentioned @Maple, but there's no bot token to answer with: add it in Settings › Integrations.");
   const question = unmention(event.text ?? "");
+  const user = event.user ?? "";
+  const whisper = (said: string, blocks?: Blocks) => postEphemeral(token, event.channel, user, event.thread_ts ?? null, said, blocks);
+  if (wantsHelp(question)) {
+    // Only the asker sees it; no OrgHub, no agent. Without a user to whisper to, it goes in the thread.
+    const blocks = [{ type: "section", text: { type: "mrkdwn", text: HELP_TEXT } }];
+    if (user) return whisper(HELP_TEXT, blocks);
+    await postMessage(token, event.channel, event.thread_ts ?? event.ts, HELP_TEXT, blocks);
+    return;
+  }
   if (wantsGoals(question)) {
     const asked = { channel: event.channel, ...(event.thread_ts ? { threadTs: event.thread_ts } : {}) };
     await orgHub(env).fetch("https://org/slack/joined", { method: "POST", body: JSON.stringify(asked) });
     return;
   }
-  const user = event.user ?? "";
-  const whisper = (said: string, blocks?: Blocks) => postEphemeral(token, event.channel, user, event.thread_ts ?? null, said, blocks);
   if (user && wantsLink(question)) {
     // Only the asker sees the code; whoever opens it signed in confirms it's them.
     const [name, teamName] = await Promise.all([userName(token, user), slackApi(token, "auth.test", {}).then((r) => (r.team as string) ?? null, () => null)]);
