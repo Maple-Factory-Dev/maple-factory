@@ -130,6 +130,39 @@ struct FeedStateTests {
         #expect(state.githubStatus == nil)
     }
 
+    @Test func secretsAndMergeHoldsFollowSnapshotAndDeltas() throws {
+        var state = FeedState()
+        state.apply(try decode(snapshot))
+        #expect(state.secrets.isEmpty)
+        #expect(state.mergeHolds.isEmpty)
+
+        let withBoth = snapshot.replacingOccurrences(of: "\"runnerLatest\":\"0.10.1\"}", with: """
+        "runnerLatest":"0.10.1",
+         "secrets":[{"repo":"acme/web","name":"API_KEY","updatedBy":"andrea","updatedAt":3}],
+         "mergeHolds":[{"repo":"acme/web","reason":"Incident","by":"sam","at":4}]}
+        """)
+        state.apply(try decode(withBoth))
+        #expect(state.secrets.map(\.name) == ["API_KEY"])
+        #expect(state.mergeHolds.map(\.repo) == ["acme/web"])
+        #expect(state.mergeHolds.first?.reason == "Incident")
+
+        state.apply(try decode("""
+        {"type":"secrets.updated","secrets":[{"repo":"acme/web","name":"API_KEY","updatedBy":"andrea","updatedAt":3},
+         {"repo":"acme/api","name":"DB_URL","updatedBy":"sam","updatedAt":6}]}
+        """))
+        #expect(state.secrets.map(\.name) == ["API_KEY", "DB_URL"])
+
+        state.apply(try decode(#"{"type":"mergeHolds.updated","holds":[]}"#))
+        #expect(state.mergeHolds.isEmpty)
+        state.apply(try decode(#"{"type":"mergeHolds.updated","holds":[{"repo":"acme/api","reason":"Freeze","by":"andrea","at":7}]}"#))
+        #expect(state.mergeHolds.map(\.repo) == ["acme/api"])
+
+        // A snapshot without them (an older server) clears what was there.
+        state.apply(try decode(snapshot))
+        #expect(state.secrets.isEmpty)
+        #expect(state.mergeHolds.isEmpty)
+    }
+
     @Test func policyAndAcceptancesFollowTheFeed() throws {
         var state = FeedState()
         state.apply(try decode(snapshot))
