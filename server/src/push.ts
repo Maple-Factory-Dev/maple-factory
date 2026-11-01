@@ -59,10 +59,11 @@ async function deleteCredential(env: Env) {
   await env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(KEY).run();
 }
 
-// Signing: HMAC-SHA256 over `${timestamp}.${body}` under the factory's secret, hex.
+// Signing: hex HMAC-SHA256 over `${timestamp}.${body}`, keyed with SHA-256(secret) in hex: the relay
+// keeps only that hash, never the secret itself (apps/site/push.js).
 
 export async function sign(secret: string, timestamp: number, body: string): Promise<string> {
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey("raw", enc.encode(await sha256(secret)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = await crypto.subtle.sign("HMAC", key, enc.encode(`${timestamp}.${body}`));
   return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
