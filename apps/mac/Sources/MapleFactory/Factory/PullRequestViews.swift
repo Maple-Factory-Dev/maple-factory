@@ -194,7 +194,7 @@ struct PullRequestCard: View {
         HStack(spacing: 6) {
             BranchPill(name: pr.branch ?? task.mockBranch, role: "Head")
                 .layoutPriority(1)
-            Image(systemName: "arrow.left")
+            Image(systemName: "arrow.right")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Theme.textFaint)
             BranchPill(name: pr.base ?? "main", role: "Base")
