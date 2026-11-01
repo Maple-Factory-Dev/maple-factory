@@ -109,6 +109,7 @@ export function destination() {
   const channel = option("--channel") ?? "stable";
   if (!["stable", "beta"].includes(channel)) throw new Error("--channel is stable or beta.");
   if (channel === "beta" && to !== "feed" && !to.startsWith("dir:")) throw new Error("Only the feed has channels; a factory's bucket serves one release.");
+  if (!to.startsWith("dir:")) checkCloudflareEnv(); // before a build, not at its first upload
   return { to, channel };
 }
 
