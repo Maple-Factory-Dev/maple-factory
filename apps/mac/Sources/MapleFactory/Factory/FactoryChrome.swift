@@ -34,8 +34,6 @@ struct FactoryTopBar: View {
 
             if !state.isCompact {
                 searchHint
-                Facepile(people: FactoryData.presence.map(\.person), size: 26)
-                    .help("\(FactoryData.presence.count) people online")
             }
             HStack(spacing: 6) {
                 Image(systemName: "person.badge.plus").font(.system(size: 11))
