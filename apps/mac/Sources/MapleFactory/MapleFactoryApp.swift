@@ -18,6 +18,8 @@ struct MapleFactoryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var state: AppState
     @State private var client: FactoryClient
+    /// The task comment or thread reply box with focus, if any: ⌘↩ sends it rather than toggling full view.
+    @FocusedValue(\.composerSubmit) private var composerSubmit
 
     init() {
         ErrorReports.start()
@@ -74,13 +76,16 @@ struct MapleFactoryApp: App {
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(!state.taskPanelEnabled)
 
-                Button(state.isComposing ? "Send to Planning" : state.focusedTask == nil ? "Open Task Full View" : "Close Task Full View") {
-                    if state.isComposing {
-                        state.submitDraft(sendToPlanning: true)
-                    } else if state.focusedTask == nil {
-                        state.openFocus(state.selectedTask)
-                    } else {
-                        state.closeFocus()
+                let returnCommand = state.returnCommand(composerFocused: composerSubmit != nil,
+                                                        composerCanSend: composerSubmit?.send != nil)
+                Button(composerSubmit?.label ?? (state.isComposing ? "Send to Planning" : state.focusedTask == nil ? "Open Task Full View" : "Close Task Full View")) {
+                    switch returnCommand {
+                    case .sendComposer: composerSubmit?.send?()
+                    // An empty comment box: don't swap the view out from under it.
+                    case .nothing: break
+                    case .sendToPlanning: state.submitDraft(sendToPlanning: true)
+                    case .openFocus: state.openFocus(state.selectedTask)
+                    case .closeFocus: state.closeFocus()
                     }
                 }
                 .keyboardShortcut(.return, modifiers: .command)
