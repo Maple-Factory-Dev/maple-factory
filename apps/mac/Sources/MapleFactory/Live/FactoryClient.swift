@@ -186,8 +186,9 @@ import Foundation
     private(set) var goalRenames: [String: String] = [:]
     /// Native session views' event streams, by session id (MF-202).
     private(set) var nativeEvents: [String: NativeSessionStore] = [:]
-    /// The sessions subscribed to, with their machine, so a reconnect subscribes again.
-    private var eventSubscriptions: [String: String] = [:]
+    /// The sessions subscribed to, with their machine and how many views hold them, so a reconnect subscribes again
+    /// and one view going away doesn't end another's stream.
+    private var eventSubscriptions: [String: (machine: String, holders: Int)] = [:]
 
     private var token: String?
     private var socket: URLSessionWebSocketTask?
@@ -635,6 +636,9 @@ import Foundation
             // A log that couldn't be read says which one (`checkLog:<task>/<check>`) and shows in its sheet.
             if let id = error.requestId, id.hasPrefix("task.get:") {
                 fetching.remove(String(id.dropFirst("task.get:".count)))
+            } else if let id = error.requestId, id.hasPrefix("events:") {
+                // A native view's subscribe was refused: that view falls back to the terminal.
+                nativeEvents[String(id.dropFirst("events:".count))]?.unavailable = true
             } else if let id = error.requestId, id.hasPrefix("checkLog:") {
                 let key = String(id.dropFirst("checkLog:".count))
                 if checkLogs[key] == .loading { checkLogs[key] = .failed(error.message) }
@@ -643,7 +647,7 @@ import Foundation
             }
         case .sessionEvents(let batch):
             guard eventSubscriptions[batch.id] != nil else { break }
-            nativeEvents[batch.id, default: NativeSessionStore()].apply(events: batch.events, epoch: batch.epoch)
+            store(for: batch.id).apply(events: batch.events, epoch: batch.epoch)
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
@@ -1042,9 +1046,13 @@ import Foundation
 
     /// Starts (or restarts) a native view's stream; nothing back in a few seconds marks it unavailable.
     func subscribeEvents(machine: String, id: String, since: UInt64? = nil) {
-        let store = nativeEvents[id] ?? NativeSessionStore()
-        nativeEvents[id] = store
-        eventSubscriptions[id] = machine
+        eventSubscriptions[id] = (machine, (eventSubscriptions[id]?.holders ?? 0) + 1)
+        startEvents(machine: machine, id: id, since: since)
+    }
+
+    private func startEvents(machine: String, id: String, since: UInt64? = nil) {
+        let store = store(for: id)
+        store.answering = nil
         send(.sessionSubscribeEvents(.init(machine: machine, id: id, since: since ?? store.lastSeq, epoch: store.epoch)))
         Task { [weak store] in
             try? await Task.sleep(for: .seconds(6))
@@ -1053,24 +1061,41 @@ import Foundation
     }
 
     func unsubscribeEvents(machine: String, id: String) {
-        guard eventSubscriptions.removeValue(forKey: id) != nil else { return }
+        guard let held = eventSubscriptions[id] else { return }
+        if held.holders > 1 { eventSubscriptions[id] = (held.machine, held.holders - 1); return }
+        eventSubscriptions[id] = nil
         send(.sessionUnsubscribeEvents(.init(machine: machine, id: id)))
     }
 
     private func resubscribeEvents() {
-        for (id, machine) in eventSubscriptions { subscribeEvents(machine: machine, id: id) }
+        for (id, held) in eventSubscriptions { startEvents(machine: held.machine, id: id) }
     }
 
     /// Types into a session the way the terminal would: text, a slash command or a prompt's key.
     func sendInput(machine: String, id: String, input: Wire.SessionInput) {
-        if case .key(let key) = input { nativeEvents[id]?.answering = key.key }
+        if case .key(let key) = input, let store = nativeEvents[id] {
+            store.answering = key.key
+            // A lost or ignored key mustn't leave the buttons disabled: they come back after a while.
+            Task { [weak store] in
+                try? await Task.sleep(for: .seconds(8))
+                if store?.answering == key.key { store?.answering = nil }
+            }
+        }
         send(.sessionSendInput(.init(machine: machine, id: id, input: input)))
     }
 
     /// For tests and headless shots: a store filled without a socket.
     func seedNativeEvents(_ id: String, machine: String, events: [Wire.SessionEvent], epoch: String = "fixture") {
-        eventSubscriptions[id] = machine
-        nativeEvents[id, default: NativeSessionStore()].apply(events: events, epoch: epoch)
+        eventSubscriptions[id] = (machine, 1)
+        store(for: id).apply(events: events, epoch: epoch)
+    }
+
+    /// The session's store, made and kept on first use (a `[id, default:]` read of a class is never stored).
+    private func store(for id: String) -> NativeSessionStore {
+        if let store = nativeEvents[id] { return store }
+        let store = NativeSessionStore()
+        nativeEvents[id] = store
+        return store
     }
 
     func killSession(machine: String, id: String) {

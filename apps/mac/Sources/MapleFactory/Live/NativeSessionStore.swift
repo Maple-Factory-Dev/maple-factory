@@ -197,6 +197,14 @@ enum SlashCommands {
     }
 
     /// The commands that match what's typed after `/`, prefix matches first.
+    /// What Return runs while the picker is open: an exact command as typed (listed or not, e.g. /mcp),
+    /// otherwise the highlighted match. Nil when the picker isn't showing.
+    static func chosen(typed: String, matches: [(command: String, help: String)], selected: Int) -> String? {
+        guard !matches.isEmpty, !typed.contains(" ") else { return nil }
+        if selected <= 0, matches.contains(where: { $0.command == typed }) { return typed }
+        return matches[min(max(selected, 0), matches.count - 1)].command
+    }
+
     static func matching(_ typed: String, agent: String) -> [(command: String, help: String)] {
         guard typed.hasPrefix("/") else { return [] }
         let query = typed.dropFirst().lowercased()

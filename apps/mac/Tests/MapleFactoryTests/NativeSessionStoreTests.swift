@@ -120,6 +120,51 @@ import Testing
         #expect(SlashCommands.matching("/zzz", agent: "claude").isEmpty)
     }
 
+    @Test func returnRunsTheHighlightedCommand() {
+        let co = SlashCommands.matching("/c", agent: "claude")
+        #expect(co.map(\.command) == ["/compact", "/clear", "/context", "/cost"] || co.count > 1)
+        // Down-arrow to the second match and Return runs that one, not the first.
+        #expect(SlashCommands.chosen(typed: "/c", matches: co, selected: 1) == co[1].command)
+        #expect(SlashCommands.chosen(typed: "/c", matches: co, selected: 0) == co[0].command)
+        // An exact command typed out runs as typed; a sentence isn't a picker choice.
+        let cost = SlashCommands.matching("/cost", agent: "claude")
+        #expect(SlashCommands.chosen(typed: "/cost", matches: cost, selected: 0) == "/cost")
+        #expect(SlashCommands.chosen(typed: "/c x", matches: co, selected: 1) == nil)
+        #expect(SlashCommands.chosen(typed: "/mcp", matches: [], selected: 0) == nil)
+    }
+
+    @Test func thinkingIsItsOwnRow() {
+        let store = NativeSessionStore()
+        store.apply(events: [user(1, "why?"), .thinking(.init(id: "th2", session: "s", seq: 2, at: 2, agent: "claude", text: "Weighing the options"))], epoch: "e")
+        #expect(store.rows.last == .thinking(id: "th2", text: "Weighing the options"))
+    }
+
+    @Test func aLostKeyFreesThePromptButtons() async {
+        let client = FactoryClient()
+        client.seedNativeEvents("s", machine: "m", events: [user(1, "go")])
+        client.sendInput(machine: "m", id: "s", input: .key(.init(promptId: "p", key: "1")))
+        #expect(client.nativeEvents["s"]?.answering == "1")
+        try? await Task.sleep(for: .seconds(8.5))
+        #expect(client.nativeEvents["s"]?.answering == nil)
+    }
+
+    @Test func twoViewsShareOneStreamAndErrorsFallBack() {
+        let client = FactoryClient()
+        client.subscribeEvents(machine: "m", id: "s")
+        client.subscribeEvents(machine: "m", id: "s")
+        client.unsubscribeEvents(machine: "m", id: "s")
+        // The other view still gets its events.
+        client.apply(.sessionEvents(.init(machine: "m", id: "s", events: [user(1, "hi")], backfill: true, nextSeq: 2, epoch: "e")))
+        #expect(client.nativeEvents["s"]?.rows.count == 1)
+        // A refused subscribe marks that store unavailable instead of a generic notice.
+        client.apply(.error(.init(message: "That session has ended.", requestId: "events:s")))
+        #expect(client.nativeEvents["s"]?.unavailable == true)
+        #expect(client.notice == nil)
+        client.unsubscribeEvents(machine: "m", id: "s")
+        client.apply(.sessionEvents(.init(machine: "m", id: "s", events: [user(2, "late")], backfill: false, nextSeq: 3, epoch: "e")))
+        #expect(client.nativeEvents["s"]?.rows.count == 1)
+    }
+
     @Test func passThroughRecordsShowOnlyTheirText() {
         func other(_ kind: String, _ summary: String) -> Wire.SessionEventOther {
             .init(id: kind, session: "s", seq: 1, at: 1, agent: "claude", kind: kind, summary: summary)

@@ -818,10 +818,12 @@ export class OrgHub extends DurableObject<Env> {
       case "session.sendInput": {
         // The terminal's rule (session-events.ts): owner and admins type, a share watches (or types with canType).
         const machine = (await this.machines()).find((m) => m.id === msg.machine);
-        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
-        if (!machine.sessions.some((s) => s.session.id === msg.id)) return this.send(ws, { type: "error", message: "That session has ended.", requestId: null });
+        // A subscribe error names its session (`events:<id>`) so the native view can fall back to the terminal.
+        const requestId = msg.type === "session.subscribeEvents" ? `events:${msg.id}` : null;
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId });
+        if (!machine.sessions.some((s) => s.session.id === msg.id)) return this.send(ws, { type: "error", message: "That session has ended.", requestId });
         const access = sessionAccess(machine, msg.id, client.member);
-        if (!access) return this.send(ws, { type: "error", message: refusal(machine), requestId: null });
+        if (!access) return this.send(ws, { type: "error", message: refusal(machine), requestId });
         let command: ServerToRunner;
         if (msg.type === "session.sendInput") {
           // Watching only: refused, and the events keep streaming.
@@ -836,7 +838,7 @@ export class OrgHub extends DurableObject<Env> {
           command = { type: "session.events.subscribe", id: msg.id, since: msg.since ?? null, epoch: msg.epoch ?? null, limit: msg.limit ?? null, nonce };
         }
         const res = await machineHub(this.env, machine.id).fetch("https://hub/command", { method: "POST", body: JSON.stringify(command), headers: { "x-by": client.member.login } });
-        if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId });
         return;
       }
       case "session.unsubscribeEvents": {

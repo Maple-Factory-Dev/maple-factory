@@ -424,8 +424,8 @@ struct NativeComposer: View {
     private func submit() {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty, !readOnly else { return }
-        if let first = matches.first, !message.contains(" ") {
-            run(matches[min(selected, matches.count - 1)].command == message ? message : first.command)
+        if let command = SlashCommands.chosen(typed: message, matches: matches, selected: selected) {
+            run(command)
             return
         }
         if message.hasPrefix("/") { send(.slash(.init(command: message))) } else { send(.text(.init(text: message))) }
