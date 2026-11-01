@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task } from "./wire.ts";
+import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task, type RunnerMessage_SessionEvents } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
@@ -25,6 +25,7 @@ import { githubAppInfo } from "./github.ts";
 import { applySettings } from "./settings.ts";
 import { SERVER_VERSION, serverUpdate } from "./version.ts";
 import { fetchGitHubStatus, notice } from "./github-status.ts";
+import { recipients, refusal, sessionAccess, toClient, watchOnly, type EventSub, type Subscriber } from "./session-events.ts";
 
 /** How often the hub reads the runner releases again while apps are connected. */
 const RUNNER_CHECK_EVERY = 3_600_000;
@@ -39,6 +40,8 @@ interface Client {
   since?: number;
   /** The iPhone or Android app: it opened the socket with `x-maple-client: mobile`. */
   mobile?: boolean;
+  /** The sessions whose native-view events this connection follows (session-events.ts). */
+  events?: EventSub[];
 }
 
 export class OrgHub extends DurableObject<Env> {
@@ -232,12 +235,24 @@ export class OrgHub extends DurableObject<Env> {
         // Its running @Maple asks won't be answered now: their threads hear it.
         if (before?.online && !machine.online) await this.engine.slack.machineGone(machine.id, machine.name);
         if (machine.online && (!before?.online || before.sessions.length > machine.sessions.length || this.engine.waiting())) await this.engine.pump();
+        // Back after being offline: the runner (maybe restarted) lost its event subscriptions, so ask again.
+        if (machine.online && before && !before.online) this.ctx.waitUntil(this.resubscribe(machine.id));
         return new Response(null, { status: 204 });
       }
       case "/ended": {
         const { machine, end } = (await request.json()) as { machine: string; end: SessionEnd };
         this.broadcast({ type: "session.ended", machine, end });
+        this.dropSubscriptions((e) => e.machine === machine && e.id === end.id);
         await this.engine.fromRunner(machine, { type: "session.ended", end });
+        return new Response(null, { status: 204 });
+      }
+      case "/session-events": {
+        // A runner's native-view events: the backfill to the connection that asked, live ones to every
+        // subscriber, each only while the machine as it stands now still lets them watch.
+        const { machine, msg } = (await request.json()) as { machine: string; msg: RunnerMessage_SessionEvents };
+        const stored = await this.ctx.storage.get<Machine>(`m:${machine}`);
+        const out = toClient(msg, machine);
+        for (const ws of recipients(stored, msg, this.subscribers())) this.send(ws, out);
         return new Response(null, { status: 204 });
       }
       case "/runner": {
@@ -632,6 +647,49 @@ export class OrgHub extends DurableObject<Env> {
 
   async webSocketClose(ws: WebSocket) {
     this.broadcast({ type: "presence", online: this.online(ws) });
+    const events = (ws.deserializeAttachment() as Client | null)?.events ?? [];
+    for (const sub of events) await this.stopIfUnwatched(sub.machine, sub.id, ws);
+  }
+
+  /** Connections following some session's events. */
+  private subscribers(except?: WebSocket): Subscriber<WebSocket>[] {
+    const out: Subscriber<WebSocket>[] = [];
+    for (const ws of this.ctx.getWebSockets("client")) {
+      if (ws === except) continue;
+      const c = ws.deserializeAttachment() as Client;
+      if (c.events?.length) out.push({ conn: ws, member: c.member, events: c.events });
+    }
+    return out;
+  }
+
+  /** Forgets the subscriptions `drop` matches, on every connection (a session that ended, say). */
+  private dropSubscriptions(drop: (e: EventSub) => boolean) {
+    for (const { conn, events } of this.subscribers()) {
+      if (!events.some(drop)) continue;
+      const c = conn.deserializeAttachment() as Client;
+      conn.serializeAttachment({ ...c, events: events.filter((e) => !drop(e)) });
+    }
+  }
+
+  /** Tells the runner to stop sending a session's events once no connection follows them. */
+  private async stopIfUnwatched(machine: string, id: string, except?: WebSocket) {
+    if (this.subscribers(except).some((s) => s.events.some((e) => e.machine === machine && e.id === id))) return;
+    const command: ServerToRunner = { type: "session.events.subscribe", id, stop: true };
+    await machineHub(this.env, machine).fetch("https://hub/command", { method: "POST", body: JSON.stringify(command) }).catch(() => {});
+  }
+
+  /** Asks the runner again for every session someone follows on `machine`, each with a fresh nonce; events
+   *  have stable ids, so apps drop the repeated backfill's duplicates. */
+  private async resubscribe(machine: string) {
+    for (const { conn } of this.subscribers()) {
+      const c = conn.deserializeAttachment() as Client;
+      const events = (c.events ?? []).map((e) => (e.machine === machine ? { ...e, nonce: crypto.randomUUID() } : e));
+      conn.serializeAttachment({ ...c, events });
+      for (const e of events.filter((e) => e.machine === machine)) {
+        const command: ServerToRunner = { type: "session.events.subscribe", id: e.id, nonce: e.nonce };
+        await machineHub(this.env, machine).fetch("https://hub/command", { method: "POST", body: JSON.stringify(command) }).catch(() => {});
+      }
+    }
   }
 
   async webSocketError(ws: WebSocket) {
@@ -754,6 +812,39 @@ export class OrgHub extends DurableObject<Env> {
           headers: { "x-by": client.member.login },
         });
         if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        return;
+      }
+      case "session.subscribeEvents":
+      case "session.sendInput": {
+        // The terminal's rule (session-events.ts): owner and admins type, a share watches (or types with canType).
+        const machine = (await this.machines()).find((m) => m.id === msg.machine);
+        if (!machine) return this.send(ws, { type: "error", message: `No machine ${msg.machine}.`, requestId: null });
+        if (!machine.sessions.some((s) => s.session.id === msg.id)) return this.send(ws, { type: "error", message: "That session has ended.", requestId: null });
+        const access = sessionAccess(machine, msg.id, client.member);
+        if (!access) return this.send(ws, { type: "error", message: refusal(machine), requestId: null });
+        let command: ServerToRunner;
+        if (msg.type === "session.sendInput") {
+          // Watching only: refused, and the events keep streaming.
+          if (access !== "type") return this.send(ws, { type: "error", message: watchOnly(machine), requestId: null });
+          command = { type: "session.input", id: msg.id, input: msg.input, by: client.member.login };
+        } else {
+          // One subscription per connection and session; a new one replaces it, with a fresh nonce for its backfill.
+          const nonce = crypto.randomUUID();
+          const now = ws.deserializeAttachment() as Client;
+          const events = (now.events ?? []).filter((e) => !(e.machine === machine.id && e.id === msg.id));
+          ws.serializeAttachment({ ...now, events: [...events, { machine: machine.id, id: msg.id, nonce }] });
+          command = { type: "session.events.subscribe", id: msg.id, since: msg.since ?? null, epoch: msg.epoch ?? null, limit: msg.limit ?? null, nonce };
+        }
+        const res = await machineHub(this.env, machine.id).fetch("https://hub/command", { method: "POST", body: JSON.stringify(command), headers: { "x-by": client.member.login } });
+        if (!res.ok) this.send(ws, { type: "error", message: await res.text(), requestId: null });
+        return;
+      }
+      case "session.unsubscribeEvents": {
+        const now = ws.deserializeAttachment() as Client;
+        const events = now.events ?? [];
+        if (!events.some((e) => e.machine === msg.machine && e.id === msg.id)) return;
+        ws.serializeAttachment({ ...now, events: events.filter((e) => !(e.machine === msg.machine && e.id === msg.id)) });
+        await this.stopIfUnwatched(msg.machine, msg.id);
         return;
       }
       case "session.share": {

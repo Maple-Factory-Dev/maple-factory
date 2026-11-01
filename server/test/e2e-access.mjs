@@ -5,6 +5,9 @@
 // again; and an owner GitHub demotes stops being an admin at the next re-check.
 // Sharing a session lets a teammate in: watch-only input is dropped, "can type" input reaches the runner, unsharing
 // closes their terminal with 4003, only the owner (or an admin) shares, and leaving the org closes a shared terminal too.
+// The native session view (MF-201) follows the same rule over the feed: a stranger can't subscribe, a watch-only share
+// gets its own backfill and live events but its input is refused, "can type" input reaches the runner with `by`, and
+// unsharing stops the events; the last unsubscribe tells the runner to stop.
 //   node server/test/e2e-access.mjs http://localhost:8788 [fake GitHub URL] [wrangler --persist-to folder]
 // The fake runs with --owner acme:alice --member acme:bob --member acme:carol --member acme:dave --installed acme/greeter;
 // the server with GITHUB_ORG=acme, GITHUB_API_URL pointing at the fake, the GitHub App's id, key, client id/secret,
@@ -116,6 +119,12 @@ check(!!enrolled.token, "bob enrolls bobs-mac");
 const replays = [];
 const resizes = [];
 const inputs = [];
+const eventSubs = [];
+const sessionInputs = [];
+let seq = 0;
+const event = (text) => ({ type: "user", id: `ev-${++seq}`, session, seq, at: Date.now(), agent: "claude", text });
+/** A live native-view event from bobs-mac: no nonce, so it goes to every subscriber still allowed. */
+const live = (text) => runner.ws.send(JSON.stringify({ type: "session.events", id: session, events: [event(text)], backfill: false, nextSeq: seq + 1, epoch: "e1" }));
 const session = randomUUID();
 /** bobs-mac's runner, with one session open: answers replays and keeps the resizes and keystrokes it's sent. */
 async function connectRunner() {
@@ -126,6 +135,12 @@ async function connectRunner() {
     if (typeof e.data !== "string") return void inputs.push(new TextDecoder().decode(new Uint8Array(e.data).subarray(16)));
     const m = JSON.parse(e.data);
     if (m.type === "session.resize") resizes.push(m);
+    if (m.type === "session.input") sessionInputs.push(m);
+    if (m.type === "session.events.subscribe") {
+      eventSubs.push(m);
+      // The backfill echoes the nonce (and a cursor the apps never see), so only the viewer that asked gets it.
+      if (!m.stop) ws.send(JSON.stringify({ type: "session.events", id: m.id, events: [event(`backfill for ${m.nonce}`)], backfill: true, nextSeq: seq + 1, epoch: "e1", nonce: m.nonce, cursor: { seq, token: "t" } }));
+    }
     if (m.type !== "session.replay") return;
     replays.push(m);
     ws.send(JSON.stringify({ type: "session.replay", id: m.id, nonce: m.nonce, data: Buffer.from(`replay for ${m.nonce}`).toString("base64") }));
@@ -206,12 +221,45 @@ await sleep(500);
 check(resizes.length === resizesNow, "nor do her resizes");
 await daveRefused("while it's shared with carol");
 
+// The native view, over the feed: the same rule as the terminal.
+const sub = { type: "session.subscribeEvents", machine: "bobs-mac", id: session };
+const isBackfill = (m) => m.type === "session.events" && m.backfill;
+const daveNative = await feed(dave);
+const subsBefore = eventSubs.length;
+const daveSub = await daveNative.ask(sub, "dave's subscribe refused", () => false);
+check(daveSub.type === "error" && daveSub.message === refusal, `dave, not shared with, is refused subscribe: "${daveSub.message}"`);
+await sleep(300);
+check(eventSubs.length === subsBefore, "and no session.events.subscribe reached the runner for him");
+const bobBackfill = await bobShares.ask(sub, "bob's backfill", isBackfill);
+check(bobBackfill.type === "session.events" && bobBackfill.events[0].text === `backfill for ${eventSubs.at(-1).nonce}`, "bob, the owner, subscribes and gets his backfill");
+const carolBackfill = await carolShares.ask(sub, "carol's backfill", isBackfill);
+const carolNonce = eventSubs.at(-1).nonce;
+check(carolBackfill.type === "session.events" && carolBackfill.machine === "bobs-mac" && carolBackfill.events[0].text === `backfill for ${carolNonce}` && !("nonce" in carolBackfill) && !("cursor" in carolBackfill),
+  `carol (watch-only) gets her backfill, with the machine and without nonce or cursor (${carolBackfill.type}${carolBackfill.message ? `: ${carolBackfill.message}` : ""})`);
+await sleep(300);
+check(bobShares.seen.filter(isBackfill).length === 1 && !bobShares.seen.some((m) => isBackfill(m) && m.events[0].text.includes(carolNonce)), "and bob's feed doesn't get hers");
+const sendInput = (text) => ({ type: "session.sendInput", machine: "bobs-mac", id: session, input: { type: "text", text } });
+const inputsBefore = sessionInputs.length;
+const carolInput = await carolShares.ask(sendInput("watching"), "carol's input refused", () => false);
+check(carolInput.message === "You can watch this session but not type into it; ask bob to let you type.", `carol's sendInput is refused while she can only watch: "${carolInput.message}"`);
+await sleep(300);
+check(sessionInputs.length === inputsBefore, "and no session.input reached the runner");
+live("after the refusal");
+await until("carol's live event", () => carolShares.seen.find((m) => m.type === "session.events" && !m.backfill && m.events[0].text === "after the refusal"));
+check(true, "carol still gets live events after the refusal");
+bobShares.send(sendInput("from bob"));
+const bobInput = await until("bob's session.input", () => sessionInputs.slice(inputsBefore).find((m) => m.input.text === "from bob"));
+check(bobInput.id === session && bobInput.by === "bob", `bob's input reaches the runner as session.input by ${bobInput.by}`);
+
 bobShares.send({ type: "session.share", machine: "bobs-mac", id: session, shares: [{ login: "carol", canType: true }] });
 await until("carol's upgrade", () => carolShares.seen.find(sharedWith(true)));
 const carolTyped = await typed(carolTerm2, "ls\r");
 check(carolTyped === "ls\r", `upgraded to "can type", her open terminal's keystrokes arrive (${JSON.stringify(carolTyped)})`);
 check(!carolTerm2.closed, "without reconnecting");
 await daveRefused("while carol can type");
+carolShares.send(sendInput("from carol"));
+const carolInput2 = await until("carol's session.input", () => sessionInputs.find((m) => m.input.text === "from carol"));
+check(carolInput2.by === "carol", `upgraded to "can type", carol's native input reaches the runner as session.input by ${carolInput2.by}`);
 
 bobShares.send({ type: "session.share", machine: "bobs-mac", id: session, shares: [] });
 const unshared = await until("carol's terminal closing", () => carolTerm2.closed);
@@ -220,6 +268,18 @@ const again = await handshake(terminal, carol);
 check(again.status === 403 && again.body === refusal, `and reconnecting gets ${again.status}`);
 check((await shared(bob)).length === 0, "the session's shares are empty again");
 await daveRefused("after the unshare");
+live("after the unshare");
+await until("bob's live event", () => bobShares.seen.find((m) => m.type === "session.events" && m.events[0].text === "after the unshare"));
+await sleep(300);
+check(!carolShares.seen.some((m) => m.type === "session.events" && m.events[0].text === "after the unshare"), "unshared, carol stops getting live events (bob still does)");
+const stopsBefore = eventSubs.filter((m) => m.stop).length;
+carolShares.send({ type: "session.unsubscribeEvents", machine: "bobs-mac", id: session });
+await sleep(300);
+check(eventSubs.filter((m) => m.stop).length === stopsBefore, "carol unsubscribing sends no stop while bob still watches");
+bobShares.send({ type: "session.unsubscribeEvents", machine: "bobs-mac", id: session });
+const stop = await until("the runner's stop", () => eventSubs.slice(subsBefore).find((m) => m.stop));
+check(stop.id === session, "the last unsubscribe sends the runner session.events.subscribe with stop");
+daveNative.ws.close();
 const audits = d1("SELECT action, target, detail FROM audit WHERE action LIKE 'session.%shared' ORDER BY rowid").map((r) => `${r.action}:${JSON.parse(r.detail).canType ?? "-"}`);
 check(JSON.stringify(audits) === JSON.stringify(["session.shared:false", "session.shared:true", "session.unshared:-"]), `each change is audited (${audits.join(", ")})`);
 
