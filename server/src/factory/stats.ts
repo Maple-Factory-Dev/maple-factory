@@ -86,13 +86,21 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
   if (task.state === "merged") {
     const at = [...events].reverse().find((e) => e.text.startsWith("merged into"))?.at ?? task.updatedAt;
     const auto = events.some((e) => e.who === "factory" && e.text.startsWith("auto-merged"));
-    const cycleMs = at - task.createdAt;
-    const idle = Math.min(cycleMs, idleMs(task.stages?.length ? task.stages : inferStages(task), at));
-    add(at, "merged", null, auto ? "factory" : null, { auto, cycleMs, idleMs: idle, activeMs: cycleMs - idle, ...(auto ? {} : { why: "unknown" }) });
+    add(at, "merged", null, auto ? "factory" : null, { auto, ...cycleSplit(task, at), ...(auto ? {} : { why: "unknown" }) });
   }
   if (task.state === "cancelled") add(task.updatedAt, "cancelled", null, null, {});
   if (task.state === "closed") add(task.updatedAt, "closed", null, null, {});
   return out;
+}
+
+/**
+ * A merge's cycle time, and how much of it was idle (drafting and backlog, MF-318) versus active.
+ * Goes by the task's stage spans, or inferred ones for a task from before them.
+ */
+export function cycleSplit(task: Task, mergedAt: number): { cycleMs: number; idleMs: number; activeMs: number } {
+  const cycleMs = Math.max(0, mergedAt - task.createdAt);
+  const idle = Math.min(cycleMs, idleMs(task.stages?.length ? task.stages : inferStages(task), mergedAt));
+  return { cycleMs, idleMs: idle, activeMs: cycleMs - idle };
 }
 
 /** Why a merge wasn't the factory's own. */
