@@ -3,7 +3,8 @@ import SwiftUI
 
 /// A goal's Merging section: how far the factory may auto-merge its work, and archiving it. Like the
 /// server, only the goal's lead or an admin can change either; anyone else sees them read-only.
-/// Full goal editing and new goals stay on the Mac.
+/// The rest of a goal is edited in GoalEditorSheet (Edit goal); scouting a goal, and its color, due date
+/// and folder, stay on the Mac.
 struct GoalSettingsSection: View {
     @Environment(FactoryStore.self) private var store
     @Environment(\.dismiss) private var dismiss

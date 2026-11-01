@@ -29,7 +29,8 @@ final class NewTaskTests: XCTestCase {
         let row = app.staticTexts["Haptics on approve"]
         for _ in 0..<3 where !row.waitForExistence(timeout: 2) { app.collectionViews.firstMatch.swipeUp() }
         XCTAssertTrue(row.exists, "the new task isn't in the goal")
-        let tag = app.staticTexts.matching(identifier: "task.effort").matching(NSPredicate(format: "label == %@", "Haptics")).firstMatch
+        // MF-274's EffortChip reads as "Effort <name>".
+        let tag = app.descendants(matching: .any).matching(identifier: "task.effort").matching(NSPredicate(format: "label == %@", "Effort Haptics")).firstMatch
         XCTAssertTrue(tag.waitForExistence(timeout: 3), "the new task's row has no Haptics effort tag")
         row.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "· codex")).firstMatch.waitForExistence(timeout: 5),

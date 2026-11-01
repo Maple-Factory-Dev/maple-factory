@@ -1131,6 +1131,8 @@ export const structs: Record<string, Struct> = {
       planVersions: "u32",
       approvals: "u32",
       cycleMedianMs: "u64?",
+      activeCycleMedianMs: "u64?",
+      idleMedianMs: "u64?",
       handOpenMedianMs: "u64?",
       answerMedianMs: "u64?",
       firstTryApproval: "f64?",
@@ -1140,6 +1142,8 @@ export const structs: Record<string, Struct> = {
     },
     fieldDocs: {
       cycleMedianMs: "From created to merged.",
+      activeCycleMedianMs: "From created to merged, less drafting and backlog.",
+      idleMedianMs: "Time in drafting and backlog before work started.",
       handOpenMedianMs: "How long a hand stays up before someone answers it.",
       answerMedianMs: "How long an agent's question waits for its answer.",
       firstTryApproval: "Plans approved at version 1.",
@@ -1155,7 +1159,11 @@ export const structs: Record<string, Struct> = {
     fieldDocs: { weekday: "0 is Sunday … 6 Saturday.", hour: "0–23." },
   },
   StatsGoalRow: {
-    fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?" },
+    fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?", activeCycleMedianMs: "u64?", idleMedianMs: "u64?" },
+    fieldDocs: {
+      activeCycleMedianMs: "From created to merged, less drafting and backlog.",
+      idleMedianMs: "Time in drafting and backlog before work started.",
+    },
   },
   StatsAgentRow: {
     fields: { agent: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", firstTryApproval: "f64?" },

@@ -2348,6 +2348,12 @@ pub struct StatsTotals {
     /// From created to merged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle_median_ms: Option<u64>,
+    /// From created to merged, less drafting and backlog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_cycle_median_ms: Option<u64>,
+    /// Time in drafting and backlog before work started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_median_ms: Option<u64>,
     /// How long a hand stays up before someone answers it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hand_open_median_ms: Option<u64>,
@@ -2407,6 +2413,12 @@ pub struct StatsGoalRow {
     pub review_rounds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle_median_ms: Option<u64>,
+    /// From created to merged, less drafting and backlog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_cycle_median_ms: Option<u64>,
+    /// Time in drafting and backlog before work started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_median_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

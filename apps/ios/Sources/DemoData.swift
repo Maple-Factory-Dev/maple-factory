@@ -26,6 +26,7 @@ enum DemoData {
             Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
             Wire.Member(login: "kit", name: "Kit Okafor", role: "member", teams: ["platform"]),
         ]
+        feed.repos = ["acme/app", "acme/push", "acme/api", "acme/web", "acme/docs"].map { Wire.OrgRepo(name: $0, defaultBranch: "main", isPrivate: true, source: .github) }
         feed.goals = [
             Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),
@@ -313,7 +314,7 @@ enum DemoData {
             days: UInt32(days), since: now - UInt64(days) * 86_400_000, generatedAt: now, inferred: 0,
             totals: .init(merged: max(1, n(47)), autoMerged: n(12), cancelled: n(3), created: max(1, n(58)), tasksTouched: max(2, n(61)), handsRaised: n(16), handsOpen: 1,
                           questions: n(9), steers: n(34), prompts: n(11), restarts: n(4), reviewRounds: max(1, n(83)), findings: max(UInt32(recent.count), n(112)),
-                          planVersions: n(74), approvals: n(52), cycleMedianMs: UInt64(4 + days % 5) * hour, handOpenMedianMs: days >= 3 ? 42 * 60_000 : nil,
+                          planVersions: n(74), approvals: n(52), cycleMedianMs: UInt64(16 + days % 5) * hour, activeCycleMedianMs: UInt64(4 + days % 5) * hour, idleMedianMs: 12 * hour, handOpenMedianMs: days >= 3 ? 42 * 60_000 : nil,
                           firstTryApproval: days >= 3 ? 0.71 : 1, avgPlanVersions: days >= 3 ? 1.4 : 1, reviewRoundsPerMerge: 1.7, steersPerTask: 0.56),
             costTotal: .init(key: "total", sessions: max(3, n(186)), costUsd: 412.6 * scale, tokens: UInt64(318_400_000 * scale), unpriced: n(31)),
             findings: .init(

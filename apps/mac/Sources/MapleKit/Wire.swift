@@ -4496,6 +4496,10 @@ public enum Wire {
         public var approvals: UInt32
         /// From created to merged.
         public var cycleMedianMs: UInt64?
+        /// From created to merged, less drafting and backlog.
+        public var activeCycleMedianMs: UInt64?
+        /// Time in drafting and backlog before work started.
+        public var idleMedianMs: UInt64?
         /// How long a hand stays up before someone answers it.
         public var handOpenMedianMs: UInt64?
         /// How long an agent's question waits for its answer.
@@ -4506,7 +4510,7 @@ public enum Wire {
         public var reviewRoundsPerMerge: Double?
         public var steersPerTask: Double?
 
-        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, closed: UInt32? = nil, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
+        public init(merged: UInt32, autoMerged: UInt32, cancelled: UInt32, closed: UInt32? = nil, created: UInt32, tasksTouched: UInt32, handsRaised: UInt32, handsOpen: UInt32, questions: UInt32, steers: UInt32, prompts: UInt32, restarts: UInt32, reviewRounds: UInt32, findings: UInt32, planVersions: UInt32, approvals: UInt32, cycleMedianMs: UInt64? = nil, activeCycleMedianMs: UInt64? = nil, idleMedianMs: UInt64? = nil, handOpenMedianMs: UInt64? = nil, answerMedianMs: UInt64? = nil, firstTryApproval: Double? = nil, avgPlanVersions: Double? = nil, reviewRoundsPerMerge: Double? = nil, steersPerTask: Double? = nil) {
             self.merged = merged
             self.autoMerged = autoMerged
             self.cancelled = cancelled
@@ -4524,6 +4528,8 @@ public enum Wire {
             self.planVersions = planVersions
             self.approvals = approvals
             self.cycleMedianMs = cycleMedianMs
+            self.activeCycleMedianMs = activeCycleMedianMs
+            self.idleMedianMs = idleMedianMs
             self.handOpenMedianMs = handOpenMedianMs
             self.answerMedianMs = answerMedianMs
             self.firstTryApproval = firstTryApproval
@@ -4584,8 +4590,12 @@ public enum Wire {
         public var steers: UInt32
         public var reviewRounds: UInt32
         public var cycleMedianMs: UInt64?
+        /// From created to merged, less drafting and backlog.
+        public var activeCycleMedianMs: UInt64?
+        /// Time in drafting and backlog before work started.
+        public var idleMedianMs: UInt64?
 
-        public init(goal: String, name: String, tasks: UInt32, merged: UInt32, hands: UInt32, steers: UInt32, reviewRounds: UInt32, cycleMedianMs: UInt64? = nil) {
+        public init(goal: String, name: String, tasks: UInt32, merged: UInt32, hands: UInt32, steers: UInt32, reviewRounds: UInt32, cycleMedianMs: UInt64? = nil, activeCycleMedianMs: UInt64? = nil, idleMedianMs: UInt64? = nil) {
             self.goal = goal
             self.name = name
             self.tasks = tasks
@@ -4594,6 +4604,8 @@ public enum Wire {
             self.steers = steers
             self.reviewRounds = reviewRounds
             self.cycleMedianMs = cycleMedianMs
+            self.activeCycleMedianMs = activeCycleMedianMs
+            self.idleMedianMs = idleMedianMs
         }
     }
 

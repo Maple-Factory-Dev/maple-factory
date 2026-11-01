@@ -2069,6 +2069,10 @@ data class StatsTotals(
     val approvals: Long,
     /** From created to merged. */
     val cycleMedianMs: Long? = null,
+    /** From created to merged, less drafting and backlog. */
+    val activeCycleMedianMs: Long? = null,
+    /** Time in drafting and backlog before work started. */
+    val idleMedianMs: Long? = null,
     /** How long a hand stays up before someone answers it. */
     val handOpenMedianMs: Long? = null,
     /** How long an agent's question waits for its answer. */
@@ -2116,6 +2120,10 @@ data class StatsGoalRow(
     val steers: Long,
     val reviewRounds: Long,
     val cycleMedianMs: Long? = null,
+    /** From created to merged, less drafting and backlog. */
+    val activeCycleMedianMs: Long? = null,
+    /** Time in drafting and backlog before work started. */
+    val idleMedianMs: Long? = null,
 )
 
 @Serializable
