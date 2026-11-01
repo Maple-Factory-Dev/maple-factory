@@ -168,6 +168,11 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
       if (me.role !== "admin") return text("Only admins can see statistics.", 403);
       return orgHub(env).fetch(`https://org/stats${url.search}`);
     }
+    if (path === "/api/report" && request.method === "GET") {
+      // Your day report: ?since=&until= are your local day's bounds in ms (src/factory/report.ts).
+      const q = new URLSearchParams({ since: url.searchParams.get("since") ?? "", until: url.searchParams.get("until") ?? "", login: me.login });
+      return orgHub(env).fetch(`https://org/report?${q}`);
+    }
     const diff = /^\/api\/tasks\/([\w-]+)\/diff$/.exec(path);
     if (diff && request.method === "GET") {
       // ?commit=<sha>: that one commit's patch, from the Changes tab's picker.

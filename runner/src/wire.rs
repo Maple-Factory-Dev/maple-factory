@@ -2248,6 +2248,59 @@ pub struct GoalTally {
     pub total: u32,
 }
 
+/// One task on a day report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportItem {
+    pub id: String,
+    /// The task in the Factory: <factory>/t/<id>.
+    pub url: String,
+    pub title: String,
+    /// Its goal's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u32>,
+    /// Its pull request on GitHub; none for a local repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    /// When it merged or was approved; for pending and in-progress rows, when it last changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+    /// What happened: "approved the plan", "review"…
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// A day report's section; empty ones are left out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSection {
+    /// merged, reviewed, pendingReview or inProgress.
+    pub key: String,
+    pub title: String,
+    #[serde(default)]
+    pub items: Vec<ReportItem>,
+}
+
+/// What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayReport {
+    pub login: String,
+    pub since: u64,
+    pub until: u64,
+    /// "EOD - Fri, Oct 31".
+    pub title: String,
+    #[serde(default)]
+    pub sections: Vec<ReportSection>,
+    /// The report as Markdown, ready to paste.
+    pub markdown: String,
+    /// The report as Slack mrkdwn, ready to paste.
+    pub slack: String,
+}
+
 /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3213,6 +3266,12 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         goal: Option<String>,
     },
+    /// Your day report for [since, until), your local day's bounds in ms, answered with `report`.
+    #[serde(rename = "report.get")]
+    ReportGet {
+        since: u64,
+        until: u64,
+    },
     /// Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.
     #[serde(rename = "tasks.older")]
     TasksOlder {
@@ -3503,6 +3562,11 @@ pub enum ServerToClient {
     #[serde(rename = "stats")]
     Stats {
         summary: StatsSummary,
+    },
+    /// The day report `report.get` asked for, to that connection only.
+    #[serde(rename = "report")]
+    Report {
+        report: DayReport,
     },
     /// The CI check log `task.checkLog` asked for, to that connection only.
     #[serde(rename = "checkLog")]

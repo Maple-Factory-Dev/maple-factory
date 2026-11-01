@@ -30,6 +30,7 @@ struct SidebarRail: View {
             nav("Inbox", icon: "tray", destination: .inbox, badge: state.myInbox.count)
             nav("Requests", icon: "tray.and.arrow.down", destination: .intake, badge: state.newIntake, badgeColor: Theme.State.building)
             nav("My tasks", icon: "checkmark.circle", destination: .myTasks)
+            nav("Day report", icon: "doc.text", destination: .dayReport)
             nav("Needs a hand", icon: "hand.raised", destination: .needsHand, badge: state.handRaises.count, badgeColor: Theme.State.cancelled)
             nav("Activity", icon: "waveform.path.ecg", destination: .activity)
             nav("Scratchpad", icon: "note.text", destination: .scratchpad, detail: "\(state.notes.count) notes")

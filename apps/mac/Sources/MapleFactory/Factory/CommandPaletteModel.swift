@@ -74,6 +74,7 @@ struct PalettePage: Hashable {
     static let all: [PalettePage] = [
         PalettePage(destination: .inbox, title: "Inbox", icon: "tray", keywords: ["approvals", "mentions"]),
         PalettePage(destination: .myTasks, title: "My tasks", icon: "checkmark.circle", keywords: ["mine"]),
+        PalettePage(destination: .dayReport, title: "Day report", icon: "doc.text", keywords: ["eod", "standup", "today", "report"]),
         PalettePage(destination: .needsHand, title: "Needs a hand", icon: "hand.raised", keywords: ["help", "stuck"]),
         PalettePage(destination: .intake, title: "Requests", icon: "tray.and.arrow.down", keywords: ["intake"]),
         PalettePage(destination: .activity, title: "Activity", icon: "waveform.path.ecg", keywords: ["feed"]),
