@@ -161,9 +161,53 @@ export const enums: Record<string, Enum> = {
       idle: "Started, with nothing asked yet.",
     },
   },
+  TurnState: {
+    doc: "Where an agent's turn is, in a session's native view.",
+    values: {
+      running: "Working: thinking, writing or running tools.",
+      waiting: "Stopped on a prompt for the person (see the `prompt` event before it).",
+      done: "Finished its turn; the composer is free.",
+      interrupted: "Stopped by Esc or Ctrl-C before it finished.",
+      error: "The turn failed (an API error, a usage limit); `message` says why.",
+    },
+  },
+  PromptKind: {
+    values: {
+      permission: "The agent wants to run a tool and asks first (Claude's allow menu, Codex's approval).",
+      question: "The agent asked the person something, with or without options.",
+    },
+  },
 };
 
 export const structs: Record<string, Struct> = {
+  SessionEventCursor: {
+    doc: "Where a native-view stream is up to. `seq` orders a session's events and only goes up; `token` is the runner's own (transcript file and byte offset), opaque to everyone else, so a restarted runner can resume without rereading the whole file.",
+    fields: { seq: "u64", token: "string?" },
+  },
+  ToolCallInfo: {
+    doc: "A tool the agent called, as the native view shows it.",
+    fields: { callId: "string", name: "string", summary: "string", path: "string?", diff: "string?", input: "json?" },
+    fieldDocs: {
+      callId: "The agent's own id (Claude's tool_use id, Codex's call_id); its `tool.result` carries the same.",
+      name: "The tool's name as the agent calls it: Bash, Edit, Write, Read, exec_command, apply_patch, an MCP tool's mcp__server__name…",
+      summary: "One line for the card: the command, the file, the pattern.",
+      path: "The file it touches, for file tools (Edit, Write, Read, apply_patch), relative to the session's cwd when it's inside it.",
+      diff: "A unified diff for Edit, Write and apply_patch, so the view can show the change without asking for the file.",
+      input: "The tool's input as the agent sent it, for a details sheet; long string values are cut.",
+    },
+  },
+  PromptOption: {
+    doc: "One answer a prompt offers.",
+    fields: { key: "string", label: "string", choice: "PromptChoice?" },
+    fieldDocs: {
+      key: "What `session.sendInput` sends back to pick it: the menu's number (\"1\") or a key name (\"Escape\").",
+      choice: "When the option is plainly allow-once or deny, the PromptChoice it is, so `task.answerPrompt` and the native view agree.",
+    },
+  },
+  TurnUsage: {
+    doc: "What a turn used, when the transcript says.",
+    fields: { inputTokens: "u64", outputTokens: "u64", cacheReadTokens: "u64?", cacheWriteTokens: "u64?", costUsd: "f64?", durationMs: "u64?" },
+  },
   SessionInfo: {
     fields: { id: "uuid", agent: "string", cwd: "string", pid: "u32?", startedAt: "u64", taskId: "string?" },
     fieldDocs: { taskId: "The task this session works on, when it's a factory session." },
@@ -1040,6 +1084,46 @@ export const structs: Record<string, Struct> = {
 };
 
 export const unions: Record<string, Union> = {
+  SessionEvent: {
+    doc: "One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.",
+    variants: {
+      user: { doc: "What the person (or the factory) typed.", fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", text: "string" }, fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex." } },
+      assistant: { doc: "What the agent said, as markdown.", fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", markdown: "string", model: "string?" }, fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex." } },
+      thinking: { doc: "The agent's visible reasoning (Claude's thinking, Codex's reasoning summary).", fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", text: "string" }, fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex." } },
+      "tool.call": { fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", call: "ToolCallInfo" }, fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex." } },
+      "tool.result": {
+        fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", callId: "string", ok: "bool", text: "string", truncated: "bool" },
+        fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex.", text: "The output, cut to the runner's limit (4000 chars: head and tail kept).", truncated: "Whether `text` was cut." },
+      },
+      prompt: {
+        doc: "The agent is waiting on the person: a permission menu or a question. Comes from hooks and the pane, not the transcript (the TUI doesn't write its menus there).",
+        fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", kind: "PromptKind", text: "string", options: "PromptOption[]", callId: "string?" },
+        fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex.", callId: "The tool call it asks about, for a permission." },
+      },
+      "prompt.resolved": {
+        doc: "The prompt with `promptId` is answered (here, in the terminal, or by a hook) or went away.",
+        fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", promptId: "string", key: "string?" },
+        fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex.", key: "The option picked, when known." },
+      },
+      turn: {
+        doc: "The turn's state changed; `done` carries what it used when the transcript says.",
+        fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", state: "TurnState", usage: "TurnUsage?", message: "string?" },
+        fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex." },
+      },
+    },
+  },
+  SessionInput: {
+    doc: "What `session.sendInput` types into a session. The runner sends it with tmux send-keys, the same as typing in the terminal, so anything the TUI takes works (`/rc` included).",
+    variants: {
+      text: { doc: "A message, pasted then submitted with Enter.", fields: { text: "string" } },
+      slash: { doc: "A slash command, e.g. `/rc` or `/compact keep the plan`, submitted with Enter.", fields: { command: "string" } },
+      key: {
+        doc: "Pick an option on the prompt that's showing.",
+        fields: { promptId: "string", key: "string" },
+        fieldDocs: { key: "A PromptOption's `key`. Refused when `promptId` isn't the prompt showing now." },
+      },
+    },
+  },
   RunnerMessage: {
     doc: "Runner → server.",
     variants: {
@@ -1061,6 +1145,11 @@ export const unions: Record<string, Union> = {
       "session.error": { fields: { id: "uuid", message: "string" } },
       "session.ended": { fields: { end: "SessionEnd" } },
       "session.activity": { fields: { id: "uuid", activity: "Activity" } },
+      "session.events": {
+        doc: "Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows.",
+        fields: { id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64", cursor: "SessionEventCursor?" },
+        fieldDocs: { nextSeq: "The seq the next event will have; subscribe with since = nextSeq - 1 to resume." },
+      },
       "session.replay": {
         doc: "The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal.",
         fields: { id: "uuid", nonce: "string", data: "string" },
@@ -1162,6 +1251,14 @@ export const unions: Record<string, Union> = {
       },
       "session.resize": { fields: { id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { id: "uuid" } },
+      "session.events.subscribe": {
+        doc: "Start (or with `stop`, end) sending `session.events` for a session. `since` is exclusive: events with seq > since. Left out, the runner sends the last `limit` events.",
+        fields: { id: "uuid", since: "u64?", limit: "u32?", stop: "bool?" },
+      },
+      "session.input": {
+        doc: "Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share).",
+        fields: { id: "uuid", input: "SessionInput", by: "string?" },
+      },
       "session.replay": {
         doc: "Send the session's screen and scrollback, so a new viewer starts with what's there.",
         fields: { id: "uuid", nonce: "string" },
@@ -1245,6 +1342,15 @@ export const unions: Record<string, Union> = {
         fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" },
       },
       "session.detach": { fields: { id: "uuid" } },
+      "session.subscribeEvents": {
+        doc: "Show a session's native view: the server answers with `session.events`, a backfill of events after `since` (exclusive; left out, the last `limit`, default 200) and then live ones. Anyone who may watch the terminal may subscribe.",
+        fields: { machine: "string", id: "uuid", since: "u64?", limit: "u32?" },
+      },
+      "session.unsubscribeEvents": { fields: { machine: "string", id: "uuid" } },
+      "session.sendInput": {
+        doc: "Type into a session from the native composer: text, a slash command, or a prompt's option. Refused, like terminal input, unless the viewer owns the machine, is an admin, or was shared it with `canType`.",
+        fields: { machine: "string", id: "uuid", input: "SessionInput" },
+      },
       "session.resize": { fields: { machine: "string", id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { machine: "string", id: "uuid" } },
       "session.share": {
@@ -1522,6 +1628,10 @@ export const unions: Record<string, Union> = {
       "integrations.updated": { doc: "Every integration again, after one was saved or heard from. Secret values blank.", fields: { integrations: "Integration[]" } },
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
+      "session.events": {
+        doc: "A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events.",
+        fields: { machine: "string", id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64" },
+      },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
       checkLog: {
         doc: "The CI check log `task.checkLog` asked for, to that connection only.",

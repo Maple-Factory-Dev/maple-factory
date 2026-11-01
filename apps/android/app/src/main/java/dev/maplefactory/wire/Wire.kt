@@ -628,6 +628,84 @@ enum class AgentState(val raw: String) {
     object Serializer : WireEnumSerializer<AgentState>("AgentState", entries, { it.raw }, Unknown)
 }
 
+/** Where an agent's turn is, in a session's native view. */
+@Serializable(with = TurnState.Serializer::class)
+enum class TurnState(val raw: String) {
+    /** Working: thinking, writing or running tools. */
+    Running("running"),
+    /** Stopped on a prompt for the person (see the `prompt` event before it). */
+    Waiting("waiting"),
+    /** Finished its turn; the composer is free. */
+    Done("done"),
+    /** Stopped by Esc or Ctrl-C before it finished. */
+    Interrupted("interrupted"),
+    /** The turn failed (an API error, a usage limit); `message` says why. */
+    Error("error"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<TurnState>("TurnState", entries, { it.raw }, Unknown)
+}
+
+@Serializable(with = PromptKind.Serializer::class)
+enum class PromptKind(val raw: String) {
+    /** The agent wants to run a tool and asks first (Claude's allow menu, Codex's approval). */
+    Permission("permission"),
+    /** The agent asked the person something, with or without options. */
+    Question("question"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<PromptKind>("PromptKind", entries, { it.raw }, Unknown)
+}
+
+/** Where a native-view stream is up to. `seq` orders a session's events and only goes up; `token` is the runner's own (transcript file and byte offset), opaque to everyone else, so a restarted runner can resume without rereading the whole file. */
+@Serializable
+data class SessionEventCursor(
+    val seq: Long,
+    val token: String? = null,
+)
+
+/** A tool the agent called, as the native view shows it. */
+@Serializable
+data class ToolCallInfo(
+    /** The agent's own id (Claude's tool_use id, Codex's call_id); its `tool.result` carries the same. */
+    val callId: String,
+    /** The tool's name as the agent calls it: Bash, Edit, Write, Read, exec_command, apply_patch, an MCP tool's mcp__server__name… */
+    val name: String,
+    /** One line for the card: the command, the file, the pattern. */
+    val summary: String,
+    /** The file it touches, for file tools (Edit, Write, Read, apply_patch), relative to the session's cwd when it's inside it. */
+    val path: String? = null,
+    /** A unified diff for Edit, Write and apply_patch, so the view can show the change without asking for the file. */
+    val diff: String? = null,
+    /** The tool's input as the agent sent it, for a details sheet; long string values are cut. */
+    val input: JsonElement? = null,
+)
+
+/** One answer a prompt offers. */
+@Serializable
+data class PromptOption(
+    /** What `session.sendInput` sends back to pick it: the menu's number ("1") or a key name ("Escape"). */
+    val key: String,
+    val label: String,
+    /** When the option is plainly allow-once or deny, the PromptChoice it is, so `task.answerPrompt` and the native view agree. */
+    val choice: PromptChoice? = null,
+)
+
+/** What a turn used, when the transcript says. */
+@Serializable
+data class TurnUsage(
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val cacheReadTokens: Long? = null,
+    val cacheWriteTokens: Long? = null,
+    val costUsd: Double? = null,
+    val durationMs: Long? = null,
+)
+
 @Serializable
 data class SessionInfo(
     val id: String,
@@ -1917,6 +1995,203 @@ data class StatsSummary(
     val findings: StatsFindings? = null,
 )
 
+/** One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md. */
+@Serializable(with = SessionEvent.Serializer::class)
+sealed class SessionEvent {
+    /** What the person (or the factory) typed. */
+    @Serializable
+    data class User(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val text: String,
+    ) : SessionEvent()
+    /** What the agent said, as markdown. */
+    @Serializable
+    data class Assistant(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val markdown: String,
+        val model: String? = null,
+    ) : SessionEvent()
+    /** The agent's visible reasoning (Claude's thinking, Codex's reasoning summary). */
+    @Serializable
+    data class Thinking(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val text: String,
+    ) : SessionEvent()
+    @Serializable
+    data class ToolCall(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val call: dev.maplefactory.wire.ToolCallInfo,
+    ) : SessionEvent()
+    @Serializable
+    data class ToolResult(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val callId: String,
+        val ok: Boolean,
+        /** The output, cut to the runner's limit (4000 chars: head and tail kept). */
+        val text: String,
+        /** Whether `text` was cut. */
+        val truncated: Boolean,
+    ) : SessionEvent()
+    /** The agent is waiting on the person: a permission menu or a question. Comes from hooks and the pane, not the transcript (the TUI doesn't write its menus there). */
+    @Serializable
+    data class Prompt(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val kind: dev.maplefactory.wire.PromptKind,
+        val text: String,
+        val options: List<dev.maplefactory.wire.PromptOption> = emptyList(),
+        /** The tool call it asks about, for a permission. */
+        val callId: String? = null,
+    ) : SessionEvent()
+    /** The prompt with `promptId` is answered (here, in the terminal, or by a hook) or went away. */
+    @Serializable
+    data class PromptResolved(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val promptId: String,
+        /** The option picked, when known. */
+        val key: String? = null,
+    ) : SessionEvent()
+    /** The turn's state changed; `done` carries what it used when the transcript says. */
+    @Serializable
+    data class Turn(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        val state: dev.maplefactory.wire.TurnState,
+        val usage: dev.maplefactory.wire.TurnUsage? = null,
+        val message: String? = null,
+    ) : SessionEvent()
+    /** A message this build doesn't know yet; newer servers and runners may send them. */
+    data class Unknown(val type: String) : SessionEvent()
+
+    object Serializer : WireUnionSerializer<SessionEvent>("SessionEvent") {
+        override fun decode(json: Json, type: String, body: JsonObject): SessionEvent = when (type) {
+            "user" -> json.decodeFromJsonElement(User.serializer(), body)
+            "assistant" -> json.decodeFromJsonElement(Assistant.serializer(), body)
+            "thinking" -> json.decodeFromJsonElement(Thinking.serializer(), body)
+            "tool.call" -> json.decodeFromJsonElement(ToolCall.serializer(), body)
+            "tool.result" -> json.decodeFromJsonElement(ToolResult.serializer(), body)
+            "prompt" -> json.decodeFromJsonElement(Prompt.serializer(), body)
+            "prompt.resolved" -> json.decodeFromJsonElement(PromptResolved.serializer(), body)
+            "turn" -> json.decodeFromJsonElement(Turn.serializer(), body)
+            else -> Unknown(type)
+        }
+
+        override fun encode(json: Json, value: SessionEvent): Pair<String, JsonElement?> = when (value) {
+            is User -> "user" to json.encodeToJsonElement(User.serializer(), value)
+            is Assistant -> "assistant" to json.encodeToJsonElement(Assistant.serializer(), value)
+            is Thinking -> "thinking" to json.encodeToJsonElement(Thinking.serializer(), value)
+            is ToolCall -> "tool.call" to json.encodeToJsonElement(ToolCall.serializer(), value)
+            is ToolResult -> "tool.result" to json.encodeToJsonElement(ToolResult.serializer(), value)
+            is Prompt -> "prompt" to json.encodeToJsonElement(Prompt.serializer(), value)
+            is PromptResolved -> "prompt.resolved" to json.encodeToJsonElement(PromptResolved.serializer(), value)
+            is Turn -> "turn" to json.encodeToJsonElement(Turn.serializer(), value)
+            is Unknown -> value.type to null
+        }
+    }
+}
+
+/** What `session.sendInput` types into a session. The runner sends it with tmux send-keys, the same as typing in the terminal, so anything the TUI takes works (`/rc` included). */
+@Serializable(with = SessionInput.Serializer::class)
+sealed class SessionInput {
+    /** A message, pasted then submitted with Enter. */
+    @Serializable
+    data class Text(
+        val text: String,
+    ) : SessionInput()
+    /** A slash command, e.g. `/rc` or `/compact keep the plan`, submitted with Enter. */
+    @Serializable
+    data class Slash(
+        val command: String,
+    ) : SessionInput()
+    /** Pick an option on the prompt that's showing. */
+    @Serializable
+    data class Key(
+        val promptId: String,
+        /** A PromptOption's `key`. Refused when `promptId` isn't the prompt showing now. */
+        val key: String,
+    ) : SessionInput()
+    /** A message this build doesn't know yet; newer servers and runners may send them. */
+    data class Unknown(val type: String) : SessionInput()
+
+    object Serializer : WireUnionSerializer<SessionInput>("SessionInput") {
+        override fun decode(json: Json, type: String, body: JsonObject): SessionInput = when (type) {
+            "text" -> json.decodeFromJsonElement(Text.serializer(), body)
+            "slash" -> json.decodeFromJsonElement(Slash.serializer(), body)
+            "key" -> json.decodeFromJsonElement(Key.serializer(), body)
+            else -> Unknown(type)
+        }
+
+        override fun encode(json: Json, value: SessionInput): Pair<String, JsonElement?> = when (value) {
+            is Text -> "text" to json.encodeToJsonElement(Text.serializer(), value)
+            is Slash -> "slash" to json.encodeToJsonElement(Slash.serializer(), value)
+            is Key -> "key" to json.encodeToJsonElement(Key.serializer(), value)
+            is Unknown -> value.type to null
+        }
+    }
+}
+
 /** Runner → server. */
 @Serializable(with = RunnerMessage.Serializer::class)
 sealed class RunnerMessage {
@@ -1953,6 +2228,16 @@ sealed class RunnerMessage {
     data class SessionActivity(
         val id: String,
         val activity: dev.maplefactory.wire.Activity,
+    ) : RunnerMessage()
+    /** Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows. */
+    @Serializable
+    data class SessionEvents(
+        val id: String,
+        val events: List<dev.maplefactory.wire.SessionEvent> = emptyList(),
+        val backfill: Boolean,
+        /** The seq the next event will have; subscribe with since = nextSeq - 1 to resume. */
+        val nextSeq: Long,
+        val cursor: dev.maplefactory.wire.SessionEventCursor? = null,
     ) : RunnerMessage()
     /** The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal. */
     @Serializable
@@ -2112,6 +2397,7 @@ sealed class RunnerMessage {
             "session.error" -> json.decodeFromJsonElement(SessionError.serializer(), body)
             "session.ended" -> json.decodeFromJsonElement(SessionEnded.serializer(), body)
             "session.activity" -> json.decodeFromJsonElement(SessionActivity.serializer(), body)
+            "session.events" -> json.decodeFromJsonElement(SessionEvents.serializer(), body)
             "session.replay" -> json.decodeFromJsonElement(SessionReplay.serializer(), body)
             "update.status" -> json.decodeFromJsonElement(UpdateStatus.serializer(), body)
             "agent.login_status" -> json.decodeFromJsonElement(AgentLoginStatus.serializer(), body)
@@ -2140,6 +2426,7 @@ sealed class RunnerMessage {
             is SessionError -> "session.error" to json.encodeToJsonElement(SessionError.serializer(), value)
             is SessionEnded -> "session.ended" to json.encodeToJsonElement(SessionEnded.serializer(), value)
             is SessionActivity -> "session.activity" to json.encodeToJsonElement(SessionActivity.serializer(), value)
+            is SessionEvents -> "session.events" to json.encodeToJsonElement(SessionEvents.serializer(), value)
             is SessionReplay -> "session.replay" to json.encodeToJsonElement(SessionReplay.serializer(), value)
             is UpdateStatus -> "update.status" to json.encodeToJsonElement(UpdateStatus.serializer(), value)
             is AgentLoginStatus -> "agent.login_status" to json.encodeToJsonElement(AgentLoginStatus.serializer(), value)
@@ -2193,6 +2480,21 @@ sealed class ServerToRunner {
     @Serializable
     data class SessionKill(
         val id: String,
+    ) : ServerToRunner()
+    /** Start (or with `stop`, end) sending `session.events` for a session. `since` is exclusive: events with seq > since. Left out, the runner sends the last `limit` events. */
+    @Serializable
+    data class SessionEventsSubscribe(
+        val id: String,
+        val since: Long? = null,
+        val limit: Long? = null,
+        val stop: Boolean? = null,
+    ) : ServerToRunner()
+    /** Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share). */
+    @Serializable
+    data class SessionInput(
+        val id: String,
+        val input: dev.maplefactory.wire.SessionInput,
+        val by: String? = null,
     ) : ServerToRunner()
     /** Send the session's screen and scrollback, so a new viewer starts with what's there. */
     @Serializable
@@ -2321,6 +2623,8 @@ sealed class ServerToRunner {
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
             "session.resize" -> json.decodeFromJsonElement(SessionResize.serializer(), body)
             "session.kill" -> json.decodeFromJsonElement(SessionKill.serializer(), body)
+            "session.events.subscribe" -> json.decodeFromJsonElement(SessionEventsSubscribe.serializer(), body)
+            "session.input" -> json.decodeFromJsonElement(SessionInput.serializer(), body)
             "session.replay" -> json.decodeFromJsonElement(SessionReplay.serializer(), body)
             "runner.update" -> json.decodeFromJsonElement(RunnerUpdate.serializer(), body)
             "agent.login" -> json.decodeFromJsonElement(AgentLogin.serializer(), body)
@@ -2343,6 +2647,8 @@ sealed class ServerToRunner {
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)
             is SessionResize -> "session.resize" to json.encodeToJsonElement(SessionResize.serializer(), value)
             is SessionKill -> "session.kill" to json.encodeToJsonElement(SessionKill.serializer(), value)
+            is SessionEventsSubscribe -> "session.events.subscribe" to json.encodeToJsonElement(SessionEventsSubscribe.serializer(), value)
+            is SessionInput -> "session.input" to json.encodeToJsonElement(SessionInput.serializer(), value)
             is SessionReplay -> "session.replay" to json.encodeToJsonElement(SessionReplay.serializer(), value)
             is RunnerUpdate -> "runner.update" to json.encodeToJsonElement(RunnerUpdate.serializer(), value)
             is AgentLogin -> "agent.login" to json.encodeToJsonElement(AgentLogin.serializer(), value)
@@ -2418,6 +2724,26 @@ sealed class ClientMessage {
     @Serializable
     data class SessionDetach(
         val id: String,
+    ) : ClientMessage()
+    /** Show a session's native view: the server answers with `session.events`, a backfill of events after `since` (exclusive; left out, the last `limit`, default 200) and then live ones. Anyone who may watch the terminal may subscribe. */
+    @Serializable
+    data class SessionSubscribeEvents(
+        val machine: String,
+        val id: String,
+        val since: Long? = null,
+        val limit: Long? = null,
+    ) : ClientMessage()
+    @Serializable
+    data class SessionUnsubscribeEvents(
+        val machine: String,
+        val id: String,
+    ) : ClientMessage()
+    /** Type into a session from the native composer: text, a slash command, or a prompt's option. Refused, like terminal input, unless the viewer owns the machine, is an admin, or was shared it with `canType`. */
+    @Serializable
+    data class SessionSendInput(
+        val machine: String,
+        val id: String,
+        val input: dev.maplefactory.wire.SessionInput,
     ) : ClientMessage()
     @Serializable
     data class SessionResize(
@@ -2828,6 +3154,9 @@ sealed class ClientMessage {
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
             "session.attach" -> json.decodeFromJsonElement(SessionAttach.serializer(), body)
             "session.detach" -> json.decodeFromJsonElement(SessionDetach.serializer(), body)
+            "session.subscribeEvents" -> json.decodeFromJsonElement(SessionSubscribeEvents.serializer(), body)
+            "session.unsubscribeEvents" -> json.decodeFromJsonElement(SessionUnsubscribeEvents.serializer(), body)
+            "session.sendInput" -> json.decodeFromJsonElement(SessionSendInput.serializer(), body)
             "session.resize" -> json.decodeFromJsonElement(SessionResize.serializer(), body)
             "session.kill" -> json.decodeFromJsonElement(SessionKill.serializer(), body)
             "session.share" -> json.decodeFromJsonElement(SessionShare.serializer(), body)
@@ -2904,6 +3233,9 @@ sealed class ClientMessage {
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)
             is SessionAttach -> "session.attach" to json.encodeToJsonElement(SessionAttach.serializer(), value)
             is SessionDetach -> "session.detach" to json.encodeToJsonElement(SessionDetach.serializer(), value)
+            is SessionSubscribeEvents -> "session.subscribeEvents" to json.encodeToJsonElement(SessionSubscribeEvents.serializer(), value)
+            is SessionUnsubscribeEvents -> "session.unsubscribeEvents" to json.encodeToJsonElement(SessionUnsubscribeEvents.serializer(), value)
+            is SessionSendInput -> "session.sendInput" to json.encodeToJsonElement(SessionSendInput.serializer(), value)
             is SessionResize -> "session.resize" to json.encodeToJsonElement(SessionResize.serializer(), value)
             is SessionKill -> "session.kill" to json.encodeToJsonElement(SessionKill.serializer(), value)
             is SessionShare -> "session.share" to json.encodeToJsonElement(SessionShare.serializer(), value)
@@ -3162,6 +3494,15 @@ sealed class ServerToClient {
         val machine: String,
         val end: dev.maplefactory.wire.SessionEnd,
     ) : ServerToClient()
+    /** A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events. */
+    @Serializable
+    data class SessionEvents(
+        val machine: String,
+        val id: String,
+        val events: List<dev.maplefactory.wire.SessionEvent> = emptyList(),
+        val backfill: Boolean,
+        val nextSeq: Long,
+    ) : ServerToClient()
     /** The statistics `stats.get` asked for, to that connection only. */
     @Serializable
     data class Stats(
@@ -3220,6 +3561,7 @@ sealed class ServerToClient {
             "integrations.updated" -> json.decodeFromJsonElement(IntegrationsUpdated.serializer(), body)
             "toast" -> json.decodeFromJsonElement(Toast.serializer(), body)
             "session.ended" -> json.decodeFromJsonElement(SessionEnded.serializer(), body)
+            "session.events" -> json.decodeFromJsonElement(SessionEvents.serializer(), body)
             "stats" -> json.decodeFromJsonElement(Stats.serializer(), body)
             "checkLog" -> json.decodeFromJsonElement(CheckLog.serializer(), body)
             "error" -> json.decodeFromJsonElement(Error.serializer(), body)
@@ -3255,6 +3597,7 @@ sealed class ServerToClient {
             is IntegrationsUpdated -> "integrations.updated" to json.encodeToJsonElement(IntegrationsUpdated.serializer(), value)
             is Toast -> "toast" to json.encodeToJsonElement(Toast.serializer(), value)
             is SessionEnded -> "session.ended" to json.encodeToJsonElement(SessionEnded.serializer(), value)
+            is SessionEvents -> "session.events" to json.encodeToJsonElement(SessionEvents.serializer(), value)
             is Stats -> "stats" to json.encodeToJsonElement(Stats.serializer(), value)
             is CheckLog -> "checkLog" to json.encodeToJsonElement(CheckLog.serializer(), value)
             is Error -> "error" to json.encodeToJsonElement(Error.serializer(), value)

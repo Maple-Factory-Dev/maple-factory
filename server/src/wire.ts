@@ -114,6 +114,54 @@ export const AgentLoginStateValues: readonly AgentLoginState[] = ["starting","wa
 export type AgentState = "working" | "waiting" | "done" | "idle";
 export const AgentStateValues: readonly AgentState[] = ["working","waiting","done","idle"];
 
+/** Where an agent's turn is, in a session's native view. */
+export type TurnState = "running" | "waiting" | "done" | "interrupted" | "error";
+export const TurnStateValues: readonly TurnState[] = ["running","waiting","done","interrupted","error"];
+
+export type PromptKind = "permission" | "question";
+export const PromptKindValues: readonly PromptKind[] = ["permission","question"];
+
+/** Where a native-view stream is up to. `seq` orders a session's events and only goes up; `token` is the runner's own (transcript file and byte offset), opaque to everyone else, so a restarted runner can resume without rereading the whole file. */
+export interface SessionEventCursor {
+  seq: number;
+  token?: string | null;
+}
+
+/** A tool the agent called, as the native view shows it. */
+export interface ToolCallInfo {
+  /** The agent's own id (Claude's tool_use id, Codex's call_id); its `tool.result` carries the same. */
+  callId: string;
+  /** The tool's name as the agent calls it: Bash, Edit, Write, Read, exec_command, apply_patch, an MCP tool's mcp__server__name… */
+  name: string;
+  /** One line for the card: the command, the file, the pattern. */
+  summary: string;
+  /** The file it touches, for file tools (Edit, Write, Read, apply_patch), relative to the session's cwd when it's inside it. */
+  path?: string | null;
+  /** A unified diff for Edit, Write and apply_patch, so the view can show the change without asking for the file. */
+  diff?: string | null;
+  /** The tool's input as the agent sent it, for a details sheet; long string values are cut. */
+  input?: unknown | null;
+}
+
+/** One answer a prompt offers. */
+export interface PromptOption {
+  /** What `session.sendInput` sends back to pick it: the menu's number ("1") or a key name ("Escape"). */
+  key: string;
+  label: string;
+  /** When the option is plainly allow-once or deny, the PromptChoice it is, so `task.answerPrompt` and the native view agree. */
+  choice?: PromptChoice | null;
+}
+
+/** What a turn used, when the transcript says. */
+export interface TurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  costUsd?: number | null;
+  durationMs?: number | null;
+}
+
 export interface SessionInfo {
   id: string;
   agent: string;
@@ -1304,6 +1352,166 @@ export interface StatsSummary {
   findings?: StatsFindings | null;
 }
 
+/** What the person (or the factory) typed. */
+export interface SessionEvent_User {
+  type: "user";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  text: string;
+}
+
+/** What the agent said, as markdown. */
+export interface SessionEvent_Assistant {
+  type: "assistant";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  markdown: string;
+  model?: string | null;
+}
+
+/** The agent's visible reasoning (Claude's thinking, Codex's reasoning summary). */
+export interface SessionEvent_Thinking {
+  type: "thinking";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  text: string;
+}
+
+export interface SessionEvent_ToolCall {
+  type: "tool.call";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  call: ToolCallInfo;
+}
+
+export interface SessionEvent_ToolResult {
+  type: "tool.result";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  callId: string;
+  ok: boolean;
+  /** The output, cut to the runner's limit (4000 chars: head and tail kept). */
+  text: string;
+  /** Whether `text` was cut. */
+  truncated: boolean;
+}
+
+/** The agent is waiting on the person: a permission menu or a question. Comes from hooks and the pane, not the transcript (the TUI doesn't write its menus there). */
+export interface SessionEvent_Prompt {
+  type: "prompt";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  kind: PromptKind;
+  text: string;
+  options: PromptOption[];
+  /** The tool call it asks about, for a permission. */
+  callId?: string | null;
+}
+
+/** The prompt with `promptId` is answered (here, in the terminal, or by a hook) or went away. */
+export interface SessionEvent_PromptResolved {
+  type: "prompt.resolved";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  promptId: string;
+  /** The option picked, when known. */
+  key?: string | null;
+}
+
+/** The turn's state changed; `done` carries what it used when the transcript says. */
+export interface SessionEvent_Turn {
+  type: "turn";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  state: TurnState;
+  usage?: TurnUsage | null;
+  message?: string | null;
+}
+
+/** One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md. */
+export type SessionEvent = SessionEvent_User | SessionEvent_Assistant | SessionEvent_Thinking | SessionEvent_ToolCall | SessionEvent_ToolResult | SessionEvent_Prompt | SessionEvent_PromptResolved | SessionEvent_Turn;
+export const SessionEventTypes = ["user","assistant","thinking","tool.call","tool.result","prompt","prompt.resolved","turn"] as const;
+
+/** A message, pasted then submitted with Enter. */
+export interface SessionInput_Text {
+  type: "text";
+  text: string;
+}
+
+/** A slash command, e.g. `/rc` or `/compact keep the plan`, submitted with Enter. */
+export interface SessionInput_Slash {
+  type: "slash";
+  command: string;
+}
+
+/** Pick an option on the prompt that's showing. */
+export interface SessionInput_Key {
+  type: "key";
+  promptId: string;
+  /** A PromptOption's `key`. Refused when `promptId` isn't the prompt showing now. */
+  key: string;
+}
+
+/** What `session.sendInput` types into a session. The runner sends it with tmux send-keys, the same as typing in the terminal, so anything the TUI takes works (`/rc` included). */
+export type SessionInput = SessionInput_Text | SessionInput_Slash | SessionInput_Key;
+export const SessionInputTypes = ["text","slash","key"] as const;
+
 /** First message on every connection, so a server that missed messages catches up. */
 export interface RunnerMessage_Hello {
   type: "hello";
@@ -1342,6 +1550,17 @@ export interface RunnerMessage_SessionActivity {
   type: "session.activity";
   id: string;
   activity: Activity;
+}
+
+/** Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows. */
+export interface RunnerMessage_SessionEvents {
+  type: "session.events";
+  id: string;
+  events: SessionEvent[];
+  backfill: boolean;
+  /** The seq the next event will have; subscribe with since = nextSeq - 1 to resume. */
+  nextSeq: number;
+  cursor?: SessionEventCursor | null;
 }
 
 /** The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal. */
@@ -1510,8 +1729,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -1542,6 +1761,23 @@ export interface ServerToRunner_SessionResize {
 export interface ServerToRunner_SessionKill {
   type: "session.kill";
   id: string;
+}
+
+/** Start (or with `stop`, end) sending `session.events` for a session. `since` is exclusive: events with seq > since. Left out, the runner sends the last `limit` events. */
+export interface ServerToRunner_SessionEventsSubscribe {
+  type: "session.events.subscribe";
+  id: string;
+  since?: number | null;
+  limit?: number | null;
+  stop?: boolean | null;
+}
+
+/** Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share). */
+export interface ServerToRunner_SessionInput {
+  type: "session.input";
+  id: string;
+  input: SessionInput;
+  by?: string | null;
 }
 
 /** Send the session's screen and scrollback, so a new viewer starts with what's there. */
@@ -1681,8 +1917,8 @@ export interface ServerToRunner_SecretsReply {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionEventsSubscribe | ServerToRunner_SessionInput | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.events.subscribe","session.input","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
@@ -1747,6 +1983,29 @@ export interface ClientMessage_SessionAttach {
 export interface ClientMessage_SessionDetach {
   type: "session.detach";
   id: string;
+}
+
+/** Show a session's native view: the server answers with `session.events`, a backfill of events after `since` (exclusive; left out, the last `limit`, default 200) and then live ones. Anyone who may watch the terminal may subscribe. */
+export interface ClientMessage_SessionSubscribeEvents {
+  type: "session.subscribeEvents";
+  machine: string;
+  id: string;
+  since?: number | null;
+  limit?: number | null;
+}
+
+export interface ClientMessage_SessionUnsubscribeEvents {
+  type: "session.unsubscribeEvents";
+  machine: string;
+  id: string;
+}
+
+/** Type into a session from the native composer: text, a slash command, or a prompt's option. Refused, like terminal input, unless the viewer owns the machine, is an admin, or was shared it with `canType`. */
+export interface ClientMessage_SessionSendInput {
+  type: "session.sendInput";
+  machine: string;
+  id: string;
+  input: SessionInput;
 }
 
 export interface ClientMessage_SessionResize {
@@ -2208,8 +2467,8 @@ export interface ClientMessage_StatsGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","repo.setup.start","repo.setup.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionSubscribeEvents | ClientMessage_SessionUnsubscribeEvents | ClientMessage_SessionSendInput | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.subscribeEvents","session.unsubscribeEvents","session.sendInput","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","repo.setup.start","repo.setup.cancel","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -2427,6 +2686,16 @@ export interface ServerToClient_SessionEnded {
   end: SessionEnd;
 }
 
+/** A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events. */
+export interface ServerToClient_SessionEvents {
+  type: "session.events";
+  machine: string;
+  id: string;
+  events: SessionEvent[];
+  backfill: boolean;
+  nextSeq: number;
+}
+
 /** The statistics `stats.get` asked for, to that connection only. */
 export interface ServerToClient_Stats {
   type: "stats";
@@ -2456,5 +2725,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","stats","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_SessionEvents | ServerToClient_Stats | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","session.events","stats","checkLog","error"] as const;

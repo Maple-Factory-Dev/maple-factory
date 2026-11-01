@@ -568,6 +568,8 @@ import Foundation
             } else {
                 notice = error.message
             }
+        case .sessionEvents:
+            break // The native session view (MF-199) isn't built yet.
         case .unknown:
             break
         }

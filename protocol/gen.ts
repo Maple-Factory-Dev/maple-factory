@@ -25,7 +25,7 @@ function parse(src: string): Ty {
   const map = /^map<(.+)>$/.exec(src);
   if (map) return { kind: "map", of: parse(map[1]) };
   if (prims.has(src)) return { kind: "prim", name: src };
-  if (src in structs || src in enums) return { kind: "ref", name: src };
+  if (src in structs || src in enums || src in unions) return { kind: "ref", name: src };
   throw new Error(`unknown type ${src}`);
 }
 

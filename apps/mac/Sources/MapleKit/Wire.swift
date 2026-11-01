@@ -1613,6 +1613,169 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where an agent's turn is, in a session's native view.
+    public enum TurnState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Working: thinking, writing or running tools.
+        case running
+        /// Stopped on a prompt for the person (see the `prompt` event before it).
+        case waiting
+        /// Finished its turn; the composer is free.
+        case done
+        /// Stopped by Esc or Ctrl-C before it finished.
+        case interrupted
+        /// The turn failed (an API error, a usage limit); `message` says why.
+        case error
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [TurnState] = [.running, .waiting, .done, .interrupted, .error]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "running": self = .running
+            case "waiting": self = .waiting
+            case "done": self = .done
+            case "interrupted": self = .interrupted
+            case "error": self = .error
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .running: "running"
+            case .waiting: "waiting"
+            case .done: "done"
+            case .interrupted: "interrupted"
+            case .error: "error"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: TurnState, b: TurnState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    public enum PromptKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// The agent wants to run a tool and asks first (Claude's allow menu, Codex's approval).
+        case permission
+        /// The agent asked the person something, with or without options.
+        case question
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PromptKind] = [.permission, .question]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "permission": self = .permission
+            case "question": self = .question
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .permission: "permission"
+            case .question: "question"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PromptKind, b: PromptKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    /// Where a native-view stream is up to. `seq` orders a session's events and only goes up; `token` is the runner's own (transcript file and byte offset), opaque to everyone else, so a restarted runner can resume without rereading the whole file.
+    public struct SessionEventCursor: Codable, Hashable, Sendable {
+        public var seq: UInt64
+        public var token: String?
+
+        public init(seq: UInt64, token: String? = nil) {
+            self.seq = seq
+            self.token = token
+        }
+    }
+
+    /// A tool the agent called, as the native view shows it.
+    public struct ToolCallInfo: Codable, Hashable, Sendable {
+        /// The agent's own id (Claude's tool_use id, Codex's call_id); its `tool.result` carries the same.
+        public var callId: String
+        /// The tool's name as the agent calls it: Bash, Edit, Write, Read, exec_command, apply_patch, an MCP tool's mcp__server__name…
+        public var name: String
+        /// One line for the card: the command, the file, the pattern.
+        public var summary: String
+        /// The file it touches, for file tools (Edit, Write, Read, apply_patch), relative to the session's cwd when it's inside it.
+        public var path: String?
+        /// A unified diff for Edit, Write and apply_patch, so the view can show the change without asking for the file.
+        public var diff: String?
+        /// The tool's input as the agent sent it, for a details sheet; long string values are cut.
+        public var input: JSONValue?
+
+        public init(callId: String, name: String, summary: String, path: String? = nil, diff: String? = nil, input: JSONValue? = nil) {
+            self.callId = callId
+            self.name = name
+            self.summary = summary
+            self.path = path
+            self.diff = diff
+            self.input = input
+        }
+    }
+
+    /// One answer a prompt offers.
+    public struct PromptOption: Codable, Hashable, Sendable {
+        /// What `session.sendInput` sends back to pick it: the menu's number ("1") or a key name ("Escape").
+        public var key: String
+        public var label: String
+        /// When the option is plainly allow-once or deny, the PromptChoice it is, so `task.answerPrompt` and the native view agree.
+        public var choice: PromptChoice?
+
+        public init(key: String, label: String, choice: PromptChoice? = nil) {
+            self.key = key
+            self.label = label
+            self.choice = choice
+        }
+    }
+
+    /// What a turn used, when the transcript says.
+    public struct TurnUsage: Codable, Hashable, Sendable {
+        public var inputTokens: UInt64
+        public var outputTokens: UInt64
+        public var cacheReadTokens: UInt64?
+        public var cacheWriteTokens: UInt64?
+        public var costUsd: Double?
+        public var durationMs: UInt64?
+
+        public init(inputTokens: UInt64, outputTokens: UInt64, cacheReadTokens: UInt64? = nil, cacheWriteTokens: UInt64? = nil, costUsd: Double? = nil, durationMs: UInt64? = nil) {
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.cacheReadTokens = cacheReadTokens
+            self.cacheWriteTokens = cacheWriteTokens
+            self.costUsd = costUsd
+            self.durationMs = durationMs
+        }
+    }
+
     public struct SessionInfo: Codable, Hashable, Sendable {
         public var id: String
         public var agent: String
@@ -4153,6 +4316,356 @@ public enum Wire {
         }
     }
 
+    /// What the person (or the factory) typed.
+    public struct SessionEventUser: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var text: String
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, text: String) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.text = text
+        }
+    }
+
+    /// What the agent said, as markdown.
+    public struct SessionEventAssistant: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var markdown: String
+        public var model: String?
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, markdown: String, model: String? = nil) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.markdown = markdown
+            self.model = model
+        }
+    }
+
+    /// The agent's visible reasoning (Claude's thinking, Codex's reasoning summary).
+    public struct SessionEventThinking: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var text: String
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, text: String) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.text = text
+        }
+    }
+
+    public struct SessionEventToolCall: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var call: ToolCallInfo
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, call: ToolCallInfo) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.call = call
+        }
+    }
+
+    public struct SessionEventToolResult: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var callId: String
+        public var ok: Bool
+        /// The output, cut to the runner's limit (4000 chars: head and tail kept).
+        public var text: String
+        /// Whether `text` was cut.
+        public var truncated: Bool
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, callId: String, ok: Bool, text: String, truncated: Bool) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.callId = callId
+            self.ok = ok
+            self.text = text
+            self.truncated = truncated
+        }
+    }
+
+    /// The agent is waiting on the person: a permission menu or a question. Comes from hooks and the pane, not the transcript (the TUI doesn't write its menus there).
+    public struct SessionEventPrompt: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var kind: PromptKind
+        public var text: String
+        public var options: [PromptOption]
+        /// The tool call it asks about, for a permission.
+        public var callId: String?
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, kind: PromptKind, text: String, options: [PromptOption] = [], callId: String? = nil) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.kind = kind
+            self.text = text
+            self.options = options
+            self.callId = callId
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            session = try c.decode(String.self, forKey: .session)
+            seq = try c.decode(UInt64.self, forKey: .seq)
+            at = try c.decode(UInt64.self, forKey: .at)
+            agent = try c.decode(String.self, forKey: .agent)
+            kind = try c.decode(PromptKind.self, forKey: .kind)
+            text = try c.decode(String.self, forKey: .text)
+            options = try c.decodeIfPresent([PromptOption].self, forKey: .options) ?? []
+            callId = try c.decodeIfPresent(String.self, forKey: .callId)
+        }
+    }
+
+    /// The prompt with `promptId` is answered (here, in the terminal, or by a hook) or went away.
+    public struct SessionEventPromptResolved: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var promptId: String
+        /// The option picked, when known.
+        public var key: String?
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, promptId: String, key: String? = nil) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.promptId = promptId
+            self.key = key
+        }
+    }
+
+    /// The turn's state changed; `done` carries what it used when the transcript says.
+    public struct SessionEventTurn: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        public var state: TurnState
+        public var usage: TurnUsage?
+        public var message: String?
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, state: TurnState, usage: TurnUsage? = nil, message: String? = nil) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.state = state
+            self.usage = usage
+            self.message = message
+        }
+    }
+
+    /// One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.
+    public enum SessionEvent: Codable, Hashable, Sendable {
+        case user(SessionEventUser)
+        case assistant(SessionEventAssistant)
+        case thinking(SessionEventThinking)
+        case toolCall(SessionEventToolCall)
+        case toolResult(SessionEventToolResult)
+        case prompt(SessionEventPrompt)
+        case promptResolved(SessionEventPromptResolved)
+        case turn(SessionEventTurn)
+        /// A message this build doesn't know yet; newer servers and runners may send them.
+        case unknown(String)
+
+        private enum TypeKey: String, CodingKey { case type }
+
+        public init(from decoder: Decoder) throws {
+            let type = try decoder.container(keyedBy: TypeKey.self).decode(String.self, forKey: .type)
+            switch type {
+            case "user": self = .user(try SessionEventUser(from: decoder))
+            case "assistant": self = .assistant(try SessionEventAssistant(from: decoder))
+            case "thinking": self = .thinking(try SessionEventThinking(from: decoder))
+            case "tool.call": self = .toolCall(try SessionEventToolCall(from: decoder))
+            case "tool.result": self = .toolResult(try SessionEventToolResult(from: decoder))
+            case "prompt": self = .prompt(try SessionEventPrompt(from: decoder))
+            case "prompt.resolved": self = .promptResolved(try SessionEventPromptResolved(from: decoder))
+            case "turn": self = .turn(try SessionEventTurn(from: decoder))
+            default: self = .unknown(type)
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: TypeKey.self)
+            switch self {
+            case .user(let body):
+                try c.encode("user", forKey: .type)
+                try body.encode(to: encoder)
+            case .assistant(let body):
+                try c.encode("assistant", forKey: .type)
+                try body.encode(to: encoder)
+            case .thinking(let body):
+                try c.encode("thinking", forKey: .type)
+                try body.encode(to: encoder)
+            case .toolCall(let body):
+                try c.encode("tool.call", forKey: .type)
+                try body.encode(to: encoder)
+            case .toolResult(let body):
+                try c.encode("tool.result", forKey: .type)
+                try body.encode(to: encoder)
+            case .prompt(let body):
+                try c.encode("prompt", forKey: .type)
+                try body.encode(to: encoder)
+            case .promptResolved(let body):
+                try c.encode("prompt.resolved", forKey: .type)
+                try body.encode(to: encoder)
+            case .turn(let body):
+                try c.encode("turn", forKey: .type)
+                try body.encode(to: encoder)
+            case .unknown(let type):
+                try c.encode(type, forKey: .type)
+            }
+        }
+    }
+
+    /// A message, pasted then submitted with Enter.
+    public struct SessionInputText: Codable, Hashable, Sendable {
+        public var text: String
+
+        public init(text: String) {
+            self.text = text
+        }
+    }
+
+    /// A slash command, e.g. `/rc` or `/compact keep the plan`, submitted with Enter.
+    public struct SessionInputSlash: Codable, Hashable, Sendable {
+        public var command: String
+
+        public init(command: String) {
+            self.command = command
+        }
+    }
+
+    /// Pick an option on the prompt that's showing.
+    public struct SessionInputKey: Codable, Hashable, Sendable {
+        public var promptId: String
+        /// A PromptOption's `key`. Refused when `promptId` isn't the prompt showing now.
+        public var key: String
+
+        public init(promptId: String, key: String) {
+            self.promptId = promptId
+            self.key = key
+        }
+    }
+
+    /// What `session.sendInput` types into a session. The runner sends it with tmux send-keys, the same as typing in the terminal, so anything the TUI takes works (`/rc` included).
+    public enum SessionInput: Codable, Hashable, Sendable {
+        case text(SessionInputText)
+        case slash(SessionInputSlash)
+        case key(SessionInputKey)
+        /// A message this build doesn't know yet; newer servers and runners may send them.
+        case unknown(String)
+
+        private enum TypeKey: String, CodingKey { case type }
+
+        public init(from decoder: Decoder) throws {
+            let type = try decoder.container(keyedBy: TypeKey.self).decode(String.self, forKey: .type)
+            switch type {
+            case "text": self = .text(try SessionInputText(from: decoder))
+            case "slash": self = .slash(try SessionInputSlash(from: decoder))
+            case "key": self = .key(try SessionInputKey(from: decoder))
+            default: self = .unknown(type)
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: TypeKey.self)
+            switch self {
+            case .text(let body):
+                try c.encode("text", forKey: .type)
+                try body.encode(to: encoder)
+            case .slash(let body):
+                try c.encode("slash", forKey: .type)
+                try body.encode(to: encoder)
+            case .key(let body):
+                try c.encode("key", forKey: .type)
+                try body.encode(to: encoder)
+            case .unknown(let type):
+                try c.encode(type, forKey: .type)
+            }
+        }
+    }
+
     /// First message on every connection, so a server that missed messages catches up.
     public struct RunnerMessageHello: Codable, Hashable, Sendable {
         public var runnerId: String
@@ -4227,6 +4740,33 @@ public enum Wire {
         public init(id: String, activity: Activity) {
             self.id = id
             self.activity = activity
+        }
+    }
+
+    /// Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows.
+    public struct RunnerMessageSessionEvents: Codable, Hashable, Sendable {
+        public var id: String
+        public var events: [SessionEvent]
+        public var backfill: Bool
+        /// The seq the next event will have; subscribe with since = nextSeq - 1 to resume.
+        public var nextSeq: UInt64
+        public var cursor: SessionEventCursor?
+
+        public init(id: String, events: [SessionEvent] = [], backfill: Bool, nextSeq: UInt64, cursor: SessionEventCursor? = nil) {
+            self.id = id
+            self.events = events
+            self.backfill = backfill
+            self.nextSeq = nextSeq
+            self.cursor = cursor
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            events = try c.decodeIfPresent([SessionEvent].self, forKey: .events) ?? []
+            backfill = try c.decode(Bool.self, forKey: .backfill)
+            nextSeq = try c.decode(UInt64.self, forKey: .nextSeq)
+            cursor = try c.decodeIfPresent(SessionEventCursor.self, forKey: .cursor)
         }
     }
 
@@ -4535,6 +5075,7 @@ public enum Wire {
         case sessionError(RunnerMessageSessionError)
         case sessionEnded(RunnerMessageSessionEnded)
         case sessionActivity(RunnerMessageSessionActivity)
+        case sessionEvents(RunnerMessageSessionEvents)
         case sessionReplay(RunnerMessageSessionReplay)
         case updateStatus(RunnerMessageUpdateStatus)
         case agentLoginStatus(RunnerMessageAgentLoginStatus)
@@ -4567,6 +5108,7 @@ public enum Wire {
             case "session.error": self = .sessionError(try RunnerMessageSessionError(from: decoder))
             case "session.ended": self = .sessionEnded(try RunnerMessageSessionEnded(from: decoder))
             case "session.activity": self = .sessionActivity(try RunnerMessageSessionActivity(from: decoder))
+            case "session.events": self = .sessionEvents(try RunnerMessageSessionEvents(from: decoder))
             case "session.replay": self = .sessionReplay(try RunnerMessageSessionReplay(from: decoder))
             case "update.status": self = .updateStatus(try RunnerMessageUpdateStatus(from: decoder))
             case "agent.login_status": self = .agentLoginStatus(try RunnerMessageAgentLoginStatus(from: decoder))
@@ -4609,6 +5151,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .sessionActivity(let body):
                 try c.encode("session.activity", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionEvents(let body):
+                try c.encode("session.events", forKey: .type)
                 try body.encode(to: encoder)
             case .sessionReplay(let body):
                 try c.encode("session.replay", forKey: .type)
@@ -4721,6 +5266,34 @@ public enum Wire {
 
         public init(id: String) {
             self.id = id
+        }
+    }
+
+    /// Start (or with `stop`, end) sending `session.events` for a session. `since` is exclusive: events with seq > since. Left out, the runner sends the last `limit` events.
+    public struct ServerToRunnerSessionEventsSubscribe: Codable, Hashable, Sendable {
+        public var id: String
+        public var since: UInt64?
+        public var limit: UInt32?
+        public var stop: Bool?
+
+        public init(id: String, since: UInt64? = nil, limit: UInt32? = nil, stop: Bool? = nil) {
+            self.id = id
+            self.since = since
+            self.limit = limit
+            self.stop = stop
+        }
+    }
+
+    /// Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share).
+    public struct ServerToRunnerSessionInput: Codable, Hashable, Sendable {
+        public var id: String
+        public var input: SessionInput
+        public var by: String?
+
+        public init(id: String, input: SessionInput, by: String? = nil) {
+            self.id = id
+            self.input = input
+            self.by = by
         }
     }
 
@@ -4968,6 +5541,8 @@ public enum Wire {
         case sessionOpen(ServerToRunnerSessionOpen)
         case sessionResize(ServerToRunnerSessionResize)
         case sessionKill(ServerToRunnerSessionKill)
+        case sessionEventsSubscribe(ServerToRunnerSessionEventsSubscribe)
+        case sessionInput(ServerToRunnerSessionInput)
         case sessionReplay(ServerToRunnerSessionReplay)
         case runnerUpdate(ServerToRunnerRunnerUpdate)
         case agentLogin(ServerToRunnerAgentLogin)
@@ -4994,6 +5569,8 @@ public enum Wire {
             case "session.open": self = .sessionOpen(try ServerToRunnerSessionOpen(from: decoder))
             case "session.resize": self = .sessionResize(try ServerToRunnerSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ServerToRunnerSessionKill(from: decoder))
+            case "session.events.subscribe": self = .sessionEventsSubscribe(try ServerToRunnerSessionEventsSubscribe(from: decoder))
+            case "session.input": self = .sessionInput(try ServerToRunnerSessionInput(from: decoder))
             case "session.replay": self = .sessionReplay(try ServerToRunnerSessionReplay(from: decoder))
             case "runner.update": self = .runnerUpdate(try ServerToRunnerRunnerUpdate(from: decoder))
             case "agent.login": self = .agentLogin(try ServerToRunnerAgentLogin(from: decoder))
@@ -5024,6 +5601,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .sessionKill(let body):
                 try c.encode("session.kill", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionEventsSubscribe(let body):
+                try c.encode("session.events.subscribe", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionInput(let body):
+                try c.encode("session.input", forKey: .type)
                 try body.encode(to: encoder)
             case .sessionReplay(let body):
                 try c.encode("session.replay", forKey: .type)
@@ -5170,6 +5753,44 @@ public enum Wire {
 
         public init(id: String) {
             self.id = id
+        }
+    }
+
+    /// Show a session's native view: the server answers with `session.events`, a backfill of events after `since` (exclusive; left out, the last `limit`, default 200) and then live ones. Anyone who may watch the terminal may subscribe.
+    public struct ClientMessageSessionSubscribeEvents: Codable, Hashable, Sendable {
+        public var machine: String
+        public var id: String
+        public var since: UInt64?
+        public var limit: UInt32?
+
+        public init(machine: String, id: String, since: UInt64? = nil, limit: UInt32? = nil) {
+            self.machine = machine
+            self.id = id
+            self.since = since
+            self.limit = limit
+        }
+    }
+
+    public struct ClientMessageSessionUnsubscribeEvents: Codable, Hashable, Sendable {
+        public var machine: String
+        public var id: String
+
+        public init(machine: String, id: String) {
+            self.machine = machine
+            self.id = id
+        }
+    }
+
+    /// Type into a session from the native composer: text, a slash command, or a prompt's option. Refused, like terminal input, unless the viewer owns the machine, is an admin, or was shared it with `canType`.
+    public struct ClientMessageSessionSendInput: Codable, Hashable, Sendable {
+        public var machine: String
+        public var id: String
+        public var input: SessionInput
+
+        public init(machine: String, id: String, input: SessionInput) {
+            self.machine = machine
+            self.id = id
+            self.input = input
         }
     }
 
@@ -5952,6 +6573,9 @@ public enum Wire {
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
         case sessionDetach(ClientMessageSessionDetach)
+        case sessionSubscribeEvents(ClientMessageSessionSubscribeEvents)
+        case sessionUnsubscribeEvents(ClientMessageSessionUnsubscribeEvents)
+        case sessionSendInput(ClientMessageSessionSendInput)
         case sessionResize(ClientMessageSessionResize)
         case sessionKill(ClientMessageSessionKill)
         case sessionShare(ClientMessageSessionShare)
@@ -6032,6 +6656,9 @@ public enum Wire {
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
             case "session.detach": self = .sessionDetach(try ClientMessageSessionDetach(from: decoder))
+            case "session.subscribeEvents": self = .sessionSubscribeEvents(try ClientMessageSessionSubscribeEvents(from: decoder))
+            case "session.unsubscribeEvents": self = .sessionUnsubscribeEvents(try ClientMessageSessionUnsubscribeEvents(from: decoder))
+            case "session.sendInput": self = .sessionSendInput(try ClientMessageSessionSendInput(from: decoder))
             case "session.resize": self = .sessionResize(try ClientMessageSessionResize(from: decoder))
             case "session.kill": self = .sessionKill(try ClientMessageSessionKill(from: decoder))
             case "session.share": self = .sessionShare(try ClientMessageSessionShare(from: decoder))
@@ -6129,6 +6756,15 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .sessionDetach(let body):
                 try c.encode("session.detach", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionSubscribeEvents(let body):
+                try c.encode("session.subscribeEvents", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionUnsubscribeEvents(let body):
+                try c.encode("session.unsubscribeEvents", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionSendInput(let body):
+                try c.encode("session.sendInput", forKey: .type)
                 try body.encode(to: encoder)
             case .sessionResize(let body):
                 try c.encode("session.resize", forKey: .type)
@@ -6742,6 +7378,32 @@ public enum Wire {
         }
     }
 
+    /// A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events.
+    public struct ServerToClientSessionEvents: Codable, Hashable, Sendable {
+        public var machine: String
+        public var id: String
+        public var events: [SessionEvent]
+        public var backfill: Bool
+        public var nextSeq: UInt64
+
+        public init(machine: String, id: String, events: [SessionEvent] = [], backfill: Bool, nextSeq: UInt64) {
+            self.machine = machine
+            self.id = id
+            self.events = events
+            self.backfill = backfill
+            self.nextSeq = nextSeq
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            machine = try c.decode(String.self, forKey: .machine)
+            id = try c.decode(String.self, forKey: .id)
+            events = try c.decodeIfPresent([SessionEvent].self, forKey: .events) ?? []
+            backfill = try c.decode(Bool.self, forKey: .backfill)
+            nextSeq = try c.decode(UInt64.self, forKey: .nextSeq)
+        }
+    }
+
     /// The statistics `stats.get` asked for, to that connection only.
     public struct ServerToClientStats: Codable, Hashable, Sendable {
         public var summary: StatsSummary
@@ -6815,6 +7477,7 @@ public enum Wire {
         case integrationsUpdated(ServerToClientIntegrationsUpdated)
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
+        case sessionEvents(ServerToClientSessionEvents)
         case stats(ServerToClientStats)
         case checkLog(ServerToClientCheckLog)
         case error(ServerToClientError)
@@ -6854,6 +7517,7 @@ public enum Wire {
             case "integrations.updated": self = .integrationsUpdated(try ServerToClientIntegrationsUpdated(from: decoder))
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
+            case "session.events": self = .sessionEvents(try ServerToClientSessionEvents(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
             case "checkLog": self = .checkLog(try ServerToClientCheckLog(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
@@ -6947,6 +7611,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .sessionEnded(let body):
                 try c.encode("session.ended", forKey: .type)
+                try body.encode(to: encoder)
+            case .sessionEvents(let body):
+                try c.encode("session.events", forKey: .type)
                 try body.encode(to: encoder)
             case .stats(let body):
                 try c.encode("stats", forKey: .type)
