@@ -9,7 +9,9 @@ struct RobotFace: View {
     var animated = true
     var online = false
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.robotsHoldStill) private var holdStill
+    private var reduceMotion: Bool { systemReduceMotion || holdStill }
     /// Each face gets its own rhythm, so a list of bots doesn't blink in unison.
     @State private var period = Double.random(in: RobotFace.blinkPeriods)
     @State private var offset = Double.random(in: 0..<RobotFace.blinkPeriods.upperBound)
@@ -26,10 +28,9 @@ struct RobotFace: View {
         requested && !reduceMotion && size >= detailThreshold
     }
 
-    /// Whether the eyes are shut at `time`: one blink of `blinkDuration` at the start of every period.
-    static func isBlinking(at time: TimeInterval, period: Double, offset: Double) -> Bool {
-        let phase = (time + offset).truncatingRemainder(dividingBy: period)
-        return (phase < 0 ? phase + period : phase) < blinkDuration
+    /// Which blink `time` falls in: it ticks over at the start of each period, when the eyes shut.
+    nonisolated static func blinkCount(at time: TimeInterval, period: Double, offset: Double) -> Int {
+        Int(((time + offset) / period).rounded(.down))
     }
 
     private var detail: Bool { Self.showsDetail(size: size) }
@@ -88,10 +89,16 @@ struct RobotFace: View {
 
         if moving {
             TimelineView(BlinkSchedule(period: period, offset: offset)) { context in
-                let shut = Self.isBlinking(at: context.date.timeIntervalSinceReferenceDate, period: period, offset: offset)
-                pair
-                    .scaleEffect(x: 1, y: shut ? 0.1 : 1, anchor: UnitPoint(x: 0.5, y: y / s))
-                    .animation(.easeInOut(duration: Self.blinkDuration / 2), value: shut)
+                // Each new blink plays shut-then-open as one animation, so the eyes always open again even if
+                // the timeline is late. Only at the live cadence; a background window's timeline is too coarse.
+                let count = context.cadence == .live
+                    ? Self.blinkCount(at: context.date.timeIntervalSinceReferenceDate, period: period, offset: offset) : 0
+                pair.keyframeAnimator(initialValue: 1.0, trigger: count) { content, scaleY in
+                    content.scaleEffect(x: 1, y: scaleY, anchor: UnitPoint(x: 0.5, y: y / s))
+                } keyframes: { _ in
+                    CubicKeyframe(0.1, duration: Self.blinkDuration / 2)
+                    CubicKeyframe(1, duration: Self.blinkDuration / 2)
+                }
             }
         } else {
             pair
@@ -107,6 +114,11 @@ struct RobotFace: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Keeps robots still as Reduce Motion does, for previews and recordings (the system setting is read-only).
+    @Entry var robotsHoldStill = false
+}
+
 /// The robot's grin: a shallow curve, open at the top.
 private struct Smile: Shape {
     func path(in rect: CGRect) -> Path {
@@ -117,22 +129,25 @@ private struct Smile: Shape {
     }
 }
 
-/// Wakes the timeline only to shut the eyes and to open them again, not every frame.
+/// Wakes the timeline once per blink, not every frame.
 struct BlinkSchedule: TimelineSchedule {
     let period: Double
     let offset: Double
 
     func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        // In low-frequency mode (a window in the background) the robot just keeps its eyes open.
+        if mode == .lowFrequency {
+            var given = false
+            return AnyIterator { defer { given = true }; return given ? nil : startDate }
+        }
+        // Now, without a catch-up blink, then the start of each blink after it.
         let start = startDate.timeIntervalSinceReferenceDate
-        // The start of the blink at or before `startDate`, then shut and open in turn.
-        var blink = start - ((start + offset).truncatingRemainder(dividingBy: period))
-        var opening = false
+        var count = RobotFace.blinkCount(at: start, period: period, offset: offset)
+        var first = true
         return AnyIterator {
-            defer {
-                if opening { blink += period }
-                opening.toggle()
-            }
-            return Date(timeIntervalSinceReferenceDate: opening ? blink + RobotFace.blinkDuration : blink)
+            if first { first = false; return startDate }
+            count += 1
+            return Date(timeIntervalSinceReferenceDate: Double(count) * period - offset)
         }
     }
 }

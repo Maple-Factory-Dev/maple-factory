@@ -19,23 +19,30 @@ import Testing
         #expect(!RobotFace.animates(size: 28, reduceMotion: false, requested: false))
     }
 
-    @Test func blinksOncePerPeriodForABriefMoment() {
-        let period = 4.0
-        #expect(RobotFace.isBlinking(at: 8.05, period: period, offset: 0))
-        #expect(!RobotFace.isBlinking(at: 8.2, period: period, offset: 0))
-        #expect(!RobotFace.isBlinking(at: 10, period: period, offset: 0))
-        // A different offset puts another bot's blink elsewhere.
-        #expect(!RobotFace.isBlinking(at: 8.05, period: period, offset: 1.5))
-        #expect(RobotFace.isBlinking(at: 10.55, period: period, offset: 1.5))
+    @Test func blinkCountTicksOverOncePerPeriod() {
+        #expect(RobotFace.blinkCount(at: 7.9, period: 4, offset: 0) == 1)
+        #expect(RobotFace.blinkCount(at: 8, period: 4, offset: 0) == 2)
+        #expect(RobotFace.blinkCount(at: 11.9, period: 4, offset: 0) == 2)
+        // Another bot's offset moves its blink elsewhere.
+        #expect(RobotFace.blinkCount(at: 8, period: 4, offset: 1.5) == 2)
+        #expect(RobotFace.blinkCount(at: 10.5, period: 4, offset: 1.5) == 3)
     }
 
-    @Test func scheduleWakesToShutAndOpenTheEyes() {
-        let schedule = BlinkSchedule(period: 4, offset: 0)
+    @Test func scheduleWakesOncePerBlinkWithNoCatchUp() {
+        // Starts now, open-eyed, so bots don't all blink together when they appear.
         let start = Date(timeIntervalSinceReferenceDate: 9)
-        let dates = Array(schedule.entries(from: start, mode: .normal).prefix(4)).map(\.timeIntervalSinceReferenceDate)
-        #expect(dates.count == 4)
-        let expected = [8, 8 + RobotFace.blinkDuration, 12, 12 + RobotFace.blinkDuration]
-        for (date, want) in zip(dates, expected) { #expect(abs(date - want) < 1e-9) }
+        let dates = Array(BlinkSchedule(period: 4, offset: 0).entries(from: start, mode: .normal).prefix(4))
+            .map(\.timeIntervalSinceReferenceDate)
+        #expect(dates == [9, 12, 16, 20])
+        let shifted = Array(BlinkSchedule(period: 4, offset: 1.5).entries(from: start, mode: .normal).prefix(3))
+            .map(\.timeIntervalSinceReferenceDate)
+        #expect(shifted == [9, 10.5, 14.5])
+    }
+
+    @Test func backgroundWindowsKeepTheEyesOpen() {
+        let start = Date(timeIntervalSinceReferenceDate: 9)
+        let dates = Array(BlinkSchedule(period: 4, offset: 0).entries(from: start, mode: .lowFrequency))
+        #expect(dates == [start])
     }
 
     @Test func peopleShowInitialsAndBotsShowTheRobot() {
