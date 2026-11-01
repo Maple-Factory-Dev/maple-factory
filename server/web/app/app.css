@@ -691,3 +691,5 @@ details.fold[open] > .card { margin-top: 10px; }
 .findings-follow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; font-size: 13px; }
 .findings-follow a.artifact-chip { text-decoration: none; color: inherit; }
 .card.findings .actions { margin-top: 12px; }
+/* Clear of the sticky bar when "Open full report" (or an artifact link) scrolls here. */
+#s-artifacts { scroll-margin-top: 64px; }
