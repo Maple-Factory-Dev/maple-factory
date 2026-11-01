@@ -460,6 +460,24 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .risk-check-body > input { width: 100%; }
 .risk-dot-low { background: var(--merged); } .risk-dot-medium { background: var(--awaiting); } .risk-dot-high { background: var(--cancelled); }
 .risk-factor .lvl { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+/* A task's risk: the header pill and the Risk card's budget meters, classifier and sign-off rows. */
+.pill.risk-pill.risk-low { color: var(--merged); background: color-mix(in srgb, var(--merged) 12%, transparent); }
+.pill.risk-pill.risk-medium { color: var(--awaiting); background: color-mix(in srgb, var(--awaiting) 14%, transparent); }
+.pill.risk-pill.risk-high { color: var(--cancelled); background: color-mix(in srgb, var(--cancelled) 12%, transparent); }
+h2 .risk-pill { vertical-align: 2px; margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.risk-card { display: flex; flex-direction: column; gap: 14px; }
+.risk-block + .risk-block { border-top: 1px solid var(--stroke); padding-top: 12px; }
+.risk-label { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.risk-budget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.risk-meter-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+.risk-bar { height: 6px; border-radius: 99px; background: var(--fill); overflow: hidden; }
+.risk-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--merged); }
+.risk-meter.over .risk-bar > span { background: var(--cancelled); }
+.risk-classifier .row { gap: 8px; }
+.risk-reasons { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+.risk-sign { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 14px; }
+.risk-sign > span:first-child { color: var(--muted); }
+@media (max-width: 560px) { .risk-budget { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
 @media (max-width: 600px) {
   .settings { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .set-nav { position: static; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 6px; border-bottom: 1px solid var(--stroke); }
