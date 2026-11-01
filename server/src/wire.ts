@@ -1654,9 +1654,27 @@ export interface SessionEvent_Turn {
   message?: string | null;
 }
 
+/** A transcript record the runner doesn't map (a new or unknown type, or a line that isn't JSON), passed through so the stream never breaks; the view can show it plainly or hide it. */
+export interface SessionEvent_Other {
+  type: "other";
+  /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+  id: string;
+  session: string;
+  /** The event's place in the session; strictly increasing, no reuse. */
+  seq: number;
+  /** Unix ms, from the transcript record's own timestamp. */
+  at: number;
+  /** claude or codex. */
+  agent: string;
+  /** The record's type (and subtype), or `invalid` for a line that isn't JSON. */
+  kind: string;
+  /** A short cut of the record, for a plain row. */
+  summary: string;
+}
+
 /** One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md. */
-export type SessionEvent = SessionEvent_User | SessionEvent_Assistant | SessionEvent_Thinking | SessionEvent_ToolCall | SessionEvent_ToolResult | SessionEvent_Prompt | SessionEvent_PromptResolved | SessionEvent_Turn;
-export const SessionEventTypes = ["user","assistant","thinking","tool.call","tool.result","prompt","prompt.resolved","turn"] as const;
+export type SessionEvent = SessionEvent_User | SessionEvent_Assistant | SessionEvent_Thinking | SessionEvent_ToolCall | SessionEvent_ToolResult | SessionEvent_Prompt | SessionEvent_PromptResolved | SessionEvent_Turn | SessionEvent_Other;
+export const SessionEventTypes = ["user","assistant","thinking","tool.call","tool.result","prompt","prompt.resolved","turn","other"] as const;
 
 /** A message, pasted then submitted with Enter. */
 export interface SessionInput_Text {

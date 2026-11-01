@@ -1259,6 +1259,11 @@ export const unions: Record<string, Union> = {
         fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", state: "TurnState", usage: "TurnUsage?", message: "string?" },
         fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex." },
       },
+      other: {
+        doc: "A transcript record the runner doesn't map (a new or unknown type, or a line that isn't JSON), passed through so the stream never breaks; the view can show it plainly or hide it.",
+        fields: { id: "string", session: "uuid", seq: "u64", at: "u64", agent: "string", kind: "string", summary: "string" },
+        fieldDocs: { id: "Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.", seq: "The event's place in the session; strictly increasing, no reuse.", at: "Unix ms, from the transcript record's own timestamp.", agent: "claude or codex.", kind: "The record's type (and subtype), or `invalid` for a line that isn't JSON.", summary: "A short cut of the record, for a plain row." },
+      },
     },
   },
   SessionInput: {

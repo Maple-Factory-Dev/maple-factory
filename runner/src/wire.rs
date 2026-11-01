@@ -2688,6 +2688,23 @@ pub enum SessionEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// A transcript record the runner doesn't map (a new or unknown type, or a line that isn't JSON), passed through so the stream never breaks; the view can show it plainly or hide it.
+    #[serde(rename = "other")]
+    Other {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        /// The record's type (and subtype), or `invalid` for a line that isn't JSON.
+        kind: String,
+        /// A short cut of the record, for a plain row.
+        summary: String,
+    },
 }
 
 /// What `session.sendInput` types into a session. The runner sends it with tmux send-keys, the same as typing in the terminal, so anything the TUI takes works (`/rc` included).

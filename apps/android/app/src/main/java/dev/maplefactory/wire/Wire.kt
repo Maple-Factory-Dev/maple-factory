@@ -2357,6 +2357,23 @@ sealed class SessionEvent {
         val usage: dev.maplefactory.wire.TurnUsage? = null,
         val message: String? = null,
     ) : SessionEvent()
+    /** A transcript record the runner doesn't map (a new or unknown type, or a line that isn't JSON), passed through so the stream never breaks; the view can show it plainly or hide it. */
+    @Serializable
+    data class Other(
+        /** Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe. */
+        val id: String,
+        val session: String,
+        /** The event's place in the session; strictly increasing, no reuse. */
+        val seq: Long,
+        /** Unix ms, from the transcript record's own timestamp. */
+        val at: Long,
+        /** claude or codex. */
+        val agent: String,
+        /** The record's type (and subtype), or `invalid` for a line that isn't JSON. */
+        val kind: String,
+        /** A short cut of the record, for a plain row. */
+        val summary: String,
+    ) : SessionEvent()
     /** A message this build doesn't know yet; newer servers and runners may send them. */
     data class Unknown(val type: String) : SessionEvent()
 
@@ -2370,6 +2387,7 @@ sealed class SessionEvent {
             "prompt" -> json.decodeFromJsonElement(Prompt.serializer(), body)
             "prompt.resolved" -> json.decodeFromJsonElement(PromptResolved.serializer(), body)
             "turn" -> json.decodeFromJsonElement(Turn.serializer(), body)
+            "other" -> json.decodeFromJsonElement(Other.serializer(), body)
             else -> Unknown(type)
         }
 
@@ -2382,6 +2400,7 @@ sealed class SessionEvent {
             is Prompt -> "prompt" to json.encodeToJsonElement(Prompt.serializer(), value)
             is PromptResolved -> "prompt.resolved" to json.encodeToJsonElement(PromptResolved.serializer(), value)
             is Turn -> "turn" to json.encodeToJsonElement(Turn.serializer(), value)
+            is Other -> "other" to json.encodeToJsonElement(Other.serializer(), value)
             is Unknown -> value.type to null
         }
     }

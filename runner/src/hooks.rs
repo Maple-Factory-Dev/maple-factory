@@ -461,6 +461,16 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
                 crate::usage::poke_codex();
                 crate::costs::poke();
             }
+            // The native view: learn (or follow) the transcript, and add what only hooks know.
+            let payload = &event["payload"];
+            if let Some(path) = payload.get("transcript_path").and_then(Value::as_str).filter(|p| !p.is_empty()) {
+                sessions.set_transcript(id, agent, PathBuf::from(path));
+            }
+            let native = native_hooks(agent, payload, classify(agent, payload).as_ref());
+            if !native.is_empty() {
+                let sessions = sessions.clone();
+                tokio::spawn(async move { sessions.push_hook_events(id, native).await });
+            }
             if let Some(activity) = classify(agent, &event["payload"]) {
                 let summary = matches!(activity, Activity::Done(_)).then(|| summary(agent, &event["payload"])).flatten();
                 let payload = &event["payload"];
@@ -475,6 +485,76 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             }
         });
     }
+}
+
+/// What a hook tells the native view that the transcript doesn't (docs/native-session-view.md).
+#[derive(Debug, Clone, PartialEq)]
+pub enum NativeHook {
+    /// A turn is running; `call` is the tool a PreToolUse is about to run, in case it asks first.
+    Running { call: Option<String> },
+    /// A permission menu is showing; its options come from the pane.
+    Permission { text: String },
+    /// Whatever prompt was showing is answered or gone.
+    Resolved,
+}
+
+pub fn native_hooks(agent: &str, payload: &Value, activity: Option<&Activity>) -> Vec<NativeHook> {
+    let text = |key: &str| payload.get(key).and_then(Value::as_str).map(str::to_string);
+    if agent == "claude" {
+        return match payload.get("hook_event_name").and_then(Value::as_str).unwrap_or("") {
+            "UserPromptSubmit" => vec![NativeHook::Resolved, NativeHook::Running { call: None }],
+            "PreToolUse" => vec![NativeHook::Running { call: text("tool_use_id") }],
+            "PostToolUse" | "PostToolUseFailure" | "Stop" => vec![NativeHook::Resolved],
+            "Notification" => {
+                let message = text("message").unwrap_or_default();
+                let permission = payload.get("notification_type").and_then(Value::as_str) == Some("permission_prompt")
+                    || (payload.get("notification_type").is_none() && message.contains("permission"));
+                if permission { vec![NativeHook::Permission { text: message }] } else { vec![] }
+            }
+            _ => vec![],
+        };
+    }
+    // Codex (and others): only the activity its hooks give.
+    match activity {
+        Some(Activity::Waiting(msg)) => vec![NativeHook::Permission { text: msg.clone().unwrap_or_else(|| "Codex is asking for approval".into()) }],
+        Some(Activity::Working(_)) | Some(Activity::Started(_)) => vec![NativeHook::Resolved, NativeHook::Running { call: None }],
+        Some(Activity::Done(_)) => vec![NativeHook::Resolved],
+        None => vec![],
+    }
+}
+
+/// The options of the menu at the bottom of a pane: its numbered lines ("❯ 1. Yes"), each picked
+/// by its number, with the "No…" option picked by Escape (what `task.answerPrompt` presses to deny).
+pub fn menu_options(lines: &[String]) -> Vec<crate::wire::PromptOption> {
+    use crate::wire::{PromptChoice, PromptOption};
+    let mut block: Vec<(String, String)> = vec![];
+    for line in lines {
+        let t = line.trim().trim_start_matches(['❯', '>', '›', '│', ' ']).trim();
+        let parsed = t.split_once(". ").filter(|(n, _)| !n.is_empty() && n.len() <= 2 && n.chars().all(|c| c.is_ascii_digit()));
+        if let Some((n, label)) = parsed {
+            // A "1." starts a new menu: only the last one on screen counts.
+            if n == "1" {
+                block.clear();
+            }
+            block.push((n.to_string(), label.trim().to_string()));
+        }
+    }
+    let mut out: Vec<PromptOption> = vec![];
+    let mut has_no = false;
+    for (n, label) in block {
+        let plain = label.trim_end_matches("(esc)").trim().to_string();
+        if plain == "No" || plain.starts_with("No,") || plain.starts_with("No ") {
+            has_no = true;
+            out.push(PromptOption { key: "Escape".into(), label: "No".into(), choice: Some(PromptChoice::No) });
+        } else {
+            let choice = (n == "1" && plain.starts_with("Yes")).then_some(PromptChoice::Yes);
+            out.push(PromptOption { key: n, label: plain, choice });
+        }
+    }
+    if !has_no {
+        out.push(PromptOption { key: "Escape".into(), label: "No".into(), choice: Some(PromptChoice::No) });
+    }
+    out
 }
 
 /// `maple-runner hook <agent> [payload]`, run by an agent inside a session.
@@ -680,6 +760,50 @@ mod tests {
         assert_eq!((s7.state, s7.question.as_ref(), s7.summary.as_deref(), s7.message.as_deref()), ("done", None, Some("All green."), None));
         let s8 = next_state(Some(&s7), Activity::Started("next".into()).update(), Some("  ".into()), None, None, 8);
         assert_eq!((s8.task.as_deref(), s8.summary.as_deref()), (Some("next"), Some("All green.")));
+    }
+
+    #[test]
+    fn notification_fixture_becomes_a_prompt_and_its_resolution() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../protocol/fixtures/session-events");
+        let payload: Value = serde_json::from_str(&std::fs::read_to_string(format!("{dir}/claude.notification.json")).unwrap()).unwrap();
+        let want: Value = serde_json::from_str(&std::fs::read_to_string(format!("{dir}/claude.notification.expected.json")).unwrap()).unwrap();
+        let hooks = native_hooks("claude", &payload, None);
+        let [NativeHook::Permission { text }] = hooks.as_slice() else { panic!("{hooks:?}") };
+        // The pane as Claude Code draws its Bash permission menu.
+        let pane: Vec<String> = [
+            " Bash command",
+            "   npm test",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. Yes, and don't ask again for this command",
+            "   3. No, and tell Claude what to do differently (esc)",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let session = Uuid::parse_str(payload["session_id"].as_str().unwrap()).unwrap();
+        let mut stream = crate::events::EventStream::new(session, "claude", None, None);
+        // The transcript's 9 events came first.
+        let transcript = std::fs::read_to_string(format!("{dir}/claude.jsonl")).unwrap();
+        let mut st = crate::transcript::ClaudeState::new(session);
+        stream.push(transcript.lines().flat_map(|l| crate::transcript::parse_claude(l, &mut st)).collect());
+        let prompt = crate::wire::SessionEvent::Prompt {
+            id: String::new(),
+            session,
+            seq: 0,
+            at: 1792000000000,
+            agent: "claude".into(),
+            kind: crate::wire::PromptKind::Permission,
+            text: text.clone(),
+            options: menu_options(&pane),
+            call_id: None,
+        };
+        let mut got = stream.open_prompt(prompt, None);
+        got.extend(stream.resolve(Some("1".into())));
+        let mut got = serde_json::to_value(&got).unwrap();
+        got[1]["at"] = json!(1792000004000u64);
+        assert_eq!(got, want);
+        assert_eq!(native_hooks("claude", &json!({"hook_event_name": "Notification", "notification_type": "idle_prompt"}), None), vec![]);
     }
 
     #[test]
