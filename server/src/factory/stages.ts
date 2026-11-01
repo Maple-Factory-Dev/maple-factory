@@ -82,3 +82,17 @@ export function inferStages(task: Task): StageSpan[] {
   // A span that ended the moment it began says nothing: drop it (but keep terminal markers).
   return out.filter((s) => s.to == null || s.to > s.from || TERMINAL.includes(s.stage));
 }
+
+/**
+ * Time a task sat idle before anyone asked it to move: its drafting and backlog spans, an open one
+ * counted up to `until`. Terminal markers count nothing. Matches the apps' TaskTimes.idle.
+ */
+export function idleMs(stages: readonly StageSpan[], until: number): number {
+  let total = 0;
+  for (const s of stages) {
+    if (s.stage !== "drafting" && s.stage !== "backlog") continue;
+    const to = Math.min(s.to ?? until, until);
+    if (to > s.from) total += to - s.from;
+  }
+  return total;
+}

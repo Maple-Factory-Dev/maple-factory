@@ -4,6 +4,7 @@
 
 import type { Finding, Goal, StatsCostRow, StatsCount, StatsFindings, StatsManualMerges, StatsSummary, Task } from "../wire.ts";
 import type { SessionCostRow } from "./store.ts";
+import { idleMs, inferStages } from "./stages.ts";
 
 export type StatKind =
   | "plan.submitted" // detail: version
@@ -20,7 +21,7 @@ export type StatKind =
   | "session.restarted" // detail: cause
   | "session.ended" // detail: cause (an end nobody chose that stopped the task)
   | "review.requested" // detail: round; actor: the person who asked for another review round
-  | "merged" // detail: auto, cycleMs, why (manualReason, or none for the factory's own), level, heldBy
+  | "merged" // detail: auto, cycleMs, idleMs (drafting + backlog), activeMs (cycleMs − idleMs), why (manualReason, or none for the factory's own), level, heldBy
   | "cancelled" // detail: state
   | "closed" // detail: proposed (finished with nothing to merge)
   | "budget.reached" // detail: over (time or cost), minutes, costUsd, allowMinutes, allowCostUsd
@@ -85,7 +86,9 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
   if (task.state === "merged") {
     const at = [...events].reverse().find((e) => e.text.startsWith("merged into"))?.at ?? task.updatedAt;
     const auto = events.some((e) => e.who === "factory" && e.text.startsWith("auto-merged"));
-    add(at, "merged", null, auto ? "factory" : null, { auto, cycleMs: at - task.createdAt, ...(auto ? {} : { why: "unknown" }) });
+    const cycleMs = at - task.createdAt;
+    const idle = Math.min(cycleMs, idleMs(task.stages?.length ? task.stages : inferStages(task), at));
+    add(at, "merged", null, auto ? "factory" : null, { auto, cycleMs, idleMs: idle, activeMs: cycleMs - idle, ...(auto ? {} : { why: "unknown" }) });
   }
   if (task.state === "cancelled") add(task.updatedAt, "cancelled", null, null, {});
   if (task.state === "closed") add(task.updatedAt, "closed", null, null, {});
@@ -200,6 +203,7 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     steers: of("steer", list).length,
     reviewRounds: of("review.round", list).length,
     cycleMedianMs: median(of("merged", list).map((e) => num(e.detail.cycleMs))),
+    ...splitMedians(of("merged", list)),
   })).sort((a, b) => b.merged - a.merged || b.tasks - a.tasks);
 
   const agentRows = group(events, (e) => byId.get(e.task)?.agent ?? "unknown").map(([agent, list]) => ({
@@ -255,6 +259,7 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
       planVersions: of("plan.submitted").length,
       approvals: approvals.length,
       cycleMedianMs: median(merges.map((e) => num(e.detail.cycleMs))),
+      ...splitMedians(merges),
       handOpenMedianMs: median(resolved.map((e) => num(e.detail.openMs))),
       answerMedianMs: median(of("question.answered").map((e) => num(e.detail.waitMs))),
       firstTryApproval: rate(approvalVersions.map((v) => v === 1)),
@@ -479,6 +484,15 @@ function group<T>(list: T[], key: (x: T) => string): [string, T[]][] {
     m.set(k, [...(m.get(k) ?? []), x]);
   }
   return [...m.entries()];
+}
+
+/** Active and idle medians over the merges that carry the split (rows from before it don't). */
+function splitMedians(merges: StatEvent[]): { activeCycleMedianMs: number | null; idleMedianMs: number | null } {
+  const split = merges.filter((e) => typeof e.detail.idleMs === "number");
+  return {
+    activeCycleMedianMs: median(split.map((e) => num(e.detail.activeMs ?? num(e.detail.cycleMs) - num(e.detail.idleMs)))),
+    idleMedianMs: median(split.map((e) => num(e.detail.idleMs))),
+  };
 }
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);

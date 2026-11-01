@@ -28,7 +28,7 @@ import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFI
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
 import { findingDetail, manualReason, type StatKind } from "./stats.ts";
-import { trackStage } from "./stages.ts";
+import { idleMs, trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
@@ -2339,7 +2339,10 @@ export class Engine {
     const held = before.mergeHeld != null && before.mergeHeld === (task.pr.head ?? task.pr.branch);
     const why = manualReason(a, this.store.policy(), { by, held });
     const heldBy = held ? ([...task.events].reverse().find((e) => e.text.startsWith("held the auto-merge"))?.who ?? null) : null;
-    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt, ...(why ? { why, level: a.level } : {}), ...(heldBy ? { heldBy } : {}) }, by);
+    const mergedAt = now();
+    const cycleMs = mergedAt - task.createdAt;
+    const idle = Math.min(cycleMs, idleMs(task.stages ?? [], mergedAt));
+    this.stat(task, "merged", { auto: by === "factory", cycleMs, idleMs: idle, activeMs: cycleMs - idle, ...(why ? { why, level: a.level } : {}), ...(heldBy ? { heldBy } : {}) }, by);
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base}${msg.commit ? ` (${msg.commit.slice(0, 7)})` : ""}`);
