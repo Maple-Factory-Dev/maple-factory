@@ -264,6 +264,9 @@ impl Sessions {
             format!("{}={id}", hooks::SESSION_ENV),
             "-e".into(),
             format!("{}={}", hooks::SOCKET_ENV, self.hooks.socket.display()),
+            // So repo scripts can run `"$MAPLE_RUNNER" lock …` without the runner on PATH (locks.rs).
+            "-e".into(),
+            format!("{}={}", hooks::RUNNER_ENV, self.hooks.exe),
         ];
         let mut meta = vec![("@maple_agent", agent_name.to_string()), ("@maple_cwd", cwd.to_string()), ("@maple_started", started_at.to_string())];
         if let Some((web, api)) = ports {
@@ -491,6 +494,35 @@ impl Sessions {
         if let Some(activity) = s.agent.as_ref().map(wire_activity) {
             self.emit(Outbound::Wire(wire::RunnerMessage::SessionActivity { id, activity }));
         }
+    }
+
+    /// Shows a resource lock wait (locks.rs) as the session's activity, without changing what its hooks
+    /// said: while queued, "Waiting for <name> · N ahead (…)"; once granted or given up, the hooks'
+    /// own activity again ("Got <name>" after a grant, if that has no line, so the wait line clears).
+    pub fn show_lock_wait(&self, id: Uuid, name: &str, wait: crate::locks::Wait) {
+        use crate::locks::Wait;
+        let inner = self.inner.lock().unwrap();
+        let Some(s) = inner.get(&id) else { return };
+        let mut activity = s.agent.as_ref().map(wire_activity).unwrap_or(wire::Activity {
+            state: wire::AgentState::Working,
+            message: None,
+            step: None,
+            summary: None,
+            question: None,
+            at: 0,
+        });
+        activity.at = stamp();
+        match wait {
+            Wait::Queued(line) => {
+                activity.state = wire::AgentState::Working;
+                activity.step = Some(line);
+            }
+            Wait::Granted if activity.step.is_none() && activity.message.is_none() => activity.step = Some(format!("Got {name}")),
+            Wait::Granted => {}
+            Wait::Left if s.agent.is_none() => return,
+            Wait::Left => {}
+        }
+        self.emit(Outbound::Wire(wire::RunnerMessage::SessionActivity { id, activity }));
     }
 
     /// For thumbnails: the session's output counter, and whether its agent is busy (working or

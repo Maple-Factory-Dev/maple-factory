@@ -56,6 +56,16 @@ struct Lock {
     queue: VecDeque<Entry>,
 }
 
+/// What a waiting session shows (sessions.rs `show_lock_wait`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Wait {
+    /// Its waiting line (`waiting_line`).
+    Queued(String),
+    Granted,
+    /// It gave up its place before getting a slot.
+    Left,
+}
+
 /// Where a ticket is now.
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
