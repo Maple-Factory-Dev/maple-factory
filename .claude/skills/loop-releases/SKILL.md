@@ -24,25 +24,26 @@ yes first.
 
 ## Where each component's last release is
 
-Compare trees, not commit messages: a commit can land while a build runs.
+Compare trees, not commit messages: a commit can land while a build runs. Every base is a tag on origin,
+set by the release scripts themselves, so a fresh checkout or CI finds the same bases (RELEASING.md).
 
 | Component | Paths | Last released at |
 |---|---|---|
-| runner | `runner/` | the last commit whose subject starts `Runner 0.` (`git log -1 --format=%H --grep='^Runner 0\.'`) |
+| runner | `runner/` | the tag `runner-v<version in runner/Cargo.toml>` (pushed by release-runner.mjs `--to feed`); for a release from before those tags, the last commit whose subject starts `Runner 0.` (`git log -1 --format=%H --grep='^Runner 0\.'`) |
 | server | `server/` | the tag `server-v<version in server/package.json>` (pushed by release-server.mjs) |
-| mac | `apps/mac/` except `apps/mac/releases/` and `apps/mac/version.json` | the local tag `mac-built-<version in apps/mac/version.json>` |
-| site | `apps/site/` | the local tag `site-deployed` |
+| mac | `apps/mac/` except `apps/mac/releases/` and `apps/mac/version.json` | the tag `mac-v<version in apps/mac/version.json>` (pushed by release.mjs `build`); for a release from before those tags, the old local tag `mac-built-<version>` |
+| site | `apps/site/` | the tag `site-deployed` on origin (moved by release-site.mjs) |
 | protocol | `protocol/` | not released on its own: a change there means the runner, server and Mac all changed |
 
-`git diff --quiet <base> HEAD -- <paths>` says whether one changed. If a local tag is missing (a new
-checkout), say so and ask before releasing that component instead of guessing.
+`git diff --quiet <base> HEAD -- <paths>` says whether one changed. If a base is missing from origin and
+has no fallback above, say so and ask before releasing that component instead of guessing.
 
 `installer/` (the `maple-factory` npm package) is not released by this loop. If it changed, say so in the
 report.
 
 ## The round
 
-1. `git fetch -q origin`. If `HEAD..origin/main` is empty and the working tree has no leftovers from a
+1. `git fetch -q --tags --force origin` (`--force` so a moved `site-deployed` comes along). If `HEAD..origin/main` is empty and the working tree has no leftovers from a
    release, say "nothing new" and stop.
 2. **Never fast-forward while a Mac build stage is running** in the background: it builds from the
    working tree. Wait for its build stage to finish (later stages only package the built app). Then
@@ -107,30 +108,29 @@ beta.json, changes.json).` and takes several minutes (Linux targets build in Doc
 
 The app bundles the runner, so its build waits for a runner release in progress.
 
-1. `git tag -f mac-built-<v> HEAD` (the tree this release is built from).
-2. `node apps/mac/scripts/release.mjs new <patch+1>` (bumps `version.json` and its build number).
-3. Write `apps/mac/releases/<v>/notes.md`. Keep the frontmatter `new` wrote and replace the body with
-   `### Added` / `### Changed` / `### Fixed` bullets from the commits since the last `mac-built` tag. Write
-   them for the people using the app: what they can do now, with the UI's own names in bold.
-4. **Run the stages one by one, not `ship`**: `ship` waits at a "Go ahead? [y/N]" prompt and silently
-   builds nothing in the background.
-   ```
-   for s in build notarize dmg sign appcast publish; do node apps/mac/scripts/release.mjs $s <v> || exit 1; done
-   ```
-   In the background, after the runner's `Released maple-runner` line if one is running.
-5. Check the log shows `✓ <v> is live` and that
+1. `node apps/mac/scripts/release.mjs new <patch+1>` (bumps `version.json` and its build number).
+2. Write `apps/mac/releases/<v>/notes.md`. Keep the frontmatter `new` wrote and replace the body with
+   `### Added` / `### Changed` / `### Fixed` bullets from the commits since the last release's tag
+   (`mac-v<previous>`). Write them for the people using the app: what they can do now, with the UI's own
+   names in bold.
+3. `node apps/mac/scripts/release.mjs ship <v> --yes` in the background, after the runner's
+   `Released maple-runner` line if one is running. `--yes` answers both confirmations (without it, `ship`
+   fails at once when stdin isn't a terminal). Its build stage tags `mac-v<v>` at HEAD and pushes it: no
+   tag step by hand. A stage that fails late can be run again on its own (`notarize`, `dmg`, `sign`,
+   `appcast`, `publish`).
+4. Check the log shows `✓ <v> is live` and that
    `curl -s "https://updates.maplefactory.dev/appcast.xml?x=$RANDOM"` lists `<v>` first. Only then
    commit `apps/mac/releases/<v>` (with `release.json`) and `apps/mac/version.json` as
    `Mac app <v> released: <what changed>`, and push with retries.
-6. Commits that landed during the build aren't in it: next round releases them.
+5. Commits that landed during the build aren't in it: next round releases them.
 
 ### Site
 
 If `apps/site/` changed since `site-deployed`:
-1. `cd apps/site && npx wrangler deploy` (wrangler comes from the root workspace's node_modules).
-2. Check `https://maplefactory.dev/` and the changed pages return 200, and `/download/mac` redirects (302)
-   to the newest stable dmg.
-3. `git tag -f site-deployed HEAD`.
+1. `node scripts/release-site.mjs`. It deploys with `npx --no-install wrangler deploy` (wrangler comes from
+   the root workspace's node_modules), checks `/` is 200 and `/download/mac` redirects (302), then tags
+   `site-v<short sha>`, moves `site-deployed`, and pushes both.
+2. Check the changed pages return 200 too.
 
 ## Report
 
