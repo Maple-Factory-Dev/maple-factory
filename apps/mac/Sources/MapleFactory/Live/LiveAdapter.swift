@@ -123,6 +123,7 @@ import SwiftUI
         task.areas = t.risk?.areas ?? []
         task.riskFactors = (t.risk?.factors ?? []).map(riskFactor)
         task.plannedRisk = t.risk.map { riskLevel($0.level) } ?? .low
+        task.classifierReview = t.classification?.humanReview ?? false
         task.pr = t.pr.map { pr in
             var request = PullRequest(number: pr.number.int, state: prState(pr.state), checks: pr.checks.map(check))
             request.link = pr.url.flatMap(URL.init(string:))

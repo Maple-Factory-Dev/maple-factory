@@ -186,13 +186,13 @@ function checksSection(checks: string[]): string {
 /** The org's risk classifier, when its policy turns it on: the reviewer grades the diff against the org's prompt. */
 function classifySection(c: RiskClassifier | null): string {
   if (!c?.enabled || !c.prompt.trim()) return "";
-  return `
-## Risk classification
+  return `## Risk classification
 Your org asks you to grade this change's risk against its own guidance:
 
 ${c.prompt.trim()}
 
 Judge the diff against that guidance and fill \`classification\` in \`submit_review\` (required): \`level\` low, medium or high; \`humanReview\` true when a person should review the change before it merges; \`reasons\`, a short line each. It can only add sign-off, never remove what the policy already asks for.
+
 `;
 }
 
@@ -221,8 +221,7 @@ Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/
 2. Are the proofs real? One check per Done when item: does the evidence actually show it? An ATTESTED item was signed off by a person themselves: accept it as proven, don't flag its proof as not real.
 3. Code: bugs, missing cases, risky changes.
 
-${classifySection(classifier)}
-Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
+${classifySection(classifier)}Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
 List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
 ${ARTIFACTS(task, "reviewer")}
 ${THREADS}`;

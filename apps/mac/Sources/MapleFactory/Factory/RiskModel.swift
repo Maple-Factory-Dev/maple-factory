@@ -91,7 +91,10 @@ struct RiskPolicy {
         let sizeLevel: RiskLevel = overFiles || overLines ? .medium : .low
         let level = max(areaLevel, sizeLevel, task.plannedRisk)
         // A goal that has accepted risk up to this level lets the factory merge without human review.
-        let accepted = acceptance.map { level <= $0.autoMergeUpTo } ?? false
+        // The classifier asking for a person's review overrides acceptance, as on the server.
+        let humanReview = classifierEnabled && task.classifierReview
+        let accepted = !humanReview && (acceptance.map { level <= $0.autoMergeUpTo } ?? false)
+        let reviews = accepted ? 0 : finalReviews[level, default: 1]
 
         return RiskAssessment(
             level: level,
@@ -103,8 +106,8 @@ struct RiskPolicy {
             overFiles: overFiles,
             overLines: overLines,
             approvals: planApprovals[level, default: 1],
-            reviews: accepted ? 0 : finalReviews[level, default: 1],
-            autoMerge: autoMerges && (accepted || autoMerge[level, default: false]),
+            reviews: humanReview ? max(reviews, 1) : reviews,
+            autoMerge: !humanReview && autoMerges && (accepted || autoMerge[level, default: false]),
             acceptance: accepted && autoMerges ? acceptance : nil,
             suggestedSplit: overFiles || overLines
                 ? max(Int((Double(footprint.files) / Double(maxFiles)).rounded(.up)),
