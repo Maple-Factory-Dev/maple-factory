@@ -83,6 +83,7 @@ struct GoalEditorSheet: View {
                             .foregroundStyle(.red)
                             .accessibilityIdentifier("goalEditor.failure")
                     }
+                    .accessibilityElement(children: .contain)
                 }
                 basics
                 code
@@ -269,6 +270,7 @@ struct GoalEditorSheet: View {
                 .lineLimit(2...8)
                 .accessibilityIdentifier("goalEditor.prompt.\(id)")
         }
+        .accessibilityElement(children: .contain)
     }
 
     // MARK: Saving
