@@ -1436,6 +1436,20 @@ data class FollowUp(
     val task: String? = null,
 )
 
+/** What a research task found: the answer to the question its brief asked, instead of a pull request. */
+@Serializable
+data class Findings(
+    /** The short answer, in Markdown: a few paragraphs at most. */
+    val answer: String,
+    /** The id of the Markdown artifact with the full report; none: the answer is all there is. */
+    val report: String? = null,
+    /** Drafts it filed for work the research turned up, in order. */
+    val followUps: List<String> = emptyList(),
+    /** Who answered it: the planner's agent. */
+    val by: String,
+    val at: Long,
+)
+
 /** One reason a change has the risk level it has. */
 @Serializable
 data class RiskFactor(
@@ -1590,6 +1604,8 @@ data class Task(
     val mergeForecast: MergeForecast? = null,
     /** The risk classifier's grade of the built change, when the org's policy turns it on. */
     val classification: Classification? = null,
+    /** A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server). */
+    val findings: Findings? = null,
 )
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */

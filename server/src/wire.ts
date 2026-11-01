@@ -773,6 +773,19 @@ export interface FollowUp {
   task?: string | null;
 }
 
+/** What a research task found: the answer to the question its brief asked, instead of a pull request. */
+export interface Findings {
+  /** The short answer, in Markdown: a few paragraphs at most. */
+  answer: string;
+  /** The id of the Markdown artifact with the full report; none: the answer is all there is. */
+  report?: string | null;
+  /** Drafts it filed for work the research turned up, in order. */
+  followUps: string[];
+  /** Who answered it: the planner's agent. */
+  by: string;
+  at: number;
+}
+
 /** One reason a change has the risk level it has. */
 export interface RiskFactor {
   source: RiskFactorSource;
@@ -919,6 +932,8 @@ export interface Task {
   mergeForecast?: MergeForecast | null;
   /** The risk classifier's grade of the built change, when the org's policy turns it on. */
   classification?: Classification | null;
+  /** A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server). */
+  findings?: Findings | null;
 }
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
