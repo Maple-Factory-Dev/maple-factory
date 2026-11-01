@@ -93,8 +93,10 @@ export function policyFromForm(form, base) {
     scoutItems: clampInt(form.scoutItems, 1, 10, base.scoutItems ?? 3),
     taskMinutes: taskMinutes(form.taskMinutes, base.taskMinutes ?? 60),
     taskCostUsd: taskCost(form.taskCostUsd, base.taskCostUsd ?? null),
-    classifier: form.classifierOn === undefined ? base.classifier ?? null
-      : form.classifierOn || form.classifierPrompt?.trim() ? { enabled: !!form.classifierOn, prompt: (form.classifierPrompt ?? "").trim() } : null,
+    // Off with no prompt keeps it left out (or clears one that was there); a form without the fields keeps base's.
+    ...(form.classifierOn === undefined ? {}
+      : form.classifierOn || form.classifierPrompt?.trim() ? { classifier: { enabled: !!form.classifierOn, prompt: (form.classifierPrompt ?? "").trim() } }
+      : base.classifier ? { classifier: null } : {}),
   };
 }
 
