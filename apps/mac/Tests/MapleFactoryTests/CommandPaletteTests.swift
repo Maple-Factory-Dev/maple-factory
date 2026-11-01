@@ -92,4 +92,28 @@ struct CommandPaletteTests {
         #expect(CommandPaletteModel.fieldScore("pskey", "passkey") != nil)
         #expect(CommandPaletteModel.fieldScore("pk", "a long title with p and much later k") == nil)
     }
+
+    @Test func themeFindsTheThreeThemeActions() {
+        #expect(items("theme", .actions) == [.action(.themeSystem), .action(.themeLight), .action(.themeDark)])
+        #expect(items("appearance", .actions) == [.action(.themeSystem), .action(.themeLight), .action(.themeDark)])
+        #expect(Set(items("mode", .actions)) == [.action(.themeSystem), .action(.themeLight), .action(.themeDark)])
+    }
+
+    @Test func darkAndLightRankTheirThemeFirst() {
+        #expect(items("dark", .actions).first == .action(.themeDark))
+        #expect(items("light", .actions).first == .action(.themeLight))
+    }
+
+    @Test func themeActionsMapToAppearance() {
+        #expect(PaletteAction.themeSystem.appearance == .system)
+        #expect(PaletteAction.themeLight.appearance == .light)
+        #expect(PaletteAction.themeDark.appearance == .dark)
+        #expect(PaletteAction.newTask.appearance == nil)
+        #expect(PaletteAction.themeDark.icon == Appearance.dark.icon)
+        #expect(PaletteAction.themeDark.shortcut.isEmpty)
+    }
+
+    @Test func themeActionsStayOutOfTheDefaults() {
+        #expect(items("", .actions) == [.action(.newTask), .action(.newGoal), .action(.settings)])
+    }
 }

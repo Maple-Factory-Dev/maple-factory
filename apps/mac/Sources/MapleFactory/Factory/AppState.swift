@@ -1129,7 +1129,16 @@ final class AppState {
         case .action(.toggleSidebar): toggleSidebar()
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
+        case .action(let action):
+            if let appearance = action.appearance { setAppearance(appearance) }
         }
+    }
+
+    /// The same `appearance` default the sidebar's toggle writes; set on NSApp too so it changes at once.
+    func setAppearance(_ appearance: Appearance) {
+        AppDefaults.set(appearance.rawValue, forKey: "appearance")
+        NSApp.appearance = appearance.nsAppearance
+        showToast("Theme: \(appearance.rawValue.capitalized)", icon: appearance.icon)
     }
 
     /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.
