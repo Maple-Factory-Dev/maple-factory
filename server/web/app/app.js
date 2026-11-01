@@ -521,6 +521,7 @@ const prioritySelect = (value, onpick, attrs = {}) => h("select", { ...attrs, on
 /** Its state's title, or "Merging…" / "In merge queue…" (the server's live log while it merges, or waits in
  *  GitHub's merge queue) or the auto-merge countdown. */
 function stateLabel(t) {
+  if (t.findings && t.state === "closed") return "Answered";
   if (t.state !== "reviewing") return STATE_TITLE[t.state];
   if (t.liveLog === "Merging…" || t.liveLog === "In merge queue…") return t.liveLog;
   if (t.mergeAt != null && !t.hand) return h("span", { "data-merge-at": t.mergeAt }, countdownLabel(t.mergeAt));
@@ -568,6 +569,8 @@ function tasksView() {
   const backlog = [...state.tasks.values()].filter((t) => t.state === "backlog").sort((a, b) => b.updatedAt - a.updatedAt);
   const active = [...state.tasks.values()].filter((t) => !["drafting", "backlog", "merged", "cancelled", "closed"].includes(t.state) && !isQueued(t)).sort((a, b) => b.updatedAt - a.updatedAt);
   const merged = [...state.tasks.values()].filter((t) => t.state === "merged").sort((a, b) => b.updatedAt - a.updatedAt);
+  // Research tasks: closed with an answer instead of a pull request.
+  const answered = [...state.tasks.values()].filter((t) => t.state === "closed" && t.findings).sort((a, b) => b.updatedAt - a.updatedAt);
   const done = merged.slice(0, Math.max(10, mergedShown));
   return h("div", {},
     h("h1", {}, "Tasks"),
@@ -576,6 +579,7 @@ function tasksView() {
     backlog.length > 0 && section("tasks:backlog", "Backlog", backlog.length, () => h("div", { class: "list" }, backlog.map((t) => row(t, t.plan.length ? `plan v${t.planVersion} · parked ${ago(t.updatedAt)}` : `not planned · parked ${ago(t.updatedAt)}`)))),
     section("tasks:active", "In flight", active.length, () =>
       active.length ? h("div", { class: "list" }, active.map((t) => row(t, t.waiting || stateLabel(t)))) : h("div", { class: "card empty" }, icon("list-checks", { size: 28 }), "Nothing in flight.")),
+    answered.length > 0 && section("tasks:answered", "Answered", answered.length, () => h("div", { class: "list" }, answered.slice(0, 10).map((t) => row(t, `${stateLabel(t)} ${ago(t.findings.at)}`)))),
     (done.length > 0 || hasOlder()) && section("tasks:merged", mergedShown ? "Merged" : "Recently merged", null, () => h("div", {},
       h("div", { class: "list" }, done.map((t) => row(t, `merged ${ago(t.updatedAt)}`))),
       merged.length > done.length
@@ -949,6 +953,7 @@ function taskView(id, artifact = null) {
     promptCard(t),
     t.hand && handCard(t),
     t.question && !t.hand && questionCard(t),
+    t.findings && findingsCard(t),
     // A backlog task that was never planned is still a draft to refine.
     (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login ? draftEditor(t) : decisions(t),
     t.effort && effortCard(t),
@@ -956,6 +961,40 @@ function taskView(id, artifact = null) {
       h("button", { class: `tab${tab === "overview" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "overview"); render(); } }, icon("file-text"), "Overview"),
       t.diff && h("button", { class: `tab${tab === "diff" ? " on" : ""}`, onclick: () => { taskTabs.set(id, "diff"); render(); } }, icon("git-pull-request"), `Diff +${t.diff.added} −${t.diff.removed}`)),
     tab === "diff" ? diffView(t) : overview(t));
+}
+
+// ---- a research task's answer, instead of a pull request ----
+
+/** The planner's answer, a link to its full report and the follow-ups it filed, above everything else. */
+function findingsCard(t) {
+  const f = t.findings;
+  const report = f.report && (t.artifacts ?? []).find((a) => a.id === f.report);
+  const openReport = () => {
+    pickedArtifact.set(t.id, report.id);
+    taskTabs.set(t.id, "overview");
+    render();
+    requestAnimationFrame(() => document.getElementById("s-artifacts")?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  };
+  const makeTask = () => {
+    // New task, with the answer as its brief; coming back keeps what's typed (key "" is a plain new task).
+    Object.assign(composer, { key: "", title: t.title, goal: t.goal, repo: t.repo ?? null, brief: `${f.answer}\n\nFrom ${t.id}'s findings.`, shareable: false, note: null, busy: false, priority: null });
+    location.hash = "#/new";
+  };
+  const followUps = f.followUps ?? [];
+  return h("div", { class: "card findings", id: "s-findings" },
+    h("div", { class: "findings-head" }, icon("lightbulb", { size: 16 }), h("b", {}, "Findings"),
+      h("span", { class: "muted" }, ` · answered by ${f.by} ${ago(f.at)}`)),
+    h("div", { class: "findings-answer" }, markdown(f.answer, h, knownTasks())),
+    followUps.length > 0 && h("div", { class: "findings-follow" },
+      h("span", { class: "muted" }, `Follow-up draft${followUps.length === 1 ? "" : "s"}`),
+      followUps.map((id) => {
+        const x = state.tasks.get(id);
+        return h("a", { class: "artifact-chip", href: `#/t/${id}`, title: x?.title ?? id },
+          h("span", { class: "mono" }, id), x && ` ${x.title}`, x && x.state !== "drafting" && h("span", { class: "muted" }, ` · ${stateLabel(x)}`));
+      })),
+    h("div", { class: "actions" },
+      report && h("button", { class: "btn", onclick: openReport }, icon("file-text"), "Open full report"),
+      h("button", { class: "btn", onclick: makeTask }, icon("plus"), "Make a task from this")));
 }
 
 // ---- efforts: tasks in a goal that share a name, like an epic ----
@@ -1028,7 +1067,7 @@ function effortCard(t) {
       h("div", { style: "flex:1;min-width:0" },
         h("div", { class: "title" }, x.title),
         h("div", { class: "sub" }, h("span", { class: "mono" }, x.id), x.id === t.id ? " · this task" : "")),
-      h("span", { class: `pill s-${x.state}` }, STATE_TITLE[x.state]))))];
+      h("span", { class: `pill s-${x.state}` }, stateLabel(x)))))];
 }
 
 function handCard(t) {

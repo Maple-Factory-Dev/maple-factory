@@ -682,3 +682,12 @@ details.fold > summary .fold-title { font-size: 12px; text-transform: uppercase;
 details.fold > summary .muted { overflow: hidden; text-overflow: ellipsis; }
 details.fold[open] > .card { margin-top: 10px; }
 .review-summary .row { flex-wrap: wrap; gap: 12px; }
+
+/* A research task's answer (findings), above everything else on its page. */
+.card.findings { margin-top: 16px; border-color: color-mix(in srgb, var(--accent) 30%, var(--stroke)); background: color-mix(in srgb, var(--accent) 4%, var(--card)); }
+.findings-head { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.findings-head b { color: var(--text); }
+.findings-answer { margin-top: 8px; }
+.findings-follow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; font-size: 13px; }
+.findings-follow a.artifact-chip { text-decoration: none; color: inherit; }
+.card.findings .actions { margin-top: 12px; }
