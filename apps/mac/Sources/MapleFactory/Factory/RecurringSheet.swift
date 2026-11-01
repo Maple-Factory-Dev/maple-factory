@@ -2,7 +2,8 @@ import SwiftUI
 import MapleKit
 
 /// Recurring tasks: a goal's saved prompts that start a new task every N hours, days or weeks, on
-/// whichever runner is online. The goal header's ⋯ menu opens the sheet that lists them.
+/// whichever runner is online; or once, at a set time (a scheduled task). The goal header's Scheduled
+/// button opens the sheet that lists them.
 enum RecurringSheetDemo {
     /// Headless `-actions 'recurring'` opens the sheet; `recurring:edit` opens it on its first item's editor.
     static let demoOpen = Notification.Name("RecurringSheet.demoOpen")
@@ -68,8 +69,8 @@ struct RecurringSheet: View {
         let items = client.recurring(goalId: goal.id)
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Recurring tasks").font(.system(size: 17, weight: .semibold))
-                Text("Each run starts a new task in \(goal.name) from its prompt and sends it to planning, on whichever runner is online. A run is skipped while the last one's task is still open.")
+                Text("Recurring / Scheduled").font(.system(size: 17, weight: .semibold))
+                Text("Each run starts a new task in \(goal.name) from its prompt and sends it to planning, on whichever runner is online. A repeating run is skipped while the last one's task is still open; a one-off runs once at its time and is then removed.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -79,8 +80,8 @@ struct RecurringSheet: View {
             if items.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "clock.arrow.circlepath").font(.system(size: 26)).foregroundStyle(Theme.textMuted)
-                    Text("Nothing recurring yet").foregroundStyle(Theme.textMuted)
-                    Text("Say, a weekly check for dependency updates.").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    Text("Nothing recurring or scheduled yet").foregroundStyle(Theme.textMuted)
+                    Text("Say, a weekly check for dependency updates, or a task prepped to run tomorrow morning.").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(30)
@@ -97,7 +98,7 @@ struct RecurringSheet: View {
             }
             Divider()
             HStack {
-                Button { editing = Self.blank(goal: goal) } label: { Label("Add Recurring Task", systemImage: "plus") }
+                Button { editing = Self.blank(goal: goal) } label: { Label("Add…", systemImage: "plus") }
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
@@ -107,6 +108,11 @@ struct RecurringSheet: View {
 
     private func row(_ item: Wire.Recurring) -> some View {
         HStack(alignment: .top, spacing: 12) {
+            Image(systemName: item.once == true ? "calendar" : "clock.arrow.circlepath")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 18)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(item.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
@@ -118,10 +124,12 @@ struct RecurringSheet: View {
                             .foregroundStyle(Theme.textMuted)
                     }
                 }
-                Text(Self.everyText(item) + (item.repo.map { " · \($0)" } ?? "") + " · \(item.agent)")
+                Text((item.once == true ? "Once · \(Self.when(item.firstAt))" : Self.everyText(item)) + (item.repo.map { " · \($0)" } ?? "") + " · \(item.agent)")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
                 HStack(spacing: 10) {
-                    Text(item.paused ? "Not running" : "Next: \(Self.when(item.nextAt))")
+                    if item.once != true || item.paused {
+                        Text(item.paused ? "Not running" : "Next: \(Self.when(item.nextAt))")
+                    }
                     if let last = item.lastTask {
                         Button {
                             dismiss()
@@ -142,7 +150,7 @@ struct RecurringSheet: View {
                 iconButton(item.paused ? "play.fill" : "pause.fill", help: item.paused ? "Resume" : "Pause") {
                     client.pauseRecurring(id: item.id, paused: !item.paused)
                 }
-                iconButton("bolt.fill", help: "Run now: start a task now; the schedule stays") { client.runRecurringNow(id: item.id) }
+                iconButton("bolt.fill", help: item.once == true ? "Run now: start its task now, instead of at its time" : "Run now: start a task now; the schedule stays") { client.runRecurringNow(id: item.id) }
                 iconButton("pencil", help: "Edit") { editing = item }
                 iconButton("trash", help: "Delete") { client.deleteRecurring(id: item.id) }
             }
@@ -201,6 +209,7 @@ struct RecurringEditor: View {
     @State private var item: Wire.Recurring
     @State private var count: Int
     @State private var first: Date
+    @State private var once: Bool
     let done: (Wire.Recurring?) -> Void
 
     init(goal: Wire.Goal, item: Wire.Recurring, done: @escaping (Wire.Recurring?) -> Void) {
@@ -209,6 +218,7 @@ struct RecurringEditor: View {
         _item = State(initialValue: item)
         _count = State(initialValue: max(1, Int(item.every / RecurringSheet.unitMinutes(item.unit))))
         _first = State(initialValue: Date(timeIntervalSince1970: Double(item.firstAt) / 1000))
+        _once = State(initialValue: item.once == true)
     }
 
     private var repos: [String] { goal.repos }
@@ -216,7 +226,7 @@ struct RecurringEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(item.id.isEmpty ? "New recurring task" : "Edit recurring task")
+            Text(item.id.isEmpty ? (once ? "New scheduled task" : "New recurring task") : (once ? "Edit scheduled task" : "Edit recurring task"))
                 .font(.system(size: 17, weight: .semibold))
                 .padding(20)
             Divider()
@@ -240,21 +250,33 @@ struct RecurringEditor: View {
                     Text("Claude").tag("claude")
                     Text("Codex").tag("codex")
                 }
-                HStack {
-                    Stepper(value: $count, in: 1...(item.unit == .hours ? 168 : item.unit == .days ? 90 : 52)) {
-                        Text("Every \(count)")
-                    }
-                    Picker("", selection: $item.unit) {
-                        Text(count == 1 ? "hour" : "hours").tag(Wire.RecurringUnit.hours)
-                        Text(count == 1 ? "day" : "days").tag(Wire.RecurringUnit.days)
-                        Text(count == 1 ? "week" : "weeks").tag(Wire.RecurringUnit.weeks)
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                Picker("Repeats", selection: $once) {
+                    Text("Once at a time").tag(true)
+                    Text("Repeating").tag(false)
                 }
-                DatePicker("First run", selection: $first)
-                Text("Later runs keep this time of day in \(item.timeZone), across daylight saving.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                if !once {
+                    HStack {
+                        Stepper(value: $count, in: 1...(item.unit == .hours ? 168 : item.unit == .days ? 90 : 52)) {
+                            Text("Every \(count)")
+                        }
+                        Picker("", selection: $item.unit) {
+                            Text(count == 1 ? "hour" : "hours").tag(Wire.RecurringUnit.hours)
+                            Text(count == 1 ? "day" : "days").tag(Wire.RecurringUnit.days)
+                            Text(count == 1 ? "week" : "weeks").tag(Wire.RecurringUnit.weeks)
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                }
+                if once {
+                    DatePicker("Runs at", selection: $first, in: Date()...)
+                    Text("It starts one task then, and is removed; the task is the record.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                } else {
+                    DatePicker("First run", selection: $first)
+                    Text("Later runs keep this time of day in \(item.timeZone), across daylight saving.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                }
             }
             .formStyle(.grouped)
             Divider()
@@ -267,6 +289,7 @@ struct RecurringEditor: View {
                     saved.title = saved.title.trimmingCharacters(in: .whitespaces)
                     saved.every = UInt32(count) * RecurringSheet.unitMinutes(saved.unit)
                     saved.firstAt = UInt64(first.timeIntervalSince1970 * 1000)
+                    saved.once = once ? true : nil
                     if repos.count <= 1 { saved.repo = nil }
                     done(saved)
                 }

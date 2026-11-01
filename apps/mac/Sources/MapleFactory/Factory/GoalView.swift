@@ -141,14 +141,15 @@ struct GoalView: View {
                 Spacer()
                 let live = state.isLive ? client.goal(named: goal.name) : nil
                 if let live {
+                    ScheduledButton(count: client.recurring(goalId: live.id).count) { showingRecurring = true }
+                        .recurringSheet(goal: live, isPresented: $showingRecurring)
+                        .padding(.trailing, 6)
                     ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
                         .padding(.trailing, 8)
                 }
                 Menu {
                     if let live {
                         Button("Edit Goal…") { state.goalSheet = .edit(live.id) }
-                        let recurring = client.recurring(goalId: live.id).count
-                        Button(recurring > 0 ? "Recurring Tasks (\(recurring))…" : "Recurring Tasks…") { showingRecurring = true }
                     }
                     Button("Risk Policy…") { showingRiskPolicy = true }
                     if live != nil {
@@ -163,7 +164,6 @@ struct GoalView: View {
                 .fixedSize()
                 .help("More goal actions")
                 .popover(isPresented: $showingRiskPolicy, arrowEdge: .bottom) { RiskPolicyEditor() }
-                .recurringSheet(goal: live, isPresented: $showingRecurring)
                 .padding(.trailing, 10)
                 Facepile(people: contributors, size: 24)
                     .help("\(contributors.count) people · \(Set(allTasks.compactMap(\.agent?.id)).count) agents")
@@ -202,6 +202,43 @@ struct FollowStarButton: View {
         .help(following ? "Following: in your sidebar. Click to unfollow." : "Follow: put this goal in your sidebar")
         .accessibilityLabel("Follow goal")
         .accessibilityValue(following ? "On" : "Off")
+    }
+}
+
+/// Scheduled: the goal's recurring and one-off scheduled tasks, with how many there are. Opens the
+/// Recurring / Scheduled sheet.
+struct ScheduledButton: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "clock").font(.system(size: 11))
+                Text("Scheduled")
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .frame(minWidth: 16, minHeight: 15)
+                        .background(Capsule().fill(Theme.stroke))
+                        .foregroundStyle(Theme.textMuted)
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Theme.fill)
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(count == 1 ? "1 recurring or scheduled task" : "\(count) recurring or scheduled tasks")
     }
 }
 
