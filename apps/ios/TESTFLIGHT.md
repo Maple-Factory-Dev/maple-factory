@@ -39,8 +39,10 @@ Manage Certificates → + → Apple Distribution.
 - Bundle ID: Explicit, `dev.maplefactory.ios`
 - Capabilities: none needed (the app uses no push, iCloud or app groups yet).
 
-(The first `testflight.sh` run with `-allowProvisioningUpdates` can register it too, but doing it here
-makes 1.3 possible.)
+`testflight.sh` runs with `-allowProvisioningUpdates`, so it registers the ID and makes the profiles itself
+when the account allows. On 2026-10-31 the first `--no-upload` run did exactly that, making "iOS Team Store
+Provisioning Profile: dev.maplefactory.ios", so check the list and skip this step if the ID is already there.
+1.3 needs the ID registered.
 
 ### 1.3 Create the app in App Store Connect
 
