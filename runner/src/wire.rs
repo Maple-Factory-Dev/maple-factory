@@ -3164,6 +3164,11 @@ pub enum ClientMessage {
     TaskRerunChecks {
         id: String,
     },
+    /// Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.
+    #[serde(rename = "task.recheckGitHub")]
+    TaskRecheckGitHub {
+        id: String,
+    },
     /// Run one of the pull request's CI checks again, by name.
     #[serde(rename = "task.rerunCheck")]
     TaskRerunCheck {

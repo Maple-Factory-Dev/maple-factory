@@ -2863,6 +2863,11 @@ sealed class ClientMessage {
     data class TaskRerunChecks(
         val id: String,
     ) : ClientMessage()
+    /** Read the pull request and its CI from GitHub again, for a webhook that didn't arrive. */
+    @Serializable
+    data class TaskRecheckGitHub(
+        val id: String,
+    ) : ClientMessage()
     /** Run one of the pull request's CI checks again, by name. */
     @Serializable
     data class TaskRerunCheck(
@@ -2993,6 +2998,7 @@ sealed class ClientMessage {
             "task.queue" -> json.decodeFromJsonElement(TaskQueue.serializer(), body)
             "task.rankDraft" -> json.decodeFromJsonElement(TaskRankDraft.serializer(), body)
             "task.rerunChecks" -> json.decodeFromJsonElement(TaskRerunChecks.serializer(), body)
+            "task.recheckGitHub" -> json.decodeFromJsonElement(TaskRecheckGitHub.serializer(), body)
             "task.rerunCheck" -> json.decodeFromJsonElement(TaskRerunCheck.serializer(), body)
             "task.checkLog" -> json.decodeFromJsonElement(TaskCheckLog.serializer(), body)
             "task.split" -> json.decodeFromJsonElement(TaskSplit.serializer(), body)
@@ -3072,6 +3078,7 @@ sealed class ClientMessage {
             is TaskQueue -> "task.queue" to json.encodeToJsonElement(TaskQueue.serializer(), value)
             is TaskRankDraft -> "task.rankDraft" to json.encodeToJsonElement(TaskRankDraft.serializer(), value)
             is TaskRerunChecks -> "task.rerunChecks" to json.encodeToJsonElement(TaskRerunChecks.serializer(), value)
+            is TaskRecheckGitHub -> "task.recheckGitHub" to json.encodeToJsonElement(TaskRecheckGitHub.serializer(), value)
             is TaskRerunCheck -> "task.rerunCheck" to json.encodeToJsonElement(TaskRerunCheck.serializer(), value)
             is TaskCheckLog -> "task.checkLog" to json.encodeToJsonElement(TaskCheckLog.serializer(), value)
             is TaskSplit -> "task.split" to json.encodeToJsonElement(TaskSplit.serializer(), value)

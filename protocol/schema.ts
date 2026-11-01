@@ -1468,6 +1468,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
+      "task.recheckGitHub": { doc: "Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.", fields: { id: "string" } },
       "task.rerunCheck": { doc: "Run one of the pull request's CI checks again, by name.", fields: { id: "string", check: "string" } },
       "task.checkLog": {
         doc: "The log of one of the pull request's CI checks, by name, answered with `checkLog` to that connection only.",

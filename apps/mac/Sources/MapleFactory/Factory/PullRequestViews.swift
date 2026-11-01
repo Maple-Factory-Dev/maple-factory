@@ -47,6 +47,10 @@ struct PullRequestCard: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
+                if !pr.isLocal, !task.state.isFinished {
+                    smallButton("Recheck", icon: "arrow.triangle.2.circlepath") { state.recheckGitHub(task.id) }
+                        .help("Read the pull request and its checks from GitHub again")
+                }
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(pr.checks.enumerated()), id: \.element.id) { index, check in
@@ -64,13 +68,19 @@ struct PullRequestCard: View {
                     Text("\(passed) of \(pr.checks.count) checks passed")
                         .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(failed.isEmpty ? Theme.textMuted : Theme.State.cancelled)
-                    Spacer()
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
                     if !failed.isEmpty, pr.state != .merged {
                         smallButton("Re-run failed", icon: "arrow.clockwise") { state.rerunFailedChecks(task.id) }
+                    }
+                    if pr.state != .merged, !pr.isLocal {
+                        smallButton("Recheck", icon: "arrow.triangle.2.circlepath") { state.recheckGitHub(task.id) }
+                            .help("Read the pull request and its checks from GitHub again")
                     }
                     Link(destination: pr.url.appending(path: "checks")) {
                         Text("All checks")
                             .font(.system(size: 11.5))
+                            .fixedSize()
                             .foregroundStyle(Theme.textMuted)
                     }
                 }
@@ -162,6 +172,8 @@ struct PullRequestCard: View {
         }
         .font(.system(size: 11.5, weight: .medium))
         .foregroundStyle(Theme.text)
+        .lineLimit(1)
+        .fixedSize()
         .padding(.horizontal, 8)
         .frame(height: 24)
         .background(
