@@ -213,7 +213,7 @@ pub fn parse_claude(line: &str, st: &mut ClaudeState) -> Vec<SessionEvent> {
     }
     let at = st.last_at;
     let id = s(&rec, "uuid").map(str::to_string).unwrap_or_else(|| format!("{session}:line:{}", st.line));
-    if CLAUDE_SKIP.contains(&ty.as_str()) {
+    if CLAUDE_SKIP.contains(&ty.as_str()) || ty.starts_with("api-request") {
         return vec![];
     }
     let cwd = s(&rec, "cwd");

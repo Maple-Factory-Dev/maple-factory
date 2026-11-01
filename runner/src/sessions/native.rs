@@ -272,3 +272,103 @@ mod tests {
         assert!(check_key(None, "prompt-2", "1").is_err());
     }
 }
+
+/// A live run against a real Claude Code session in tmux (`cargo test live_claude -- --ignored --nocapture`):
+/// the stream's backfill and live `session.events`, as the server would get them, and a slash command
+/// typed with send-keys the way `send_input` types it.
+#[cfg(test)]
+mod live {
+    use super::*;
+    use std::process::Command;
+
+    fn tmux(sock: &str, args: &[&str]) -> String {
+        String::from_utf8_lossy(&Command::new("tmux").arg("-L").arg(sock).args(args).output().unwrap().stdout).into_owned()
+    }
+
+    fn type_bytes(sock: &str, target: &str, data: &[u8]) {
+        let hex: Vec<String> = data.iter().map(|b| format!("{b:02x}")).collect();
+        let mut args = vec!["send-keys", "-t", target, "-H"];
+        args.extend(hex.iter().map(String::as_str));
+        tmux(sock, &args);
+    }
+
+    fn print_msg(stream: &EventStream, id: Uuid, events: Vec<SessionEvent>, backfill: bool, nonce: Option<String>) {
+        let msg = wire::RunnerMessage::SessionEvents {
+            id,
+            events,
+            backfill,
+            next_seq: stream.next_seq(),
+            epoch: stream.epoch.clone(),
+            nonce,
+            cursor: Some(stream.cursor()),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        let rows: Vec<String> = json["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                let what = ["text", "markdown", "kind", "state"].iter().find_map(|k| e[*k].as_str()).or_else(|| e["call"]["summary"].as_str()).unwrap_or("");
+                format!("    seq {} {}: {}", e["seq"], e["type"].as_str().unwrap(), what.chars().take(70).collect::<String>().replace('\n', " "))
+            })
+            .collect();
+        println!(
+            "→ server: session.events backfill={} nonce={} nextSeq={} epoch={} cursor={}\n{}",
+            json["backfill"],
+            json["nonce"],
+            json["nextSeq"],
+            json["epoch"],
+            json["cursor"]["token"].as_str().unwrap_or("").rsplit('/').next().unwrap(),
+            rows.join("\n")
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn live_claude() {
+        let cwd = std::env::var("LIVE_CWD").expect("LIVE_CWD");
+        let sock = "maple-mf200-live";
+        let id = Uuid::new_v4();
+        tmux(sock, &["new-session", "-d", "-s", "live", "-x", "160", "-y", "50", "-c", &cwd, "claude", "Reply with just the word ready."]);
+        let projects = PathBuf::from(std::env::var("HOME").unwrap()).join(".claude/projects").join(cwd.replace(['/', '.'], "-"));
+        let started = std::time::SystemTime::now();
+        // The transcript_path a hook would give: the session's file under ~/.claude/projects.
+        let find = move || {
+            std::fs::read_dir(&projects)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+                .find(|p| p.metadata().and_then(|m| m.modified()).is_ok_and(|m| m >= started))
+        };
+        let mut stream = EventStream::new(id, "claude", None, Some(Box::new(find)));
+        let wait = |stream: &mut EventStream, until: &dyn Fn(&SessionEvent) -> bool, secs: u64| -> Vec<SessionEvent> {
+            let mut got = vec![];
+            for _ in 0..secs * 4 {
+                std::thread::sleep(Duration::from_millis(250));
+                got.extend(stream.poll());
+                if got.iter().any(until) {
+                    break;
+                }
+            }
+            got
+        };
+        let got = wait(&mut stream, &|e| matches!(e, SessionEvent::Turn { state: TurnState::Done, .. }), 90);
+        println!("transcript: {}", stream.cursor().token.unwrap_or_default());
+        println!("{} events read before the subscribe", got.len());
+        // session.events.subscribe {nonce: "n-live-1"}: the backfill.
+        print_msg(&stream, id, stream.backfill(None, None, None), true, Some("n-live-1".into()));
+        // session.input {type: slash, command: "/context"}: typed, then Enter.
+        type_bytes(sock, "live", b"/context");
+        std::thread::sleep(ENTER_AFTER);
+        type_bytes(sock, "live", b"\r");
+        let live = wait(&mut stream, &|e| matches!(e, SessionEvent::User { text, .. } if text == "/context"), 30);
+        print_msg(&stream, id, live.clone(), false, None);
+        println!(
+            "pane after /context:\n{}",
+            tmux(sock, &["capture-pane", "-p", "-t", "live"]).lines().filter(|l| !l.trim().is_empty()).take(12).collect::<Vec<_>>().join("\n")
+        );
+        tmux(sock, &["kill-server"]);
+        assert!(live.iter().any(|e| matches!(e, SessionEvent::User { text, .. } if text == "/context")), "no /context user event");
+    }
+}
