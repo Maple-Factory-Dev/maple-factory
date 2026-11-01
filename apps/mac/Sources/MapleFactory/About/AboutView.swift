@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Maple Factory › About Maple Factory: the app on glass at the left (icon, version, the website and an
-/// update check), and a note from Andrea at the right, signed with the afomera.dev mountain.
+/// update check), and a note from Andrea at the right, signed with the full afomera.dev logo
+/// (the mountain and the pink "afomera" lettering), in its light or dark colours.
 struct AboutView: View {
     static let windowID = "about"
     static let size = CGSize(width: 560, height: 340)
@@ -18,6 +19,7 @@ struct AboutView: View {
     """
 
     @Bindable private var updater = Updater.shared
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 0) {
@@ -105,13 +107,11 @@ struct AboutView: View {
                     .font(.system(size: 20, weight: .medium, design: .serif))
                     .italic()
                     .foregroundStyle(Theme.text)
-                if let mark = Self.mountain {
-                    Image(nsImage: mark)
-                        .renderingMode(.template)
+                if let logo = Self.logo(dark: colorScheme == .dark) {
+                    Image(nsImage: logo)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(height: 24)
-                        .foregroundStyle(.primary)
+                        .frame(height: 36)
                         .accessibilityLabel("afomera.dev")
                 }
             }
@@ -152,13 +152,17 @@ struct AboutView: View {
         return "Version \(version) (build \(build))"
     }
 
-    /// The afomera.dev mountain, as a template so it takes the text colour in light and dark.
-    @MainActor static let mountain: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "afomera-mountain", withExtension: "svg"),
-              let image = NSImage(contentsOf: url) else { return nil }
-        image.isTemplate = true
-        return image
-    }()
+    /// The full afomera.dev logo in its own colours: a dark mountain in light mode, a white one in dark,
+    /// pink lettering in both. Not a template, so the pink survives.
+    @MainActor static func logo(dark: Bool) -> NSImage? { dark ? darkLogo : lightLogo }
+
+    @MainActor private static let lightLogo = loadLogo("afomera-logo-light")
+    @MainActor private static let darkLogo = loadLogo("afomera-logo-dark")
+
+    private static func loadLogo(_ name: String) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "svg") else { return nil }
+        return NSImage(contentsOf: url)
+    }
 
     private static var year: Int { Calendar.current.component(.year, from: .now) }
 }
