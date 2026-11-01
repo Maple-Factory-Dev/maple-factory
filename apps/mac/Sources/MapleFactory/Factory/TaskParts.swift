@@ -94,7 +94,7 @@ struct TaskOwnership: View {
     var body: some View {
         HStack(spacing: 8) {
             StateBadge(state: task.state)
-            OwnerMenu(task: task, avatarSize: avatarSize, spacing: 8)
+            OwnerMenu(task: task, avatarSize: avatarSize, spacing: 8, demoAnchor: true)
             if let agent = task.agent {
                 Image(systemName: "arrow.right")
                     .font(.system(size: 9, weight: .semibold))
@@ -108,29 +108,39 @@ struct TaskOwnership: View {
     }
 }
 
-/// A task's owner (avatar, then "You" or their first name). While the task is open the name opens a menu
-/// to take it over or give it to a teammate; once it's merged, closed or cancelled it's plain text.
+/// A task's owner (avatar, then "You" or their first name). While the task is open the name opens the
+/// people picker (AssignPopover) to give it to a teammate, or only to take it over when you can't
+/// reassign it; once it's merged, closed or cancelled, or it's yours and you can't, it's plain text.
 struct OwnerMenu: View {
+    @Environment(AppState.self) private var appState
     let task: FactoryTask
     var avatarSize: CGFloat = 18
     var showAvatar = true
     var spacing: CGFloat = 6
+    /// The one a demo script's `assignask:<id>` opens (the header's chip, not the Detail panel's row too).
+    var demoAnchor = false
+    @State private var picking = false
+    @State private var frame: CGRect = .zero
+
+    private var mine: Bool { task.owner.github == FactoryData.me.github }
 
     var body: some View {
         HStack(spacing: spacing) {
             if showAvatar { AgentAvatar(agent: task.owner, size: avatarSize) }
-            let name = Text(task.owner.id == FactoryData.me.id ? "You" : task.owner.firstName)
+            let name = Text(mine ? "You" : task.owner.firstName)
                 .foregroundStyle(Theme.text)
-            if !task.state.isFinished {
-                // Picks its owner: take it over, or (its owner, an admin) give it to a teammate.
-                Menu {
-                    TaskAssignButtons(task: task)
-                } label: {
-                    name
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Change who owns it")
+            if !task.state.isFinished && (!mine || appState.canReassign(task.id)) {
+                let open = Binding(get: { picking || (demoAnchor && appState.assigningTask == task.id) },
+                                   set: { if !$0 { picking = false; if appState.assigningTask == task.id { appState.assigningTask = nil } } })
+                Button { picking = true } label: { name }
+                    .buttonStyle(.borderless)
+                    .fixedSize()
+                    .help("Change who owns it")
+                    .background(GeometryReader { g in
+                        Color.clear.onAppear { frame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in frame = f }
+                    })
+                    .popover(isPresented: open, arrowEdge: .bottom) { AssignPopover(task: task) }
+                    .onChange(of: open.wrappedValue) { _, now in if Headless.isOn { Headless.popoverAnchor = now ? frame : nil } }
             } else {
                 name
             }
@@ -205,10 +215,12 @@ struct TaskActionsMenu<Label: View>: View {
     @State private var confirmCancel = false
     @State private var rename = false
     @State private var scheduling = false
+    @State private var assigning = false
 
     var body: some View {
         Menu {
-            TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
+            TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true },
+                              assign: { assigning = true })
         } label: {
             label
         }
@@ -217,6 +229,7 @@ struct TaskActionsMenu<Label: View>: View {
         .fixedSize()
         .help("Task actions")
         .popover(isPresented: $scheduling, arrowEdge: .bottom) { SchedulePopover(task: task) }
+        .popover(isPresented: $assigning, arrowEdge: .bottom) { AssignPopover(task: task) }
         .cancelTaskConfirmation(task: task, isPresented: Binding(
             get: { confirmCancel || appState.confirmingCancel == task.id },
             set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
@@ -237,6 +250,8 @@ struct TaskActionButtons: View {
     @Binding var rename: Bool
     /// Shows the Schedule… popover; without it there's no Schedule….
     var schedule: (() -> Void)? = nil
+    /// Shows the Assign… people picker; without it there's no Assign… (Take it over stays).
+    var assign: (() -> Void)? = nil
 
     private var open: Bool { !task.state.isFinished }
 
@@ -287,7 +302,7 @@ struct TaskActionButtons: View {
             Divider()
         }
         if open {
-            TaskAssignButtons(task: task)
+            TaskAssignButtons(task: task, assign: assign)
             TaskMoveGoalMenu(task: task)
             Divider()
             Button { rename = true } label: { Label("Rename…", systemImage: "pencil") }
@@ -306,10 +321,12 @@ struct TaskActionButtons: View {
     }
 }
 
-/// Take it over (when it isn't yours) and, for its owner or an admin, Assign to ▸ the org's members.
+/// Take it over (when it isn't yours) and, for its owner or an admin, Assign…, which opens the people
+/// picker (AssignPopover) where the caller can anchor one.
 struct TaskAssignButtons: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
+    var assign: (() -> Void)? = nil
 
     private var mine: Bool { task.owner.github == FactoryData.me.github }
 
@@ -317,27 +334,9 @@ struct TaskAssignButtons: View {
         if !mine, let me = FactoryData.me.github {
             Button { appState.assign(task.id, to: me) } label: { Label("Take it over", systemImage: "person.crop.circle.badge.checkmark") }
         }
-        if appState.canReassign(task.id) {
-            let choices = Self.choices(for: task)
-            Menu {
-                ForEach(choices, id: \.person.id) { choice in
-                    let person = choice.person
-                    // The current owner is checked; picking them again changes nothing.
-                    Toggle(person.github == FactoryData.me.github ? "\(person.name) (you)" : person.name, isOn: Binding(
-                        get: { choice.current },
-                        set: { _ in appState.assign(task.id, to: person.github!) }
-                    ))
-                }
-            } label: {
-                Label("Assign to", systemImage: "person.badge.plus")
-            }
-            .disabled(!choices.contains { !$0.current })
+        if let assign, appState.canReassign(task.id) {
+            Button(action: assign) { Label("Assign…", systemImage: "person.badge.plus") }
         }
-    }
-
-    /// Everyone you can give `task` to: the teammates with a GitHub login, its current owner checked.
-    static func choices(for task: FactoryTask) -> [(person: Person, current: Bool)] {
-        FactoryData.people.filter { $0.github != nil }.map { ($0, $0.github == task.owner.github) }
     }
 }
 

@@ -586,7 +586,8 @@ private struct ColumnCards<Content: View>: View {
 extension View {
     /// A task row's Cancel… and Rename… alerts and its Schedule… popover, each in the view graph only
     /// while it's up. On every card they cost each board update and layout pass three presentations a card.
-    func taskPresentations(task: FactoryTask, confirmCancel: Binding<Bool>, rename: Binding<Bool>, scheduling: Binding<Bool>) -> some View {
+    func taskPresentations(task: FactoryTask, confirmCancel: Binding<Bool>, rename: Binding<Bool>, scheduling: Binding<Bool>,
+                           assigning: Binding<Bool> = .constant(false)) -> some View {
         background {
             if confirmCancel.wrappedValue {
                 WhilePresented(isPresented: confirmCancel) { Color.clear.cancelTaskConfirmation(task: task, isPresented: $0) }
@@ -596,6 +597,9 @@ extension View {
             }
             if scheduling.wrappedValue {
                 WhilePresented(isPresented: scheduling) { Color.clear.popover(isPresented: $0, arrowEdge: .trailing) { SchedulePopover(task: task) } }
+            }
+            if assigning.wrappedValue {
+                WhilePresented(isPresented: assigning) { Color.clear.popover(isPresented: $0, arrowEdge: .trailing) { AssignPopover(task: task) } }
             }
         }
     }
@@ -636,17 +640,20 @@ private struct BoardCard: View {
     @State private var confirmCancel = false
     @State private var rename = false
     @State private var scheduling = false
+    @State private var assigning = false
     @State private var targeted = false
 
     var body: some View {
         let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position, mergeButton: mergeButton)
             .taskClicks(task.id)
             .contextMenu {
-                TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true })
+                TaskActionButtons(task: task, confirmCancel: $confirmCancel, rename: $rename, schedule: { scheduling = true },
+                                  assign: { assigning = true })
             }
             .taskPresentations(task: task, confirmCancel: $confirmCancel, rename: $rename,
                                scheduling: Binding(get: { scheduling || state.schedulingTask == task.id },
-                                                   set: { if !$0 { scheduling = false; state.schedulingTask = nil } }))
+                                                   set: { if !$0 { scheduling = false; state.schedulingTask = nil } }),
+                               assigning: $assigning)
             // Where a dropped card lands: a line above this one.
             .overlay(alignment: .top) {
                 if targeted {

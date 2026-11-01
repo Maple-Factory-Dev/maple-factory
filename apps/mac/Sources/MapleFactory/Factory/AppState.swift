@@ -119,6 +119,10 @@ final class AppState {
     var effortDraft = ""
     /// The task whose board card shows its Schedule… popover, when a demo script opened it (`scheduleask:<id>`).
     var schedulingTask: String? = nil
+    /// The task whose owner chip shows its people picker, when a demo script opened it (`assignask:<id>`),
+    /// and what's typed into its filter (`assigntype:<text>`).
+    var assigningTask: String? = nil
+    var assignQuery = ""
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
@@ -2410,6 +2414,14 @@ final class AppState {
             case "reply": NotificationCenter.default.post(name: TaskTimeline.demoReply, object: parts[1])
             case "goto": destination = .goal(parts.dropFirst().joined(separator: ":"))
             case "scheduleask": schedulingTask = parts[1]
+            // The owner chip's people picker (`assignask:<id>`), its filter typed in (`assigntype:<text>`), then Return (`assignpick:<id>`).
+            case "assignask": assignQuery = ""; assigningTask = parts[1]
+            case "assigntype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    assignQuery.append(character)
+                    try? await Task.sleep(for: .milliseconds(120))
+                }
+            case "assignpick": NotificationCenter.default.post(name: AssignPopover.demoPick, object: parts[1])
             case "schedule":
                 schedulingTask = nil
                 let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]
@@ -2436,7 +2448,7 @@ final class AppState {
                 namingEffort = nil
                 setEffort(parts[1], effortDraft)
             case "effort": setEffort(parts[1], parts.dropFirst(2).joined(separator: ":"))
-            // The ⋯ menu's Take it over (`assign:<id>:me`) or Assign to ▸ a member (`assign:<id>:<login>`).
+            // The ⋯ menu's Take it over (`assign:<id>:me`), or a member picked in Assign… (`assign:<id>:<login>`).
             case "assign": assign(parts[1], to: parts.count > 2 && parts[2] != "me" ? parts[2] : FactoryData.me.github ?? "")
             // The ⋯ menu's Move to goal ▸ a goal, by name (`movegoal:<id>:<goal>`).
             case "movegoal": moveToGoal(parts[1], goal: parts.dropFirst(2).joined(separator: ":"))
