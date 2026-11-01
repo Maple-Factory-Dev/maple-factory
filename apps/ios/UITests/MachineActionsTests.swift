@@ -52,7 +52,7 @@ final class MachineActionsTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["It re-queues first and carries on from its last push."].exists)
         snap(app, "machines-move-confirm")
         confirm.tap()
-        XCTAssertTrue(app.staticTexts["BIL-8 moves to the next free machine"].waitForExistence(timeout: 5), "the toast should say where it goes")
+        XCTAssertTrue(app.staticTexts["BIL-8 moves to the next free machine · carries on from its last push"].waitForExistence(timeout: 5), "the toast should say where it goes")
         snap(app, "machines-moved")
         XCTAssertTrue(move.waitForNonExistence(timeout: 5), "BIL-8's session should leave the Air")
         XCTAssertFalse(app.buttons.containing(NSPredicate(format: "label BEGINSWITH 'BIL-8'")).firstMatch.exists)
