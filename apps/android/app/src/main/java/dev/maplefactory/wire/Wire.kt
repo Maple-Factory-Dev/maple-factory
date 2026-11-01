@@ -1394,6 +1394,19 @@ data class RepoWorktreeScripts(
     val updatedAt: Long,
 )
 
+/** A hold on merges into one repo (an incident freeze across every goal): the factory starts no merges into it until someone lifts it. */
+@Serializable
+data class MergeHold(
+    /** GitHub owner/name. */
+    val repo: String,
+    /** Why, shown on every held task's merge card. */
+    val reason: String,
+    /** Who put it on. */
+    val by: String,
+    /** When (ms). */
+    val at: Long,
+)
+
 /** A newer maple-server than the factory runs, and how this factory gets it. */
 @Serializable
 data class ServerUpdate(
@@ -3291,6 +3304,19 @@ sealed class ClientMessage {
         val repo: String,
         val name: String,
     ) : ClientMessage()
+    /** Any member: hold merges into a repo across every goal (an incident freeze). Auto-merge countdowns stop and a person's Merge is refused until it's lifted. */
+    @Serializable
+    data class ReposHoldMerges(
+        /** GitHub owner/name, one of the factory's repos. */
+        val repo: String,
+        /** Why, at most 200 characters. */
+        val reason: String,
+    ) : ClientMessage()
+    /** Any member: lift a repo's merge hold. Its reviewing tasks are checked again, so the ones waiting merge on their own. */
+    @Serializable
+    data class ReposReleaseMerges(
+        val repo: String,
+    ) : ClientMessage()
     /** Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them. */
     @Serializable
     data class ReposScriptsSet(
@@ -3609,6 +3635,8 @@ sealed class ClientMessage {
             "repos.owners.set" -> json.decodeFromJsonElement(ReposOwnersSet.serializer(), body)
             "secrets.set" -> json.decodeFromJsonElement(SecretsSet.serializer(), body)
             "secrets.delete" -> json.decodeFromJsonElement(SecretsDelete.serializer(), body)
+            "repos.holdMerges" -> json.decodeFromJsonElement(ReposHoldMerges.serializer(), body)
+            "repos.releaseMerges" -> json.decodeFromJsonElement(ReposReleaseMerges.serializer(), body)
             "repos.scripts.set" -> json.decodeFromJsonElement(ReposScriptsSet.serializer(), body)
             "goal.acceptRisk" -> json.decodeFromJsonElement(GoalAcceptRisk.serializer(), body)
             "task.create" -> json.decodeFromJsonElement(TaskCreate.serializer(), body)
@@ -3701,6 +3729,8 @@ sealed class ClientMessage {
             is ReposOwnersSet -> "repos.owners.set" to json.encodeToJsonElement(ReposOwnersSet.serializer(), value)
             is SecretsSet -> "secrets.set" to json.encodeToJsonElement(SecretsSet.serializer(), value)
             is SecretsDelete -> "secrets.delete" to json.encodeToJsonElement(SecretsDelete.serializer(), value)
+            is ReposHoldMerges -> "repos.holdMerges" to json.encodeToJsonElement(ReposHoldMerges.serializer(), value)
+            is ReposReleaseMerges -> "repos.releaseMerges" to json.encodeToJsonElement(ReposReleaseMerges.serializer(), value)
             is ReposScriptsSet -> "repos.scripts.set" to json.encodeToJsonElement(ReposScriptsSet.serializer(), value)
             is GoalAcceptRisk -> "goal.acceptRisk" to json.encodeToJsonElement(GoalAcceptRisk.serializer(), value)
             is TaskCreate -> "task.create" to json.encodeToJsonElement(TaskCreate.serializer(), value)
@@ -3778,6 +3808,8 @@ sealed class ServerToClient {
         val repos: List<dev.maplefactory.wire.OrgRepo> = emptyList(),
         /** Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server. */
         val repoOwners: List<String>? = null,
+        /** The repos whose merges are on hold. None: none, or an older server. */
+        val mergeHolds: List<dev.maplefactory.wire.MergeHold>? = null,
         /** The factory's GitHub App. None: no app, or an older server. */
         val githubApp: dev.maplefactory.wire.GitHubAppInfo? = null,
         /** Every repo's secrets, names and who changed them only. */
@@ -3932,6 +3964,11 @@ sealed class ServerToClient {
         /** The approved other GitHub accounts. None: an older server. */
         val repoOwners: List<String>? = null,
     ) : ServerToClient()
+    /** Every merge hold again, after one was put on or lifted. */
+    @Serializable
+    data class MergeHoldsUpdated(
+        val holds: List<dev.maplefactory.wire.MergeHold> = emptyList(),
+    ) : ServerToClient()
     /** Every repo's secrets again (names only), after one changed. */
     @Serializable
     data class SecretsUpdated(
@@ -4044,6 +4081,7 @@ sealed class ServerToClient {
             "icon.updated" -> json.decodeFromJsonElement(IconUpdated.serializer(), body)
             "name.updated" -> json.decodeFromJsonElement(NameUpdated.serializer(), body)
             "repos.updated" -> json.decodeFromJsonElement(ReposUpdated.serializer(), body)
+            "mergeHolds.updated" -> json.decodeFromJsonElement(MergeHoldsUpdated.serializer(), body)
             "secrets.updated" -> json.decodeFromJsonElement(SecretsUpdated.serializer(), body)
             "runner.released" -> json.decodeFromJsonElement(RunnerReleased.serializer(), body)
             "github.status" -> json.decodeFromJsonElement(GithubStatus.serializer(), body)
@@ -4086,6 +4124,7 @@ sealed class ServerToClient {
             is IconUpdated -> "icon.updated" to json.encodeToJsonElement(IconUpdated.serializer(), value)
             is NameUpdated -> "name.updated" to json.encodeToJsonElement(NameUpdated.serializer(), value)
             is ReposUpdated -> "repos.updated" to json.encodeToJsonElement(ReposUpdated.serializer(), value)
+            is MergeHoldsUpdated -> "mergeHolds.updated" to json.encodeToJsonElement(MergeHoldsUpdated.serializer(), value)
             is SecretsUpdated -> "secrets.updated" to json.encodeToJsonElement(SecretsUpdated.serializer(), value)
             is RunnerReleased -> "runner.released" to json.encodeToJsonElement(RunnerReleased.serializer(), value)
             is GithubStatus -> "github.status" to json.encodeToJsonElement(GithubStatus.serializer(), value)

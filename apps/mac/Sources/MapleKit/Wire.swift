@@ -3146,6 +3146,25 @@ public enum Wire {
         }
     }
 
+    /// A hold on merges into one repo (an incident freeze across every goal): the factory starts no merges into it until someone lifts it.
+    public struct MergeHold: Codable, Hashable, Sendable {
+        /// GitHub owner/name.
+        public var repo: String
+        /// Why, shown on every held task's merge card.
+        public var reason: String
+        /// Who put it on.
+        public var by: String
+        /// When (ms).
+        public var at: UInt64
+
+        public init(repo: String, reason: String, by: String, at: UInt64) {
+            self.repo = repo
+            self.reason = reason
+            self.by = by
+            self.at = at
+        }
+    }
+
     /// A newer maple-server than the factory runs, and how this factory gets it.
     public struct ServerUpdate: Codable, Hashable, Sendable {
         public var version: String
@@ -6886,6 +6905,28 @@ public enum Wire {
         }
     }
 
+    /// Any member: hold merges into a repo across every goal (an incident freeze). Auto-merge countdowns stop and a person's Merge is refused until it's lifted.
+    public struct ClientMessageReposHoldMerges: Codable, Hashable, Sendable {
+        /// GitHub owner/name, one of the factory's repos.
+        public var repo: String
+        /// Why, at most 200 characters.
+        public var reason: String
+
+        public init(repo: String, reason: String) {
+            self.repo = repo
+            self.reason = reason
+        }
+    }
+
+    /// Any member: lift a repo's merge hold. Its reviewing tasks are checked again, so the ones waiting merge on their own.
+    public struct ClientMessageReposReleaseMerges: Codable, Hashable, Sendable {
+        public var repo: String
+
+        public init(repo: String) {
+            self.repo = repo
+        }
+    }
+
     /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     public struct ClientMessageReposScriptsSet: Codable, Hashable, Sendable {
         public var repo: String
@@ -7445,6 +7486,8 @@ public enum Wire {
         case reposOwnersSet(ClientMessageReposOwnersSet)
         case secretsSet(ClientMessageSecretsSet)
         case secretsDelete(ClientMessageSecretsDelete)
+        case reposHoldMerges(ClientMessageReposHoldMerges)
+        case reposReleaseMerges(ClientMessageReposReleaseMerges)
         case reposScriptsSet(ClientMessageReposScriptsSet)
         case goalAcceptRisk(ClientMessageGoalAcceptRisk)
         case taskCreate(ClientMessageTaskCreate)
@@ -7541,6 +7584,8 @@ public enum Wire {
             case "repos.owners.set": self = .reposOwnersSet(try ClientMessageReposOwnersSet(from: decoder))
             case "secrets.set": self = .secretsSet(try ClientMessageSecretsSet(from: decoder))
             case "secrets.delete": self = .secretsDelete(try ClientMessageSecretsDelete(from: decoder))
+            case "repos.holdMerges": self = .reposHoldMerges(try ClientMessageReposHoldMerges(from: decoder))
+            case "repos.releaseMerges": self = .reposReleaseMerges(try ClientMessageReposReleaseMerges(from: decoder))
             case "repos.scripts.set": self = .reposScriptsSet(try ClientMessageReposScriptsSet(from: decoder))
             case "goal.acceptRisk": self = .goalAcceptRisk(try ClientMessageGoalAcceptRisk(from: decoder))
             case "task.create": self = .taskCreate(try ClientMessageTaskCreate(from: decoder))
@@ -7735,6 +7780,12 @@ public enum Wire {
             case .secretsDelete(let body):
                 try c.encode("secrets.delete", forKey: .type)
                 try body.encode(to: encoder)
+            case .reposHoldMerges(let body):
+                try c.encode("repos.holdMerges", forKey: .type)
+                try body.encode(to: encoder)
+            case .reposReleaseMerges(let body):
+                try c.encode("repos.releaseMerges", forKey: .type)
+                try body.encode(to: encoder)
             case .reposScriptsSet(let body):
                 try c.encode("repos.scripts.set", forKey: .type)
                 try body.encode(to: encoder)
@@ -7883,6 +7934,8 @@ public enum Wire {
         public var repos: [OrgRepo]
         /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
         public var repoOwners: [String]?
+        /// The repos whose merges are on hold. None: none, or an older server.
+        public var mergeHolds: [MergeHold]?
         /// The factory's GitHub App. None: no app, or an older server.
         public var githubApp: GitHubAppInfo?
         /// Every repo's secrets, names and who changed them only.
@@ -7911,7 +7964,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -7933,6 +7986,7 @@ public enum Wire {
             self.intake = intake
             self.repos = repos
             self.repoOwners = repoOwners
+            self.mergeHolds = mergeHolds
             self.githubApp = githubApp
             self.secrets = secrets
             self.scripts = scripts
@@ -7972,6 +8026,7 @@ public enum Wire {
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
             repos = try c.decodeIfPresent([OrgRepo].self, forKey: .repos) ?? []
             repoOwners = try c.decodeIfPresent([String].self, forKey: .repoOwners)
+            mergeHolds = try c.decodeIfPresent([MergeHold].self, forKey: .mergeHolds)
             githubApp = try c.decodeIfPresent(GitHubAppInfo.self, forKey: .githubApp)
             secrets = try c.decodeIfPresent([RepoSecret].self, forKey: .secrets) ?? []
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
@@ -8261,6 +8316,20 @@ public enum Wire {
         }
     }
 
+    /// Every merge hold again, after one was put on or lifted.
+    public struct ServerToClientMergeHoldsUpdated: Codable, Hashable, Sendable {
+        public var holds: [MergeHold]
+
+        public init(holds: [MergeHold] = []) {
+            self.holds = holds
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            holds = try c.decodeIfPresent([MergeHold].self, forKey: .holds) ?? []
+        }
+    }
+
     /// Every repo's secrets again (names only), after one changed.
     public struct ServerToClientSecretsUpdated: Codable, Hashable, Sendable {
         public var secrets: [RepoSecret]
@@ -8463,6 +8532,7 @@ public enum Wire {
         case iconUpdated(ServerToClientIconUpdated)
         case nameUpdated(ServerToClientNameUpdated)
         case reposUpdated(ServerToClientReposUpdated)
+        case mergeHoldsUpdated(ServerToClientMergeHoldsUpdated)
         case secretsUpdated(ServerToClientSecretsUpdated)
         case runnerReleased(ServerToClientRunnerReleased)
         case githubStatus(ServerToClientGithubStatus)
@@ -8509,6 +8579,7 @@ public enum Wire {
             case "icon.updated": self = .iconUpdated(try ServerToClientIconUpdated(from: decoder))
             case "name.updated": self = .nameUpdated(try ServerToClientNameUpdated(from: decoder))
             case "repos.updated": self = .reposUpdated(try ServerToClientReposUpdated(from: decoder))
+            case "mergeHolds.updated": self = .mergeHoldsUpdated(try ServerToClientMergeHoldsUpdated(from: decoder))
             case "secrets.updated": self = .secretsUpdated(try ServerToClientSecretsUpdated(from: decoder))
             case "runner.released": self = .runnerReleased(try ServerToClientRunnerReleased(from: decoder))
             case "github.status": self = .githubStatus(try ServerToClientGithubStatus(from: decoder))
@@ -8605,6 +8676,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .reposUpdated(let body):
                 try c.encode("repos.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .mergeHoldsUpdated(let body):
+                try c.encode("mergeHolds.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .secretsUpdated(let body):
                 try c.encode("secrets.updated", forKey: .type)

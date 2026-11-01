@@ -1485,6 +1485,20 @@ pub struct RepoWorktreeScripts {
     pub updated_at: u64,
 }
 
+/// A hold on merges into one repo (an incident freeze across every goal): the factory starts no merges into it until someone lifts it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeHold {
+    /// GitHub owner/name.
+    pub repo: String,
+    /// Why, shown on every held task's merge card.
+    pub reason: String,
+    /// Who put it on.
+    pub by: String,
+    /// When (ms).
+    pub at: u64,
+}
+
 /// A newer maple-server than the factory runs, and how this factory gets it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3570,6 +3584,19 @@ pub enum ClientMessage {
         repo: String,
         name: String,
     },
+    /// Any member: hold merges into a repo across every goal (an incident freeze). Auto-merge countdowns stop and a person's Merge is refused until it's lifted.
+    #[serde(rename = "repos.holdMerges")]
+    ReposHoldMerges {
+        /// GitHub owner/name, one of the factory's repos.
+        repo: String,
+        /// Why, at most 200 characters.
+        reason: String,
+    },
+    /// Any member: lift a repo's merge hold. Its reviewing tasks are checked again, so the ones waiting merge on their own.
+    #[serde(rename = "repos.releaseMerges")]
+    ReposReleaseMerges {
+        repo: String,
+    },
     /// Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.
     #[serde(rename = "repos.scripts.set")]
     ReposScriptsSet {
@@ -3929,6 +3956,9 @@ pub enum ServerToClient {
         /// Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo_owners: Option<Vec<String>>,
+        /// The repos whose merges are on hold. None: none, or an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merge_holds: Option<Vec<MergeHold>>,
         /// The factory's GitHub App. None: no app, or an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         github_app: Option<GitHubAppInfo>,
@@ -4108,6 +4138,12 @@ pub enum ServerToClient {
         /// The approved other GitHub accounts. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo_owners: Option<Vec<String>>,
+    },
+    /// Every merge hold again, after one was put on or lifted.
+    #[serde(rename = "mergeHolds.updated")]
+    MergeHoldsUpdated {
+        #[serde(default)]
+        holds: Vec<MergeHold>,
     },
     /// Every repo's secrets again (names only), after one changed.
     #[serde(rename = "secrets.updated")]
