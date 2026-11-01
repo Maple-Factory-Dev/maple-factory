@@ -1606,6 +1606,9 @@ pub struct Task {
     #[serde(default)]
     pub reviews: Vec<String>,
     pub reviews_needed: u32,
+    /// Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks.
+    #[serde(default)]
+    pub requested: Vec<String>,
     #[serde(default)]
     pub comments: Vec<Comment>,
     #[serde(default)]
@@ -3575,6 +3578,17 @@ pub enum ClientMessage {
         id: String,
         /// The member's login.
         owner: String,
+    },
+    /// Ask teammates to approve its plan or review its changes, or take a request back, like GitHub review requests. Refused once it's merged or cancelled, and for logins that aren't org members. Its owner and anyone who already approved the current stage are skipped. In review with a pull request, they're requested on GitHub too.
+    #[serde(rename = "task.requestReviewers")]
+    TaskRequestReviewers {
+        id: String,
+        /// Logins to request.
+        #[serde(default)]
+        add: Vec<String>,
+        /// Logins whose request is taken back.
+        #[serde(default)]
+        remove: Vec<String>,
     },
     /// Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.
     #[serde(rename = "task.moveGoal")]

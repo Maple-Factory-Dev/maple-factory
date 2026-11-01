@@ -3298,6 +3298,8 @@ public enum Wire {
         public var approvalsNeeded: UInt32
         public var reviews: [String]
         public var reviewsNeeded: UInt32
+        /// Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks.
+        public var requested: [String]
         public var comments: [Comment]
         public var changes: [ChangeRequest]
         public var events: [TaskEvent]
@@ -3355,7 +3357,7 @@ public enum Wire {
         /// The risk classifier's grade of the built change, when the org's policy turns it on.
         public var classification: Classification?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3373,6 +3375,7 @@ public enum Wire {
             self.approvalsNeeded = approvalsNeeded
             self.reviews = reviews
             self.reviewsNeeded = reviewsNeeded
+            self.requested = requested
             self.comments = comments
             self.changes = changes
             self.events = events
@@ -3431,6 +3434,7 @@ public enum Wire {
             approvalsNeeded = try c.decode(UInt32.self, forKey: .approvalsNeeded)
             reviews = try c.decodeIfPresent([String].self, forKey: .reviews) ?? []
             reviewsNeeded = try c.decode(UInt32.self, forKey: .reviewsNeeded)
+            requested = try c.decodeIfPresent([String].self, forKey: .requested) ?? []
             comments = try c.decodeIfPresent([Comment].self, forKey: .comments) ?? []
             changes = try c.decodeIfPresent([ChangeRequest].self, forKey: .changes) ?? []
             events = try c.decodeIfPresent([TaskEvent].self, forKey: .events) ?? []
@@ -6888,6 +6892,28 @@ public enum Wire {
         }
     }
 
+    /// Ask teammates to approve its plan or review its changes, or take a request back, like GitHub review requests. Refused once it's merged or cancelled, and for logins that aren't org members. Its owner and anyone who already approved the current stage are skipped. In review with a pull request, they're requested on GitHub too.
+    public struct ClientMessageTaskRequestReviewers: Codable, Hashable, Sendable {
+        public var id: String
+        /// Logins to request.
+        public var add: [String]
+        /// Logins whose request is taken back.
+        public var remove: [String]
+
+        public init(id: String, add: [String] = [], remove: [String] = []) {
+            self.id = id
+            self.add = add
+            self.remove = remove
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            add = try c.decodeIfPresent([String].self, forKey: .add) ?? []
+            remove = try c.decodeIfPresent([String].self, forKey: .remove) ?? []
+        }
+    }
+
     /// Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.
     public struct ClientMessageTaskMoveGoal: Codable, Hashable, Sendable {
         public var id: String
@@ -7293,6 +7319,7 @@ public enum Wire {
         case taskEdit(ClientMessageTaskEdit)
         case taskFollowUp(ClientMessageTaskFollowUp)
         case taskAssign(ClientMessageTaskAssign)
+        case taskRequestReviewers(ClientMessageTaskRequestReviewers)
         case taskMoveGoal(ClientMessageTaskMoveGoal)
         case taskPlan(ClientMessageTaskPlan)
         case taskBacklog(ClientMessageTaskBacklog)
@@ -7388,6 +7415,7 @@ public enum Wire {
             case "task.edit": self = .taskEdit(try ClientMessageTaskEdit(from: decoder))
             case "task.followUp": self = .taskFollowUp(try ClientMessageTaskFollowUp(from: decoder))
             case "task.assign": self = .taskAssign(try ClientMessageTaskAssign(from: decoder))
+            case "task.requestReviewers": self = .taskRequestReviewers(try ClientMessageTaskRequestReviewers(from: decoder))
             case "task.moveGoal": self = .taskMoveGoal(try ClientMessageTaskMoveGoal(from: decoder))
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
             case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
@@ -7592,6 +7620,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskAssign(let body):
                 try c.encode("task.assign", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRequestReviewers(let body):
+                try c.encode("task.requestReviewers", forKey: .type)
                 try body.encode(to: encoder)
             case .taskMoveGoal(let body):
                 try c.encode("task.moveGoal", forKey: .type)

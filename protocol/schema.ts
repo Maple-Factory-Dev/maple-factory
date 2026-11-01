@@ -701,6 +701,7 @@ export const structs: Record<string, Struct> = {
       approvalsNeeded: "u32",
       reviews: "string[]",
       reviewsNeeded: "u32",
+      requested: "string[]",
       comments: "Comment[]",
       changes: "ChangeRequest[]",
       events: "TaskEvent[]",
@@ -757,6 +758,7 @@ export const structs: Record<string, Struct> = {
       priority: "How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).",
       followUpOf: "What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
+      requested: "Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
       agent: "claude or codex: what builds it.",
@@ -1641,6 +1643,11 @@ export const unions: Record<string, Union> = {
         doc: "Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).",
         fields: { id: "string", owner: "string" },
         fieldDocs: { owner: "The member's login." },
+      },
+      "task.requestReviewers": {
+        doc: "Ask teammates to approve its plan or review its changes, or take a request back, like GitHub review requests. Refused once it's merged or cancelled, and for logins that aren't org members. Its owner and anyone who already approved the current stage are skipped. In review with a pull request, they're requested on GitHub too.",
+        fields: { id: "string", add: "string[]", remove: "string[]" },
+        fieldDocs: { add: "Logins to request.", remove: "Logins whose request is taken back." },
       },
       "task.moveGoal": {
         doc: "Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.",
