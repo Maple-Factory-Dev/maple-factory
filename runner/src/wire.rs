@@ -2363,6 +2363,18 @@ pub struct StatsDay {
     pub hands: u32,
 }
 
+/// One weekday × hour of a window, in the summary's `timeZone`: how many merges and hands landed then.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsHourCell {
+    /// 0 is Sunday … 6 Saturday.
+    pub weekday: u16,
+    /// 0–23.
+    pub hour: u16,
+    pub merges: u32,
+    pub hands: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsGoalRow {
@@ -2646,6 +2658,12 @@ pub struct StatsSummary {
     /// Merges people made, by reason; none from a server older than it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manual_merges: Option<StatsManualMerges>,
+    /// All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hours: Option<Vec<StatsHourCell>>,
+    /// The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
 }
 
 /// One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.
@@ -3872,6 +3890,9 @@ pub enum ClientMessage {
         days: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         goal: Option<String>,
+        /// The viewer's IANA time zone, for the weekday × hour chart; UTC when left out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tz: Option<String>,
     },
     /// Your day report for [since, until), your local day's bounds in ms, answered with `report`.
     #[serde(rename = "report.get")]
