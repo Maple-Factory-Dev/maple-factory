@@ -242,6 +242,8 @@ struct TaskFocusView: View {
                     .foregroundStyle(Theme.textMuted)
             }
             TaskOrigin(task: task)
+            // The next step for a draft, a queued plan or a parked task, one click from the title.
+            TaskActionBar(task: task)
         }
     }
 
