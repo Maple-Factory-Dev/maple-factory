@@ -119,7 +119,10 @@ struct OrgSettingsView: View {
             .background(SettingsKit.paneBG)
         }
         .ignoresSafeArea()
-        .background(HiddenTitleBar())
+        // The scene has no title bar (`.windowStyle(.hiddenTitleBar)`); these keep SwiftUI from adding a title or toolbar band back.
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .background(SettingsTitleBar())
         .onReceive(NotificationCenter.default.publisher(for: Self.demoPick)) { note in
             if let pane = (note.object as? String).flatMap(Pane.init) { tab = pane.rawValue }
         }
@@ -211,24 +214,20 @@ struct OrgSettingsView: View {
     }
 }
 
-/// The Settings window without a title bar: the sidebar runs up under the traffic lights.
-private struct HiddenTitleBar: NSViewRepresentable {
+/// The one thing the scene modifiers can't do: SwiftUI's `Settings` scene ignores `.windowStyle(.hiddenTitleBar)`
+/// and still makes a 28pt title bar above the content, so once the window exists, let the content run up under it.
+/// Its window also can't be minimized, unlike the main window; the yellow button works here too.
+private struct SettingsTitleBar: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { View() }
-    /// SwiftUI's Settings scene can restore its title bar after the view first lands, so hide it again.
-    func updateNSView(_ view: NSView, context: Context) { (view as? View)?.hide() }
+    func updateNSView(_ view: NSView, context: Context) {}
 
     final class View: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            hide()
-        }
-
-        func hide() {
             guard let window else { return }
-            window.styleMask.insert(.fullSizeContentView)
-            window.titleVisibility = .hidden
+            window.styleMask.formUnion([.fullSizeContentView, .miniaturizable])
             window.titlebarAppearsTransparent = true
-            window.toolbar = nil
+            window.titleVisibility = .hidden
         }
     }
 }

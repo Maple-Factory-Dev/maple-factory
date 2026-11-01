@@ -8,8 +8,8 @@ enum SettingsKit {
     static let sidebarBG = Color(light: 0xE8E5E7, dark: 0x211E25)
     static let groupStroke = Color(light: .black.opacity(0.06), dark: .white.opacity(0.06))
     static let caption = Font.system(size: 11.5)
-    /// The Settings window hides its title bar and runs content up under it (`HiddenTitleBar`), so
-    /// the traffic-light strip is this tall at the top of both the sidebar and the panes.
+    /// The Settings window has no title bar (`.windowStyle(.hiddenTitleBar)`, made to stick by `SettingsTitleBar`)
+    /// and runs content up under the traffic lights, so this strip is clear at the top of both the sidebar and the panes.
     static let titlebarInset: CGFloat = 40
     /// Where a pane's header starts: below the title-bar strip, with room to breathe.
     static let paneTopInset: CGFloat = titlebarInset + 20
