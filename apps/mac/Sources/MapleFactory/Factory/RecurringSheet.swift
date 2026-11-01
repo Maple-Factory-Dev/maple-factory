@@ -4,9 +4,12 @@ import MapleKit
 /// Recurring tasks: a goal's saved prompts that start a new task every N hours, days or weeks, on
 /// whichever runner is online. The goal header's button, with a count, opens the sheet that lists them.
 struct RecurringButton: View {
+    /// Headless `-actions 'recurring'` opens the sheet; `recurring:edit` opens it on its first item's editor.
+    static let demoOpen = Notification.Name("RecurringButton.demoOpen")
     let goal: Wire.Goal
     @Environment(FactoryClient.self) private var client
     @State private var showing = false
+    @State private var demoEdit = false
 
     var body: some View {
         let items = client.recurring(goalId: goal.id)
@@ -32,7 +35,11 @@ struct RecurringButton: View {
         .buttonStyle(.plain)
         .fixedSize()
         .help("Tasks this goal starts on a schedule, from a saved prompt")
-        .sheet(isPresented: $showing) { RecurringSheet(goal: goal) }
+        .sheet(isPresented: $showing) { RecurringSheet(goal: goal, editing: demoEdit ? items.first : nil) }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoOpen)) { note in
+            demoEdit = (note.object as? String) == "edit"
+            showing = true
+        }
     }
 }
 
@@ -42,6 +49,11 @@ struct RecurringSheet: View {
     @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
     @State private var editing: Wire.Recurring?
+
+    init(goal: Wire.Goal, editing: Wire.Recurring? = nil) {
+        self.goal = goal
+        _editing = State(initialValue: editing)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
