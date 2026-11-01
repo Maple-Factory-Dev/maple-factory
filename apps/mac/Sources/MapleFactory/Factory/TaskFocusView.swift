@@ -596,6 +596,7 @@ struct TaskFocusView: View {
                 }
             }
             detailRow("Owner") { OwnerMenu(task: task, avatarSize: 18) }
+            detailRow("Reviewers") { ReviewersRow(task: task) }
             agentRows
             if appState.isLive {
                 if let worker = task.worker {

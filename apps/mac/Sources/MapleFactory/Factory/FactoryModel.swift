@@ -258,6 +258,8 @@ struct FactoryTask: Identifiable {
     var plannedRisk: RiskLevel = .low
     /// Teammates who signed off on the finished change.
     var reviews: [Person] = []
+    /// Teammates asked to approve its plan or review its changes, like GitHub review requests.
+    var requested: [Person] = []
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil

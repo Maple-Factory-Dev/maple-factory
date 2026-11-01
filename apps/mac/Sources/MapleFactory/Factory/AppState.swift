@@ -790,15 +790,22 @@ final class AppState {
     static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>,
                           mentions: (FactoryTask) -> [InboxItem]) -> [InboxItem] {
         var items: [InboxItem] = []
+        // Tasks someone asked you to sign off on lead their groups.
+        var requestedOfMe: [InboxItem] = []
         for task in tasks {
             let mine = task.owner.id == me.id
+            let asked = task.requested.contains { $0.id == me.id }
             if task.state == .awaitingApproval && !task.approvals.contains(where: { $0.id == me.id }) {
-                items.append(InboxItem(kind: .approval, taskID: task.id, assignee: me, message: "Plan v\(task.planVersion) is ready for your approval", when: task.updated))
+                let item = InboxItem(kind: .approval, taskID: task.id, assignee: me, message: asked ? "Your review is requested · plan v\(task.planVersion)" : "Plan v\(task.planVersion) is ready for your approval", when: task.updated)
+                if asked { requestedOfMe.append(item) } else { items.append(item) }
+            }
+            if task.state == .reviewing, asked, !task.reviews.contains(where: { $0.id == me.id }) {
+                requestedOfMe.append(InboxItem(kind: .review, taskID: task.id, assignee: me, message: "Your review is requested", when: task.updated))
             }
             if let question = task.question {
                 items.append(InboxItem(kind: .question, taskID: task.id, assignee: task.owner, message: question, when: task.updated))
             }
-            if task.state == .reviewing, task.autoReview?.current?.verdict == .passed, !task.reviews.contains(where: { $0.id == me.id }) {
+            if task.state == .reviewing, !asked, task.autoReview?.current?.verdict == .passed, !task.reviews.contains(where: { $0.id == me.id }) {
                 items.append(InboxItem(kind: .review, taskID: task.id, assignee: mine ? me : task.owner, message: "Passed automatic review; ready for yours", when: task.updated))
             }
             if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
@@ -806,7 +813,7 @@ final class AppState {
             }
             items += mentions(task).filter { !dismissedMentions.contains($0.id) }
         }
-        return items
+        return requestedOfMe + items
     }
 
     /// A Mentions row for each comment in the task that @mentions you and isn't yours.
@@ -1585,6 +1592,22 @@ final class AppState {
             }
         }
         showToast(mine ? "You took over \(id)" : "Gave \(id) to \(person.firstName)", icon: "person.crop.circle.badge.checkmark")
+    }
+
+    /// Asks teammates to approve its plan or review its changes, or takes a request back (GitHub-style review requests).
+    func requestReviewers(_ id: String, add: [String], remove: [String] = []) {
+        guard !add.isEmpty || !remove.isEmpty else { return }
+        let people = add.map { login in FactoryData.people.first { $0.github == login } ?? LiveAdapter.person(login, members: client?.members ?? []) }
+        let change: (inout FactoryTask) -> Void = { task in
+            task.requested.removeAll { remove.contains($0.github ?? "") }
+            task.requested += people.filter { p in !task.requested.contains { $0.github == p.github } }
+        }
+        if let client, isLive {
+            client.expect(id, change)
+            client.send(.taskRequestReviewers(.init(id: id, add: add, remove: remove)))
+        } else {
+            update(id, change)
+        }
     }
 
     // MARK: Goal
