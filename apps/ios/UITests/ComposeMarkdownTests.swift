@@ -45,7 +45,10 @@ final class ComposeMarkdownTests: XCTestCase {
         app.buttons["Timeline"].tap()
         XCTAssertTrue(app.staticTexts["Ship it bold"].waitForExistence(timeout: 5), "the timeline doesn't show the rendered text")
         XCTAssertFalse(app.staticTexts["Ship it **bold**"].exists, "the timeline shows raw Markdown")
-        XCTAssertTrue(app.buttons["markdown.image"].waitForExistence(timeout: 5), "the timeline has no image thumbnail")
+        // The timeline shows a note's own image lines in its attachment gallery
+        // (attachment.image.<name>); an inline image keeps markdown.image.
+        let thumb = app.buttons.matching(NSPredicate(format: "identifier == 'markdown.image' OR identifier BEGINSWITH 'attachment.image.'")).firstMatch
+        XCTAssertTrue(thumb.waitForExistence(timeout: 5), "the timeline has no image thumbnail")
         snap(app, "\(action.lowercased())-timeline")
     }
 

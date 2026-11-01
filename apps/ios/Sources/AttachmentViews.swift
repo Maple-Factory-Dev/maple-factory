@@ -172,16 +172,33 @@ struct AttachmentThumb: View {
 struct AttachmentVideo: View {
     @Environment(FactoryStore.self) private var store
     let attachment: LinkedAttachment
+    /// Made once, so a re-render (feed updates) doesn't reset playback.
+    @State private var player: AVPlayer?
+    @State private var unavailable = false
 
     var body: some View {
-        if let request = store.request(attachment.path), let url = request.url {
-            VideoPlayer(player: AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]]))))
-                .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .accessibilityIdentifier("attachment.video.\(attachment.name)")
-        } else {
-            AttachmentChip(attachment: attachment)
+        Group {
+            if let player {
+                VideoPlayer(player: player)
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityIdentifier("attachment.video.\(attachment.name)")
+            } else if unavailable {
+                AttachmentChip(attachment: attachment)
+            } else {
+                Color.clear.frame(height: 220)
+            }
         }
+        .onAppear(perform: makePlayer)
+    }
+
+    private func makePlayer() {
+        guard player == nil, !unavailable else { return }
+        guard let request = store.request(attachment.path), let url = request.url else {
+            unavailable = true
+            return
+        }
+        player = AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]])))
     }
 }
 
