@@ -619,7 +619,8 @@ import Foundation
             } else {
                 notice = error.message
             }
-        case .unknown:
+        case .pushDevices, .unknown:
+            // push.devices is the phones' list (MF-231); the Mac has no use for it.
             break
         }
     }
