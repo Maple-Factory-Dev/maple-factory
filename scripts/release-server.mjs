@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { destination, option, publish, releaseKey, root } from "./feed.mjs";
+import { destination, option, publish, releaseKey, root, tagRelease, wrangler } from "./feed.mjs";
 
 /** JSON with comments and trailing commas, as wrangler.jsonc is written. */
 export function parseJsonc(source) {
@@ -52,20 +52,10 @@ const dev = parseJsonc(readFileSync(join(server, "wrangler.jsonc"), "utf8"));
 const sentry = JSON.parse(readFileSync(join(server, "web/sentry.json"), "utf8"));
 if (where.to === "feed" && !sentry.projects.server.dsn) throw new Error("server/web/sentry.json has no server DSN.");
 if (!(dev.compatibility_flags ?? []).includes("nodejs_als")) throw new Error("wrangler.jsonc lost the nodejs_als flag the Sentry SDK needs.");
-if (where.to === "feed") {
-  const git = (...argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" }).trim();
-  const tag = `server-v${version}`;
-  if (git("status", "--porcelain", "--", "server")) throw new Error("server/ has uncommitted changes; the release is tagged from what's committed.");
-  git("fetch", "-q", "origin");
-  if (git("branch", "-r", "--contains", "HEAD") === "") throw new Error("Push this commit first: the button's factories update from it on GitHub.");
-  if (git("ls-remote", "--tags", "origin", tag)) throw new Error(`${tag} is already released; bump server/package.json's version.`);
-  git("tag", "-a", tag, "-m", `maple-server ${version}`);
-  git("push", "-q", "origin", tag);
-  console.log(`Tagged ${tag}.`);
-}
+if (where.to === "feed") tagRelease("server-v", version, ["server"], `maple-server ${version}`);
 
 const stage = mkdtempSync(join(tmpdir(), `maple-server-${version}-`));
-execFileSync("npx", ["wrangler", "deploy", "--dry-run", "--outdir", join(stage, "worker")], { cwd: server, stdio: "inherit" });
+wrangler(["deploy", "--dry-run", "--outdir", join(stage, "worker")], { cwd: server, stdio: "inherit" });
 rmSync(join(stage, "worker", "README.md"), { force: true }); // wrangler's note about the folder
 for (const name of readdirSync(join(stage, "worker"))) if (!/\.(js|mjs|wasm|map)$/.test(name)) throw new Error(`Unexpected file in the bundle: ${name}`);
 cpSync(join(server, dev.assets.directory), join(stage, "web"), { recursive: true });
