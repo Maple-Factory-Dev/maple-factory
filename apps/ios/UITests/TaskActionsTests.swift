@@ -110,7 +110,91 @@ final class TaskActionsTests: XCTestCase {
         snap(app, "menu-member-others-task")
     }
 
+    /// Retry shows where the Mac's TaskActionButtons offers it: on a building task, not on a draft,
+    /// and a draft without a plan has no Recheck GitHub or Split… either.
+    func testRetryShowsWhenSomethingCanRun() {
+        let building = open("BIL-8")
+        menu(building)
+        XCTAssertTrue(building.buttons["Retry"].exists)
+        XCTAssertTrue(building.buttons["Recheck GitHub"].exists, "BIL-8 has a draft PR on GitHub")
+        XCTAssertTrue(building.buttons["Split…"].exists, "BIL-8 has a four-step plan")
+        snap(building, "menu-building-with-pr")
+        building.buttons["Retry"].tap()
+        XCTAssertTrue(building.staticTexts["Retrying BIL-8"].waitForExistence(timeout: 5), "the toast should say it's retrying")
+
+        let draft = open("APP-15")
+        menu(draft)
+        XCTAssertFalse(draft.buttons["Retry"].exists)
+        XCTAssertFalse(draft.buttons["Recheck GitHub"].exists)
+        snap(draft, "menu-draft-no-retry")
+    }
+
+    /// BIL-8's draft PR has a running `test` and a queued `lint`: Recheck GitHub reads them again and they've passed.
+    func testRecheckGitHub() {
+        let app = open("BIL-8")
+        app.buttons["Review"].tap()
+        let test = app.buttons["check-test"], lint = app.buttons["check-lint"]
+        reveal(app, lint)
+        XCTAssertEqual(test.value as? String, "running")
+        XCTAssertEqual(lint.value as? String, "queued")
+        menu(app)
+        app.buttons["Recheck GitHub"].tap()
+        XCTAssertTrue(app.staticTexts["Checking GitHub…"].waitForExistence(timeout: 5), "the toast should say it's checking")
+        for _ in 0..<20 where lint.value as? String != "passed" { usleep(500_000) }
+        XCTAssertEqual(test.value as? String, "passed", "the running check should have passed")
+        XCTAssertEqual(lint.value as? String, "passed", "the queued check should have passed")
+        snap(app, "rechecked")
+    }
+
+    /// Split BIL-8 into 3: it keeps its first two steps, and two new tasks Split from BIL-8 go to planning.
+    func testSplitIntoThree() {
+        let app = open("BIL-8", "-tab", "goals")
+        menu(app)
+        app.buttons["Split…"].tap()
+        let stepper = app.steppers["split-parts"]
+        XCTAssertTrue(stepper.waitForExistence(timeout: 5), "the split sheet should open")
+        XCTAssertTrue(app.staticTexts["New task 1"].exists || app.staticTexts["NEW TASK 1"].exists)
+        // 44 files over a 20-file budget: it starts at 3.
+        if !(app.staticTexts["NEW TASK 2"].exists || app.staticTexts["New task 2"].exists) { stepper.buttons.element(boundBy: 1).tap() }
+        XCTAssertTrue(app.staticTexts["NEW TASK 2"].exists || app.staticTexts["New task 2"].exists, "three parts: two new tasks")
+        XCTAssertTrue(app.staticTexts["3"].exists)
+        snap(app, "split-sheet")
+        app.buttons["split-confirm"].tap()
+        XCTAssertTrue(app.staticTexts["Splitting BIL-8 into 3 tasks; the new ones go to planning"].waitForExistence(timeout: 5))
+
+        // Back on Billing, the new tasks are there and planning.
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Billing"].waitForExistence(timeout: 5))
+        let first = app.staticTexts["Send it from the payment webhook"]
+        let second = app.staticTexts["Let customers resend a receipt from Billing"]
+        reveal(app, first)
+        XCTAssertTrue(first.waitForExistence(timeout: 5), "BIL-9 should be on the board")
+        reveal(app, second)
+        XCTAssertTrue(second.exists, "BIL-10 should be on the board")
+        snap(app, "split-board")
+
+        first.tap()
+        XCTAssertTrue(app.staticTexts["Planning"].waitForExistence(timeout: 5), "the new task should be planning")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Split from BIL-8'")).firstMatch.exists, "its brief should say where it came from")
+        snap(app, "split-new-task")
+    }
+
+    /// APP-15 is a draft with no plan: nothing to split.
+    func testSplitHiddenOnDraft() {
+        let app = open("APP-15")
+        menu(app)
+        XCTAssertFalse(app.buttons["Split…"].exists)
+        XCTAssertFalse(app.buttons["Retry"].exists)
+        snap(app, "menu-draft-no-split")
+    }
+
     // MARK: Helpers
+
+    /// Scrolls until `element` is on screen.
+    private func reveal(_ app: XCUIApplication, _ element: XCUIElement) {
+        let list = app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.scrollViews.firstMatch
+        for _ in 0..<6 where !(element.exists && element.isHittable) { list.swipeUp() }
+    }
 
     private func open(_ task: String, _ extra: String...) -> XCUIApplication {
         let app = XCUIApplication()
