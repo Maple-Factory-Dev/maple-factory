@@ -1,6 +1,6 @@
 ---
 name: loop-releases
-description: Release whatever changed on origin/main (runner, maple-server, the Mac app, the maplefactory.dev site), update the afomera/maple-factory factory, and keep doing it every 10 minutes. Use when the user runs /loop-releases or asks to ship or check for releases.
+description: Release whatever changed on origin/main (runner, maple-server, the Mac app, the maplefactory.dev site, the iPhone app to TestFlight), update the afomera/maple-factory factory, and keep doing it every 10 minutes. Use when the user runs /loop-releases or asks to ship or check for releases.
 ---
 
 # loop-releases
@@ -18,8 +18,8 @@ release only those. Then report what went out.
 - `stop`: CronDelete the `/loop-releases` jobs and stop.
 
 The user has authorized everything below for this loop: pushing to main, `release-runner.mjs` and
-`release-server.mjs --to feed`, the Mac release stages, pushing to `afomera/maple-factory`, and deploying the
-site. Anything outside it (npm publish of `installer/`, new infrastructure, force pushes) still needs a
+`release-server.mjs --to feed`, the Mac release stages, pushing to `afomera/maple-factory`, deploying the
+site, and uploading the iPhone app to TestFlight for internal testers. Anything outside it (npm publish of `installer/`, new infrastructure, force pushes) still needs a
 yes first.
 
 ## Where each component's last release is
@@ -33,7 +33,8 @@ set by the release scripts themselves, so a fresh checkout or CI finds the same 
 | server | `server/` | the tag `server-v<version in server/package.json>` (pushed by release-server.mjs) |
 | mac | `apps/mac/` except `apps/mac/releases/` and `apps/mac/version.json` | the tag `mac-v<version in apps/mac/version.json>` (pushed by release.mjs `build`); for a release from before those tags, the old local tag `mac-built-<version>` |
 | site | `apps/site/` | the tag `site-deployed` on origin (moved by release-site.mjs) |
-| protocol | `protocol/` | not released on its own: a change there means the runner, server and Mac all changed |
+| ios | `apps/ios/`, `apps/mac/Sources/MapleKit/`, `apps/mac/Package.swift` (the iPhone app builds the Mac package's MapleKit) | the newest tag `ios-build-<build number>` on origin: `git tag -l 'ios-build-*' --sort=-v:refname \| head -1` (pushed by hand after each upload, below) |
+| protocol | `protocol/` | not released on its own: a change there means the runner, server, Mac and iOS all changed |
 
 `git diff --quiet <base> HEAD -- <paths>` says whether one changed. If a base is missing from origin and
 has no fallback above, say so and ask before releasing that component instead of guessing.
@@ -65,7 +66,7 @@ report.
      broke the web app once while tsc passed), and `npm test` in `server/`.
    - mac: `swift build` and `swift test` in `apps/mac`.
    - site: `node --check apps/site/worker.js main.js`.
-5. Release, in this order: version bumps, then server, runner, factory, Mac, and site last.
+5. Release, in this order: version bumps, then server, runner, factory, Mac, site, and iOS last.
 
 ### Version bumps (runner and server together)
 
@@ -138,6 +139,21 @@ If `apps/site/` changed since `site-deployed`, CI normally has it already: every
    It deploys with `npx --no-install wrangler deploy` (wrangler comes from the root workspace's
    node_modules), checks `/`, every page changed since `site-deployed` (200) and `/download/mac` (302 to a
    `.dmg`), then tags `site-v<short sha>`, moves `site-deployed`, and pushes both.
+
+### iOS (TestFlight)
+
+If the iOS paths changed since the newest `ios-build-*` tag, send a build to the internal testers. There's no
+version bump: the build number is a UTC timestamp the script picks, and `MARKETING_VERSION` in
+`apps/ios/project.yml` only changes when someone decides to.
+1. Note the commit: `S=$(git rev-parse HEAD)`. Then, in the background,
+   `apps/ios/scripts/testflight.sh > <scratchpad>/ios-testflight.log 2>&1`. It archives a snapshot of the
+   checkout (a detached worktree at `apps/ios/build/src`), so fast-forwarding during the archive is safe.
+   Credentials come from `apps/ios/.env.testflight` (gitignored, never commit it).
+2. It ends with `Uploaded Maple Factory <version> (<build>).` Only then tag the snapshot and push it:
+   `git tag ios-build-<build> $S && git push -q origin ios-build-<build>`. A failed upload gets no tag, so the
+   next round tries again; the log is `apps/ios/build/testflight.log`.
+3. App Store Connect processes the build for 5–30 minutes before testers see it. Report it as uploaded, not
+   as in TestFlight.
 
 ## Report
 
