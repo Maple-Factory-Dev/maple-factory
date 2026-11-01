@@ -89,8 +89,13 @@ final class AppState {
     /// This factory's last page has been reopened (or there was none), so a move now is the person's to remember.
     /// Until then the mock's starting goal, or the inbox a factory switch lands on, would overwrite it.
     var pageRestored = false
+    /// Which layout a goal opens on; one choice for every goal, like goalTaskFilter, kept in the
+    /// same defaults so a relaunch reopens the goal on the layout you left it on.
     var layout: GoalLayout = .board {
-        didSet { focusedTask = nil }
+        didSet {
+            focusedTask = nil
+            boardDefaults.set(layout.rawValue, forKey: "goalLayout")
+        }
     }
     /// The goal Timeline hides merged tasks until this is on; it's one choice for every goal.
     var timelineShowsMerged = AppDefaults.bool(forKey: "timelineShowsMerged") {
@@ -2382,6 +2387,8 @@ final class AppState {
         self.boardDefaults = boardDefaults
         boardHidesEmptyColumns = boardDefaults.bool(forKey: "boardHidesEmptyColumns")
         goalTaskFilter = boardDefaults.string(forKey: "goalTaskFilter").flatMap(GoalTaskFilter.init(rawValue:)) ?? .everyone
+        // Set in init, so didSet doesn't run: the `-layout` override below isn't saved.
+        layout = boardDefaults.string(forKey: "goalLayout").flatMap(GoalLayout.init(rawValue:)) ?? .board
         let defaults = AppDefaults
         // `-goaltasks mine|everyone` starts a screenshot on that filter without saving it.
         if let filter = defaults.string(forKey: "goaltasks").flatMap(GoalTaskFilter.init(argument:)) {
