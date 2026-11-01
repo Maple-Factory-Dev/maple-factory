@@ -405,3 +405,11 @@ enum DemoData {
                      truncated: false, failedStep: failed ? "Process completed with exit code 1." : nil)
     }
 }
+
+extension DemoData {
+    /// This phone's sample push registration (Settings › Notifications), and another of yours.
+    static var thisPhone: Wire.PushDevice { .init(id: "d3m0th1sph0ne000", platform: .apns, environment: .sandbox, createdAt: ago(60 * 24 * 9), lastSeen: ago(2)) }
+    static var pushDevices: [Wire.PushDevice] {
+        [thisPhone, .init(id: "0ldph0ne00000000", platform: .apns, environment: .production, createdAt: ago(60 * 24 * 90), lastSeen: ago(60 * 24 * 12))]
+    }
+}

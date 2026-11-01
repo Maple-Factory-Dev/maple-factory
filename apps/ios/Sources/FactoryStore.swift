@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MapleKit
 import Observation
@@ -40,6 +41,27 @@ final class FactoryStore {
         case failed(String)
     }
 
+    // MARK: Push (PushNotifications.swift, MF-272)
+
+    enum NotificationStatus: Equatable { case notAsked, allowed, off }
+
+    /// This phone's APNs token (hex) and its environment, once iOS hands it over.
+    private(set) var pushToken: String?
+    private(set) var pushEnvironment: Wire.PushEnvironment = AppDelegate.environment
+    /// The id the factory shows for this phone's token (server/src/push.ts deviceId).
+    private(set) var pushDeviceID: String?
+    /// Why iOS gave no token (a simulator, or no entitlement).
+    var pushError: String?
+    /// Your phones registered with this factory (`push.devices`).
+    private(set) var pushDevices: [Wire.PushDevice] = []
+    /// Your quiet hours, from the snapshot and `quietHours.updated`.
+    private(set) var quietHours: Wire.QuietHours?
+    var notificationStatus: NotificationStatus = .notAsked
+    /// The task whose detail is on screen, so its own notification needn't show a banner.
+    var visibleTask: String?
+    /// Asks iOS for permission and a token; called when a real factory goes live (AppDelegate sets it).
+    @ObservationIgnored var askForPush: (() -> Void)?
+
     nonisolated static func checkLogKey(task: String, check: String) -> String { "\(task)/\(check)" }
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
@@ -78,6 +100,7 @@ final class FactoryStore {
     /// Switches to another saved factory.
     func switchTo(_ factory: SavedFactory) {
         guard let token = keychain.read(account: factory.server.absoluteString) else { return }
+        unregisterPush()
         var factory = factory
         factory.lastUsed = Date()
         saved = SavedFactories.upsert(factory, into: saved)
@@ -86,6 +109,7 @@ final class FactoryStore {
     }
 
     func signOut() {
+        unregisterPush()
         if let server {
             keychain.delete(account: server.absoluteString)
             saved = SavedFactories.remove(server, from: saved)
@@ -104,6 +128,8 @@ final class FactoryStore {
         feed = FeedState()
         diffs = [:]
         stats = nil
+        pushDevices = []
+        quietHours = nil
         status = .signedOut
     }
 
@@ -167,6 +193,8 @@ final class FactoryStore {
         while gen == generation {
             do {
                 let message = try await socket.receive()
+                // A socket left open to finish its push.unregister (unregisterPush) mustn't feed the next factory.
+                guard gen == generation else { return }
                 guard case .string(let text) = message else { continue }
                 apply(try decoder.decode(Wire.ServerToClient.self, from: Data(text.utf8)))
             } catch {
@@ -215,7 +243,18 @@ final class FactoryStore {
             attempt = 0
             status = .live
             ErrorReports.tag(org: snapshot.org)
+            quietHours = snapshot.quietHours
+            // Register again on every snapshot (the token can change, and it keeps lastSeen fresh); the
+            // reply is push.devices. With no token yet, still ask, for the other phones' list.
+            if let pushToken {
+                send(.pushRegister(.init(platform: .apns, token: pushToken, environment: pushEnvironment)))
+            } else {
+                send(.pushDevices)
+                askForPush?()
+            }
         }
+        if case .pushDevices(let reply) = message { pushDevices = reply.devices }
+        if case .quietHoursUpdated(let update) = message { quietHours = update.quietHours }
         if case .stats(let reply) = message { stats = reply.summary }
         if case .checkLog(let reply) = message {
             // Only one still asked for: a log forgotten by a re-run stays forgotten.
@@ -248,6 +287,50 @@ final class FactoryStore {
         if status == .demo { return demoSend(message) }
         guard let socket, let data = try? JSONEncoder().encode(message), let text = String(data: data, encoding: .utf8) else { return }
         socket.send(.string(text)) { _ in }
+    }
+
+    // MARK: Push
+
+    /// The token iOS handed over: registered now if a factory is live, else with the next snapshot.
+    func registerPush(token: String, environment: Wire.PushEnvironment) {
+        pushToken = token
+        pushEnvironment = environment
+        pushError = nil
+        pushDeviceID = Self.pushDeviceID(token)
+        if status == .live { send(.pushRegister(.init(platform: .apns, token: token, environment: environment))) }
+    }
+
+    /// server/src/push.ts deviceId: the first 16 hex digits of sha256("push-device\n" + token).
+    nonisolated static func pushDeviceID(_ token: String) -> String {
+        SHA256.hash(data: Data("push-device\n\(token)".utf8)).map { String(format: "%02x", $0) }.joined().prefix(16).description
+    }
+
+    /// Before leaving a factory (sign-out, switching): tells it to stop pushing to this phone. The old
+    /// socket stays open until the frame is sent, then closes; its replies are ignored (receive's gen check).
+    private func unregisterPush() {
+        guard status == .live, let pushToken, let socket,
+              let data = try? JSONEncoder().encode(Wire.ClientMessage.pushUnregister(.init(token: pushToken))),
+              let text = String(data: data, encoding: .utf8) else { return }
+        self.socket = nil
+        socket.send(.string(text)) { _ in socket.cancel(with: .goingAway, reason: nil) }
+    }
+
+    /// Settings' Notifications row: Off without permission, Quiet now inside quiet hours, else On.
+    var pushSummary: String {
+        if notificationStatus != .allowed { return "Off" }
+        return quietHours?.isQuiet(at: Date()) == true ? "Quiet now" : "On"
+    }
+
+    /// Removes one of your other phones, by its id.
+    func removePushDevice(_ id: String) {
+        pushDevices.removeAll { $0.id == id }
+        send(.pushUnregister(.init(id: id)))
+    }
+
+    /// Sets your quiet hours (nil: none) on every device; the server answers quietHours.updated.
+    func setQuietHours(_ schedule: Wire.QuietHours?) {
+        quietHours = schedule
+        send(.quietHoursSet(.init(quietHours: schedule)))
     }
 
     // MARK: Actions
@@ -607,7 +690,7 @@ final class FactoryStore {
     }
 
     /// Tells the factory which task you're looking at, so others see you there.
-    func viewing(_ id: String?) { send(.presence(.init(viewing: id))) }
+    func viewing(_ id: String?) { visibleTask = id; send(.presence(.init(viewing: id))) }
 
     // MARK: Review rounds and follow-ups
     // The same refusals as the server (engine.ts task.requestReview / task.followUp) and the Mac's
@@ -695,6 +778,11 @@ final class FactoryStore {
         close()
         feed = DemoData.feed()
         status = .demo
+        // A sample registration for this phone and another; the demo never asks iOS or the network.
+        notificationStatus = .allowed
+        pushDeviceID = DemoData.thisPhone.id
+        pushEnvironment = DemoData.thisPhone.environment
+        pushDevices = DemoData.pushDevices
     }
 
     /// The demo answers actions itself, the way a factory would.
@@ -960,6 +1048,12 @@ final class FactoryStore {
             demoSplit(m.id, parts: Int(m.parts))
         case .recurringSave, .recurringPause, .recurringRunNow, .recurringDelete:
             demoRecurring(message)
+        case .pushRegister, .pushDevices:
+            break // The sample devices are already there.
+        case .pushUnregister(let m):
+            pushDevices.removeAll { $0.id == m.id || (m.token != nil && $0.id == m.token.map(Self.pushDeviceID)) }
+        case .quietHoursSet(let m):
+            quietHours = m.quietHours
         default:
             break
         }
