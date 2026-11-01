@@ -9,7 +9,8 @@ import { postMessage, updateMessage, type Blocks, type SlackAction, type SlackAs
 import { lastJson } from "./drafts.ts";
 import { goalMayFetch } from "./repos.ts";
 import type { Store } from "./store.ts";
-import { wantsStatus, workSummary } from "./slack-status.ts";
+import { LINK_HINT, mineSummary, wantsStatus, workSummary } from "./slack-status.ts";
+import { wantsMine } from "../slack-links.ts";
 
 /** The id an ask goes by on the runner (its token requests and its worktree's name). */
 export const SLACK_PREFIX = "slack-";
@@ -36,6 +37,8 @@ export type Ask = {
   /** The bot's "Looking into it…" message, replaced by the answer. */
   replyTs: string;
   requester: string;
+  /** The asker's factory login, when their Slack account is linked. */
+  login: string | null;
   question: string;
   thread: SlackAsk["thread"];
   attachments: SlackAttachment[];
@@ -64,6 +67,8 @@ type Deps = {
   /** Makes the proposed task and starts its planning; throws with a message for the thread. `onMade` is
    *  called once the task is saved, so a throw after it (its planning) doesn't leave the task unknown. */
   make(ask: Ask, proposal: Proposal, by: string, channelName: string | null, onMade: (task: Task) => void): Promise<Task>;
+  /** The factory login a Slack user linked (slack-links.ts), else null. */
+  loginFor(team: string, slackUser: string): Promise<string | null>;
   /** Deletes attachments (their `/attachments/<id>/<name>` paths) from the bucket. */
   forget(paths: string[]): void;
   /** Call `sweep` again in about `ms`. */
@@ -280,6 +285,12 @@ export class SlackAsks {
     this.store.set("slack:lastMention", String(Date.now()));
     const { goals, note } = this.channelGoals(input.channel);
     if (!goals.length) return void (await this.post(input.channel, input.threadTs, "This factory has no goals yet, so there's no code for me to look at."));
+    const login = input.login ?? null;
+    if (wantsMine(input.question)) {
+      // From the factory's state, for the linked member alone; no agent.
+      const said = login ? mineSummary(this.store.tasks(), this.store.goals(), login, Date.now()) : LINK_HINT;
+      return void (await this.post(input.channel, input.threadTs, said.slice(0, 3000), sections(said)));
+    }
     const work = workSummary(this.store.tasks(), this.store.queued(), goals, Date.now());
     if (wantsStatus(input.question)) {
       // Answered from the factory's own state: no agent, so no machine needs to be online.
@@ -297,12 +308,12 @@ export class SlackAsks {
     if (!replyTs) return;
     const ask: Ask = {
       id: SLACK_PREFIX + crypto.randomUUID(), machine: machine.id, owner: machine.owner, agent, channel: input.channel, threadTs: input.threadTs, replyTs,
-      requester: input.requester, question: input.question, thread: input.thread, attachments: input.attachments,
+      requester: input.requester, login, question: input.question, thread: input.thread, attachments: input.attachments,
       goals: goals.map((g) => g.id), goal: goal.id, state: "running", proposal: null, answer: null, note, task: null, expiresAt: Date.now() + ASK_MS,
     };
     this.save(ask);
     this.deps.wakeIn(ASK_MS + 1000);
-    const command: ServerToRunner = { type: "draft.run", id: ask.id, agent, prompt: askPrompt(ask, goal, goals, work), repo: goal.folder ? null : goal.repo ?? null, folder: goal.folder ?? null, base: goal.base ?? null };
+    const command: ServerToRunner = { type: "draft.run", id: ask.id, agent, prompt: askPrompt(ask, goal, goals, work, login ? mineSummary(this.store.tasks(), this.store.goals(), login, Date.now()) : null), repo: goal.folder ? null : goal.repo ?? null, folder: goal.folder ?? null, base: goal.base ?? null };
     if (!(await this.deps.toRunner(machine.id, command))) {
       ask.expiresAt = 0;
       this.save(ask);
@@ -354,9 +365,12 @@ export class SlackAsks {
     // Saved as created first, so a second click can't make it twice.
     ask.state = "created";
     this.save(ask);
+    // Credited by login when the clicker linked their Slack account; the owner stays the answering machine's.
+    const clicker = await this.deps.loginFor(a.team ?? "", a.user.id).catch(() => null);
+    const by = clicker ? `@${clicker}` : a.user.name;
     let task: Task;
     try {
-      task = await this.deps.make(ask, ask.proposal, a.user.name, a.channel.name, (made) => {
+      task = await this.deps.make(ask, ask.proposal, by, a.channel.name, (made) => {
         ask.task = made.id;
         this.save(ask);
       });
@@ -386,7 +400,7 @@ export class SlackAsks {
   }
 }
 
-function askPrompt(ask: Ask, goal: Goal, goals: Goal[], work: string): string {
+function askPrompt(ask: Ask, goal: Goal, goals: Goal[], work: string, mine: string | null): string {
   const thread = ask.thread.map((l) => `${l.author}: ${l.text.replace(/\n+/g, "\n  ")}`).join("\n");
   const list = goals.map((g) => `- ${g.id} · ${g.name}${g.summary ? `: ${g.summary.replace(/\s+/g, " ").slice(0, 300)}` : ""}`).join("\n");
   const files = ask.attachments.length ? `\n\nFiles posted in the thread (they'll be attached to a task if one is made):\n${ask.attachments.map((f) => `- ${f.name} (${f.mime})`).join("\n")}` : "";
@@ -396,7 +410,13 @@ function askPrompt(ask: Ask, goal: Goal, goals: Goal[], work: string): string {
 ${thread}
 </thread>
 
-${ask.requester} asked: ${ask.question || "(see the thread)"}${files}
+${ask.requester} asked: ${ask.question || "(see the thread)"}${files}${ask.login && mine ? `
+
+The person asking is @${ask.login}, a member of this factory. Their own work right now:
+<mine>
+${mine}
+</mine>
+When they say "my", "mine" or "me", they mean @${ask.login}: answer from that block and the factory block.` : ""}
 
 The goals this channel works on:
 ${list}

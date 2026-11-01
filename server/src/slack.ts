@@ -222,6 +222,8 @@ export interface SlackAction {
   value: string | null;
   selected: string[];
   user: { id: string; name: string };
+  /** The Slack workspace it came from. */
+  team?: string | null;
   channel: { id: string; name: string | null };
   messageTs: string | null;
 }
@@ -233,7 +235,8 @@ export async function slackActions(request: Request, env: Env, ctx: { waitUntil(
   await integrationEvent(env, "slack");
   const payload = JSON.parse(new URLSearchParams(checked.raw).get("payload") ?? "null") as {
     type?: string;
-    user?: { id: string; name?: string; username?: string };
+    user?: { id: string; name?: string; username?: string; team_id?: string };
+    team?: { id?: string };
     channel?: { id: string; name?: string };
     message?: { ts: string };
     container?: { message_ts?: string };
@@ -246,6 +249,7 @@ export async function slackActions(request: Request, env: Env, ctx: { waitUntil(
     value: a.value ?? null,
     selected: (a.selected_options ?? []).map((o) => o.value),
     user: { id: payload.user?.id ?? "", name: payload.user?.name ?? payload.user?.username ?? "someone" },
+    team: payload.team?.id ?? payload.user?.team_id ?? null,
     channel: { id: payload.channel.id, name: payload.channel.name ?? null },
     messageTs: payload.message?.ts ?? payload.container?.message_ts ?? null,
   };

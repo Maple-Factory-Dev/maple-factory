@@ -23,6 +23,7 @@ import { everyText, Recurrings } from "./recurring.ts";
 import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
+import { loginFor } from "../slack-links.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
@@ -202,6 +203,7 @@ export class Engine {
       token: async () => (await hooks.slack?.token()) ?? null,
       problem: (text) => hooks.slack?.problem(text),
       make: (ask, proposal, by, channel, onMade) => this.fromSlack(ask, proposal, by, channel, onMade),
+      loginFor: (team, user) => loginFor(this.env, team, user),
       forget: (paths) => hooks.waitUntil(this.env.RELEASES.delete(paths.filter((p) => p.startsWith("/attachments/")).map((p) => p.slice(1)))),
       wakeIn: (ms) => hooks.wakeIn(ms),
     });
@@ -1365,7 +1367,8 @@ export class Engine {
     task.comments.push(await this.comment(ask.requester, transcript || ask.question, { via: sourceTitle(request) }));
     this.event(task, "factory", `created from Slack${channel ? ` (#${channel})` : ""} by ${by}`);
     onMade(task);
-    await audit(this.env, `slack:${by}`, "task.created", task.id, { title: task.title, slack: ask.id });
+    // `by` is @login when the clicker linked their Slack account (slack-links.ts), else their Slack name.
+    await audit(this.env, by.startsWith("@") ? by.slice(1) : `slack:${by}`, "task.created", task.id, { title: task.title, slack: ask.id });
     await this.startPlanning(task, by);
     this.intake.accepted(request, this.store.task(task.id) ?? task, "created", by);
     return this.store.task(task.id) ?? task;
