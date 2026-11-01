@@ -181,7 +181,7 @@ pub struct Releases {
 
 impl Releases {
     pub fn new(base: String) -> Result<Self> {
-        let http = reqwest::Client::builder()
+        let http = crate::http_client()
             .connect_timeout(Duration::from_secs(15))
             // Downloads are tens of MB; bound reads, not the whole transfer.
             .read_timeout(Duration::from_secs(60))

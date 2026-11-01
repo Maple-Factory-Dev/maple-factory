@@ -311,8 +311,14 @@ fn settings(args: &Args, config: Option<Config>, host: &str) -> Result<Settings>
     Ok(Settings { url: config::ws_endpoint(&url)?, token, runner_id, test })
 }
 
+/// Every reqwest client starts here: reqwest has no crypto provider of its own, so this installs ring first (tests never run `main`).
+pub(crate) fn http_client() -> reqwest::ClientBuilder {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    reqwest::Client::builder()
+}
+
 fn main() -> Result<()> {
-    // Sentry's reqwest brings in aws-lc-rs next to everyone else's ring, so rustls can't pick one on its own.
+    // reqwest and Sentry are built without a crypto provider (no aws-lc-rs), so rustls gets ring before anything opens a connection.
     let _ = rustls::crypto::ring::default_provider().install_default();
     // Agents call `maple-runner hook …` from inside sessions.
     if std::env::args().nth(1).as_deref() == Some("hook") {
