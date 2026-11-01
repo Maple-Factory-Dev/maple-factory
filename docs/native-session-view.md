@@ -1,8 +1,9 @@
 # Native session view: research note
 
 Status: research and contract (MF-199). The wire types are in `protocol/schema.ts` (`SessionEvent`, `SessionInput`,
-`session.subscribeEvents` / `session.sendInput`). Fixtures are in `protocol/fixtures/session-events/`. Nothing in the
-runner or the apps uses them yet.
+`session.subscribeEvents` / `session.sendInput`). Fixtures are in `protocol/fixtures/session-events/`. The server
+relays them between the apps and the runner, with the terminal's access rule (MF-201; see server/README.md); the
+runner's side is MF-200, and the apps don't use them yet.
 
 Sources checked **2026-10-31**.
 

@@ -123,6 +123,21 @@ runner/src/update.rs) and upload them to the factory's bucket (`RELEASES`) with
 `node scripts/release-runner.mjs --to factory`. What's in the bucket wins over the feed.
 `RELEASE_FEED=off` serves only the bucket.
 
+### Native session view relay
+
+The apps' native session view (docs/native-session-view.md) goes over the feed. The org hub takes
+`session.subscribeEvents`, `session.unsubscribeEvents` and `session.sendInput` and checks each with the rule
+`/client/terminal` uses (`src/session-events.ts` `sessionAccess`): the machine's owner and admins may type, a
+teammate the session is shared with may watch, and may type too only with `canType`; anyone else gets the terminal's
+403 wording. Allowed requests reach the runner through the machine hub as `session.events.subscribe` (with a fresh
+nonce per subscription) or `session.input` (with `by`). Input from a watch-only share is refused, and their events
+keep streaming. The runner's `session.events` come back through the machine hub to the org hub's
+`/session-events`. A backfill goes only to the connection whose nonce it echoes. Live events go to every subscriber
+whose access holds on the machine as it stands now, so unsharing stops them at the next message. Subscriptions live on
+each connection's attachment. A session's end drops them. The last unsubscribe or close sends the runner `stop`. A
+machine coming back online is asked again for every followed session. Tests: `test/session-events.test.ts`,
+`test/e2e-access.mjs`.
+
 ### GitHub status
 
 While apps are connected, the org hub reads githubstatus.com's `api/v2/summary.json` from its alarm, at most
