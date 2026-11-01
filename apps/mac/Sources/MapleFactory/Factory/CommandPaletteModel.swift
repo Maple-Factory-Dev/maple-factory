@@ -1,4 +1,5 @@
 import Foundation
+import MapleKit
 
 /// Something the ⌘K palette can run that isn't a place: the menu's common commands.
 enum PaletteAction: String, CaseIterable, Hashable {
@@ -205,58 +206,15 @@ enum CommandPaletteModel {
     /// An id match beats the title, which beats the goal and state. With only filters, every task scores the same,
     /// unfinished ones first.
     private static func taskScore(_ task: FactoryTask, _ words: [String]) -> Int? {
-        let finished = task.state.isFinished ? 0 : 1
-        guard !words.isEmpty else { return finished }
-        var total = 0
-        for word in words {
-            let id = fieldScore(word, task.id).map { $0 * 2 } ?? 0
-            let title = fieldScore(word, task.title) ?? 0
-            let other = max(fieldScore(word, task.goal) ?? 0, fieldScore(word, task.state.title) ?? 0) / 2
-            let best = max(id, title, other)
-            guard best > 0 else { return nil }
-            total += best
-        }
-        return total * 2 + finished
+        SearchRank.taskScore(words, id: task.id, title: task.title, goal: task.goal, state: task.state.title,
+                             finished: task.state.isFinished)
     }
 
-    /// Every word has to match a name (or, weaker, a keyword); the sum of each word's best.
     private static func score(_ words: [String], _ names: [String], also keywords: [String] = []) -> Int? {
-        var total = 0
-        for word in words {
-            let name = names.compactMap { fieldScore(word, $0) }.max() ?? 0
-            let keyword = (keywords.compactMap { fieldScore(word, $0) }.max() ?? 0) / 2
-            let best = max(name, keyword)
-            guard best > 0 else { return nil }
-            total += best
-        }
-        return total
+        SearchRank.score(words, names, also: keywords)
     }
 
-    /// How well one typed word matches a field: exact, prefix, a word's start, anywhere, then in order with gaps.
-    static func fieldScore(_ word: String, _ field: String) -> Int? {
-        let field = field.lowercased()
-        if field == word { return 1000 }
-        if field.hasPrefix(word) { return 800 }
-        if field.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(word) }) { return 600 }
-        if field.contains(word) { return 400 }
-        return fuzzy(word, field)
-    }
-
-    /// The word's letters in order, close together: 100 for a tight run, less as it spreads out.
-    private static func fuzzy(_ word: String, _ field: String) -> Int? {
-        guard word.count >= 2 else { return nil }
-        let letters = Array(field)
-        var index = 0, first: Int? = nil
-        for char in word {
-            while index < letters.count && letters[index] != char { index += 1 }
-            guard index < letters.count else { return nil }
-            if first == nil { first = index }
-            index += 1
-        }
-        let span = index - first!
-        guard span <= word.count * 3 else { return nil }
-        return max(1, 100 - (span - word.count) * 10)
-    }
+    static func fieldScore(_ word: String, _ field: String) -> Int? { SearchRank.fieldScore(word, field) }
 
     /// Lowercased with spaces and dashes gone, so `state:awaiting-approval` and `goal:authoverhaul` match.
     private static func squash(_ text: String) -> String {
