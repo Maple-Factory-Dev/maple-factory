@@ -2727,6 +2727,10 @@ final class AppState {
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
             case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
+            // A sidebar person's hover card, by first name (`hoverperson:chris`; `none` closes it).
+            // A collapsed-rail item's tooltip, by its title (`hoverrail:andrea`; `none` hides it).
+            case "hoverrail": NotificationCenter.default.post(name: RailTooltip.demo, object: nil, userInfo: ["title": parts[1]])
+            case "hoverperson": NotificationCenter.default.post(name: PersonHover.demoHover, object: nil, userInfo: ["name": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.

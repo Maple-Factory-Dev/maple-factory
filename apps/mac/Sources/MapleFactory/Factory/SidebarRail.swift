@@ -122,6 +122,8 @@ struct SidebarRail: View {
                 }
             }
             .scrollIndicators(.never)
+            // Rail tooltips float to the right of their item, past the rail's edge.
+            .scrollClipDisabled()
             .frame(maxHeight: .infinity, alignment: .top)
 
             updateItem
@@ -239,7 +241,9 @@ extension View {
     }
 }
 
-private struct RailTooltip: ViewModifier {
+struct RailTooltip: ViewModifier {
+    static let demo = Notification.Name("RailTooltip.demo")
+
     let title: String
     /// A muted word right after the title, like "you" on your own row.
     var note: String? = nil
@@ -259,6 +263,9 @@ private struct RailTooltip: ViewModifier {
                 } else {
                     withAnimation(.easeOut(duration: 0.08)) { shown = false }
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+                shown = (note.userInfo?["title"] as? String)?.lowercased() == title.lowercased()
             }
             .overlay(alignment: .leading) {
                 if shown {

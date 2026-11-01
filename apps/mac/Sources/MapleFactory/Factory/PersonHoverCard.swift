@@ -75,6 +75,11 @@ extension View {
     }
 }
 
+enum PersonHover {
+    /// A demo script's `hoverperson:<first name>` (or `none`) opens or closes a row's card.
+    static let demoHover = Notification.Name("PersonHover.demoHover")
+}
+
 private struct PersonHoverCardModifier: ViewModifier {
     let person: Person
     let presence: String
@@ -83,9 +88,11 @@ private struct PersonHoverCardModifier: ViewModifier {
     let status: PersonStatus?
     @State private var hovering = false
     @State private var shown = false
+    @State private var frame: CGRect = .zero
 
     func body(content: Content) -> some View {
         content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
             .onHover { inside in
                 hovering = inside
                 if inside {
@@ -99,6 +106,13 @@ private struct PersonHoverCardModifier: ViewModifier {
             }
             .popover(isPresented: $shown, arrowEdge: .trailing) {
                 PersonHoverCard(person: person, presence: presence, online: online, mobile: mobile, status: status)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: PersonHover.demoHover)) { note in
+                shown = (note.userInfo?["name"] as? String)?.lowercased() == person.firstName.lowercased()
+            }
+            .onChange(of: shown) { _, open in
+                guard Headless.isOn else { return }
+                if open { Headless.popoverAnchor = frame } else if Headless.popoverAnchor == frame { Headless.popoverAnchor = nil }
             }
     }
 }
