@@ -64,7 +64,14 @@ impl Health {
 /// Sends vitals every 10 seconds, and straight away with the agents checked again when `recheck` is
 /// notified (an agent just signed in). While disconnected they're dropped with other stale output.
 pub async fn report(sessions: crate::sessions::Sessions, recheck: std::sync::Arc<tokio::sync::Notify>) {
-    let mut sampler = Sampler::new();
+    let mut sampler = match Sampler::new() {
+        Ok(sampler) => sampler,
+        Err(e) => {
+            // Without vitals the runner still works; it just doesn't report Health.
+            tracing::warn!("couldn't read system vitals, not reporting health: {e}");
+            return;
+        }
+    };
     let mut tick = tokio::time::interval(Duration::from_secs(10));
     loop {
         tokio::select! {
@@ -88,11 +95,11 @@ pub struct Sampler {
 const AGENT_CHECK_EVERY: Duration = Duration::from_secs(10 * 60);
 
 impl Sampler {
-    pub fn new() -> Self {
-        let mut system = System::new();
+    pub fn new() -> Result<Self, sysinfo::Error> {
+        let mut system = System::new()?;
         // The first refresh also finds the CPUs, so `cores` is known from the first sample.
         system.refresh_cpu_usage();
-        Self { system, disks: Disks::new_with_refreshed_list(), agents: Default::default(), agents_checked: None }
+        Ok(Self { system, disks: Disks::new_with_refreshed_list()?, agents: Default::default(), agents_checked: None })
     }
 
     pub async fn sample(&mut self) -> Health {
@@ -111,12 +118,13 @@ impl Sampler {
         Health {
             cpu: self.system.global_cpu_usage(),
             cores: self.cores(),
-            load1: System::load_average().one,
+            // Load average isn't supported on Windows, where sysinfo returns an error.
+            load1: System::load_average().map_or(0.0, |l| l.one),
             mem_used: self.system.used_memory(),
             mem_total: self.system.total_memory(),
             disk_used,
             disk_total,
-            uptime: System::uptime(),
+            uptime: System::uptime().unwrap_or(0),
             battery: battery().await,
             agents: self.agents.clone(),
         }
@@ -134,7 +142,6 @@ impl Sampler {
 /// On macOS the data volume (`/System/Volumes/Data`) holds home directories.
 fn disk_for(disks: &Disks, path: &Path) -> (u64, u64) {
     let best = disks
-        .list()
         .iter()
         .filter(|d| path.starts_with(d.mount_point()) || (cfg!(target_os = "macos") && d.mount_point() == Path::new("/System/Volumes/Data")))
         .max_by_key(|d| {
@@ -225,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn samples_real_vitals() {
-        let health = Sampler::new().sample().await;
+        let health = Sampler::new().unwrap().sample().await;
         println!(
             "load1={} uptime={}s mem={}/{} disk={}/{} cores={} cpu={}",
             health.load1, health.uptime, health.mem_used, health.mem_total, health.disk_used, health.disk_total, health.cores, health.cpu
@@ -238,7 +245,7 @@ mod tests {
 
     #[test]
     fn reports_cores() {
-        let sampler = Sampler::new();
+        let sampler = Sampler::new().unwrap();
         let cores = sampler.cores();
         assert!(cores >= 1);
         assert_eq!(cores as usize, sampler.system.cpus().len(), "found by the first refresh");
