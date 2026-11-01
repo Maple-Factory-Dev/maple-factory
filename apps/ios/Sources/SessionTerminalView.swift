@@ -18,6 +18,8 @@ struct SessionTerminalView: View {
     @State private var active = false
     /// The session as last seen live, so the header keeps its agent and folder after it ends.
     @State private var lastSeen: Wire.LiveSession?
+    @State private var sharing = false
+    @State private var ending = false
 
     private var machine: Wire.Machine? { store.feed.machines.first { $0.id == machineID } }
     private var current: Wire.LiveSession? { machine?.sessions.first { $0.session.id == sessionID } }
@@ -63,6 +65,20 @@ struct SessionTerminalView: View {
         .navigationTitle(live?.session.taskId ?? live?.session.agent ?? "Session")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Share and End: the machine's owner or an admin, while the session is live.
+            if let machine, let current, !ended, store.canManage(machine) {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button(current.shares?.isEmpty == false ? "Shared with \(current.shares!.count)…" : "Share…", systemImage: "person.2") { sharing = true }
+                            .accessibilityIdentifier("session-share")
+                        Button("End session", systemImage: "stop.fill", role: .destructive) { ending = true }
+                            .accessibilityIdentifier("session-end")
+                    } label: {
+                        Label("Session actions", systemImage: "ellipsis.circle")
+                    }
+                    .accessibilityIdentifier("session-menu")
+                }
+            }
             if let task = live?.session.taskId {
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink(value: TaskRoute(id: task)) { Label("Open task \(task)", systemImage: "arrow.up.forward.square") }
@@ -75,6 +91,13 @@ struct SessionTerminalView: View {
             active = true
         }
         .onDisappear { active = false }
+        .sheet(isPresented: $sharing) { SessionShareSheet(machineID: machineID, sessionID: sessionID) }
+        .confirmationDialog("End \(live.map(sessionName) ?? sessionID)?", isPresented: $ending, titleVisibility: .visible) {
+            Button("End session", role: .destructive) { store.killSession(machine: machineID, id: sessionID) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its terminal closes for everyone watching.")
+        }
         .onChange(of: current) { _, now in if let now { lastSeen = now } }
     }
 
