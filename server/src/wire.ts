@@ -38,6 +38,10 @@ export const DraftStateValues: readonly DraftState[] = ["choosing","reading","ne
 export type ScoutState = "running" | "done" | "failed";
 export const ScoutStateValues: readonly ScoutState[] = ["running","done","failed"];
 
+/** How a recurring task's interval is shown. */
+export type RecurringUnit = "hours" | "days" | "weeks";
+export const RecurringUnitValues: readonly RecurringUnit[] = ["hours","days","weeks"];
+
 /** Where a repo's Set up with AI run is. */
 export type RepoSetupState = "running" | "done" | "failed";
 export const RepoSetupStateValues: readonly RepoSetupState[] = ["running","done","failed"];
@@ -1113,6 +1117,35 @@ export interface ScoutRun {
   error?: string | null;
 }
 
+/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. */
+export interface Recurring {
+  id: string;
+  goal: string;
+  title: string;
+  /** The prompt: each run's task brief. */
+  brief: string;
+  /** One of the goal's repos. None: the goal's own. */
+  repo?: string | null;
+  /** claude or codex. */
+  agent: string;
+  /** The interval in minutes (60 at least). */
+  every: number;
+  /** How `every` is shown: hours, days or weeks. */
+  unit: RecurringUnit;
+  /** The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST. */
+  firstAt: number;
+  /** An IANA time zone, e.g. America/New_York. */
+  timeZone: string;
+  /** When it next runs (ms). */
+  nextAt: number;
+  paused: boolean;
+  lastRunAt?: number | null;
+  /** The task its last run started. While that one is still open, a due run is skipped. */
+  lastTask?: string | null;
+  /** Who saved it last; its runs are started on their behalf. */
+  by: string;
+}
+
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
 export interface Draft {
   id: string;
@@ -1918,6 +1951,32 @@ export interface ClientMessage_GoalScout {
   goal: string;
 }
 
+/** The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`. */
+export interface ClientMessage_RecurringSave {
+  type: "recurring.save";
+  /** nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent. */
+  recurring: Recurring;
+}
+
+/** The goal's lead or an admin. */
+export interface ClientMessage_RecurringDelete {
+  type: "recurring.delete";
+  id: string;
+}
+
+/** The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now. */
+export interface ClientMessage_RecurringPause {
+  type: "recurring.pause";
+  id: string;
+  paused: boolean;
+}
+
+/** The goal's lead or an admin: start a run now; its schedule is kept. */
+export interface ClientMessage_RecurringRunNow {
+  type: "recurring.runNow";
+  id: string;
+}
+
 /** Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`. */
 export interface ClientMessage_RepoSetupStart {
   type: "repo.setup.start";
@@ -2385,8 +2444,8 @@ export interface ClientMessage_TaskGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_PushRegister | ClientMessage_PushUnregister | ClientMessage_PushDevices | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRecheckGitHub | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_ReportGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","repo.setup.start","repo.setup.cancel","quietHours.set","push.register","push.unregister","push.devices","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.recheckGitHub","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","report.get","tasks.older","task.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RecurringSave | ClientMessage_RecurringDelete | ClientMessage_RecurringPause | ClientMessage_RecurringRunNow | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_PushRegister | ClientMessage_PushUnregister | ClientMessage_PushDevices | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRecheckGitHub | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_ReportGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","recurring.save","recurring.delete","recurring.pause","recurring.runNow","repo.setup.start","repo.setup.cancel","quietHours.set","push.register","push.unregister","push.devices","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.recheckGitHub","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","report.get","tasks.older","task.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -2430,6 +2489,8 @@ export interface ServerToClient_Snapshot {
   setupRuns?: RepoSetupRun[] | null;
   /** Each goal's latest Scout run. None: an older server. */
   scoutRuns?: ScoutRun[] | null;
+  /** Every goal's recurring tasks. None: an older server. */
+  recurring?: Recurring[] | null;
   /** The newest released runner version, when there's a release. */
   runnerLatest?: string | null;
   /** Runner releases, newest first, with their notes (What's new). None: an older server. */
@@ -2514,6 +2575,17 @@ export interface ServerToClient_DraftUpdated {
 export interface ServerToClient_ScoutUpdated {
   type: "scout.updated";
   run: ScoutRun;
+}
+
+/** A recurring task was saved or ran. */
+export interface ServerToClient_RecurringUpdated {
+  type: "recurring.updated";
+  recurring: Recurring;
+}
+
+export interface ServerToClient_RecurringDeleted {
+  type: "recurring.deleted";
+  id: string;
 }
 
 /** How a repo's Set up with AI run is going. */
@@ -2669,5 +2741,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_PushDevices | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Report | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","repo.setup.updated","follows.updated","push.devices","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","stats","report","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RecurringUpdated | ServerToClient_RecurringDeleted | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_PushDevices | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_Stats | ServerToClient_Report | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","draft.updated","scout.updated","recurring.updated","recurring.deleted","repo.setup.updated","follows.updated","push.devices","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","stats","report","checkLog","error"] as const;

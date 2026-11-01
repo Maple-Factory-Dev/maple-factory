@@ -254,6 +254,22 @@ enum class ScoutState(val raw: String) {
     object Serializer : WireEnumSerializer<ScoutState>("ScoutState", entries, { it.raw }, Unknown)
 }
 
+/** How a recurring task's interval is shown. */
+@Serializable(with = RecurringUnit.Serializer::class)
+enum class RecurringUnit(val raw: String) {
+    /** Every N hours. */
+    Hours("hours"),
+    /** Every N days. */
+    Days("days"),
+    /** Every N weeks. */
+    Weeks("weeks"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<RecurringUnit>("RecurringUnit", entries, { it.raw }, Unknown)
+}
+
 /** Where a repo's Set up with AI run is. */
 @Serializable(with = RepoSetupState.Serializer::class)
 enum class RepoSetupState(val raw: String) {
@@ -1750,6 +1766,36 @@ data class ScoutRun(
     val error: String? = null,
 )
 
+/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. */
+@Serializable
+data class Recurring(
+    val id: String,
+    val goal: String,
+    val title: String,
+    /** The prompt: each run's task brief. */
+    val brief: String,
+    /** One of the goal's repos. None: the goal's own. */
+    val repo: String? = null,
+    /** claude or codex. */
+    val agent: String,
+    /** The interval in minutes (60 at least). */
+    val every: Long,
+    /** How `every` is shown: hours, days or weeks. */
+    val unit: RecurringUnit,
+    /** The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST. */
+    val firstAt: Long,
+    /** An IANA time zone, e.g. America/New_York. */
+    val timeZone: String,
+    /** When it next runs (ms). */
+    val nextAt: Long,
+    val paused: Boolean,
+    val lastRunAt: Long? = null,
+    /** The task its last run started. While that one is still open, a due run is skipped. */
+    val lastTask: String? = null,
+    /** Who saved it last; its runs are started on their behalf. */
+    val by: String,
+)
+
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
 @Serializable
 data class Draft(
@@ -2628,6 +2674,28 @@ sealed class ClientMessage {
     data class GoalScout(
         val goal: String,
     ) : ClientMessage()
+    /** The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`. */
+    @Serializable
+    data class RecurringSave(
+        /** nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent. */
+        val recurring: dev.maplefactory.wire.Recurring,
+    ) : ClientMessage()
+    /** The goal's lead or an admin. */
+    @Serializable
+    data class RecurringDelete(
+        val id: String,
+    ) : ClientMessage()
+    /** The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now. */
+    @Serializable
+    data class RecurringPause(
+        val id: String,
+        val paused: Boolean,
+    ) : ClientMessage()
+    /** The goal's lead or an admin: start a run now; its schedule is kept. */
+    @Serializable
+    data class RecurringRunNow(
+        val id: String,
+    ) : ClientMessage()
     /** Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`. */
     @Serializable
     data class RepoSetupStart(
@@ -3051,6 +3119,10 @@ sealed class ClientMessage {
             "draft.goal" -> json.decodeFromJsonElement(DraftGoal.serializer(), body)
             "draft.cancel" -> json.decodeFromJsonElement(DraftCancel.serializer(), body)
             "goal.scout" -> json.decodeFromJsonElement(GoalScout.serializer(), body)
+            "recurring.save" -> json.decodeFromJsonElement(RecurringSave.serializer(), body)
+            "recurring.delete" -> json.decodeFromJsonElement(RecurringDelete.serializer(), body)
+            "recurring.pause" -> json.decodeFromJsonElement(RecurringPause.serializer(), body)
+            "recurring.runNow" -> json.decodeFromJsonElement(RecurringRunNow.serializer(), body)
             "repo.setup.start" -> json.decodeFromJsonElement(RepoSetupStart.serializer(), body)
             "repo.setup.cancel" -> json.decodeFromJsonElement(RepoSetupCancel.serializer(), body)
             "quietHours.set" -> json.decodeFromJsonElement(QuietHoursSet.serializer(), body)
@@ -3135,6 +3207,10 @@ sealed class ClientMessage {
             is DraftGoal -> "draft.goal" to json.encodeToJsonElement(DraftGoal.serializer(), value)
             is DraftCancel -> "draft.cancel" to json.encodeToJsonElement(DraftCancel.serializer(), value)
             is GoalScout -> "goal.scout" to json.encodeToJsonElement(GoalScout.serializer(), value)
+            is RecurringSave -> "recurring.save" to json.encodeToJsonElement(RecurringSave.serializer(), value)
+            is RecurringDelete -> "recurring.delete" to json.encodeToJsonElement(RecurringDelete.serializer(), value)
+            is RecurringPause -> "recurring.pause" to json.encodeToJsonElement(RecurringPause.serializer(), value)
+            is RecurringRunNow -> "recurring.runNow" to json.encodeToJsonElement(RecurringRunNow.serializer(), value)
             is RepoSetupStart -> "repo.setup.start" to json.encodeToJsonElement(RepoSetupStart.serializer(), value)
             is RepoSetupCancel -> "repo.setup.cancel" to json.encodeToJsonElement(RepoSetupCancel.serializer(), value)
             is QuietHoursSet -> "quietHours.set" to json.encodeToJsonElement(QuietHoursSet.serializer(), value)
@@ -3247,6 +3323,8 @@ sealed class ServerToClient {
         val setupRuns: List<dev.maplefactory.wire.RepoSetupRun>? = null,
         /** Each goal's latest Scout run. None: an older server. */
         val scoutRuns: List<dev.maplefactory.wire.ScoutRun>? = null,
+        /** Every goal's recurring tasks. None: an older server. */
+        val recurring: List<dev.maplefactory.wire.Recurring>? = null,
         /** The newest released runner version, when there's a release. */
         val runnerLatest: String? = null,
         /** Runner releases, newest first, with their notes (What's new). None: an older server. */
@@ -3319,6 +3397,15 @@ sealed class ServerToClient {
     @Serializable
     data class ScoutUpdated(
         val run: dev.maplefactory.wire.ScoutRun,
+    ) : ServerToClient()
+    /** A recurring task was saved or ran. */
+    @Serializable
+    data class RecurringUpdated(
+        val recurring: dev.maplefactory.wire.Recurring,
+    ) : ServerToClient()
+    @Serializable
+    data class RecurringDeleted(
+        val id: String,
     ) : ServerToClient()
     /** How a repo's Set up with AI run is going. */
     @Serializable
@@ -3468,6 +3555,8 @@ sealed class ServerToClient {
             "note.removed" -> json.decodeFromJsonElement(NoteRemoved.serializer(), body)
             "draft.updated" -> json.decodeFromJsonElement(DraftUpdated.serializer(), body)
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
+            "recurring.updated" -> json.decodeFromJsonElement(RecurringUpdated.serializer(), body)
+            "recurring.deleted" -> json.decodeFromJsonElement(RecurringDeleted.serializer(), body)
             "repo.setup.updated" -> json.decodeFromJsonElement(RepoSetupUpdated.serializer(), body)
             "follows.updated" -> json.decodeFromJsonElement(FollowsUpdated.serializer(), body)
             "push.devices" -> json.decodeFromJsonElement(PushDevices.serializer(), body)
@@ -3507,6 +3596,8 @@ sealed class ServerToClient {
             is NoteRemoved -> "note.removed" to json.encodeToJsonElement(NoteRemoved.serializer(), value)
             is DraftUpdated -> "draft.updated" to json.encodeToJsonElement(DraftUpdated.serializer(), value)
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
+            is RecurringUpdated -> "recurring.updated" to json.encodeToJsonElement(RecurringUpdated.serializer(), value)
+            is RecurringDeleted -> "recurring.deleted" to json.encodeToJsonElement(RecurringDeleted.serializer(), value)
             is RepoSetupUpdated -> "repo.setup.updated" to json.encodeToJsonElement(RepoSetupUpdated.serializer(), value)
             is FollowsUpdated -> "follows.updated" to json.encodeToJsonElement(FollowsUpdated.serializer(), value)
             is PushDevices -> "push.devices" to json.encodeToJsonElement(PushDevices.serializer(), value)
