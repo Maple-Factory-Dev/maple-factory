@@ -88,4 +88,4 @@ export function mineSummary(tasks: Task[], goals: Goal[], login: string, now: nu
 }
 
 /** What `@Maple mine` says to someone whose Slack account isn't linked. */
-export const LINK_HINT = "I don't know which factory member you are yet. Mention me with `link` and I'll send you a one-time link (only you see it) to connect your Slack account to your factory login.";
+export const LINK_HINT = "I don't know which factory member you are yet. Mention me with `link` and I'll send you a one-time link (only you see it) to connect your Slack account to your factory login. `@Maple help` lists everything I can do.";

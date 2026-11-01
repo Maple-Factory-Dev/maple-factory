@@ -11,7 +11,7 @@ import { Intake } from "../src/factory/intake.ts";
 import { ARCHIVED_NOTE, parseAnswer } from "../src/factory/slack-asks.ts";
 import { Store } from "../src/factory/store.ts";
 import { deliver } from "../src/trackers.ts";
-import { slackActions, slackCommand, slackEvents, wantsGoals } from "../src/slack.ts";
+import { HELP_TEXT, slackActions, slackCommand, slackEvents, wantsGoals, wantsHelp } from "../src/slack.ts";
 import { manifest, merged, definition, slackSetupUrl, SLACK_SCOPES } from "../src/integrations/registry.ts";
 import type { Goal, ServerToRunner } from "../src/wire.ts";
 import { d1 } from "./d1.ts";
@@ -651,6 +651,37 @@ test("wordings of `goals` bring up the picker; a question naming goals in passin
   }
 });
 
+test("wordings of `help` ask for the command list; a question that only mentions help goes to the agent", () => {
+  for (const text of ["help", "help?", "*help*", "Help!", "commands", "what can you do", "What can you do?", "how do I use you", "`help`"]) assert.ok(wantsHelp(text), text);
+  for (const text of ["help me fix the export bug", "does the help page load?", "can you help with billing", "what commands does the CLI take?", "helpful"]) assert.ok(!wantsHelp(text), text);
+});
+
+test("`@Maple help` whispers the command list to the asker in the thread, with no agent and no ask", async () => {
+  const f = factory();
+  try {
+    for (const [i, text] of ["<@UBOT> help", "<@UBOT> help?", "<@UBOT> *help*", "<@UBOT> what can you do"].entries()) {
+      await slackEvents(signed("/integrations/slack/events", mention(`EvH${i}`, text)), f.env, f.ctx);
+      await f.settle();
+    }
+    const whispers = f.whispers();
+    assert.equal(whispers.length, 4);
+    for (const w of whispers) {
+      assert.deepEqual([w.channel, w.user, w.thread_ts, w.text], ["C1", "U2", "50.0001", HELP_TEXT]);
+      for (const c of ["@Maple status", "@Maple mine", "@Maple goals", "@Maple link", "@Maple unlink", "/maple"]) assert.ok(w.text.includes(c), c);
+    }
+    assert.equal(f.posts().length, 0, "nothing posted in the channel");
+    assert.equal(f.sent.length, 0, "no draft.run");
+    assert.equal(f.asks.length, 0, "no OrgHub ask");
+    // A question that only mentions help is still a question for the agent.
+    await slackEvents(signed("/integrations/slack/events", mention("EvH9", "<@UBOT> help me fix the export bug")), f.env, f.ctx);
+    await f.settle();
+    assert.equal(f.asks.length, 1);
+    assert.equal(f.asks[0].question, "help me fix the export bug");
+  } finally {
+    f.restore();
+  }
+});
+
 test("when Slack rejects the picker, a plain reply in the thread says why and the problem is recorded", async () => {
   const f = factory();
   const mocked = globalThis.fetch;
@@ -734,8 +765,8 @@ test("parseAnswer: a proposal only in one of the channel's goals, by id, name or
 
 // ---- The slash command ----
 
-const command = (f: { secret?: string; at?: number } = {}) =>
-  signed("/integrations/slack/command", new URLSearchParams({ text: "the export button times out", channel_id: "C1", channel_name: "support", user_name: "dana", response_url: "https://hooks.slack.com/commands/T1/1/abc" }).toString(), { ...f, type: "application/x-www-form-urlencoded" });
+const command = (f: { secret?: string; at?: number; text?: string } = {}) =>
+  signed("/integrations/slack/command", new URLSearchParams({ text: f.text ?? "the export button times out", channel_id: "C1", channel_name: "support", user_name: "dana", response_url: "https://hooks.slack.com/commands/T1/1/abc" }).toString(), { ...f, type: "application/x-www-form-urlencoded" });
 
 test("/maple posts the ask in the channel and the request's replies go in its thread; a bad signature is refused", async () => {
   const f = factory();
@@ -758,6 +789,22 @@ test("/maple posts the ask in the channel and the request's replies go in its th
 
     assert.equal((await slackCommand(command({ secret: "wrong" }), f.env)).status, 401);
     assert.equal((await slackCommand(command({ at: 1 }), f.env)).status, 401);
+  } finally {
+    f.restore();
+  }
+});
+
+test("`/maple help` answers with the command list, only to the asker, and files no request", async () => {
+  const f = factory();
+  try {
+    for (const text of ["help", "help?", "what can you do"]) {
+      const res = await slackCommand(command({ text }), f.env);
+      assert.deepEqual(await res.json(), { response_type: "ephemeral", text: HELP_TEXT });
+    }
+    assert.equal(f.store.intake().length, 0, "no request");
+    assert.equal(f.posts().length, 0, "nothing posted in the channel");
+    const empty = await slackCommand(command({ text: "" }), f.env);
+    assert.match(((await empty.json()) as { text: string }).text, /`\/maple help`/);
   } finally {
     f.restore();
   }

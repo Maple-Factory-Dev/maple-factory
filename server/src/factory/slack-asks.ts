@@ -303,7 +303,7 @@ export class SlackAsks {
     const machines = (await this.deps.machines()).filter((m) => m.online && !this.deps.paused(m)).sort((a, b) => a.sessions.length - b.sessions.length);
     const agent = ["claude", "codex"].find((a) => machines.some((m) => this.deps.hasAgent(m, a)));
     const machine = agent && machines.find((m) => this.deps.hasAgent(m, agent));
-    if (!agent || !machine) return void (await this.post(input.channel, input.threadTs, "No machine is online to look into this right now (I answer with an agent on one of the factory's runners). Mention me again once one is. `@Maple status` still works: it says what's building and queued."));
+    if (!agent || !machine) return void (await this.post(input.channel, input.threadTs, "No machine is online to look into this right now (I answer with an agent on one of the factory's runners). Mention me again once one is. `@Maple status` still works: it says what's building and queued, and `@Maple help` lists the rest."));
     const replyTs = await this.post(input.channel, input.threadTs, "Looking into it…");
     if (!replyTs) return;
     const ask: Ask = {
