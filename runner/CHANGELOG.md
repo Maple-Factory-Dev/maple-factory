@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.99.0 — 2026-11-01
+
+The runner understands research tasks, which finish with a written answer instead of a pull request.
+
 ## 0.98.0 — 2026-11-01
 
 The runner understands the new Statistics fields that split idle time (drafting and backlog) from active cycle time.
