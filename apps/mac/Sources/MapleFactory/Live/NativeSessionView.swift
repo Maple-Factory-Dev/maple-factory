@@ -275,16 +275,21 @@ struct NativePromptCard: View {
             HStack(spacing: 8) {
                 ForEach(prompt.options, id: \.key) { option in
                     let deny = option.choice == .no || option.key == "Escape"
+                    let color = deny ? Theme.State.cancelled : option.choice == .yes ? Theme.accent : Theme.State.backlog
                     Button {
                         send(option.key)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 5) {
                             if answering == option.key { ProgressView().controlSize(.mini) }
                             Text(option.label).lineLimit(1)
                         }
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(option.choice == .yes ? Theme.onAccent : color)
+                        .padding(.horizontal, 12).frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(option.choice == .yes ? color : color.opacity(0.14)))
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(deny ? Theme.State.cancelled : option.choice == .yes ? Theme.accent : Theme.State.backlog)
+                    .buttonStyle(.plain)
                     .keyboardShortcut(deny ? .cancelAction : option.choice == .yes ? .defaultAction : nil)
                 }
             }

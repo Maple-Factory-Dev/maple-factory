@@ -87,8 +87,8 @@ import Observation
             case .toolCall(let c): rows.append(.tool(id: c.id, call: c.call, result: results[c.call.callId]))
             case .turn(let t) where t.state == .error || t.state == .interrupted:
                 rows.append(.turnNote(id: t.id, state: t.state, message: t.message))
-            case .other(let o) where NativeRow.shows(o):
-                rows.append(.other(id: o.id, kind: o.kind, summary: o.summary))
+            case .other(let o):
+                if let text = NativeRow.shownText(o) { rows.append(.other(id: o.id, kind: o.kind, summary: text)) }
             default: break
             }
         }
@@ -105,9 +105,23 @@ enum NativeRow: Identifiable, Hashable {
     /// A record the runner passes through unmapped (a slash command's output, say), shown plainly.
     case other(id: String, kind: String, summary: String)
 
-    /// Bookkeeping records (file snapshots, summaries, invalid lines) stay hidden.
-    static func shows(_ o: Wire.SessionEventOther) -> Bool {
-        !o.summary.isEmpty && o.kind != "invalid" && !o.kind.contains("snapshot") && !o.kind.hasPrefix("summary")
+    /// What a pass-through record shows, if anything: plain text as is; a JSON record only its
+    /// `content` (a slash command's output, like /remote-control's link). Bookkeeping (file
+    /// snapshots, latches, tool lists, invalid lines) stays hidden.
+    static func shownText(_ o: Wire.SessionEventOther) -> String? {
+        let summary = o.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty, o.kind != "invalid", !o.kind.contains("snapshot") else { return nil }
+        guard summary.hasPrefix("{") else { return summary }
+        // The summary may be cut, so read `content` by hand rather than as JSON.
+        guard let range = summary.range(of: #""content":""#) else { return nil }
+        var text = "", escaped = false
+        for ch in summary[range.upperBound...] {
+            if escaped { text.append(ch == "n" ? "\n" : ch); escaped = false }
+            else if ch == "\\" { escaped = true }
+            else if ch == "\"" { break }
+            else { text.append(ch) }
+        }
+        return text.isEmpty ? nil : text
     }
 
     var id: String {

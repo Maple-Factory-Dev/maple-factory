@@ -119,4 +119,14 @@ import Testing
         #expect(SlashCommands.matching("hello", agent: "claude").isEmpty)
         #expect(SlashCommands.matching("/zzz", agent: "claude").isEmpty)
     }
+
+    @Test func passThroughRecordsShowOnlyTheirText() {
+        func other(_ kind: String, _ summary: String) -> Wire.SessionEventOther {
+            .init(id: kind, session: "s", seq: 1, at: 1, agent: "claude", kind: kind, summary: summary)
+        }
+        #expect(NativeRow.shownText(other("system/local_command", #"{"content":"/remote-control is active · Continue at https://claude.ai/code/x","cwd":"/tmp"}"#)) == "/remote-control is active · Continue at https://claude.ai/code/x")
+        #expect(NativeRow.shownText(other("atis-latch", #"{"atis":"","sessionId":"x","type":"atis-latch"}"#)) == nil)
+        #expect(NativeRow.shownText(other("file-history-snapshot", "snapshot")) == nil)
+        #expect(NativeRow.shownText(other("system", "Compacted the conversation")) == "Compacted the conversation")
+    }
 }

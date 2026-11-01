@@ -180,11 +180,12 @@ struct LiveSessionView: View {
     }
 
     private var statusBar: some View {
-        let (text, color): (String, Color) = switch link {
+        let terminal: (String, Color) = switch link {
         case .connecting: ("Attaching…", Theme.textMuted)
         case .live: ("Attached · relayed through \(client.server?.host() ?? "the factory")", Theme.State.merged)
         case .closed: ("Detached", Theme.State.awaitingApproval)
         }
+        let (text, color) = mode == .native ? ("Native · events relayed through \(client.server?.host() ?? "the factory")", Theme.State.merged) : terminal
         return HStack(spacing: 8) {
             Text(" maple ")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
