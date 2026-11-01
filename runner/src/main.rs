@@ -7,6 +7,7 @@ mod config;
 mod costs;
 mod draft;
 mod ends;
+mod events;
 mod factory;
 mod folder;
 mod fs_browse;
