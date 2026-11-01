@@ -173,9 +173,7 @@ private struct EditTaskSheet: View {
                     .accessibilityIdentifier("edit-title")
             }
             Section {
-                TextEditor(text: $brief)
-                    .frame(minHeight: 180)
-                    .accessibilityIdentifier("edit-brief")
+                MarkdownField(placeholder: "What should it do, and why?", text: $brief, identifier: "edit-brief", minHeight: 180)
             } header: {
                 Text("Brief")
             } footer: {

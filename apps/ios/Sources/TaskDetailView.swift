@@ -84,7 +84,8 @@ struct TaskDetailView: View {
         if !task.stages.isEmpty { TimeCard(task: task) }
         if !task.brief.isEmpty {
             Card("Brief", icon: "doc.text") {
-                Text(LocalizedStringKey(task.brief)).font(.callout)
+                MarkdownText(source: task.brief)
+                    .accessibilityElement(children: .contain)
                     // The brief as written (links and all), for the UI tests.
                     .accessibilityIdentifier("task.brief").accessibilityValue(task.brief)
             }
@@ -928,13 +929,13 @@ struct TimelineSection: View {
                     Avatar(login: comment.author, size: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(comment.author).font(.caption.weight(.semibold))
-                        Text(LocalizedStringKey(comment.text)).font(.callout)
+                        MarkdownText(source: comment.text)
                     }
                 case .change(let change):
                     Image(systemName: "arrow.uturn.right").foregroundStyle(Theme.warning).frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(change.author) asked for changes · \(change.status.rawValue)").font(.caption.weight(.semibold))
-                        Text(change.text).font(.callout)
+                        MarkdownText(source: change.text)
                     }
                 }
                 Spacer()
@@ -1040,34 +1041,56 @@ struct ActionBar: View {
     }
 }
 
+/// What every Comment, Steer, Request changes, Answer and Reply to hand opens: Markdown with a
+/// formatting bar and Write/Preview, and photos or files that upload as they're picked and go out
+/// linked at the end of the text (`![name](/attachments/…)`), so the agent gets them too.
 struct ComposeSheet: View {
+    @Environment(FactoryStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let compose: Compose
     @State private var text = ""
+    @State private var uploads = AttachmentUploads()
     @FocusState private var focused: Bool
+
+    private var message: String { FactoryStore.brief(text, attachments: uploads.attachments) }
+    private var canSend: Bool {
+        !uploads.uploading && (compose.optional || !message.isEmpty)
+    }
 
     var body: some View {
         NavigationStack {
-            TextField(compose.placeholder, text: $text, axis: .vertical)
-                .lineLimit(5...12)
-                .focused($focused)
-                .padding()
-                .frame(maxHeight: .infinity, alignment: .top)
-                .navigationTitle(compose.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(compose.send) {
-                            compose.action(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                            dismiss()
-                        }
-                        .disabled(!compose.optional && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    MarkdownField(placeholder: compose.placeholder, text: $text, identifier: "compose.text",
+                                  minHeight: 160, previewSource: message, focused: $focused)
+                    AttachmentTray(uploads: uploads, prefix: "compose")
+                    if uploads.uploading {
+                        Text("Send waits for the uploads to finish.").font(.footnote).foregroundStyle(.secondary)
+                    } else if uploads.failed {
+                        Text("Tap a photo that didn't go up to try again.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-                .onAppear { focused = true }
+                .padding()
+            }
+            .navigationTitle(compose.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(compose.send) {
+                        compose.action(message)
+                        dismiss()
+                    }
+                    .disabled(!canSend)
+                    .accessibilityIdentifier("compose.send")
+                }
+            }
+            .onAppear {
+                focused = !UserDefaults.standard.bool(forKey: "composeNoFocus")
+                uploads.injectTestAttachments(flag: "composeAttachment", store: store)
+            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large, .medium])
     }
 }
 
