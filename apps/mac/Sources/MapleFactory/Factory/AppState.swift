@@ -2525,6 +2525,8 @@ final class AppState {
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
+            // The native session view (MF-202): `native:mode:native`, `native:type:/r`, `native:send`, `native:key:1`, `native:open:Edit`, `native:think`.
+            case "native": NotificationCenter.default.post(name: NativeSessionView.demo, object: Array(parts.dropFirst()).map { String($0) })
             // A press on one of the Risk policy editor's sign-off steppers (with `-window riskpolicy`):
             // `riskstep:approvals:low:-` (row approvals or reviews, a level, + or -).
             case "riskstep": NotificationCenter.default.post(name: RiskPolicyEditor.demoStep, object: Array(parts.dropFirst()).map { String($0) })

@@ -290,6 +290,7 @@ enum Headless {
             }
             if AppDefaults.string(forKey: "window") == "about" { self.aboutWindow.orderBack(nil) }
             if AppDefaults.string(forKey: "window") == "riskpolicy" { self.riskPolicyWindow.orderBack(nil) }
+            if AppDefaults.string(forKey: "window") == "native" { self.nativeWindow.orderBack(nil) }
             let frames = Int(self.number("frames", 0))
             async let recording: Void = self.record(frames: frames)
             while !self.state.scriptFinished { try? await Task.sleep(for: .milliseconds(100)) }
@@ -385,6 +386,7 @@ enum Headless {
         case "settings-sheet": settingsWindow.attachedSheet
         case "about": aboutWindow
         case "riskpolicy": riskPolicyWindow
+        case "native": nativeWindow
         default: window
         }
     }
@@ -399,6 +401,29 @@ enum Headless {
         settings.isExcludedFromWindowsMenu = true
         settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
         return settings
+    }()
+
+    /// The native session view (MF-202) on a fixture-seeded session: `-native-fixture <path>` (a session-events
+    /// `.expected.json`), with one thinking event put after the first message, so the thinking row can be shot.
+    private lazy var nativeWindow: NSWindow = {
+        // Put the thinking record after the first message and number the records again.
+        var records = (AppDefaults.string(forKey: "native-fixture").flatMap { FileManager.default.contents(atPath: $0) })
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+        records.insert(["type": "thinking", "id": "think-1", "session": "fixture", "seq": 0, "at": 0, "agent": "claude",
+            "text": "The test fails on the empty case. The parser returns nil before it checks the header, so the fix belongs in parse(), not in the caller. I'll edit that and rerun the suite."],
+            at: min(1, records.count))
+        for index in records.indices { records[index]["seq"] = index + 1 }
+        let events = (try? JSONSerialization.data(withJSONObject: records))
+            .flatMap { try? JSONDecoder().decode([Wire.SessionEvent].self, from: $0) } ?? []
+        client.seedNativeEvents("fixture", machine: "m", events: events)
+        let host = NSHostingController(rootView: NativeSessionView(machineID: "m", sessionID: "fixture", agent: "claude", switchToTerminal: {})
+            .frame(width: 760, height: 620).background(Theme.raised)
+            .environment(state).environment(client).defaultAppStorage(AppDefaults))
+        let native = NSWindow(contentViewController: host)
+        native.setContentSize(CGSize(width: 760, height: 620))
+        native.isExcludedFromWindowsMenu = true
+        native.setFrame(Headless.offscreenFrame(size: native.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
+        return native
     }()
 
     /// The goal header's Risk policy popover in a window of its own: a background app shows no popover.

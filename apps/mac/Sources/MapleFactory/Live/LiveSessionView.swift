@@ -13,6 +13,7 @@ struct LiveSessionView: View {
     @State private var sharing = false
     /// The Share button's frame in the window, for a headless shot to hang the popover from.
     @State private var shareFrame: CGRect = .zero
+    @AppStorage(SessionViewMode.storageKey) private var mode: SessionViewMode = .terminal
 
     /// The session as last seen live, so the header keeps its agent and folder after it ends.
     @State private var lastSeen: Wire.LiveSession?
@@ -31,12 +32,17 @@ struct LiveSessionView: View {
             toolbar
             ZStack(alignment: .bottom) {
                 Term.bg
-                LiveTerminal(request: { cols, rows in
-                    client.terminalRequest(machine: machineID, session: sessionID, cols: cols, rows: rows)
-                }, state: $link, readOnly: myShare?.canType == false)
-                .padding(.leading, 12)
-                .padding(.top, 8)
-                .opacity(ended == nil ? 1 : 0.55)
+                if mode == .native {
+                    NativeSessionView(machineID: machineID, sessionID: sessionID, agent: live?.session.agent, readOnly: myShare?.canType == false || ended != nil) { mode = .terminal }
+                        .opacity(ended == nil ? 1 : 0.55)
+                } else {
+                    LiveTerminal(request: { cols, rows in
+                        client.terminalRequest(machine: machineID, session: sessionID, cols: cols, rows: rows)
+                    }, state: $link, readOnly: myShare?.canType == false)
+                    .padding(.leading, 12)
+                    .padding(.top, 8)
+                    .opacity(ended == nil ? 1 : 0.55)
+                }
 
                 if let ended {
                     endedBanner(ended)
@@ -48,7 +54,11 @@ struct LiveSessionView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(12)
-        .onAppear { lastSeen = current }
+        .onAppear { lastSeen = current; if mode == .native { client.subscribeEvents(machine: machineID, id: sessionID) } }
+        .onDisappear { client.unsubscribeEvents(machine: machineID, id: sessionID) }
+        .onChange(of: mode) { _, now in
+            if now == .native { client.subscribeEvents(machine: machineID, id: sessionID) } else { client.unsubscribeEvents(machine: machineID, id: sessionID) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: SessionSharePopover.demoOpen)) { _ in sharing = true }
         .onChange(of: sharing) { _, open in if Headless.isOn { Headless.popoverAnchor = open ? shareFrame : nil } }
         .onChange(of: current) { _, now in if let now { lastSeen = now } }
@@ -101,6 +111,8 @@ struct LiveSessionView: View {
                     .lineLimit(1)
                     .frame(maxWidth: 280, alignment: .trailing)
             }
+
+            NativeTerminalToggle(mode: $mode)
 
             toolbarButton(copied ? "checkmark" : "doc.on.doc", help: "Copy a command to attach from a terminal on \(machine?.name ?? "the machine")") {
                 NSPasteboard.general.clearContents()
@@ -168,11 +180,12 @@ struct LiveSessionView: View {
     }
 
     private var statusBar: some View {
-        let (text, color): (String, Color) = switch link {
+        let terminal: (String, Color) = switch link {
         case .connecting: ("Attaching…", Theme.textMuted)
         case .live: ("Attached · relayed through \(client.server?.host() ?? "the factory")", Theme.State.merged)
         case .closed: ("Detached", Theme.State.awaitingApproval)
         }
+        let (text, color) = mode == .native ? ("Native · events relayed through \(client.server?.host() ?? "the factory")", Theme.State.merged) : terminal
         return HStack(spacing: 8) {
             Text(" maple ")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))

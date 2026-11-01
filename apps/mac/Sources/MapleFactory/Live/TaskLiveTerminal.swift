@@ -7,6 +7,7 @@ struct TaskLiveTerminal: View {
     let worker: FactoryTask.Worker
 
     @State private var link: TerminalLink.State = .connecting
+    @AppStorage(SessionViewMode.storageKey) private var mode: SessionViewMode = .terminal
 
     private var machine: Wire.Machine? { client.machines.first { $0.id == worker.machine } }
     private var activity: Wire.Activity? { client.workerActivity(for: worker) }
@@ -38,6 +39,7 @@ struct TaskLiveTerminal: View {
                         .lineLimit(1)
                         .frame(maxWidth: 360, alignment: .trailing)
                 }
+                NativeTerminalToggle(mode: $mode).controlSize(.small)
             }
             .padding(.horizontal, 12)
             .frame(height: 38)
@@ -45,11 +47,15 @@ struct TaskLiveTerminal: View {
 
             ZStack(alignment: .bottom) {
                 Term.bg
-                LiveTerminal(request: { cols, rows in
-                    client.terminalRequest(machine: worker.machine, session: worker.session, cols: cols, rows: rows)
-                }, state: $link)
-                .padding(.leading, 12)
-                .padding(.top, 8)
+                if mode == .native {
+                    NativeSessionView(machineID: worker.machine, sessionID: worker.session, agent: worker.agent) { mode = .terminal }
+                } else {
+                    LiveTerminal(request: { cols, rows in
+                        client.terminalRequest(machine: worker.machine, session: worker.session, cols: cols, rows: rows)
+                    }, state: $link)
+                    .padding(.leading, 12)
+                    .padding(.top, 8)
+                }
                 if case .closed(let reason) = link {
                     Label(reason, systemImage: "wifi.slash")
                         .font(.system(size: 12))
@@ -80,6 +86,11 @@ struct TaskLiveTerminal: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+        .onAppear { if mode == .native { client.subscribeEvents(machine: worker.machine, id: worker.session) } }
+        .onDisappear { client.unsubscribeEvents(machine: worker.machine, id: worker.session) }
+        .onChange(of: mode) { _, now in
+            if now == .native { client.subscribeEvents(machine: worker.machine, id: worker.session) } else { client.unsubscribeEvents(machine: worker.machine, id: worker.session) }
+        }
         .id(worker.session)
     }
 }
