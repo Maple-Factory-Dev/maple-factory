@@ -62,13 +62,7 @@ struct AboutView: View {
 
     @ViewBuilder private var updateCheck: some View {
         VStack(spacing: 6) {
-            Button("Check for Updates…") {
-                if updater.available || updater.isDemo {
-                    updater.checkForUpdates()
-                } else {
-                    NSWorkspace.shared.open(Self.website)
-                }
-            }
+            Button("Check for Updates…") { Self.checkForUpdates() }
             .controlSize(.regular)
             .disabled((updater.available || updater.isDemo) && !updater.canCheckNow)
 
@@ -132,6 +126,17 @@ struct AboutView: View {
     }
 
     // MARK: Helpers
+
+    /// The button: a check, or the website for a build that doesn't update itself (as Machines does).
+    /// `-actions about:check` presses it headless.
+    @MainActor static func checkForUpdates() {
+        let updater = Updater.shared
+        if updater.available || updater.isDemo {
+            updater.checkForUpdates()
+        } else {
+            NSWorkspace.shared.open(website)
+        }
+    }
 
     /// "Version 0.2.24 (build 57)", or "Version dev" under `swift run`, which has no bundle version.
     static func versionLine(_ bundle: Bundle) -> String {

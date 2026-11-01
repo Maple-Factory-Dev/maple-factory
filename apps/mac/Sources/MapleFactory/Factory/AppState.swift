@@ -2429,6 +2429,8 @@ final class AppState {
                 case "notes": if let url = Updater.shared.releaseNotesURL { NSWorkspace.shared.open(url) }
                 default: Updater.shared.updateAndRestart()
                 }
+            // The About window's Check for Updates… button (`about:check`; with MAPLE_UPDATE_DEMO for an answer).
+            case "about": AboutView.checkForUpdates()
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
