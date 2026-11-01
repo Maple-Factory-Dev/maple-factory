@@ -17,7 +17,7 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
 import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
-import { statsWindow, summarize } from "./factory/stats.ts";
+import { statsWindow, summarize, type StatEvent } from "./factory/stats.ts";
 import { dayReport } from "./factory/report.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
@@ -351,6 +351,12 @@ export class OrgHub extends DurableObject<Env> {
         this.store.ageSessions(task, ms);
         const priv = this.store.private(task);
         if (priv.budgetAskedAt != null) this.store.savePrivate(task, { ...priv, budgetAskedAt: priv.budgetAskedAt - ms });
+        return new Response(null, { status: 204 });
+      }
+      case "/dev/stat-events": {
+        // Local dev (the Worker checked): record statistics rows as given, to try the Statistics page on made-up history.
+        const { events } = (await request.json()) as { events: (Pick<StatEvent, "at" | "kind" | "task" | "goal"> & Partial<StatEvent>)[] };
+        for (const e of events) this.store.recordStat({ at: e.at, kind: e.kind, task: e.task, goal: e.goal, role: e.role ?? null, actor: e.actor ?? null, detail: e.detail ?? {} });
         return new Response(null, { status: 204 });
       }
       case "/intake": {
