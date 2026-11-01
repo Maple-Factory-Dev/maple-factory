@@ -31,7 +31,7 @@ jobs:
       server: ${{ steps.filter.outputs.server }}
       deps: ${{ steps.filter.outputs.deps }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -65,7 +65,7 @@ jobs:
       run:
         working-directory: runner
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -93,7 +93,7 @@ jobs:
     if: needs.changes.outputs.server == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
@@ -111,7 +111,7 @@ jobs:
     if: needs.changes.outputs.deps == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
