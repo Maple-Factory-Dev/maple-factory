@@ -404,6 +404,10 @@ export class MachineHub extends DurableObject<Env> {
         }
         return;
       }
+      case "session.events":
+        // Native-view events go to the org hub, which knows who subscribed and whether they still may watch.
+        await orgHub(this.env).fetch("https://org/session-events", { method: "POST", body: JSON.stringify({ machine: machine.id, msg }) });
+        return;
       case "session.error":
         await this.toFactory(machine.id, msg);
         await orgHub(this.env).fetch("https://org/notice", { method: "POST", body: JSON.stringify({ machine: machine.id, msg }) });
