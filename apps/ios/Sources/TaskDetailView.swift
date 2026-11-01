@@ -573,16 +573,22 @@ struct ReviewSection: View {
 struct DiffSection: View {
     @Environment(FactoryStore.self) private var store
     let task: Wire.Task
+    @State private var compose: Compose?
 
     private var key: String { "\(task.pr?.head ?? "")-\(task.diff?.added ?? 0)-\(task.diff?.removed ?? 0)" }
+    /// Notes go to the builder, so only while the task's still open.
+    private var reviewable: Bool { task.state != .merged && task.state != .cancelled }
 
     var body: some View {
         Group {
+            if let notes = store.reviewNotes[task.id], !notes.isEmpty { ReviewBar(task: task, notes: notes) }
             if let files = store.diffs[task.id]?.files {
                 if files.isEmpty {
                     ContentUnavailableView("No changes yet", systemImage: "doc.text.magnifyingglass")
                 }
-                ForEach(files) { file in DiffFileView(file: file) }
+                ForEach(files) { file in
+                    DiffFileView(file: file, noted: noted(file.path), onNote: reviewable ? { line in note(file.path, line) } : nil)
+                }
             } else if task.diff == nil && task.pr == nil {
                 ContentUnavailableView("No changes yet", systemImage: "doc.text.magnifyingglass", description: Text("The diff appears once the builder starts writing."))
             } else {
@@ -590,11 +596,75 @@ struct DiffSection: View {
             }
         }
         .task(id: key) { await store.loadDiff(task: task.id, key: key) }
+        .sheet(item: $compose) { ComposeSheet(compose: $0) }
+    }
+
+    /// The lines of `path` with a pending note, as `<side><n>`.
+    private func noted(_ path: String) -> Set<String> {
+        Set((store.reviewNotes[task.id] ?? []).filter { $0.path == path }.map { "\($0.side.rawValue)\($0.start)" })
+    }
+
+    private func note(_ path: String, _ line: DiffLine) {
+        guard let number = line.kind == .removed ? line.old : line.new else { return }
+        compose = Compose(title: "Note on \(path):\(number)", placeholder: "What should the builder change here?", send: "Add") { [store, task] in
+            store.addReviewNote(task: task.id, path: path, line: line, text: $0)
+        }
+    }
+}
+
+/// The draft review: how many notes are pending, each one (✕ to drop it), and Submit review.
+struct ReviewBar: View {
+    @Environment(FactoryStore.self) private var store
+    let task: Wire.Task
+    let notes: [Wire.ReviewNote]
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button { withAnimation { expanded.toggle() } } label: {
+                    Label("\(notes.count) pending note\(notes.count == 1 ? "" : "s")", systemImage: expanded ? "chevron.down" : "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("pending-notes")
+                Spacer()
+                Button("Submit review") { store.submitReview(task.id) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.approve)
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("submit-review")
+            }
+            if expanded {
+                ForEach(Array(notes.enumerated()), id: \.offset) { index, note in
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(FactoryStore.anchor(note)).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            Text(note.text).font(.callout)
+                        }
+                        Spacer()
+                        Button { withAnimation { store.removeReviewNote(task: task.id, at: index) } } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove note")
+                        .accessibilityIdentifier("remove-note-\(index)")
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(.secondarySystemGroupedBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.approve.opacity(0.5)))
     }
 }
 
 struct DiffFileView: View {
     let file: DiffFile
+    /// Lines with a pending note, as `<side><n>`.
+    var noted: Set<String> = []
+    /// Long-press → Add note on a line; nil when the task can't take notes.
+    var onNote: ((DiffLine) -> Void)?
     @State private var open = true
 
     var body: some View {
@@ -616,16 +686,7 @@ struct DiffFileView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(file.hunks) { hunk in
                             Text(hunk.header).foregroundStyle(.secondary).padding(.vertical, 3).padding(.horizontal, 8)
-                            ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
-                                HStack(spacing: 6) {
-                                    Text(line.new.map(String.init) ?? line.old.map(String.init) ?? "").foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
-                                    Text(line.kind == .added ? "+" : line.kind == .removed ? "−" : " ")
-                                    Text(line.text)
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                                .background(line.kind == .added ? Theme.approve.opacity(0.12) : line.kind == .removed ? Theme.danger.opacity(0.12) : .clear)
-                            }
+                            ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in row(line) }
                         }
                     }
                     .font(.caption2.monospaced())
@@ -634,6 +695,35 @@ struct DiffFileView: View {
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(.secondarySystemGroupedBackground)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(.separator).opacity(0.4)))
+    }
+
+    /// `old12` for a removed line, `new12` for any other: the side a note on it is numbered on.
+    private func place(_ line: DiffLine) -> String {
+        line.kind == .removed ? "old\(line.old ?? 0)" : "new\(line.new ?? 0)"
+    }
+
+    @ViewBuilder
+    private func row(_ line: DiffLine) -> some View {
+        let content = HStack(spacing: 6) {
+            Text(line.new.map(String.init) ?? line.old.map(String.init) ?? "").foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
+            Text(line.kind == .added ? "+" : line.kind == .removed ? "−" : " ")
+            Text(line.text)
+            if noted.contains(place(line)) {
+                Image(systemName: "text.bubble.fill").foregroundStyle(Theme.approve).accessibilityIdentifier("note-marker-\(file.path)-\(place(line))")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .background(line.kind == .added ? Theme.approve.opacity(0.12) : line.kind == .removed ? Theme.danger.opacity(0.12) : .clear)
+        .contentShape(Rectangle())
+        if let onNote {
+            content
+                .contextMenu { Button("Add note", systemImage: "text.bubble") { onNote(line) } }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("diff-line-\(file.path)-\(place(line))")
+        } else {
+            content
+        }
     }
 }
 
