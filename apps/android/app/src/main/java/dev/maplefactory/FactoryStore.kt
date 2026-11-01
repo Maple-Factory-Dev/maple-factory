@@ -193,6 +193,8 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
             // Teammates see a phone badge for someone who's only on a phone.
             .header("x-maple-client", "mobile")
             .build()
+        // Big snapshots need nothing raised here: OkHttp has no cap on incoming messages (unlike URLSession's
+        // 1 MiB default, which iPhone raised to 64 MiB in MF-212). SocketSizeTest reads 8 and 40 MiB frames whole.
         socket = FactoryApi.client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send(encode(ClientMessage.Subscribe))
