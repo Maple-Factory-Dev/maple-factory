@@ -387,7 +387,7 @@ struct RiskPolicyEditor: View {
                     GridRow {
                         Text("Plan approvals").foregroundStyle(Theme.textMuted)
                         ForEach(RiskLevel.allCases, id: \.self) { level in
-                            countStepper($state.policy.planApprovals, level, range: 1...4)
+                            countStepper($state.policy.planApprovals, level, range: 0...4)
                         }
                     }
                     GridRow {

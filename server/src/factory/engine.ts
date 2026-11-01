@@ -2387,7 +2387,11 @@ export class Engine {
     if (name !== "get_task" && this.store.private(task.id).handingOff) return { error: "The task is being handed off to another machine; stop here." };
     try {
       const out = this.run(task, s, name, args);
+      // A plan whose risk level needs no approval goes straight to building.
+      const unapproved = name === "submit_plan" && task.state === "awaitingApproval" && task.approvalsNeeded <= 0;
+      if (unapproved) await this.approved(task, "queued it for building (its risk level needs no plan approval)");
       this.save(task);
+      if (unapproved) this.hooks.waitUntil(this.pump());
       if (name === "submit_review") await this.autoMerge(task);
       // Off the tool's critical path: a share never waits on, or fails with, GitHub.
       if (name === "share_artifact") this.hooks.waitUntil(this.syncPullArtifacts(task.id));
@@ -2524,9 +2528,13 @@ export class Engine {
         for (const c of task.changes) if (c.status !== "applied") c.status = "applied";
         task.state = "awaitingApproval";
         this.event(task, "planner", task.planVersion > 1 ? `revised the plan (v${task.planVersion})` : "wrote the plan");
-        this.intake.forTask(task, `${task.id}'s plan${task.planVersion > 1 ? ` (v${task.planVersion})` : ""} is ready: ${task.plan.length} step${task.plan.length === 1 ? "" : "s"}, waiting for a member to approve it.`);
+        // A risk level that needs no plan approval builds right away: tool() approves it once this returns.
+        const unapproved = task.approvalsNeeded <= 0;
+        if (unapproved) for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
+        const count = `${task.plan.length} step${task.plan.length === 1 ? "" : "s"}`;
+        this.intake.forTask(task, `${task.id}'s plan${task.planVersion > 1 ? ` (v${task.planVersion})` : ""} is ready: ${count}, ${unapproved ? "building now (its risk level needs no plan approval)" : "waiting for a member to approve it"}.`);
         this.closeWorker(task, "done");
-        return { summary: `Plan v${task.planVersion} submitted for approval. Your work here is done; end your turn.` };
+        return { summary: unapproved ? `Plan v${task.planVersion} submitted; its risk level needs no plan approval, so it goes straight to building. Your work here is done; end your turn.` : `Plan v${task.planVersion} submitted for approval. Your work here is done; end your turn.` };
       }
 
       case "propose_tasks": {
