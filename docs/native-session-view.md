@@ -144,8 +144,8 @@ Cons:
    - A `key` input picks a prompt option ("1", "Escape"), with the same keys `task.answerPrompt` uses.
    - The server refuses it unless the viewer may type: the machine owner, an admin, or a share with `canType`, the
      same rule as the terminal.
-6. **Fallback.** The terminal stays one tap away. If the parser hits records it doesn't know, it skips them and
-   the view says so; it never blocks the session.
+6. **Fallback.** The terminal stays one tap away. If the parser hits records it doesn't know (or a line that isn't
+   JSON), it passes them through as a generic `other {kind, summary}` event; it never blocks the session.
 
 We keep (a) in mind for Codex only: app-server could later replace tailing for the read side, while the TUI keeps
 running. Not now.
@@ -192,7 +192,7 @@ Checked against the transcripts on this machine (Claude Code with Opus 5.5, Code
 
 - **Format drift.** Both formats are internal. Anthropic says so outright for Claude, and Codex's changed under us: tools
   are now one `exec` script rather than `exec_command`/`apply_patch` calls, and reasoning summaries are mostly empty.
-  - Mitigation: skip unknown records and keep fixtures per agent version.
+  - Mitigation: pass unknown records through as `other` events and keep fixtures per agent version.
   - Also: emit a `turn {state: error, message}` only for the session, never crash the tail.
   - Also: the terminal is always the fallback.
 - **Prompts aren't in the transcript.** The TUI draws permission menus and questions on screen only.

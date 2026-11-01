@@ -5032,6 +5032,33 @@ public enum Wire {
         }
     }
 
+    /// A transcript record the runner doesn't map (a new or unknown type, or a line that isn't JSON), passed through so the stream never breaks; the view can show it plainly or hide it.
+    public struct SessionEventOther: Codable, Hashable, Sendable {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        public var id: String
+        public var session: String
+        /// The event's place in the session; strictly increasing, no reuse.
+        public var seq: UInt64
+        /// Unix ms, from the transcript record's own timestamp.
+        public var at: UInt64
+        /// claude or codex.
+        public var agent: String
+        /// The record's type (and subtype), or `invalid` for a line that isn't JSON.
+        public var kind: String
+        /// A short cut of the record, for a plain row.
+        public var summary: String
+
+        public init(id: String, session: String, seq: UInt64, at: UInt64, agent: String, kind: String, summary: String) {
+            self.id = id
+            self.session = session
+            self.seq = seq
+            self.at = at
+            self.agent = agent
+            self.kind = kind
+            self.summary = summary
+        }
+    }
+
     /// One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.
     public enum SessionEvent: Codable, Hashable, Sendable {
         case user(SessionEventUser)
@@ -5042,6 +5069,7 @@ public enum Wire {
         case prompt(SessionEventPrompt)
         case promptResolved(SessionEventPromptResolved)
         case turn(SessionEventTurn)
+        case other(SessionEventOther)
         /// A message this build doesn't know yet; newer servers and runners may send them.
         case unknown(String)
 
@@ -5058,6 +5086,7 @@ public enum Wire {
             case "prompt": self = .prompt(try SessionEventPrompt(from: decoder))
             case "prompt.resolved": self = .promptResolved(try SessionEventPromptResolved(from: decoder))
             case "turn": self = .turn(try SessionEventTurn(from: decoder))
+            case "other": self = .other(try SessionEventOther(from: decoder))
             default: self = .unknown(type)
             }
         }
@@ -5088,6 +5117,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .turn(let body):
                 try c.encode("turn", forKey: .type)
+                try body.encode(to: encoder)
+            case .other(let body):
+                try c.encode("other", forKey: .type)
                 try body.encode(to: encoder)
             case .unknown(let type):
                 try c.encode(type, forKey: .type)
