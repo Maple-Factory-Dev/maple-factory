@@ -503,3 +503,75 @@ test("weekday × hour cells follow the window and add up to the 30-day totals", 
   const week = summarize([...events, ev("merged", "OLD", 40 * DAY, { cycleMs: 1 })], [], { days: 7, now: NOW });
   assert.equal(week.hours!.reduce((a, c) => a + c.merges, 0), week.totals.merged);
 });
+
+// MF-318: idle time (drafting + backlog) apart from the time the task was worked on.
+test("idleMs totals drafting and backlog spans, an open one up to until, and skips terminal markers", async () => {
+  const { idleMs } = await import("../src/factory/stages.ts");
+  const t0 = NOW - 20 * H;
+  const spans = [
+    { stage: "drafting", from: t0, to: t0 + 12 * H },
+    { stage: "planning", from: t0 + 12 * H, to: t0 + 13 * H },
+    { stage: "backlog", from: t0 + 13 * H, to: t0 + 15 * H },
+    { stage: "building", from: t0 + 15 * H, to: t0 + 16 * H },
+    { stage: "merged", from: t0 + 16 * H, to: t0 + 16 * H },
+  ] as never[];
+  assert.equal(idleMs(spans, NOW), 14 * H);
+  // An open backlog span counts up to until; one past until is clipped to it.
+  assert.equal(idleMs([{ stage: "drafting", from: t0, to: null }] as never[], t0 + 3 * H), 3 * H);
+  assert.equal(idleMs([{ stage: "backlog", from: t0, to: t0 + 5 * H }] as never[], t0 + 2 * H), 2 * H);
+  assert.equal(idleMs([], NOW), 0);
+});
+
+test("a merge 12h in drafting and 2h worked on records idleMs 12h and activeMs 2h, live and backfilled", async () => {
+  const { cycleSplit } = await import("../src/factory/stats.ts");
+  const created = NOW - 14 * H;
+  const stages = [
+    { stage: "drafting", from: created, to: created + 12 * H },
+    { stage: "planning", from: created + 12 * H, to: created + 12.5 * H },
+    { stage: "awaitingApproval", from: created + 12.5 * H, to: created + 12.6 * H },
+    { stage: "building", from: created + 12.6 * H, to: created + 13.5 * H },
+    { stage: "reviewing", from: created + 13.5 * H, to: null },
+  ];
+  // Live: the engine records it while the task's still in review, its reviewing span open.
+  const live = task("I-1", { createdAt: created, stages });
+  assert.deepEqual(cycleSplit(live, NOW), { cycleMs: 14 * H, idleMs: 12 * H, activeMs: 2 * H });
+  // Backfilled, from its stage spans…
+  const merged = task("I-1", { createdAt: created, state: "merged", updatedAt: NOW, stages: [...stages.slice(0, 4), { stage: "reviewing", from: created + 13.5 * H, to: NOW }, { stage: "merged", from: NOW, to: NOW }],
+    events: [{ at: NOW, who: "factory", text: "merged into main" }] });
+  const row = inferEvents(merged).find((e) => e.kind === "merged")!;
+  assert.equal(row.detail.idleMs, 12 * H);
+  assert.equal(row.detail.activeMs, 2 * H);
+  assert.equal(row.detail.cycleMs, 14 * H);
+  // …and from its events when it has no spans (inferStages: drafting until it went to planning).
+  const old = task("I-2", { createdAt: created, state: "merged", updatedAt: NOW, events: [
+    { at: created + 12 * H, who: "me", text: "sent it to planning" },
+    { at: created + 12.5 * H, who: "planner", text: "wrote the plan" },
+    { at: created + 12.6 * H, who: "me", text: "approved the plan" },
+    { at: NOW, who: "factory", text: "merged into main" },
+  ] });
+  const oldRow = inferEvents(old).find((e) => e.kind === "merged")!;
+  assert.equal(oldRow.detail.idleMs, 12 * H);
+  assert.equal(oldRow.detail.activeMs, 2 * H);
+});
+
+test("summarize: active and idle medians over merges that carry the split; cycle median unchanged; old rows skipped", () => {
+  const rows = [
+    ev("merged", "S-1", H, { auto: true, cycleMs: 14 * H, idleMs: 12 * H, activeMs: 2 * H }, "g1"),
+    ev("merged", "S-2", 2 * H, { auto: true, cycleMs: 6 * H, idleMs: 2 * H, activeMs: 4 * H }, "g1"),
+    ev("merged", "S-3", 3 * H, { auto: true, cycleMs: 10 * H, idleMs: 0, activeMs: 10 * H }, "g1"),
+    ev("merged", "S-4", 4 * H, { auto: false, cycleMs: 40 * H }, "g1"), // from before MF-318: no split
+  ];
+  const s = summarize(rows, [], { days: 7, now: NOW });
+  assert.equal(s.totals.cycleMedianMs, 12 * H); // median of 6, 10, 14, 40
+  assert.equal(s.totals.activeCycleMedianMs, 4 * H);
+  assert.equal(s.totals.idleMedianMs, 2 * H);
+  const g = s.goals.find((r) => r.goal === "g1")!;
+  assert.equal(g.cycleMedianMs, 12 * H);
+  assert.equal(g.activeCycleMedianMs, 4 * H);
+  assert.equal(g.idleMedianMs, 2 * H);
+  // Only old rows: no split medians, cycle median as before.
+  const before = summarize([rows[3]], [], { days: 7, now: NOW });
+  assert.equal(before.totals.cycleMedianMs, 40 * H);
+  assert.equal(before.totals.activeCycleMedianMs, null);
+  assert.equal(before.totals.idleMedianMs, null);
+});

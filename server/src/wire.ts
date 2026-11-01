@@ -1348,6 +1348,10 @@ export interface StatsTotals {
   approvals: number;
   /** From created to merged. */
   cycleMedianMs?: number | null;
+  /** From created to merged, less drafting and backlog. */
+  activeCycleMedianMs?: number | null;
+  /** Time in drafting and backlog before work started. */
+  idleMedianMs?: number | null;
   /** How long a hand stays up before someone answers it. */
   handOpenMedianMs?: number | null;
   /** How long an agent's question waits for its answer. */
@@ -1391,6 +1395,10 @@ export interface StatsGoalRow {
   steers: number;
   reviewRounds: number;
   cycleMedianMs?: number | null;
+  /** From created to merged, less drafting and backlog. */
+  activeCycleMedianMs?: number | null;
+  /** Time in drafting and backlog before work started. */
+  idleMedianMs?: number | null;
 }
 
 export interface StatsAgentRow {
