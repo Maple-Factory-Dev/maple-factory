@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { flag, root, wrangler } from "./feed.mjs";
-import { changedPages } from "./site-pages.mjs";
+import { changedPages, changedSiteFiles } from "./site-pages.mjs";
 
 const SITE_URL = "https://maplefactory.dev";
 const site = join(root, "apps/site");
@@ -35,7 +35,7 @@ try {
   if (git("status", "--porcelain", "--", "apps/site")) throw new Error("apps/site has uncommitted changes; the deploy is tagged from what's committed.");
   // The pages changed since what's live; none when there's no site-deployed tag to diff against.
   const hasBase = (() => { try { git("rev-parse", "-q", "--verify", "refs/tags/site-deployed^{commit}"); return true; } catch { return false; } })();
-  const pages = changedPages(hasBase ? git("diff", "--name-only", "site-deployed..HEAD", "--", "apps/site").split("\n") : null);
+  const pages = changedPages(hasBase ? changedSiteFiles("site-deployed", root) : null);
   console.log(`Deploying ${git("rev-parse", "HEAD")}${hasBase ? "" : " (no site-deployed tag: checking / and /download/mac only)"}.`);
 
   wrangler(["deploy"], { cwd: site, stdio: "inherit" });
@@ -45,7 +45,7 @@ try {
     if (res.status !== 200) throw new Error(`${SITE_URL}${path} answered ${res.status} after the deploy.`);
     console.log(`✓ ${SITE_URL}${path} 200`);
   }
-  const mac = await fetch(`${SITE_URL}/download/mac`, { redirect: "manual" });
+  const mac = await fetch(`${SITE_URL}/download/mac?x=${Date.now()}`, { redirect: "manual" });
   const dmg = mac.headers.get("location") ?? "";
   if (mac.status !== 302) throw new Error(`${SITE_URL}/download/mac answered ${mac.status}, not a redirect to the newest DMG.`);
   if (!/\.dmg$/.test(new URL(dmg, SITE_URL).pathname)) throw new Error(`${SITE_URL}/download/mac redirects to ${dmg || "nowhere"}, not a .dmg.`);
