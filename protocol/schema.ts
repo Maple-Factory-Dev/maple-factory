@@ -147,6 +147,7 @@ export const enums: Record<string, Enum> = {
       check: "A risk check that matched: a path check against the diff's files, or a rule the planner cited.",
       size: "The change's size against the PR budget.",
       acceptance: "A goal's acceptance of risk up to a level.",
+      classifier: "The org's risk classifier: the reviewer graded the built change against the org's prompt.",
     },
   },
   IntegrationKind: { values: { slack: "Slack's /maple slash command.", linear: "Linear issues with the factory's label.", jira: "Jira issues with the factory's label." } },
@@ -605,6 +606,14 @@ export const structs: Record<string, Struct> = {
       files: "For a path check, the diff's files that matched it.",
     },
   },
+  Classification: {
+    doc: "The reviewer's grade of a built change against the org's risk classifier prompt.",
+    fields: { level: "RiskLevel", humanReview: "bool", reasons: "string[]", round: "u32", at: "u64" },
+    fieldDocs: {
+      humanReview: "Whether it says a person should review the change; yes makes at least one final review required.",
+      round: "The review round it came from; the latest round wins.",
+    },
+  },
   Risk: {
     fields: { level: "RiskLevel", reasons: "string[]", areas: "string[]", factors: "RiskFactor[]?" },
     fieldDocs: { factors: "Set by the server from the org's risk policy: every reason behind the level, highest first." },
@@ -683,8 +692,10 @@ export const structs: Record<string, Struct> = {
       followUpOf: "string?",
       mergeAt: "u64?",
       mergeForecast: "MergeForecast?",
+      classification: "Classification?",
     },
     fieldDocs: {
+      classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
       artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",
       mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
       suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
@@ -716,6 +727,11 @@ export const structs: Record<string, Struct> = {
       rule: "A plain-language check, like \"changes the public HTTP API\"; the planner names it in risk.areas when it applies.",
     },
   },
+  RiskClassifier: {
+    doc: "An org prompt the reviewer grades each built change against; it can only raise the risk and ask for a human review.",
+    fields: { enabled: "bool", prompt: "string" },
+    fieldDocs: { prompt: "What the reviewer weighs, e.g. \"changes that touch payments or user data need a person\"." },
+  },
   RiskPolicy: {
     doc: "The org's rules for how much sign-off a change needs, by its risk.",
     fields: {
@@ -730,8 +746,10 @@ export const structs: Record<string, Struct> = {
       scoutItems: "u32?",
       taskMinutes: "u32?",
       taskCostUsd: "f64?",
+      classifier: "RiskClassifier?",
     },
     fieldDocs: {
+      classifier: "The optional risk classifier. None: off.",
       taskMinutes: "Minutes of agent work a task gets before it asks for a hand (0 turns it off). None: 60.",
       taskCostUsd: "Dollars of agent work a task gets before it asks for a hand. None: no cost limit.",
       autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",

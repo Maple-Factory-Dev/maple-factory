@@ -490,6 +490,8 @@ pub enum RiskFactorSource {
     Size,
     /// A goal's acceptance of risk up to a level.
     Acceptance,
+    /// The org's risk classifier: the reviewer graded the built change against the org's prompt.
+    Classifier,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -1409,6 +1411,20 @@ pub struct RiskFactor {
     pub files: Option<Vec<String>>,
 }
 
+/// The reviewer's grade of a built change against the org's risk classifier prompt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Classification {
+    pub level: RiskLevel,
+    /// Whether it says a person should review the change; yes makes at least one final review required.
+    pub human_review: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    /// The review round it came from; the latest round wins.
+    pub round: u32,
+    pub at: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Risk {
@@ -1588,6 +1604,9 @@ pub struct Task {
     /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_forecast: Option<MergeForecast>,
+    /// The risk classifier's grade of the built change, when the org's policy turns it on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<Classification>,
 }
 
 /// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).
@@ -1603,6 +1622,15 @@ pub struct SensitiveArea {
     /// A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
+}
+
+/// An org prompt the reviewer grades each built change against; it can only raise the risk and ask for a human review.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskClassifier {
+    pub enabled: bool,
+    /// What the reviewer weighs, e.g. "changes that touch payments or user data need a person".
+    pub prompt: String,
 }
 
 /// The org's rules for how much sign-off a change needs, by its risk.
@@ -1636,6 +1664,9 @@ pub struct RiskPolicy {
     /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_cost_usd: Option<f64>,
+    /// The optional risk classifier. None: off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classifier: Option<RiskClassifier>,
 }
 
 /// An MCP server the factory adds to every session, alongside its own `maple` server.

@@ -1437,11 +1437,13 @@ public enum Wire {
         case size
         /// A goal's acceptance of risk up to a level.
         case acceptance
+        /// The org's risk classifier: the reviewer graded the built change against the org's prompt.
+        case classifier
         /// A value this build doesn't know yet; newer servers may send them.
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [RiskFactorSource] = [.planner, .check, .size, .acceptance]
+        public static let allCases: [RiskFactorSource] = [.planner, .check, .size, .acceptance, .classifier]
 
         public init(rawValue: String) {
             switch rawValue {
@@ -1449,6 +1451,7 @@ public enum Wire {
             case "check": self = .check
             case "size": self = .size
             case "acceptance": self = .acceptance
+            case "classifier": self = .classifier
             default: self = .other(rawValue)
             }
         }
@@ -1459,6 +1462,7 @@ public enum Wire {
             case .check: "check"
             case .size: "size"
             case .acceptance: "acceptance"
+            case .classifier: "classifier"
             case .other(let value): value
             }
         }
@@ -2975,6 +2979,34 @@ public enum Wire {
         }
     }
 
+    /// The reviewer's grade of a built change against the org's risk classifier prompt.
+    public struct Classification: Codable, Hashable, Sendable {
+        public var level: RiskLevel
+        /// Whether it says a person should review the change; yes makes at least one final review required.
+        public var humanReview: Bool
+        public var reasons: [String]
+        /// The review round it came from; the latest round wins.
+        public var round: UInt32
+        public var at: UInt64
+
+        public init(level: RiskLevel, humanReview: Bool, reasons: [String] = [], round: UInt32, at: UInt64) {
+            self.level = level
+            self.humanReview = humanReview
+            self.reasons = reasons
+            self.round = round
+            self.at = at
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            level = try c.decode(RiskLevel.self, forKey: .level)
+            humanReview = try c.decode(Bool.self, forKey: .humanReview)
+            reasons = try c.decodeIfPresent([String].self, forKey: .reasons) ?? []
+            round = try c.decode(UInt32.self, forKey: .round)
+            at = try c.decode(UInt64.self, forKey: .at)
+        }
+    }
+
     public struct Risk: Codable, Hashable, Sendable {
         public var level: RiskLevel
         public var reasons: [String]
@@ -3156,8 +3188,10 @@ public enum Wire {
         public var mergeAt: UInt64?
         /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
         public var mergeForecast: MergeForecast?
+        /// The risk classifier's grade of the built change, when the org's policy turns it on.
+        public var classification: Classification?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3211,6 +3245,7 @@ public enum Wire {
             self.followUpOf = followUpOf
             self.mergeAt = mergeAt
             self.mergeForecast = mergeForecast
+            self.classification = classification
         }
 
         public init(from decoder: Decoder) throws {
@@ -3268,6 +3303,7 @@ public enum Wire {
             followUpOf = try c.decodeIfPresent(String.self, forKey: .followUpOf)
             mergeAt = try c.decodeIfPresent(UInt64.self, forKey: .mergeAt)
             mergeForecast = try c.decodeIfPresent(MergeForecast.self, forKey: .mergeForecast)
+            classification = try c.decodeIfPresent(Classification.self, forKey: .classification)
         }
     }
 
@@ -3299,6 +3335,18 @@ public enum Wire {
         }
     }
 
+    /// An org prompt the reviewer grades each built change against; it can only raise the risk and ask for a human review.
+    public struct RiskClassifier: Codable, Hashable, Sendable {
+        public var enabled: Bool
+        /// What the reviewer weighs, e.g. "changes that touch payments or user data need a person".
+        public var prompt: String
+
+        public init(enabled: Bool, prompt: String) {
+            self.enabled = enabled
+            self.prompt = prompt
+        }
+    }
+
     /// The org's rules for how much sign-off a change needs, by its risk.
     public struct RiskPolicy: Codable, Hashable, Sendable {
         /// Over this (or maxLines), a change is at least medium risk and should be split.
@@ -3319,8 +3367,10 @@ public enum Wire {
         public var taskMinutes: UInt32?
         /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
         public var taskCostUsd: Double?
+        /// The optional risk classifier. None: off.
+        public var classifier: RiskClassifier?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, classifier: RiskClassifier? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -3332,6 +3382,7 @@ public enum Wire {
             self.scoutItems = scoutItems
             self.taskMinutes = taskMinutes
             self.taskCostUsd = taskCostUsd
+            self.classifier = classifier
         }
 
         public init(from decoder: Decoder) throws {
@@ -3347,6 +3398,7 @@ public enum Wire {
             scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
             taskMinutes = try c.decodeIfPresent(UInt32.self, forKey: .taskMinutes)
             taskCostUsd = try c.decodeIfPresent(Double.self, forKey: .taskCostUsd)
+            classifier = try c.decodeIfPresent(RiskClassifier.self, forKey: .classifier)
         }
     }
 

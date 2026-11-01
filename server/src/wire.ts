@@ -101,8 +101,8 @@ export const CheckStatusValues: readonly CheckStatus[] = ["queued","running","pa
 export type RiskLevel = "low" | "medium" | "high";
 export const RiskLevelValues: readonly RiskLevel[] = ["low","medium","high"];
 
-export type RiskFactorSource = "planner" | "check" | "size" | "acceptance";
-export const RiskFactorSourceValues: readonly RiskFactorSource[] = ["planner","check","size","acceptance"];
+export type RiskFactorSource = "planner" | "check" | "size" | "acceptance" | "classifier";
+export const RiskFactorSourceValues: readonly RiskFactorSource[] = ["planner","check","size","acceptance","classifier"];
 
 export type IntegrationKind = "slack" | "linear" | "jira";
 export const IntegrationKindValues: readonly IntegrationKind[] = ["slack","linear","jira"];
@@ -706,6 +706,17 @@ export interface RiskFactor {
   files?: string[] | null;
 }
 
+/** The reviewer's grade of a built change against the org's risk classifier prompt. */
+export interface Classification {
+  level: RiskLevel;
+  /** Whether it says a person should review the change; yes makes at least one final review required. */
+  humanReview: boolean;
+  reasons: string[];
+  /** The review round it came from; the latest round wins. */
+  round: number;
+  at: number;
+}
+
 export interface Risk {
   level: RiskLevel;
   reasons: string[];
@@ -823,6 +834,8 @@ export interface Task {
   mergeAt?: number | null;
   /** Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge. */
   mergeForecast?: MergeForecast | null;
+  /** The risk classifier's grade of the built change, when the org's policy turns it on. */
+  classification?: Classification | null;
 }
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
@@ -834,6 +847,13 @@ export interface SensitiveArea {
   enabled: boolean;
   /** A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies. */
   rule?: string | null;
+}
+
+/** An org prompt the reviewer grades each built change against; it can only raise the risk and ask for a human review. */
+export interface RiskClassifier {
+  enabled: boolean;
+  /** What the reviewer weighs, e.g. "changes that touch payments or user data need a person". */
+  prompt: string;
 }
 
 /** The org's rules for how much sign-off a change needs, by its risk. */
@@ -856,6 +876,8 @@ export interface RiskPolicy {
   taskMinutes?: number | null;
   /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
   taskCostUsd?: number | null;
+  /** The optional risk classifier. None: off. */
+  classifier?: RiskClassifier | null;
 }
 
 /** An MCP server the factory adds to every session, alongside its own `maple` server. */
