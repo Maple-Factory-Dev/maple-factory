@@ -10,9 +10,9 @@
     "test": "node --no-warnings=ExperimentalWarning --experimental-transform-types --test test/*.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261011.1",
+    "@cloudflare/workers-types": "^5.20261101.1",
     "typescript": "^7.0.2",
-    "wrangler": "^4.149.0"
+    "wrangler": "^4.156.0"
   },
   "cloudflare": {
     "bindings": {
