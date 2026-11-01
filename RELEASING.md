@@ -133,7 +133,8 @@ Mac app › Run workflow (or `gh workflow run release-mac.yml -f channel=beta [-
 [-f ref=<sha>]`), or `uses: ./.github/workflows/release-mac.yml` with `secrets: inherit`. One `macos-15` job in
 `release`, one run at a time (`release-mac`). Inputs: `version` (blank: patch + 1 of `apps/mac/version.json`),
 `channel` (`beta`, the default, or `stable`), `notes` (markdown; blank: written from the commits) and `ref` (the
-commit to build; blank: `main`). It stops first if `mac-v<v>` is already on origin. Then:
+commit to build, which must already be on `main`; blank: `main`). It stops first if `ref` isn't on `main` (the
+release commit is rebased onto `main` and pushed past its protection) or `mac-v<v>` is already on origin. Then:
 
 1. imports the Developer ID (`import-signing-cert.sh` with `APPLE_CERT_P12` / `APPLE_CERT_PASSWORD`; removed again
    at the end, pass or fail), runs `swift build` and `swift test` in `apps/mac`;

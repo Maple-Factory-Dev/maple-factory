@@ -62,6 +62,7 @@ jobs:
       CHANNEL: ${{ inputs.channel }}
       NOTES_TEXT: ${{ inputs.notes }}
       INPUT_VERSION: ${{ inputs.version }}
+      INPUT_REF: ${{ inputs.ref || 'main' }}
       UPDATES_URL: ${{ vars.UPDATES_URL }}
     steps:
       - name: Check the inputs
@@ -99,6 +100,11 @@ jobs:
       - name: The version
         id: version
         run: |
+          # The commit step rebases onto main and pushes past its protection,
+          # so only release a commit main already has.
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::ref '${INPUT_REF}' ($(git rev-parse --short HEAD)) isn't on main; release from a commit already on main"; exit 1
+          fi
           v="$INPUT_VERSION"
           if [ -z "$v" ]; then
             v=$(node -p 'const [a, b, c] = require("./apps/mac/version.json").version.split(".").map(Number); [a, b, c + 1].join(".")')
@@ -216,7 +222,7 @@ jobs:
         run: |
           first=$(python3 - "apps/mac/releases/${VERSION}/notes.md" <<'PY'
           import re, sys
-          body = open(sys.argv[1]).read().split("\n---", 2)[-1]
+          body = open(sys.argv[1]).read().split("\n---", 1)[-1]
           m = re.search(r"^\s*-\s+(.+)$", body, re.M)
           s = re.sub(r"[*_`]", "", m.group(1)).strip() if m else "a new build"
           s = s.rstrip(".")
@@ -232,7 +238,10 @@ jobs:
             git rebase --abort 2>/dev/null || true
             sleep $((i * 5))
           done
-          if [ -z "$pushed" ]; then echo "::error::couldn't push the release commit to main after 3 tries"; exit 1; fi
+          if [ -z "$pushed" ]; then
+            echo "::error::${VERSION} is published (the appcast lists it) but isn't recorded on main or tagged: couldn't push the release commit after 3 tries. Commit apps/mac/releases/${VERSION} and apps/mac/version.json by hand (the maple-factory-${VERSION}-dmg artifact has the DMG) and push mac-v${VERSION}, or the next run will pick ${VERSION} again."
+            exit 1
+          fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Pushed $(git log -1 --format='%h %s')."
 
