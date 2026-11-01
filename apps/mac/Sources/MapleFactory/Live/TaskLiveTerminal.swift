@@ -14,7 +14,7 @@ struct TaskLiveTerminal: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                AgentAvatar(agent: LiveAdapter.role(worker.role), size: 18)
+                AgentAvatar(agent: LiveAdapter.role(worker.role), size: 18, online: true)
                 Text(LiveAdapter.role(worker.role).name)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
