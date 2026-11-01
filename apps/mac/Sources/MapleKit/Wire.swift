@@ -3210,6 +3210,36 @@ public enum Wire {
         }
     }
 
+    /// What a research task found: the answer to the question its brief asked, instead of a pull request.
+    public struct Findings: Codable, Hashable, Sendable {
+        /// The short answer, in Markdown: a few paragraphs at most.
+        public var answer: String
+        /// The id of the Markdown artifact with the full report; none: the answer is all there is.
+        public var report: String?
+        /// Drafts it filed for work the research turned up, in order.
+        public var followUps: [String]
+        /// Who answered it: the planner's agent.
+        public var by: String
+        public var at: UInt64
+
+        public init(answer: String, report: String? = nil, followUps: [String] = [], by: String, at: UInt64) {
+            self.answer = answer
+            self.report = report
+            self.followUps = followUps
+            self.by = by
+            self.at = at
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            answer = try c.decode(String.self, forKey: .answer)
+            report = try c.decodeIfPresent(String.self, forKey: .report)
+            followUps = try c.decodeIfPresent([String].self, forKey: .followUps) ?? []
+            by = try c.decode(String.self, forKey: .by)
+            at = try c.decode(UInt64.self, forKey: .at)
+        }
+    }
+
     /// One reason a change has the risk level it has.
     public struct RiskFactor: Codable, Hashable, Sendable {
         public var source: RiskFactorSource
@@ -3445,8 +3475,10 @@ public enum Wire {
         public var mergeForecast: MergeForecast?
         /// The risk classifier's grade of the built change, when the org's policy turns it on.
         public var classification: Classification?
+        /// A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).
+        public var findings: Findings?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3503,6 +3535,7 @@ public enum Wire {
             self.mergeAt = mergeAt
             self.mergeForecast = mergeForecast
             self.classification = classification
+            self.findings = findings
         }
 
         public init(from decoder: Decoder) throws {
@@ -3563,6 +3596,7 @@ public enum Wire {
             mergeAt = try c.decodeIfPresent(UInt64.self, forKey: .mergeAt)
             mergeForecast = try c.decodeIfPresent(MergeForecast.self, forKey: .mergeForecast)
             classification = try c.decodeIfPresent(Classification.self, forKey: .classification)
+            findings = try c.decodeIfPresent(Findings.self, forKey: .findings)
         }
     }
 

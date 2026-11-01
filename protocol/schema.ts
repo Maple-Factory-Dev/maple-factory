@@ -666,6 +666,16 @@ export const structs: Record<string, Struct> = {
     fields: { repo: "string", title: "string", brief: "string", task: "string?" },
     fieldDocs: { task: "The task made for it, once the plan is approved." },
   },
+  Findings: {
+    doc: "What a research task found: the answer to the question its brief asked, instead of a pull request.",
+    fields: { answer: "string", report: "string?", followUps: "string[]", by: "string", at: "u64" },
+    fieldDocs: {
+      answer: "The short answer, in Markdown: a few paragraphs at most.",
+      report: "The id of the Markdown artifact with the full report; none: the answer is all there is.",
+      followUps: "Drafts it filed for work the research turned up, in order.",
+      by: "Who answered it: the planner's agent.",
+    },
+  },
   RiskFactor: {
     doc: "One reason a change has the risk level it has.",
     fields: { source: "RiskFactorSource", label: "string", level: "RiskLevel", detail: "string?", files: "string[]?" },
@@ -764,8 +774,10 @@ export const structs: Record<string, Struct> = {
       mergeAt: "u64?",
       mergeForecast: "MergeForecast?",
       classification: "Classification?",
+      findings: "Findings?",
     },
     fieldDocs: {
+      findings: "A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).",
       classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
       artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",
       stages: "Its time, span by span: each stage and what it waited on. Empty on older servers.",

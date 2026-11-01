@@ -44,6 +44,8 @@ const CLOSE_AFTER_MS = 8_000;
 const MAX_EVENTS = 200;
 /** Artifacts a task keeps; sharing more drops the oldest. */
 const MAX_ARTIFACTS = 20;
+// A research task's short answer: a few paragraphs; the full write-up is its report artifact.
+const MAX_FINDINGS_ANSWER = 4000;
 
 /** An uploaded artifact's kind from the type the server sniffed (attachments.ts `sniffArtifact`). */
 function artifactKind(mime: string): ArtifactKind {
@@ -2482,6 +2484,38 @@ export class Engine {
     return null;
   }
 
+  /** Make drafts in `goal` from proposals (propose_tasks' tasks, submit_findings' follow-ups), in order.
+   *  Every one is checked before any is made, so a bad proposal makes none. */
+  private makeProposals(goal: Goal, task: Task, role: Role, asked: Record<string, unknown>[], field: string): { made: string[]; lines: string[] } {
+    if (asked.length > 20) fail(`${field}: at most 20 per call.`);
+    const repos = goalRepos(goal);
+    const picks = asked.map((p, i) => {
+      const named = typeof p.repo === "string" ? p.repo.trim() : "";
+      const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `${field}[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `${field}[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
+      const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`${field}[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
+      // `#n`: the n-th proposal in this call, made before it; anything else is an existing task.
+      const refs = arr(p.after).map((x) => String(x).trim()).filter(Boolean);
+      const earlier = refs.map((r) => (/^#\d+$/.test(r) ? Number(r.slice(1)) : null));
+      for (const [k, n] of earlier.entries()) if (n != null && (n < 1 || n > i)) fail(`${field}[${i}].after: ${refs[k]} isn't an earlier proposal in this call${n > i ? "; a task can only wait on ones listed before it" : ""}.`);
+      const existing = this.checkAfter(null, refs.filter((_, k) => earlier[k] == null));
+      const effort = p.effort == null ? undefined : effortName(String(p.effort));
+      return { title: str(p.title, `${field}[].title`).slice(0, 120).trim(), brief: str(p.brief, `${field}[].brief`), repo, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
+    });
+    // Drafts only: nothing plans or builds until a person sends one to planning.
+    const made: string[] = [];
+    const lines: string[] = [];
+    for (const p of picks) {
+      const after = [...p.existing, ...p.earlier.map((n) => made[n - 1]!)];
+      const draft = this.draftFrom(goal, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${role}.`, repo: p.repo, priority: p.priority, after, ...(p.effort !== undefined ? { effort: p.effort } : {}) });
+      this.event(draft, role, `proposed by ${task.id}${after.length ? `; waits on ${after.join(", ")}` : ""}`);
+      this.save(draft);
+      this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));
+      made.push(draft.id);
+      lines.push(`${draft.id} ${draft.title}${after.length ? ` (after ${after.join(", ")})` : ""}${draft.effort ? ` [${draft.effort}]` : ""}`);
+    }
+    return { made, lines };
+  }
+
   private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
     const s = this.store.session(sessionId);
     if (!s) {
@@ -2666,35 +2700,9 @@ export class Engine {
         if (!goal) fail("The task's goal is gone.");
         const asked = arr(a.tasks).map((x) => obj(x));
         if (!asked.length) fail("tasks: at least one.");
-        if (asked.length > 20) fail("tasks: at most 20 per call.");
-        const repos = goalRepos(goal!);
-        // Checked before any is made, so a bad proposal makes none.
-        const picks = asked.map((p, i) => {
-          const named = typeof p.repo === "string" ? p.repo.trim() : "";
-          const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `tasks[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `tasks[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
-          const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`tasks[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
-          // `#n`: the n-th proposal in this call, made before it; anything else is an existing task.
-          const refs = arr(p.after).map((x) => String(x).trim()).filter(Boolean);
-          const earlier = refs.map((r) => (/^#\d+$/.test(r) ? Number(r.slice(1)) : null));
-          for (const [k, n] of earlier.entries()) if (n != null && (n < 1 || n > i)) fail(`tasks[${i}].after: ${refs[k]} isn't an earlier proposal in this call${n > i ? "; a task can only wait on ones listed before it" : ""}.`);
-          const existing = this.checkAfter(null, refs.filter((_, k) => earlier[k] == null));
-          const effort = p.effort == null ? undefined : effortName(String(p.effort));
-          return { title: str(p.title, "tasks[].title").slice(0, 120).trim(), brief: str(p.brief, "tasks[].brief"), repo, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
-        });
-        // Drafts only: nothing plans or builds until a person sends one to planning.
-        const made: string[] = [];
-        const lines: string[] = [];
-        for (const p of picks) {
-          const after = [...p.existing, ...p.earlier.map((n) => made[n - 1]!)];
-          const draft = this.draftFrom(goal!, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${s.role}.`, repo: p.repo, priority: p.priority, after, ...(p.effort !== undefined ? { effort: p.effort } : {}) });
-          this.event(draft, s.role, `proposed by ${task.id}${after.length ? `; waits on ${after.join(", ")}` : ""}`);
-          this.save(draft);
-          this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));
-          made.push(draft.id);
-          lines.push(`${draft.id} ${draft.title}${after.length ? ` (after ${after.join(", ")})` : ""}${draft.effort ? ` [${draft.effort}]` : ""}`);
-        }
+        const { made, lines } = this.makeProposals(goal!, task, s.role, asked, "tasks");
         // An ordered set reads as a chain: MF-201 → MF-202 → MF-203.
-        const ordered = made.length > 1 && picks.some((p) => p.earlier.length);
+        const ordered = made.length > 1 && asked.some((p) => arr(p.after).some((x) => /^#\d+$/.test(String(x).trim())));
         this.hooks.broadcast({ type: "toast", text: ordered ? `${task.id}'s ${s.role} proposed ${made.join(" → ")}; they're in ${goal!.name}'s drafts, in order.` : `${task.id}'s ${s.role} proposed ${made.length} task${made.length === 1 ? "" : "s"}; they're in ${goal!.name}'s drafts.`, taskId: task.id });
         if (s.role === "planner" && task.state === "planning") {
           // A scan-and-propose task: the proposals are its outcome, so it closes with nothing to merge.
@@ -2706,6 +2714,29 @@ export class Engine {
         }
         this.event(task, s.role, `proposed ${made.join(", ")}`);
         return { summary: `Proposed as drafts in ${goal!.name}:\n${lines.join("\n")}\nA person sends each to planning or deletes it; don't build them yourself.`, data: { tasks: made } };
+      }
+
+      case "submit_findings": {
+        // A research task: the answer is its outcome, so it closes with nothing to merge.
+        if (s.role !== "planner") fail("Only the planner answers a research task.");
+        if (task.state !== "planning") fail("Findings answer a task while it's planning; this one isn't.");
+        if (!goal) fail("The task's goal is gone.");
+        const answer = str(a.answer, "answer").trim();
+        if (!answer) fail("answer: give the short answer.");
+        if (answer.length > MAX_FINDINGS_ANSWER) fail(`answer: keep it to a few paragraphs (at most ${MAX_FINDINGS_ANSWER} characters); the full write-up goes in the report.`);
+        const named = typeof a.report === "string" ? a.report.trim() : "";
+        const report = named
+          ? (task.artifacts ?? []).find((x) => x.title.toLowerCase() === named.toLowerCase())
+            ?? fail(`report: "${named}" isn't one of this task's artifacts${task.artifacts?.length ? ` (${task.artifacts.map((x) => `"${x.title}"`).join(", ")})` : ""}. Share it with share_artifact first.`)
+          : null;
+        const { made, lines } = this.makeProposals(goal!, task, s.role, arr(a.followUps).map((x) => obj(x)), "followUps");
+        task.findings = { answer, report: report?.id ?? null, followUps: made, by: task.worker?.agent ?? task.agent, at: now() };
+        task.state = "closed";
+        this.event(task, s.role, `answered it${made.length ? `; proposed ${made.join(", ")}` : ""}`);
+        this.stat(task, "closed", { research: true, proposed: made.length }, null, s.role);
+        this.closeWorker(task, "done");
+        this.hooks.broadcast({ type: "toast", text: `${task.id}'s planner answered it${made.length ? ` and proposed ${made.length} follow-up${made.length === 1 ? "" : "s"}` : ""}.`, taskId: task.id });
+        return { summary: `Answered and closed ${task.id}: there's nothing to merge.${lines.length ? ` Follow-ups, as drafts in ${goal!.name}:\n${lines.join("\n")}\n` : " "}Your work here is done; end your turn.`, data: { tasks: made, report: report?.id ?? null } };
       }
 
       case "ask": {

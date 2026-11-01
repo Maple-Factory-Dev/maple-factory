@@ -1534,6 +1534,23 @@ pub struct FollowUp {
     pub task: Option<String>,
 }
 
+/// What a research task found: the answer to the question its brief asked, instead of a pull request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Findings {
+    /// The short answer, in Markdown: a few paragraphs at most.
+    pub answer: String,
+    /// The id of the Markdown artifact with the full report; none: the answer is all there is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<String>,
+    /// Drafts it filed for work the research turned up, in order.
+    #[serde(default)]
+    pub follow_ups: Vec<String>,
+    /// Who answered it: the planner's agent.
+    pub by: String,
+    pub at: u64,
+}
+
 /// One reason a change has the risk level it has.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1752,6 +1769,9 @@ pub struct Task {
     /// The risk classifier's grade of the built change, when the org's policy turns it on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Classification>,
+    /// A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings: Option<Findings>,
 }
 
 /// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).

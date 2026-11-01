@@ -24,6 +24,19 @@ const handOptions = list(
   "Two or three ways forward a person can pick from.",
 );
 
+// One proposal: propose_tasks' items, and submit_findings' follow-ups.
+const proposal = obj(
+  {
+    title: str("A short title for the task."),
+    brief: str("What the task should do and why, for its own planner."),
+    repo: str("One of the goal's repos (owner/name). Left out: this task's repo."),
+    priority: oneOf(["p0", "p1", "p2", "p3"], "How soon: p0 do it right away, p1 next, p2 soon, p3 when there's room. Use p3 for non-urgent clean-ups. Left out: none."),
+    after: list(str(""), "What must merge before it builds: existing task ids (MF-12), or #n for the n-th proposal in this call (#1 is the first; earlier proposals only). It waits for all of them."),
+    effort: str("A name for the bigger piece of work it belongs to, like an epic; give the same name to every proposal in the set."),
+  },
+  ["title", "brief"],
+);
+
 const TOOLS: Tool[] = [
   {
     name: "get_task",
@@ -90,24 +103,24 @@ const TOOLS: Tool[] = [
     description: "Propose new tasks for this goal, e.g. work you were asked to find. Each becomes a draft in this goal that a person sends to planning or deletes; nothing runs until they do. Call once with every proposal; don't build them yourself. When the work has to land in order, give each proposal `after` (what must merge first) and the set a shared `effort`: an approved task then starts building on its own once everything it waits on has merged.",
     inputSchema: obj(
       {
-        tasks: list(
-          obj(
-            {
-              title: str("A short title for the task."),
-              brief: str("What the task should do and why, for its own planner."),
-              repo: str("One of the goal's repos (owner/name). Left out: this task's repo."),
-              priority: oneOf(["p0", "p1", "p2", "p3"], "How soon: p0 do it right away, p1 next, p2 soon, p3 when there's room. Use p3 for non-urgent clean-ups. Left out: none."),
-              after: list(str(""), "What must merge before it builds: existing task ids (MF-12), or #n for the n-th proposal in this call (#1 is the first; earlier proposals only). It waits for all of them."),
-              effort: str("A name for the bigger piece of work it belongs to, like an epic; give the same name to every proposal in the set."),
-            },
-            ["title", "brief"],
-          ),
-          "1–20 proposals.",
-        ),
+        tasks: list(proposal, "1–20 proposals."),
       },
       ["tasks"],
     ),
     roles: ["planner", "builder"],
+  },
+  {
+    name: "submit_findings",
+    description: "Answer a research task: when the brief asks a question (how does X work, how could we build Y) instead of asking for a change. Saves your short answer on the task, files any follow-ups as drafts in this goal, and closes the task: there's nothing to merge. Share the full report with share_artifact first. Call once instead of submit_plan, then end your turn.",
+    inputSchema: obj(
+      {
+        answer: str("The short answer in Markdown: a few paragraphs at most."),
+        report: str("The title of the Markdown artifact you already shared with share_artifact that holds the full report."),
+        followUps: list(proposal, "Work the research turned up, as drafts for a person to accept (0–20). Same shape as propose_tasks' tasks."),
+      },
+      ["answer"],
+    ),
+    roles: ["planner"],
   },
   {
     name: "ask",
