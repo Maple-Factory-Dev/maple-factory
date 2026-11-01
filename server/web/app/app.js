@@ -1043,7 +1043,7 @@ function decisions(t) {
   if (t.state === "awaitingApproval") {
     buttons.push(h("button", { class: "btn go", disabled: t.approvals.includes(me), onclick: () => approvePlan(t) },
       icon("check"), t.approvals.includes(me) ? "You approved it" : "Approve plan"));
-    buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
+    if (t.approvalsNeeded > 0) buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.approvals.length} of ${t.approvalsNeeded} approvals`));
   }
   if (t.state === "awaitingApproval" || t.state === "drafting") {
     buttons.push(h("button", { class: "btn", onclick: () => send({ type: "task.backlog", id: t.id }) }, "Send to backlog"));
@@ -1061,7 +1061,7 @@ function decisions(t) {
     if (approvable(t)) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
         icon("check"), t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
-      buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
+      if (t.reviewsNeeded > 0) buttons.push(h("span", { class: "muted", style: "align-self:center;font-size:13px" }, `${t.reviews.length} of ${t.reviewsNeeded} approvals`));
     }
     const countdown = mergeCountdown(t);
     if (merging(t)) {

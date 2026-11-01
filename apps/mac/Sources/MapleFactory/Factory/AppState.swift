@@ -1367,7 +1367,9 @@ final class AppState {
             client.send(.taskRetry(.init(id: id)))
             return
         }
-        // Back to the stage it was in, as the factory does.
+        // Back to the stage it was in, as the factory does: a level that needs no approval builds.
+        // Read before `update`, which holds exclusive access to `tasks` while it mutates.
+        let needed = risk(for: task(id))?.approvals ?? task(id).approvalsNeeded
         update(id) { task in
             guard task.state == .cancelled || task.state == .closed || task.state == .reviewing else { return }
             if task.state == .cancelled || task.state == .closed {
@@ -1376,7 +1378,7 @@ final class AppState {
                     if task.pr?.state == .closed { task.pr?.state = .open }
                 } else {
                     task.state = task.plan.isEmpty ? .planning
-                        : task.approvals.count >= task.approvalsNeeded ? .building
+                        : task.approvals.count >= needed ? .building
                         : .awaitingApproval
                 }
             }
