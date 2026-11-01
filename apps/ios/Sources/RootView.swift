@@ -756,6 +756,9 @@ struct SettingsView: View {
                 if let version = store.feed.serverVersion { LabeledContent("Server", value: version) }
                 LabeledContent("Members", value: "\(store.feed.members.count)")
                 NavigationLink(value: UsageRoute()) { Label("Usage", systemImage: "gauge.with.dots.needle.33percent") }
+                NavigationLink(value: NotificationsRoute()) {
+                    LabeledContent { Text(store.pushSummary) } label: { Label("Notifications", systemImage: "bell") }
+                }
                 if store.isAdmin {
                     NavigationLink(value: StatsRoute()) { Label("Statistics", systemImage: "chart.bar") }
                 }
@@ -794,5 +797,6 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
         .navigationDestination(for: UsageRoute.self) { _ in UsageView() }
+        .navigationDestination(for: NotificationsRoute.self) { _ in NotificationSettingsView() }
     }
 }
