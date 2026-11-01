@@ -84,18 +84,7 @@ struct TaskDetailView: View {
         if !task.brief.isEmpty {
             Card("Brief", icon: "doc.text") { Text(LocalizedStringKey(task.brief)).font(.callout) }
         }
-        if !task.plan.isEmpty {
-            Card("Plan v\(task.planVersion)", icon: "list.number") {
-                if let summary = task.planSummary { Text(summary).font(.callout).foregroundStyle(.secondary) }
-                ForEach(Array(task.plan.enumerated()), id: \.offset) { index, step in
-                    PlanStepRow(number: index + 1, step: step)
-                }
-                if task.approvalsNeeded > 0 {
-                    Label("\(task.approvals.count) of \(task.approvalsNeeded) approvals\(task.approvals.isEmpty ? "" : ": " + task.approvals.joined(separator: ", "))", systemImage: "checkmark.seal")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-        }
+        if !task.plan.isEmpty { PlanCard(task: task) }
         if !task.doneWhen.isEmpty {
             Card("Done when", icon: "checklist") {
                 ForEach(Array(task.doneWhen.enumerated()), id: \.offset) { index, item in DoneItemRow(task: task, index: index, item: item, compose: $compose) }
@@ -146,9 +135,51 @@ struct Card<Content: View>: View {
     }
 }
 
+extension Wire.Task {
+    /// Whether the plan's step changes (`added`/`from`, against the version before) are news:
+    /// only while a revised plan (v2+) waits on approval. After that they're history.
+    var planChangesFresh: Bool {
+        planVersion > 1 && state == .awaitingApproval && plan.contains { $0.added || $0.from != nil }
+    }
+}
+
+/// The plan's steps, with a revision's changes marked up while it awaits approval, and a toggle for them otherwise.
+struct PlanCard: View {
+    let task: Wire.Task
+    /// The reader's own Show/Hide choice; nil follows `planChangesFresh`. Reset when the plan or stage moves on.
+    @State private var showChangesOverride: Bool?
+
+    private var hasChanges: Bool { task.plan.contains { $0.added || $0.from != nil } }
+    private var showChanges: Bool { showChangesOverride ?? task.planChangesFresh }
+
+    var body: some View {
+        Card("Plan v\(task.planVersion)", icon: "list.number", accessory: hasChanges ? AnyView(toggle) : nil) {
+            if let summary = task.planSummary { Text(summary).font(.callout).foregroundStyle(.secondary) }
+            ForEach(Array(task.plan.enumerated()), id: \.offset) { index, step in
+                PlanStepRow(number: index + 1, step: step, showChanges: showChanges)
+            }
+            if task.approvalsNeeded > 0 {
+                Label("\(task.approvals.count) of \(task.approvalsNeeded) approvals\(task.approvals.isEmpty ? "" : ": " + task.approvals.joined(separator: ", "))", systemImage: "checkmark.seal")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: task.planVersion) { showChangesOverride = nil }
+        .onChange(of: task.state) { showChangesOverride = nil }
+    }
+
+    private var toggle: some View {
+        Button(showChanges ? "Hide changes" : "Show changes from v\(task.planVersion - 1)") {
+            withAnimation(.snappy(duration: 0.2)) { showChangesOverride = !showChanges }
+        }
+        .font(.footnote)
+    }
+}
+
 struct PlanStepRow: View {
     let number: Int
     let step: Wire.PlanStep
+    /// Marks what changed from the previous plan version.
+    var showChanges = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -164,8 +195,8 @@ struct PlanStepRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(step.text).font(.callout)
                 Text(step.file).font(.caption.monospaced()).foregroundStyle(.secondary)
-                if let from = step.from { Text("Was: \(from)").font(.caption).strikethrough().foregroundStyle(.tertiary) }
-                if step.added { Text("New in this version").font(.caption2.weight(.semibold)).foregroundStyle(Theme.approve) }
+                if showChanges, let from = step.from { Text("Was: \(from)").font(.caption).strikethrough().foregroundStyle(.tertiary) }
+                if showChanges, step.added { Text("New in this version").font(.caption2.weight(.semibold)).foregroundStyle(Theme.approve) }
             }
         }
     }

@@ -102,6 +102,8 @@ import dev.maplefactory.FactoryStore
 import dev.maplefactory.kit.DiffFile
 import dev.maplefactory.kit.DiffLine
 import dev.maplefactory.kit.FactoryApi
+import dev.maplefactory.kit.changed
+import dev.maplefactory.kit.planChangesFresh
 import dev.maplefactory.wire.CheckStatus
 import dev.maplefactory.wire.CheckVerdict
 import dev.maplefactory.wire.DoneItem
@@ -225,9 +227,16 @@ private fun Overview(store: FactoryStore, task: Task) {
         task.question?.let { QuestionCard(store, task, it) }
         if (task.brief.isNotEmpty()) Card("Brief", Icons.Filled.Description) { Text(inlineMarkdown(task.brief), style = MaterialTheme.typography.bodyMedium) }
         if (task.plan.isNotEmpty()) {
+            // The reader's own Show/Hide choice, kept per plan version and stage so a new revision shows its changes again.
+            var showChanges by rememberSaveable(task.id, task.planVersion, task.state) { mutableStateOf(task.planChangesFresh) }
             Card("Plan v${task.planVersion}", Icons.AutoMirrored.Filled.FormatListBulleted) {
+                if (task.plan.any { it.changed }) {
+                    TextButton(onClick = { showChanges = !showChanges }) {
+                        Text(if (showChanges) "Hide changes" else "Show changes from v${task.planVersion - 1}")
+                    }
+                }
                 task.planSummary?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = secondaryText) }
-                task.plan.forEachIndexed { index, step -> PlanStepRow(index + 1, step) }
+                task.plan.forEachIndexed { index, step -> PlanStepRow(index + 1, step, showChanges) }
                 if (task.approvalsNeeded > 0) {
                     val who = if (task.approvals.isEmpty()) "" else ": " + task.approvals.joinToString(", ")
                     Label("${task.approvals.size} of ${task.approvalsNeeded} approvals$who", Icons.Filled.Verified, secondaryText)
@@ -250,7 +259,7 @@ private fun Overview(store: FactoryStore, task: Task) {
 }
 
 @Composable
-private fun PlanStepRow(number: Int, step: PlanStep) {
+private fun PlanStepRow(number: Int, step: PlanStep, showChanges: Boolean) {
     val color = when (step.progress) {
         StepProgress.Done -> Maple.approve.color
         StepProgress.Active -> Maple.state(TaskState.Building)
@@ -264,8 +273,8 @@ private fun PlanStepRow(number: Int, step: PlanStep) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(step.text, style = MaterialTheme.typography.bodyMedium)
             Text(step.file, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = secondaryText)
-            step.from?.let { Text("Was: $it", style = MaterialTheme.typography.bodySmall, textDecoration = TextDecoration.LineThrough, color = tertiaryText) }
-            if (step.added) Text("New in this version", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = Maple.approve.color)
+            if (showChanges) step.from?.let { Text("Was: $it", style = MaterialTheme.typography.bodySmall, textDecoration = TextDecoration.LineThrough, color = tertiaryText) }
+            if (showChanges && step.added) Text("New in this version", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = Maple.approve.color)
         }
     }
 }
