@@ -369,11 +369,16 @@ struct FactoryReadingPanel: View {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionLabel(title: "What happens next")
                     step(1, "\(agent.name) drafts a plan: steps, files and estimated size.")
-                    step(2, "Plan needs \(state.policy.planApprovals[areaLevel, default: 1]) approval\(state.policy.planApprovals[areaLevel, default: 1] == 1 ? "" : "s") at \(areaLevel.title.lowercased()) risk.")
+                    let approvals = state.policy.planApprovals[areaLevel, default: 1]
+                    let reviews = state.policy.finalReviews[areaLevel, default: 1]
+                    step(2, approvals == 0
+                         ? "Plan builds without approval at \(areaLevel.title.lowercased()) risk."
+                         : "Plan needs \(approvals) approval\(approvals == 1 ? "" : "s") at \(areaLevel.title.lowercased()) risk.")
                     step(3, "\(agent.name) builds, opens a PR and attaches proof for each check.")
                     step(4, state.policy.autoMerge[areaLevel, default: false]
                          ? "Auto-merges once proofs and CI pass."
-                         : "\(state.policy.finalReviews[areaLevel, default: 1]) review\(state.policy.finalReviews[areaLevel, default: 1] == 1 ? "" : "s") before someone merges.")
+                         : reviews == 0 ? "Merges without a human review."
+                         : "\(reviews) review\(reviews == 1 ? "" : "s") before someone merges.")
                 }
             }
         }

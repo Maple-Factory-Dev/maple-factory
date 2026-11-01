@@ -277,3 +277,26 @@ test("the Version card reads unknown for a server too old to send its version", 
   assert.equal(info.version, "Unknown");
   assert.equal(info.update, null);
 });
+
+test("a policy can ask for 0 plan approvals and 0 final reviews at every risk level, but not fewer or none said", () => {
+  const zero: RiskPolicy = { ...policy, planApprovals: { low: 0, medium: 0, high: 0 }, finalReviews: { low: 0, medium: 0, high: 0 } };
+  assert.equal(validPolicy(zero), null);
+  for (const level of ["low", "medium", "high"] as const) {
+    assert.ok(validPolicy({ ...zero, planApprovals: { ...zero.planApprovals, [level]: -1 } }), `-1 ${level} approvals`);
+    assert.ok(validPolicy({ ...zero, finalReviews: { ...zero.finalReviews, [level]: -1 } }), `-1 ${level} reviews`);
+    const { [level]: _a, ...noApprovals } = zero.planApprovals;
+    assert.ok(validPolicy({ ...zero, planApprovals: noApprovals as RiskPolicy["planApprovals"] }), `missing ${level} approvals`);
+    const { [level]: _r, ...noReviews } = zero.finalReviews;
+    assert.ok(validPolicy({ ...zero, finalReviews: noReviews as RiskPolicy["finalReviews"] }), `missing ${level} reviews`);
+  }
+});
+
+test("with 0 approvals and 0 reviews in the policy, assess asks for none at that level", () => {
+  const zero: RiskPolicy = { ...policy, planApprovals: { low: 0, medium: 0, high: 0 }, finalReviews: { low: 0, medium: 0, high: 0 } };
+  for (const level of ["low", "medium", "high"] as const) {
+    const a = assess(task({ risk: { level, reasons: [], areas: [] }, diff: { added: 1, removed: 0, files: ["a.ts"] } }), zero, undefined);
+    assert.equal(a.level, level);
+    assert.equal(a.approvals, 0);
+    assert.equal(a.reviews, 0);
+  }
+});
