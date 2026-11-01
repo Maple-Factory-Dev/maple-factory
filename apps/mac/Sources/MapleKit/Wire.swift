@@ -4244,6 +4244,92 @@ public enum Wire {
         }
     }
 
+    /// One task on a day report.
+    public struct ReportItem: Codable, Hashable, Sendable {
+        public var id: String
+        /// The task in the Factory: <factory>/t/<id>.
+        public var url: String
+        public var title: String
+        /// Its goal's name.
+        public var goal: String?
+        public var owner: String
+        public var pr: UInt32?
+        /// Its pull request on GitHub; none for a local repo.
+        public var prUrl: String?
+        /// When it merged or was approved; for pending and in-progress rows, when it last changed.
+        public var at: UInt64?
+        /// What happened: "approved the plan", "review"…
+        public var note: String?
+
+        public init(id: String, url: String, title: String, goal: String? = nil, owner: String, pr: UInt32? = nil, prUrl: String? = nil, at: UInt64? = nil, note: String? = nil) {
+            self.id = id
+            self.url = url
+            self.title = title
+            self.goal = goal
+            self.owner = owner
+            self.pr = pr
+            self.prUrl = prUrl
+            self.at = at
+            self.note = note
+        }
+    }
+
+    /// A day report's section; empty ones are left out.
+    public struct ReportSection: Codable, Hashable, Sendable {
+        /// merged, reviewed, pendingReview or inProgress.
+        public var key: String
+        public var title: String
+        public var items: [ReportItem]
+
+        public init(key: String, title: String, items: [ReportItem] = []) {
+            self.key = key
+            self.title = title
+            self.items = items
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = try c.decode(String.self, forKey: .key)
+            title = try c.decode(String.self, forKey: .title)
+            items = try c.decodeIfPresent([ReportItem].self, forKey: .items) ?? []
+        }
+    }
+
+    /// What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal.
+    public struct DayReport: Codable, Hashable, Sendable {
+        public var login: String
+        public var since: UInt64
+        public var until: UInt64
+        /// "EOD - Fri, Oct 31".
+        public var title: String
+        public var sections: [ReportSection]
+        /// The report as Markdown, ready to paste.
+        public var markdown: String
+        /// The report as Slack mrkdwn, ready to paste.
+        public var slack: String
+
+        public init(login: String, since: UInt64, until: UInt64, title: String, sections: [ReportSection] = [], markdown: String, slack: String) {
+            self.login = login
+            self.since = since
+            self.until = until
+            self.title = title
+            self.sections = sections
+            self.markdown = markdown
+            self.slack = slack
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            login = try c.decode(String.self, forKey: .login)
+            since = try c.decode(UInt64.self, forKey: .since)
+            until = try c.decode(UInt64.self, forKey: .until)
+            title = try c.decode(String.self, forKey: .title)
+            sections = try c.decodeIfPresent([ReportSection].self, forKey: .sections) ?? []
+            markdown = try c.decode(String.self, forKey: .markdown)
+            slack = try c.decode(String.self, forKey: .slack)
+        }
+    }
+
     /// The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.
     public struct StatsSummary: Codable, Hashable, Sendable {
         public var days: UInt32
@@ -6133,6 +6219,17 @@ public enum Wire {
         }
     }
 
+    /// Your day report for [since, until), your local day's bounds in ms, answered with `report`.
+    public struct ClientMessageReportGet: Codable, Hashable, Sendable {
+        public var since: UInt64
+        public var until: UInt64
+
+        public init(since: UInt64, until: UInt64) {
+            self.since = since
+            self.until = until
+        }
+    }
+
     /// Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.
     public struct ClientMessageTasksOlder: Codable, Hashable, Sendable {
         /// One goal's tasks. None: every goal's.
@@ -6237,6 +6334,7 @@ public enum Wire {
         case taskCheckedIt(ClientMessageTaskCheckedIt)
         case taskMockupChange(ClientMessageTaskMockupChange)
         case statsGet(ClientMessageStatsGet)
+        case reportGet(ClientMessageReportGet)
         case tasksOlder(ClientMessageTasksOlder)
         case taskGet(ClientMessageTaskGet)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -6321,6 +6419,7 @@ public enum Wire {
             case "task.checkedIt": self = .taskCheckedIt(try ClientMessageTaskCheckedIt(from: decoder))
             case "task.mockupChange": self = .taskMockupChange(try ClientMessageTaskMockupChange(from: decoder))
             case "stats.get": self = .statsGet(try ClientMessageStatsGet(from: decoder))
+            case "report.get": self = .reportGet(try ClientMessageReportGet(from: decoder))
             case "tasks.older": self = .tasksOlder(try ClientMessageTasksOlder(from: decoder))
             case "task.get": self = .taskGet(try ClientMessageTaskGet(from: decoder))
             default: self = .unknown(type)
@@ -6549,6 +6648,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .statsGet(let body):
                 try c.encode("stats.get", forKey: .type)
+                try body.encode(to: encoder)
+            case .reportGet(let body):
+                try c.encode("report.get", forKey: .type)
                 try body.encode(to: encoder)
             case .tasksOlder(let body):
                 try c.encode("tasks.older", forKey: .type)
@@ -7037,6 +7139,15 @@ public enum Wire {
         }
     }
 
+    /// The day report `report.get` asked for, to that connection only.
+    public struct ServerToClientReport: Codable, Hashable, Sendable {
+        public var report: DayReport
+
+        public init(report: DayReport) {
+            self.report = report
+        }
+    }
+
     /// The CI check log `task.checkLog` asked for, to that connection only.
     public struct ServerToClientCheckLog: Codable, Hashable, Sendable {
         /// The task.
@@ -7104,6 +7215,7 @@ public enum Wire {
         case toast(ServerToClientToast)
         case sessionEnded(ServerToClientSessionEnded)
         case stats(ServerToClientStats)
+        case report(ServerToClientReport)
         case checkLog(ServerToClientCheckLog)
         case error(ServerToClientError)
         /// A message this build doesn't know yet; newer servers and runners may send them.
@@ -7145,6 +7257,7 @@ public enum Wire {
             case "toast": self = .toast(try ServerToClientToast(from: decoder))
             case "session.ended": self = .sessionEnded(try ServerToClientSessionEnded(from: decoder))
             case "stats": self = .stats(try ServerToClientStats(from: decoder))
+            case "report": self = .report(try ServerToClientReport(from: decoder))
             case "checkLog": self = .checkLog(try ServerToClientCheckLog(from: decoder))
             case "error": self = .error(try ServerToClientError(from: decoder))
             default: self = .unknown(type)
@@ -7246,6 +7359,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .stats(let body):
                 try c.encode("stats", forKey: .type)
+                try body.encode(to: encoder)
+            case .report(let body):
+                try c.encode("report", forKey: .type)
                 try body.encode(to: encoder)
             case .checkLog(let body):
                 try c.encode("checkLog", forKey: .type)

@@ -1062,6 +1062,31 @@ export const structs: Record<string, Struct> = {
     doc: "How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).",
     fields: { goal: "string", merged: "u32", cancelled: "u32", closed: "u32", total: "u32" },
   },
+  ReportItem: {
+    doc: "One task on a day report.",
+    fields: { id: "string", url: "string", title: "string", goal: "string?", owner: "string", pr: "u32?", prUrl: "string?", at: "u64?", note: "string?" },
+    fieldDocs: {
+      url: "The task in the Factory: <factory>/t/<id>.",
+      goal: "Its goal's name.",
+      prUrl: "Its pull request on GitHub; none for a local repo.",
+      at: "When it merged or was approved; for pending and in-progress rows, when it last changed.",
+      note: "What happened: \"approved the plan\", \"review\"…",
+    },
+  },
+  ReportSection: {
+    doc: "A day report's section; empty ones are left out.",
+    fields: { key: "string", title: "string", items: "ReportItem[]" },
+    fieldDocs: { key: "merged, reviewed, pendingReview or inProgress." },
+  },
+  DayReport: {
+    doc: "What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal.",
+    fields: { login: "string", since: "u64", until: "u64", title: "string", sections: "ReportSection[]", markdown: "string", slack: "string" },
+    fieldDocs: {
+      title: "\"EOD - Fri, Oct 31\".",
+      markdown: "The report as Markdown, ready to paste.",
+      slack: "The report as Slack mrkdwn, ready to paste.",
+    },
+  },
   StatsSummary: {
     doc: "The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only.",
     fields: {
@@ -1485,6 +1510,10 @@ export const unions: Record<string, Union> = {
       "task.checkedIt": { doc: "Attest to a Done when item yourself, with an optional reason.", fields: { id: "string", item: "u32", note: "string?" } },
       "task.mockupChange": { fields: { id: "string", mockup: "string", text: "string" } },
       "stats.get": { doc: "Admins only: the factory's statistics, answered with `stats`.", fields: { days: "u32", goal: "string?" } },
+      "report.get": {
+        doc: "Your day report for [since, until), your local day's bounds in ms, answered with `report`.",
+        fields: { since: "u64", until: "u64" },
+      },
       "tasks.older": {
         doc: "Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only.",
         fields: { goal: "string?", before: "u64?", beforeId: "string?", limit: "u32?" },
@@ -1619,6 +1648,7 @@ export const unions: Record<string, Union> = {
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
+      report: { doc: "The day report `report.get` asked for, to that connection only.", fields: { report: "DayReport" } },
       checkLog: {
         doc: "The CI check log `task.checkLog` asked for, to that connection only.",
         fields: { id: "string", check: "string", url: "string?", text: "string", truncated: "bool", failedStep: "string?" },
