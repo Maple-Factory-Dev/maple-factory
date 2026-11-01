@@ -60,6 +60,9 @@ export interface TaskPrivate {
   budgetBase?: import("./policy.ts").BudgetBase | null;
   /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
   budgetAskedAt?: number | null;
+  /** The last answer a person gave its agent (to `ask`, a raised hand, or in a comment thread), since it last
+   *  asked; what lets the builder `attest` Done when items for them. Cleared by a new `ask` or `raise_hand`. */
+  lastAnswer?: { who: string; text: string; at: number } | null;
   /** Cancelled with its goal's archive, to have its worktree removed (when nothing would be lost). */
   discard?: boolean;
 }
