@@ -1631,6 +1631,12 @@ final class AppState {
         }
     }
 
+    /// The hold on merges into the task's repo (an incident freeze), live only.
+    func mergeHold(for task: FactoryTask) -> Wire.MergeHold? {
+        guard let client, isLive else { return nil }
+        return client.mergeHold(for: task.repo ?? client.goal(named: task.goal)?.repo)
+    }
+
     // MARK: Goal
 
     /// The goals `id` can move to (unarchived, not its own), each with why it can't when its goal doesn't work in the task's repo.

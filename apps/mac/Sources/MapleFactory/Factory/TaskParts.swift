@@ -821,7 +821,14 @@ struct ReviewActions: View {
                 }
             }
 
-            if let mergeAt = countdown(gate) {
+            if let hold = state.mergeHold(for: task), task.state == .reviewing, !factoryMerging {
+                MergeHoldNotice(hold: hold)
+                DecisionButtons {
+                    PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: false) {}
+                        .help("Merges into \(hold.repo) are on hold")
+                    RequestChangesButton(action: onRequestChanges)
+                }
+            } else if let mergeAt = countdown(gate) {
                 CountdownMergeButton(number: task.pr?.number ?? 0, mergeAt: mergeAt, from: task.mergeFrom,
                                      holding: state.isInFlight(task.id, .holdMerge),
                                      hold: { state.holdMerge(task.id) }, mergeNow: { state.merge(task.id) })
@@ -878,7 +885,9 @@ struct ReviewActions: View {
                 }
             }
 
-            if let mergeAt = countdown(gate) {
+            if state.mergeHold(for: task) != nil, task.state == .reviewing {
+                EmptyView()
+            } else if let mergeAt = countdown(gate) {
                 TimelineView(.everySecond(until: mergeAt)) { context in
                     let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
                     statusRow("bolt.fill", left > 0 ? "Auto-merging in \(left)s — Hold to merge it yourself." : "Auto-merging now.", Theme.State.merged)
@@ -994,6 +1003,25 @@ struct ReviewActions: View {
         }
         .font(.system(size: 11.5))
         .foregroundStyle(color)
+    }
+}
+
+/// In place of the countdown and Merge while merges into the task's repo are on hold.
+struct MergeHoldNotice: View {
+    let hold: Wire.MergeHold
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: "hand.raised.fill").foregroundStyle(GitHubColor.failed)
+            Text("Merges into \(hold.repo) are on hold — \(hold.reason) · \(hold.by), \(LiveAdapter.ago(hold.at) == "now" ? "just now" : "\(LiveAdapter.ago(hold.at)) ago")")
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(GitHubColor.failed.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(GitHubColor.failed.opacity(0.35)))
     }
 }
 

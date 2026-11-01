@@ -962,6 +962,8 @@ struct RepositoriesSettings: View {
     @State private var adding = ""
     @State private var refreshing = false
     @State private var filter = ""
+    /// The repo whose "Hold merges…" sheet is open.
+    @State private var holding: String?
     /// The repo whose detail is open (`-reposSelected owner/name` opens one at launch).
     @AppStorage("reposSelected") private var selected = ""
 
@@ -975,6 +977,11 @@ struct RepositoriesSettings: View {
             RepoScriptsDetail(repo: repo) { selected = "" }
         } else {
             list
+                .sheet(isPresented: Binding(get: { holding != nil }, set: { if !$0 { holding = nil } })) {
+                    if let repo = holding {
+                        HoldMergesSheet(repo: repo) { reason in client.holdMerges(repo: repo, reason: reason) }
+                    }
+                }
         }
     }
 
@@ -1027,6 +1034,17 @@ struct RepositoriesSettings: View {
     }
 
     private func row(_ repo: Wire.OrgRepo) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            repoRow(repo)
+            if let hold = client.mergeHold(for: repo.name) {
+                MergeHoldBanner(hold: hold) { client.releaseMerges(repo: repo.name) }
+                    .padding(.leading, 38)
+            }
+        }
+        .settingsRowPadding()
+    }
+
+    private func repoRow(_ repo: Wire.OrgRepo) -> some View {
         RepoList.Row(repo: repo) {
             EmptyView()
         } trailing: {
@@ -1042,6 +1060,11 @@ struct RepositoriesSettings: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textMuted)
                 .fixedSize()
+            if client.mergeHold(for: repo.name) == nil {
+                Button("Hold merges…") { holding = repo.name }
+                    .controlSize(.small)
+                    .help("Stop every merge into \(repo.name), across all goals, until the hold is lifted")
+            }
             if repo.source == .manual && isAdmin {
                 Button {
                     client.send(.reposRemove(.init(name: repo.name)))
@@ -1053,7 +1076,6 @@ struct RepositoriesSettings: View {
             }
             Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textFaint)
         }
-        .settingsRowPadding()
         .contentShape(Rectangle())
         .onTapGesture { selected = repo.name }
         .help("Open \(repo.name)'s worktree scripts")
@@ -1064,6 +1086,72 @@ struct RepositoriesSettings: View {
         guard !name.isEmpty else { return }
         client.send(.reposAdd(.init(name: name)))
         adding = ""
+    }
+}
+
+/// A repo's merge hold in Settings › Repositories: why, who and when, and Lift hold.
+struct MergeHoldBanner: View {
+    let hold: Wire.MergeHold
+    let lift: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label("Merges on hold", systemImage: "hand.raised.fill")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(Capsule().fill(GitHubColor.failed))
+                .fixedSize()
+            Text("\(hold.reason) · \(hold.by), \(LiveAdapter.ago(hold.at) == "now" ? "just now" : "\(LiveAdapter.ago(hold.at)) ago")")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textMuted)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button("Lift hold", action: lift)
+                .controlSize(.small)
+                .help("Let merges into \(hold.repo) go again; the tasks waiting merge on their own")
+        }
+    }
+}
+
+/// Asks why before putting merges into a repo on hold.
+struct HoldMergesSheet: View {
+    let repo: String
+    let hold: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var reason = ""
+
+    private var trimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Hold merges into \(repo)").font(.system(size: 14, weight: .semibold))
+            Text("Nothing merges into it, on any goal, until someone lifts the hold: auto-merge countdowns stop and Merge is refused. Tasks keep building and reviewing.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Why? e.g. Incident #42: bad deploy, rolling back", text: $reason)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(submit)
+            if trimmed.count > 200 {
+                Text("Keep it to 200 characters.").font(.system(size: 11)).foregroundStyle(GitHubColor.failed)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Hold merges", action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmed.isEmpty || trimmed.count > 200)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func submit() {
+        guard !trimmed.isEmpty, trimmed.count <= 200 else { return }
+        hold(trimmed)
+        dismiss()
     }
 }
 
