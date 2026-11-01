@@ -155,7 +155,7 @@ struct RepoScriptsDetail: View {
                 field("Setup", "Runs once the worktree exists, before the agent starts: install, seed, copy config.", "bin/worktree-setup", $draft.setup)
                 linesField("Checks", "Must exit cleanly before a builder's work is pushed: linters, formatters, lefthook. One command per line, run in the worktree. Start a line with [macos] (or [xcode,macos]) and only a machine with those tags runs it; elsewhere the builder is told it's skipped.",
                            "bundle exec rubocop\nlefthook run pre-commit --all-files\n[macos] xcodebuild test -scheme App", $draft.checks)
-                linesField("Path requirements", "A task whose plan touches a matching file only runs on a machine with those tags: a path from the repo's root (** for any folders) and its tags, one rule per line (at most 20).",
+                linesField("Needs tags", "Path requirements: a task whose plan touches a matching file only runs on a machine with those tags: a path from the repo's root (** for any folders) and its tags, one rule per line (at most 20).",
                            "apps/mac/** macos\napps/ios/** macos,xcode", $draft.requirePaths)
                 field("Teardown", "Runs before a finished task's worktree is removed: stop services, drop databases.", "bin/worktree-teardown", $draft.teardown)
                 field("Archive", "Runs instead of the removal when a finished task is cleaned up. It owns the folder and the branch.", "bin/worktree-archive", $draft.archive)
