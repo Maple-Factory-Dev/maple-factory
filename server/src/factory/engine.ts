@@ -642,6 +642,29 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.requestReviewers": {
+        if (isFinished(task.state)) fail(`It's ${task.state}; there's nothing left to review.`);
+        const members = await this.hooks.members();
+        const login = (l: string) => {
+          const name = l.trim().replace(/^@/, "");
+          return members.find((m) => m.login.toLowerCase() === name.toLowerCase())?.login ?? fail(`${name} isn't in the org.`);
+        };
+        const add = [...new Set(msg.add.map(login))];
+        const remove = [...new Set(msg.remove.map(login))];
+        // Who already signed off on the stage it's in has nothing left to do.
+        const signedOff = task.state === "reviewing" ? task.reviews : task.state === "awaitingApproval" ? task.approvals : [];
+        task.requested ??= [];
+        const added = add.filter((l) => l !== task.owner && !signedOff.includes(l) && !task.requested.includes(l) && !remove.includes(l));
+        const removed = remove.filter((l) => task.requested.includes(l));
+        if (!added.length && !removed.length) return;
+        task.requested = [...task.requested.filter((l) => !removed.includes(l)), ...added];
+        for (const l of added) this.event(task, who, `requested a review from @${l}`);
+        for (const l of removed) this.event(task, who, `removed @${l}'s review request`);
+        await audit(this.env, who, "task.reviewersRequested", task.id, { added, removed });
+        this.save(task);
+        if (added.length && task.state === "reviewing") await this.requestOnGitHub(task.id, added);
+        return;
+      }
       case "task.moveGoal": {
         if (isFinished(task.state)) fail(`It's ${task.state}; it stays in its goal.`);
         if (msg.goal === task.goal) fail("It's already in that goal.");
@@ -732,6 +755,7 @@ export class Engine {
           this.event(task, who, "kept the title");
         }
         task.approvals.push(who);
+        task.requested = (task.requested ?? []).filter((l) => l !== who);
         for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
         this.event(task, who, "approved the plan");
         if (task.approvals.length >= task.approvalsNeeded) await this.approved(task, "queued it for building");
@@ -842,6 +866,7 @@ export class Engine {
         if (task.state !== "reviewing" || task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It isn't ready for review yet.");
         if (task.reviews.includes(who)) fail("You've already approved it.");
         task.reviews.push(who);
+        task.requested = (task.requested ?? []).filter((l) => l !== who);
         this.event(task, who, "approved the changes");
         this.stat(task, "changes.approved", { reviews: task.reviews.length }, who);
         this.save(task);
@@ -1118,6 +1143,7 @@ export class Engine {
             doneWhen: [],
             approvals: [],
             reviews: [],
+            requested: [],
             comments: [],
             changes: [],
             events: [{ who, text: `split it off ${task.id}`, at: t }],
@@ -1317,6 +1343,7 @@ export class Engine {
       approvalsNeeded: 1,
       reviews: [],
       reviewsNeeded: 1,
+      requested: [],
       comments: [],
       changes: [],
       events: [{ who, text: "created it", at: t }],
@@ -1987,9 +2014,39 @@ export class Engine {
     } catch (e) {
       notes.push(`couldn't ask @${who} to review pull request #${number}: ${(e as Error).message}`);
     }
+    // Teammates requested before the pull request existed.
+    const asked = (task.requested ?? []).filter((l) => l !== who && !task.reviews.includes(l));
+    if (asked.length) {
+      try {
+        await requestReviewers(app, owner, repo, number, asked);
+        notes.push(`asked ${asked.map((l) => `@${l}`).join(", ")} to review pull request #${number}`);
+      } catch (e) {
+        notes.push(`couldn't ask ${asked.map((l) => `@${l}`).join(", ")} to review pull request #${number}: ${(e as Error).message}`);
+      }
+    }
     const t = this.store.task(id);
     if (!t) return;
     for (const n of notes) this.event(t, "factory", n);
+    this.save(t);
+  }
+
+  /** Asks `logins` to review the task's open pull request on GitHub. Best-effort: what GitHub refused goes on the timeline. */
+  private async requestOnGitHub(id: string, logins: string[]) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.number || !gh || task.pr.state !== "open") return;
+    const who = logins.map((l) => `@${l}`).join(", ");
+    let note: string;
+    try {
+      await requestReviewers(app, gh.owner, gh.repo, task.pr.number, logins);
+      note = `asked ${who} to review pull request #${task.pr.number} on GitHub`;
+    } catch (e) {
+      note = `couldn't ask ${who} to review pull request #${task.pr.number} on GitHub: ${(e as Error).message}`;
+    }
+    const t = this.store.task(id);
+    if (!t) return;
+    this.event(t, "factory", note);
     this.save(t);
   }
 

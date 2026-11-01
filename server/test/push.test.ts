@@ -89,6 +89,21 @@ test("who a task newly needs, for the Mac Notifier's reasons", () => {
   assert.deepEqual(pushReasons(task({ comments: [c] }), task({ comments: [c] }), all), []);
 });
 
+test("a newly requested reviewer gets exactly one push, and a re-save doesn't push again", () => {
+  const all = ["ada", "bob", "cy"];
+  // Everyone already needed for the approval: only the request pushes, to cy alone.
+  const waiting = task({ state: "awaitingApproval", owner: "ada" });
+  const asked = task({ state: "awaitingApproval", owner: "ada", requested: ["cy"] });
+  assert.deepEqual(pushReasons(waiting, asked, all), [{ login: "cy", reason: "approval" }]);
+  assert.deepEqual(pushReasons(asked, asked, all), []);
+  // In review, before its round passes: a review push.
+  assert.deepEqual(pushReasons(task({ state: "reviewing" }), task({ state: "reviewing", requested: ["bob"] }), all), [{ login: "bob", reason: "review" }]);
+  // Still building: a mention-style push so an early request gets noticed.
+  assert.deepEqual(pushReasons(task(), task({ requested: ["bob"] }), all), [{ login: "bob", reason: "mention" }]);
+  // Older tasks without the field push nothing extra.
+  assert.deepEqual(pushReasons(task(), task(), all), []);
+});
+
 test("a raised hand sends one signed push per device", async () => {
   const push = new Push(await envWith(CRED), storeWithDevices());
   await push.taskSaved(task(), task({ hand: hand("ada") }), async () => [{ login: "ada" }, { login: "bob" }] as never);

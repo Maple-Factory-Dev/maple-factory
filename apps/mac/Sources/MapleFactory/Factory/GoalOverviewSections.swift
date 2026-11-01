@@ -85,7 +85,9 @@ struct GoalOverviewSections {
             }
         }
         // Stable: within a reason, the goal's own order holds.
-        needsYou = needsYou.enumerated().sorted { ($0.element.reason, $0.offset) < ($1.element.reason, $1.offset) }.map(\.element)
+        // A review someone requested of you comes first (MF-299), then by reason.
+        let asked = { (w: Waiting) in w.task.requested.contains { $0.id == FactoryData.me.id } && w.reason != .hand ? 0 : 1 }
+        needsYou = needsYou.enumerated().sorted { (asked($0.element), $0.element.reason, $0.offset) < (asked($1.element), $1.element.reason, $1.offset) }.map(\.element)
         drafts.sort { $0.draftRank < $1.draftRank }
         queued.sort { $0.queueRank < $1.queueRank }
         recentlyLanded.sort { $0.span.upperBound > $1.span.upperBound }
@@ -101,6 +103,8 @@ struct GoalOverviewSections {
             return Waiting(task: task, reason: .question, why: question)
         }
         switch task.state {
+        case .awaitingApproval where task.requested.contains { $0.id == FactoryData.me.id }:
+            return Waiting(task: task, reason: .approval, why: "Your review is requested · plan v\(task.planVersion)")
         case .awaitingApproval:
             return Waiting(task: task, reason: .approval, why: "Plan v\(task.planVersion) is ready for your approval")
         case .reviewing where pendingMerge:
