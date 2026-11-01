@@ -6,7 +6,8 @@
 // finishes; a task created meanwhile waits with "<machine> is paused for new work."; under a full pause
 // an approved plan's builder doesn't start ("<machine> is paused."), and resuming starts it; a
 // teammate's task in a team slot isn't handed off by a new-work pause, and is by a full one; Maple's own
-// runs (Draft with AI) still go out to a machine paused for new work.
+// runs (Draft with AI) still go out to a machine paused for new work. task.move is refused while a task
+// runs on a machine paused for new work, and allowed once it is fully paused.
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -143,6 +144,15 @@ step(`${b}: still waiting: "${tasks.get(b).waiting}"`);
 send({ type: "task.approvePlan", id: a });
 const builder = await sessionOf(a, "builder");
 step(`${a}: plan approved, its builder started on ${runnerId} under the new-work pause`);
+send({ type: "task.move", id: a });
+const refused = await (async () => {
+  const deadline = Date.now() + 10000;
+  while (!errors.length && Date.now() < deadline) await new Promise((r) => { poke = r; setTimeout(r, 250); });
+  return errors.splice(0).join("; ");
+})();
+if (!/^It's running on /.test(refused)) throw new Error(`${a}: task.move under a new-work pause wasn't refused (${refused || "no error"})`);
+if (tasks.get(a).worker?.machine !== runnerId) throw new Error(`${a} lost its builder`);
+step(`${a}: can't be moved off mid-build under a new-work pause: "${refused}"`);
 const proved = await call(builder.id, "prove", { item: 1, kind: "terminal", summary: "Changed", command: "cat README.md", output: ["changed"] });
 if (proved.error) throw new Error(`prove: ${proved.error}`);
 const finished = await call(builder.id, "finish", { summary: "Changed it." });
@@ -151,6 +161,10 @@ await sessionOf(a, "reviewer");
 step(`${a}: finished and pushed; its reviewer started on ${runnerId}, still paused for new work`);
 if (tasks.get(b).worker) throw new Error(`${b} started meanwhile`);
 step(`${b}: still waiting: "${tasks.get(b).waiting}"`);
+await setPause({ paused: true });
+send({ type: "task.move", id: a });
+const moving = await wait(`${a} moving under the full pause`, () => (/Pushing its work so far/.test(tasks.get(a)?.liveLog ?? "") || tasks.get(a)?.events.some((e) => /moved it off/.test(e.text))) && tasks.get(a));
+step(`${a}: under a full pause it can be moved: "${moving.liveLog ?? moving.events.findLast((e) => /moved it off/.test(e.text)).text}"`);
 send({ type: "task.cancel", id: a });
 send({ type: "task.cancel", id: b });
 await wait("both cancelled", () => tasks.get(a)?.state === "cancelled" && tasks.get(b)?.state === "cancelled");

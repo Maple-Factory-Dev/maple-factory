@@ -1046,8 +1046,9 @@ export class Engine {
         if (!task.machine) fail("It hasn't started on a machine yet.");
         if (this.store.private(task.id).handingOff) fail("It's already being handed off.");
         const from = (await this.hooks.machines()).find((m) => m.id === task.machine);
-        const stuck = !from || !from.online || this.store.settings(from.id).paused || !task.worker;
-        if (!stuck) fail(`It's running on ${from!.name}; it moves when that machine is offline or paused, or once it stops.`);
+        // A new-work pause lets the task already running finish there, so only a full pause frees it.
+        const stuck = !from || !from.online || this.pause(from.id) === "all" || !task.worker;
+        if (!stuck) fail(`It's running on ${from!.name}; it moves when that machine is offline or fully paused, or once it stops.`);
         await audit(this.env, who, "task.moved", task.id, { from: from?.id ?? task.machine });
         // A machine that's still there pushes the work it has first, so nothing stays behind on it.
         if (from?.online && (await this.handOff(task, who))) return;
