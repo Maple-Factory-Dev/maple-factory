@@ -12,7 +12,7 @@ struct TaskActionsMenu: View {
     @State private var sheet: Sheet?
     @State private var confirmCancel = false
 
-    enum Sheet: String, Identifiable { case assign, edit, move; var id: String { rawValue } }
+    enum Sheet: String, Identifiable { case assign, edit, move, effort; var id: String { rawValue } }
 
     private var open: Bool { task.state != .merged && task.state != .cancelled }
     private var queued: Bool { task.queueRank != nil && (task.state == .planning || task.state == .building) }
@@ -46,6 +46,7 @@ struct TaskActionsMenu: View {
                         Button { sheet = .assign } label: { Label("Assign…", systemImage: "person.badge.plus") }
                     }
                     Button { sheet = .edit } label: { Label("Edit title & brief…", systemImage: "pencil") }
+                    Button { sheet = .effort } label: { Label(task.effort == nil ? "Add to effort…" : "Change effort…", systemImage: "square.stack.3d.up") }
                     Button { sheet = .move } label: { Label("Move to goal…", systemImage: "folder") }
                         .disabled(!store.moveTargets(task).contains { $0.blocked == nil })
                 }
@@ -60,6 +61,7 @@ struct TaskActionsMenu: View {
                 case .assign: AssignSheet(task: task)
                 case .edit: EditTaskSheet(task: task)
                 case .move: MoveGoalSheet(task: task)
+                case .effort: EffortSheet(task: task)
                 }
             }
             .environment(store)
