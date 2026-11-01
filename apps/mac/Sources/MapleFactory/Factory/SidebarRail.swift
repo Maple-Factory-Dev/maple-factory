@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The collapsed sidebar: one icon per destination, goal, person and agent, with hover tooltips.
+/// The collapsed sidebar: one icon per destination, goal and machine, with hover tooltips.
 struct SidebarRail: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
@@ -70,20 +70,6 @@ struct SidebarRail: View {
                             ProgressRing(progress: Double(stats.merged) / Double(max(stats.total, 1)), color: goal.color, size: 16)
                         }
                         .onTapGesture { state.destination = .goal(goal.name) }
-                    }
-
-                    divider
-
-                    ForEach(FactoryData.presence, id: \.person.id) { entry in
-                        let isMe = entry.person.id == FactoryData.me.id
-                        let status = FactoryData.status(for: entry.person)
-                        item(entry.person.firstName, titleNote: isMe ? "you" : nil,
-                             detail: FactorySidebar.statusLine(status) ?? entry.viewing.map { "Viewing \($0)" } ?? "Online") {
-                            AgentAvatar(agent: entry.person, size: 25, online: true, shape: .roundedSquare)
-                        }
-                        .onTapGesture {
-                            if let viewing = entry.viewing { state.openTask(viewing) }
-                        }
                     }
 
                     divider

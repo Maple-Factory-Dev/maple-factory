@@ -1,0 +1,86 @@
+# Deploys maplefactory.dev (apps/site) whenever it changes on main: scripts/release-site.mjs runs
+# `wrangler deploy`, checks /, every page changed since site-deployed and /download/mac (302 to a .dmg),
+# then tags site-v<sha> and force-moves site-deployed, the base the loop and the orchestrator diff from.
+# RELEASING.md ("In CI") has the secrets it reads.
+name: Deploy maplefactory.dev
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/site/**
+      - scripts/release-site.mjs
+      - scripts/site-pages.mjs
+      - .github/workflows/deploy-site.yml
+  workflow_dispatch:
+  workflow_call:
+    # Callers pass `secrets: inherit`.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      # The App's token pushes the site-v and site-deployed tags.
+      - name: Mint the release App's token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0 # the site-deployed tag, and the diff since it
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci # wrangler comes from the server workspace (`npx --no-install wrangler`)
+
+      - name: Git identity
+        env:
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+      # Any failure ends the job here, before anything deploys.
+      - name: "Check: site scripts parse"
+        run: node --check apps/site/worker.js && node --check apps/site/main.js && node --check apps/site/push.js
+      - name: "Check: site tests"
+        run: node --test apps/site/test/*.test.mjs scripts/site-pages.test.mjs
+
+      - name: Deploy, smoke-check and tag
+        run: |
+          set -o pipefail
+          node scripts/release-site.mjs 2>&1 | tee "${RUNNER_TEMP}/deploy.log"
+
+      - name: Job summary
+        if: always()
+        run: |
+          log="${RUNNER_TEMP}/deploy.log"
+          {
+            echo "## maplefactory.dev at \`$(git rev-parse --short HEAD)\`"
+            echo
+            if [ -s "$log" ]; then
+              grep -E '^(Deploying|✓|✗)' "$log" | sed 's/^/- /' || echo "- (no smoke-check lines; see the step log)"
+            else
+              echo "- Didn't deploy: a check failed first."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

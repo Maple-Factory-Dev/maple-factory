@@ -369,10 +369,16 @@ extension AppState {
     func liveStranded(_ taskID: String) -> (name: String, why: String, lastSeen: UInt64?)? {
         guard isLive, let client else { return nil }
         let task = task(taskID)
+        return Self.stranded(task, machine: client.machines.first { $0.id == task.machine })
+    }
+
+    /// Why a live task's machine left it stranded, or nil. A new-work pause (`pauseNew`) lets the task
+    /// already running finish, so only offline, removed or fully paused machines count.
+    static func stranded(_ task: FactoryTask, machine: Wire.Machine?) -> (name: String, why: String, lastSeen: UInt64?)? {
         guard let id = task.machine, [.planning, .building, .reviewing].contains(task.state), task.hand == nil else { return nil }
-        guard let machine = client.machines.first(where: { $0.id == id }) else { return (id, "was removed", nil) }
+        guard let machine, machine.id == id else { return (id, "was removed", nil) }
         if !machine.online { return (machine.name, "went offline", machine.lastSeen) }
-        if machine.settings?.paused == true { return (machine.name, "was paused", nil) }
+        if machine.settings?.paused == true && machine.settings?.pauseNew != true { return (machine.name, "was paused", nil) }
         return nil
     }
 
