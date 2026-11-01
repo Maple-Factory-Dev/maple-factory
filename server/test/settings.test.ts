@@ -22,7 +22,11 @@ test("the form's changes land in the policy, and the sensitive areas it doesn't 
   form.autoMerges = false;
   form.planApprovals.high = 3;
   form.maxLines = 800;
+  assert.equal(form.overBudget, "ask");
+  form.overBudget = "handOff";
   const saved = policyFromForm(form, policy);
+  assert.equal(saved.overBudget, "handOff");
+  assert.equal(formFromPolicy(saved).overBudget, "handOff");
   assert.equal(saved.autoMerge.medium, true);
   assert.equal(saved.autoMerges, false);
   assert.equal(saved.planApprovals.high, 3);
