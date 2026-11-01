@@ -26,6 +26,11 @@ export function trackStage(task: Task, at: number): boolean {
   const { stage, wait } = phaseOf(task);
   const last = stages.at(-1);
   if (last && last.stage === stage && (last.wait ?? null) === wait && (last.to == null || TERMINAL.includes(stage))) return false;
+  // An open span that began this same instant never really happened: replace it.
+  if (last && last.to == null && last.from >= at) {
+    stages.pop();
+    return trackStage(task, at) || true;
+  }
   if (last && last.to == null) last.to = Math.max(last.from, at);
   const from = last ? Math.max(at, last.to ?? at) : Math.min(task.createdAt || at, at);
   stages.push(span(stage, wait, from, TERMINAL.includes(stage) ? from : null));

@@ -68,7 +68,7 @@ public struct TaskTimes: Equatable, Sendable {
                 working += stage.total - stage.waiting
             }
         }
-        stages = Self.order.compactMap { byStage[$0] }.filter { $0.total > 0 || $0.open }
+        stages = Self.order.compactMap { byStage[$0] }.filter { $0.total >= 1000 || $0.open }
             + byStage.values.filter { !Self.order.contains($0.stage) }.sorted { $0.stage.rawValue < $1.stage.rawValue }
     }
 

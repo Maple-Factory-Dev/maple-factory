@@ -195,6 +195,9 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     }
     const commits = /^\/api\/tasks\/([\w-]+)\/commits$/.exec(path);
     if (commits && request.method === "GET") return orgHub(env).fetch(`https://org/commits?task=${commits[1]}`);
+    // One task as the apps see it, `stages` and all (MF-302).
+    const one = /^\/api\/tasks\/([\w-]+)$/.exec(path);
+    if (one && request.method === "GET") return orgHub(env).fetch(`https://org/task?task=${one[1]}`);
     const threads = /^\/api\/tasks\/([\w-]+)\/threads$/.exec(path);
     if (threads && request.method === "GET") return orgHub(env).fetch(`https://org/threads?task=${threads[1]}`);
     if (path === "/api/machines/enroll" && request.method === "POST") return createEnrollment(request, env, me);

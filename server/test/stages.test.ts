@@ -137,3 +137,10 @@ test("the store backfills stages once, on tasks that have none", () => {
   assert.ok(fresh.task("MF-1")!.stages.every((s) => s.inferred));
   assert.deepEqual(fresh.task("MF-2")!.stages, [{ stage: "building", from: T0, to: null }]);
 });
+
+test("a span that began the same instant is replaced, not kept at zero length", () => {
+  const t = task();
+  trackStage(t, T0);
+  t.state = "planning"; trackStage(t, T0);
+  assert.deepEqual(brief(t), [["planning", null, 0, null]]);
+});
