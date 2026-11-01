@@ -61,6 +61,8 @@ struct TaskInspector: View {
                             .fixedSize(horizontal: false, vertical: true)
                         TaskOwnership(task: task)
                         TaskOrigin(task: task)
+                        // The backlog's buttons are in BacklogBlock just below.
+                        if task.state != .backlog { TaskActionBar(task: task).padding(.top, 2) }
                     }
                     SinceLastViewedBanner(task: task, compact: true)
                     PipelineStepper(state: task.state)
