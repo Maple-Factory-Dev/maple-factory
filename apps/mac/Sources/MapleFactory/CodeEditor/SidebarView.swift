@@ -129,37 +129,34 @@ struct SidebarView: View {
     }
 }
 
-/// The factory card at the top of the sidebar; opens the factory menu.
+/// The sidebar's Slack-style header: the factory's name in bold with a chevron; opens the factory menu.
 struct WorkspaceSwitcher: View {
     @Environment(FactoryClient.self) private var client
+    @State private var hovering = false
 
     var body: some View {
         Menu {
             FactoryMenu()
         } label: {
-            HStack(spacing: 10) {
-                FactoryIcon(name: client.workspaceName, image: client.icon, size: 22)
+            HStack(spacing: 5) {
                 Text(client.workspaceName)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                Spacer()
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Theme.textMuted)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Theme.card)
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
-            )
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 7).fill(hovering ? Theme.fillSelected : .clear))
             .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
+        .onHover { hovering = $0 }
     }
 }
 

@@ -7,6 +7,8 @@ struct SidebarRail: View {
 
     var body: some View {
         VStack(spacing: 4) {
+            // The factory rail beside it already shows the factory.
+            if !state.showsFactoryRail {
             item(client.workspaceName, detail: "Switch or add factories") {
                 Menu {
                     FactoryMenu()
@@ -26,6 +28,9 @@ struct SidebarRail: View {
             }
             .padding(.top, 44)
             .padding(.bottom, 10)
+            } else {
+                Spacer().frame(height: 44)
+            }
 
             nav("Inbox", icon: "tray", destination: .inbox, badge: state.myInbox.count)
             nav("Requests", icon: "tray.and.arrow.down", destination: .intake, badge: state.newIntake, badgeColor: Theme.State.building)

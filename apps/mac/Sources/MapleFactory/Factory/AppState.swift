@@ -323,7 +323,8 @@ final class AppState {
     /// Around half a laptop screen: the inspector floats and the sidebar becomes a rail.
     var isCompact: Bool { windowWidth < 1180 }
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
-    var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
+    /// The sidebar's width plus the factory rail's beside it.
+    var sidebarSpace: CGFloat { (sidebarCollapsed || isCompact ? 68 : 250) + railSpace }
     var inspectorInline: Bool {
         showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
@@ -343,6 +344,37 @@ final class AppState {
                 sidebarCollapsed = sidebarPreference
                 showInspector = taskPanelEnabled && AppDefaults.bool(forKey: AppState.panelKey)
             }
+        }
+    }
+
+    // MARK: Factory rail
+
+    /// View › Show/Hide Factory Rail; nil until it's used, so the rail follows the factory count.
+    var factoryRailPreference: Bool? = AppDefaults.object(forKey: "factoryRail") as? Bool {
+        didSet {
+            if let factoryRailPreference { AppDefaults.set(factoryRailPreference, forKey: "factoryRail") }
+            else { AppDefaults.removeObject(forKey: "factoryRail") }
+        }
+    }
+    /// The Slack-style factory rail on the far left: on its own with two or more factories.
+    var showsFactoryRail: Bool {
+        SavedFactories.railShown(count: client?.savedFactories.count ?? 0, preference: factoryRailPreference)
+    }
+    var railSpace: CGFloat { showsFactoryRail ? 60 : 0 }
+
+    func toggleFactoryRail() {
+        let shown = showsFactoryRail
+        withAnimation(.snappy(duration: 0.25)) { factoryRailPreference = !shown }
+    }
+
+    /// ⌘1–⌘9: the Nth saved factory, or onboarding when its token is gone.
+    func switchToFactory(at number: Int) {
+        guard let client, let factory = SavedFactories.factory(forShortcut: number, in: client.savedFactories) else { return }
+        guard client.server.map(SavedFactory.key) != factory.id || !client.isSignedIn else { return }
+        if client.switchTo(factory) {
+            didSwitchFactory()
+        } else {
+            startOnboarding()
         }
     }
 
