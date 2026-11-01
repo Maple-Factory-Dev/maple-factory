@@ -904,6 +904,9 @@ pub struct MachineSettings {
     /// When a pause ends on its own; none: until resumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_until: Option<u64>,
+    /// With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_new: Option<bool>,
     /// Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_cap: Option<f64>,

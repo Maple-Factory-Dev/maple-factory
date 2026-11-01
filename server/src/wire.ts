@@ -325,6 +325,8 @@ export interface MachineSettings {
   paused: boolean;
   /** When a pause ends on its own; none: until resumed. */
   pausedUntil?: number | null;
+  /** With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review. */
+  pauseNew?: boolean | null;
   /** Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap. */
   sessionCap?: number | null;
   /** The same for its weekly window. */

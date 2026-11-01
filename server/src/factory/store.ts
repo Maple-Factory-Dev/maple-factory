@@ -418,7 +418,7 @@ export class Store {
     const s: MachineSettings = { ...DEFAULT_SETTINGS, ...(row ? JSON.parse(row.doc) : {}) };
     // Pauses from before pausedUntil was a field were objects.
     if (typeof s.paused !== "boolean") s.paused = Boolean(s.paused);
-    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null };
+    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null, pauseNew: false };
     return s;
   }
 
