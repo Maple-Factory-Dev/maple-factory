@@ -133,3 +133,43 @@ test("503 until the provider keys are set", async () => {
   assert.equal((await signed("/push/send", cred, msg(cred, { platform: "fcm" }))).status, 503);
   assert.equal(calls.length, 0);
 });
+
+test("sends keep going when KV refuses a second write to the counter within a second", async () => {
+  const cred = await enroll();
+  const last = new Map();
+  const put = env.PUSH.put.bind(env.PUSH);
+  // Like Workers KV: a write to the same key within 1 s of the last one rejects with 429.
+  env.PUSH.put = async (k, v, o) => {
+    const at = Date.now();
+    if (k.startsWith("r:") && last.has(k) && at - last.get(k) < 1000) throw new Error("KV PUT failed: 429 Too Many Requests");
+    last.set(k, at);
+    return put(k, v, o);
+  };
+  for (const token of ["t1aaaaaa", "t2bbbbbb", "t3cccccc"]) {
+    assert.equal((await signed("/push/send", cred, msg(cred, { token }))).status, 200);
+  }
+  assert.equal(calls.filter((c) => c.url.includes("/3/device/")).length, 3);
+});
+
+test("enroll is limited per IP when the rate limit is bound", async () => {
+  const seen = [];
+  env.PUSH_ENROLL_LIMIT = { limit: async ({ key }) => { seen.push(key); return { success: seen.length <= 2 }; } };
+  const req = () => post("/push/enroll", "{}", { "cf-connecting-ip": "203.0.113.9" });
+  assert.equal((await handlePush(req(), env, NOW)).status, 200);
+  assert.equal((await handlePush(req(), env, NOW)).status, 200);
+  assert.equal((await handlePush(req(), env, NOW)).status, 429);
+  assert.deepEqual(seen, ["203.0.113.9", "203.0.113.9", "203.0.113.9"]);
+  assert.equal([...env.PUSH.map.keys()].filter((k) => k.startsWith("f:")).length, 2);
+});
+
+test("a provider that can't be reached, or a bad service account, answers 502 with a detail", async () => {
+  const cred = await enroll();
+  provider = () => { throw new TypeError("fetch failed"); };
+  const apns = await signed("/push/send", cred, msg(cred));
+  assert.equal(apns.status, 502);
+  assert.match((await apns.json()).detail, /fetch failed/);
+  env.FCM_SERVICE_ACCOUNT = "{not json";
+  const fcm = await signed("/push/send", cred, msg(cred, { platform: "fcm" }));
+  assert.equal(fcm.status, 502);
+  assert.ok((await fcm.json()).detail);
+});

@@ -8,6 +8,8 @@
   // The push relay's enrolled factories (a hash of each secret) and hourly send counts (push.js).
   // No id: wrangler deploy provisions the namespace the first time and keeps it.
   "kv_namespaces": [{ "binding": "PUSH" }],
+  // /push/enroll is unauthenticated: at most 5 enrollments a minute from one IP (push.js).
+  "ratelimits": [{ "name": "PUSH_ENROLL_LIMIT", "namespace_id": "2310", "simple": { "limit": 5, "period": 60 } }],
   "r2_buckets": [{ "binding": "FEED", "bucket_name": "maplefactory-releases" }],
   "routes": [{ "pattern": "maplefactory.dev", "custom_domain": true }]
 }

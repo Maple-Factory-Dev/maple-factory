@@ -201,7 +201,7 @@
 
         <section class="sec-part" id="push" aria-labelledby="push-title">
           <h2 id="push-title">Mobile notifications</h2>
-          <p>Phones get notifications through a push relay at maplefactory.dev, the only place that holds Apple’s (APNs) and Google’s (FCM) keys. It’s off in every factory until an admin turns it on in Settings › General. Turning it on enrolls the factory with the relay, which gives it an id and a secret; the factory keeps the secret encrypted under its <code>SECRETS_KEY</code>, and the relay keeps only a hash of it. A Worker var <code>PUSH_RELAY=off</code> locks it off.</p>
+          <p>Phones get notifications through a push relay at maplefactory.dev, the only place that holds Apple’s (APNs) and Google’s (FCM) keys. It’s off in every factory until an admin turns it on in Settings › General. Turning it on enrolls the factory with the relay, which gives it an id and a secret; the factory keeps the secret encrypted under its <code>SECRETS_KEY</code>, and the relay keeps a hash of it, which it uses as the signing key: the raw secret never leaves the factory after enrollment, but the relay’s copy is enough to sign for the factory, so it’s guarded like a key. At worst a leak would let someone send fixed-text notifications (a task key and a reason) to phones whose tokens they already have. A Worker var <code>PUSH_RELAY=off</code> locks it off.</p>
 
           <h3>What’s sent</h3>
           <ul>

@@ -10,6 +10,15 @@
 // Signatures are hex HMAC-SHA256 over `${timestamp}.${body}` under the factory's secret, in
 // x-maple-signature, with x-maple-factory and x-maple-timestamp (seconds). The relay keeps
 // SHA-256(secret) and checks the HMAC with it as the key: the factory signs with the same derived key.
+// So the stored value IS the signing key, not a one-way check: anyone who can read KV PUSH can forge a
+// factory's sends and revokes (never read its secret back, or anything in it). Keeping the raw secret
+// out of KV only means it can't be reused elsewhere. Treat the namespace as secret; the worst a forger
+// gets is fixed-text pushes ("MF-12 · Needs a hand") to tokens they already hold, within the limits.
+//
+// Limits: enroll is capped per IP by the PUSH_ENROLL_LIMIT Rate Limiting binding (when it's bound).
+// The hourly send count lives in KV, so it's approximate: KV is eventually consistent across colos and
+// allows about one write a second to a key. A write it refuses is let through (fail open) rather than
+// dropping someone's push; the count only has to stop runaway factories, not meter exact use.
 //
 // Keys are Worker secrets: APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC (the app's bundle id) and
 // FCM_SERVICE_ACCOUNT (the service account's JSON). Until they're set, sends answer 503.
@@ -157,9 +166,10 @@ const configured = {
 /** One hour's sends for a factory, counted in KV; false once it's over the limit. */
 async function underLimit(env, id, nowS) {
   const key = `r:${id}:${Math.floor(nowS / 3600)}`;
-  const n = Number((await env.PUSH.get(key)) ?? 0);
+  const n = Number((await env.PUSH.get(key).catch(() => 0)) ?? 0);
   if (n >= PER_HOUR) return false;
-  await env.PUSH.put(key, String(n + 1), { expirationTtl: 7200 });
+  // KV refuses (429) a second write to one key within a second, as a burst of sends does: fail open.
+  await env.PUSH.put(key, String(n + 1), { expirationTtl: 7200 }).catch(() => {});
   return true;
 }
 
@@ -171,6 +181,11 @@ export async function handlePush(request, env, nowS = Math.floor(Date.now() / 10
   if (!env.PUSH) return plain("push isn't configured yet", 503);
 
   if (path === "/push/enroll") {
+    if (env.PUSH_ENROLL_LIMIT) {
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      const { success } = await env.PUSH_ENROLL_LIMIT.limit({ key: ip });
+      if (!success) return plain("Too many enrollments from here; try again in a minute.", 429);
+    }
     const id = `pf_${b64url(crypto.getRandomValues(new Uint8Array(12)))}`;
     const secret = `pfs_${b64url(crypto.getRandomValues(new Uint8Array(32)))}`;
     await env.PUSH.put(`f:${id}`, JSON.stringify({ key: await sha256Hex(secret), at: nowS }));
@@ -196,7 +211,13 @@ export async function handlePush(request, env, nowS = Math.floor(Date.now() / 10
     if (!configured[platform](env)) return plain("push isn't configured yet", 503);
     if (!(await underLimit(env, id, nowS))) return plain(`Over ${PER_HOUR} pushes this hour.`, 429);
     const msg = { factory: id, token, platform, environment, ref, reason };
-    const result = platform === "apns" ? await sendApns(env, msg, nowS) : await sendFcm(env, msg, nowS);
+    let result;
+    try {
+      result = platform === "apns" ? await sendApns(env, msg, nowS) : await sendFcm(env, msg, nowS);
+    } catch (e) {
+      // Apple or Google unreachable, a bad FCM_SERVICE_ACCOUNT, or Google refusing it: say so, not a bare 500.
+      return json({ sent: false, status: 0, detail: String(e?.message ?? e).slice(0, 200) }, 502);
+    }
     if (result.ok) return json({ sent: true });
     if (result.gone) return json({ sent: false, gone: true }, 410);
     return json({ sent: false, status: result.status, detail: result.detail }, 502);

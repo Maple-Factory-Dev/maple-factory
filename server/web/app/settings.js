@@ -313,10 +313,12 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       render();
     };
     const { on, locked, loading, failed, busy, devices } = push;
+    const admin = state.me?.role === "admin";
     return h("div", { class: "card set-card" },
       toggle("Send mobile notifications through Maple Factory's relay",
         "When a task newly needs someone, this factory asks maplefactory.dev to wake their phone through Apple or Google. Each request holds only the phone's device token, the task's key (like MF-12), why (a raised hand, a question, a plan to approve, a review or a mention) and this factory's relay id. Never titles, comments, code or repo names: the app loads those from here.",
-        on, flip, locked || loading || failed || busy),
+        on, flip, locked || loading || failed || busy || !admin),
+      !admin && h("p", { class: "set-detail muted", style: "margin:0" }, "Only an admin can change this."),
       h("p", { class: "set-detail muted", style: "margin:0" }, `${devices ?? 0} ${devices === 1 ? "device" : "devices"} registered${on ? "" : " (nothing is sent while this is off)"}.`),
       locked && h("p", { class: "set-detail muted", style: "margin:0" }, "Set off by the Worker's PUSH_RELAY. Remove it there to use this toggle."),
       failed && h("p", { class: "set-detail muted", style: "margin:0" }, "Couldn't read whether mobile notifications are on."),
