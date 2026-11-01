@@ -108,9 +108,25 @@ export async function removeMachine(env: Env, me: Member, id: string): Promise<R
   const row = await machineRow(env, id);
   if (!row) return text("No such machine.", 404);
   if (row.owner !== me.login && me.role !== "admin") return text(`Only ${row.owner} or an admin can remove ${id}.`, 403);
+  await forgetMachine(env, id, me.login, "machine.removed");
+  return new Response(null, { status: 204 });
+}
+
+/** POST /runner/unenroll: a machine forgets itself with its own token, e.g. `maple-runner unenroll`. */
+export async function unenroll(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as { runnerId?: string } | null;
+  const id = String(body?.runnerId ?? new URL(request.url).searchParams.get("runner") ?? "");
+  if (!MACHINE_ID.test(id) || !(await authenticateRunner(env, id, request))) return text("Unknown machine or bad token.", 401);
+  const row = await machineRow(env, id);
+  if (!row) return text("Unknown machine or bad token.", 401);
+  await forgetMachine(env, id, row.owner, "machine.unenrolled");
+  return new Response(null, { status: 204 });
+}
+
+/** Deletes the machine row (its token with it), drops its hub's connection and tells the apps. */
+async function forgetMachine(env: Env, id: string, actor: string, action: string): Promise<void> {
   await env.DB.prepare("DELETE FROM machines WHERE id = ?").bind(id).run();
   await machineHub(env, id).fetch("https://hub/disconnect", { method: "POST", body: "forget" });
   await orgHub(env).fetch("https://org/removed", { method: "POST", body: id });
-  await audit(env, me.login, "machine.removed", id);
-  return new Response(null, { status: 204 });
+  await audit(env, actor, action, id);
 }

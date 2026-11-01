@@ -69,7 +69,7 @@ struct Cli {
 }
 
 /// The footer under the command list.
-const AFTER_HELP: &str = "Run `maple-runner run` to start the runner, or `maple-runner install` to run it at login;\n`maple-runner stop` and `maple-runner start` then stop and start that service.";
+const AFTER_HELP: &str = "Run `maple-runner run` to start the runner, or `maple-runner install` to run it at login;\n`maple-runner stop` and `maple-runner start` then stop and start that service.\n`maple-runner uninstall --unenroll` removes the service and binary and takes this machine out of the factory.";
 
 #[derive(Subcommand, Debug)]
 enum SecretsCmd {
@@ -123,11 +123,26 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Stop the runner service and remove it.
+    /// Stop the runner service and remove it, along with the installed binary.
+    ///
+    /// Repos and worktrees under ~/.local/share/maple/repos are always kept.
     Uninstall {
         /// Print what would be removed instead of removing it.
         #[arg(long)]
         dry_run: bool,
+        /// Also unenroll: remove this machine from the factory and delete runner.json.
+        #[arg(long)]
+        unenroll: bool,
+    },
+    /// Remove this machine from the factory, revoke its token and delete ~/.config/maple/runner.json.
+    Unenroll {
+        /// Print what would happen instead of doing it.
+        #[arg(long)]
+        dry_run: bool,
+        /// Only delete runner.json, without telling the server (for a machine that's offline
+        /// for good). It stays listed in the web app until removed there.
+        #[arg(long)]
+        local_only: bool,
     },
     /// Show this machine's enrollment, the installed binary, and whether the service is running.
     Status {
@@ -335,7 +350,15 @@ async fn command(cli: Cli) -> Result<()> {
         Some(Cmd::Secrets { command: SecretsCmd::List { repo, tmux_socket } }) => secrets::cli(true, repo, None, false, &tmux_socket),
         Some(Cmd::Enroll { url, code, runner_id, test }) => enroll(&url, &code, runner_id, test).await,
         Some(Cmd::Install { dry_run }) => install(dry_run),
-        Some(Cmd::Uninstall { dry_run }) => service::Service::detect()?.uninstall(dry_run),
+        Some(Cmd::Uninstall { dry_run, unenroll: and_unenroll }) => {
+            service::Service::detect()?.uninstall(dry_run)?;
+            if and_unenroll {
+                println!();
+                unenroll(dry_run, false).await?;
+            }
+            Ok(())
+        }
+        Some(Cmd::Unenroll { dry_run, local_only }) => unenroll(dry_run, local_only).await,
         Some(Cmd::Status { url }) => status(url.as_deref()),
         Some(Cmd::Start { dry_run }) => start(dry_run),
         Some(Cmd::Stop { dry_run }) => stop(dry_run),
@@ -531,6 +554,53 @@ fn stop(dry_run: bool) -> Result<()> {
     } else {
         println!("The service ({manager}) is already stopped. {} starts it.", style::accent("maple-runner start"));
     }
+    Ok(())
+}
+
+/// `maple-runner unenroll`: stops the service (so it doesn't keep reconnecting with a dead
+/// token), asks the server to forget this machine, then deletes runner.json.
+async fn unenroll(dry_run: bool, local_only: bool) -> Result<()> {
+    let path = config::path()?;
+    let Some(cfg) = Config::load(&path)? else {
+        println!("This machine isn't enrolled (no {}). Nothing to do.", path.display());
+        return Ok(());
+    };
+    let service = service::Service::detect().ok();
+    let running = service.as_ref().is_some_and(|s| s.running_pid().is_some());
+    if dry_run {
+        println!("Would unenroll {} from {}:", style::bold(&cfg.runner_id), cfg.url);
+        if running {
+            println!("  stop the runner service");
+        }
+        if !local_only {
+            println!("  POST {}/runner/unenroll (the server forgets this machine and revokes its token)", config::base_url(&cfg.url)?);
+        }
+        println!("  remove {}", path.display());
+        println!("Would keep ~/.local/share/maple/repos (repos and worktrees).");
+        return Ok(());
+    }
+    if running && let Some(service) = &service {
+        service.stop(false)?;
+        println!("{} the runner service.", style::ok("Stopped"));
+    }
+    if local_only {
+        println!(
+            "{} the server wasn't told: {} stays listed in the web app until you remove it there.",
+            style::warn("Local only:"),
+            style::bold(&cfg.runner_id)
+        );
+    } else {
+        match anyhow::Context::context(
+            config::unenroll(&cfg).await,
+            "unenrolling didn't finish, so runner.json is kept; try again, or use --local-only for a machine that's offline for good",
+        )? {
+            config::Unenrolled::Forgotten => println!("{} {} from {}; its token no longer works.", style::ok("Removed"), style::bold(&cfg.runner_id), cfg.url),
+            config::Unenrolled::AlreadyGone => println!("{} wasn't on {} any more (or its token was already revoked).", style::bold(&cfg.runner_id), cfg.url),
+        }
+    }
+    config::forget(&path)?;
+    println!("{} {}", style::ok("Removed"), style::accent(path.display()));
+    println!("{} ~/.local/share/maple/repos (repos and worktrees) is kept.", style::dim("Note:"));
     Ok(())
 }
 
@@ -1145,6 +1215,16 @@ mod tests {
         assert!(matches!(Cli::try_parse_from(["maple-runner", "start", "--dry-run"]).unwrap().command, Some(Cmd::Start { dry_run: true })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "stop"]).unwrap().command, Some(Cmd::Stop { dry_run: false })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "stop", "--dry-run"]).unwrap().command, Some(Cmd::Stop { dry_run: true })));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "uninstall"]).unwrap().command, Some(Cmd::Uninstall { dry_run: false, unenroll: false })));
+        assert!(matches!(
+            Cli::try_parse_from(["maple-runner", "uninstall", "--dry-run", "--unenroll"]).unwrap().command,
+            Some(Cmd::Uninstall { dry_run: true, unenroll: true })
+        ));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "unenroll"]).unwrap().command, Some(Cmd::Unenroll { dry_run: false, local_only: false })));
+        assert!(matches!(
+            Cli::try_parse_from(["maple-runner", "unenroll", "--local-only"]).unwrap().command,
+            Some(Cmd::Unenroll { dry_run: false, local_only: true })
+        ));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "run", "--force"]).unwrap().command, Some(Cmd::Run(Args { force: true, .. }))));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "status", "--url", "https://x.dev"]).unwrap().command, Some(Cmd::Status { url: Some(_) })));
     }
@@ -1162,7 +1242,7 @@ mod tests {
     #[test]
     fn help_lists_every_command() {
         let help = Cli::command().render_help().to_string();
-        for cmd in ["run", "enroll", "install", "uninstall", "status", "start", "stop", "restart", "update", "mcp"] {
+        for cmd in ["run", "enroll", "unenroll", "install", "uninstall", "status", "start", "stop", "restart", "update", "mcp"] {
             assert!(help.lines().any(|l| l.trim_start().starts_with(cmd)), "{cmd} missing:\n{help}");
         }
         assert!(help.contains("Maple Factory") && help.contains(AFTER_HELP), "{help}");
