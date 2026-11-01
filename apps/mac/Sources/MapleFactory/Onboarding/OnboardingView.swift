@@ -781,7 +781,7 @@ private struct GitHubButton: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if title == nil { GitHubMark().frame(width: 18, height: 18) }
+            if title == nil { GitHubIcon(mark: .logo, size: 18) }
             Text(waiting ? "Waiting for GitHub…" : title ?? "Continue with GitHub")
         }
         .font(.system(size: 14, weight: .semibold))
@@ -791,35 +791,5 @@ private struct GitHubButton: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(light: Color(hex: 0x1F2328), dark: .white)).opacity(waiting ? 0.6 : 1))
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
-    }
-}
-
-/// The Octocat silhouette, drawn so it doesn't need an image asset.
-private struct GitHubMark: View {
-    var body: some View {
-        Canvas { context, size in
-            let s = min(size.width, size.height) / 16
-            var path = Path()
-            // Simplified from GitHub's 16×16 mark.
-            path.addPath(Path(ellipseIn: CGRect(x: 0, y: 0, width: 16 * s, height: 16 * s)))
-            var cut = Path()
-            cut.move(to: CGPoint(x: 6 * s, y: 15.6 * s))
-            cut.addLine(to: CGPoint(x: 6 * s, y: 13 * s))
-            cut.addCurve(to: CGPoint(x: 3.2 * s, y: 11.6 * s), control1: CGPoint(x: 4.4 * s, y: 13.3 * s), control2: CGPoint(x: 3.6 * s, y: 12.4 * s))
-            cut.addCurve(to: CGPoint(x: 3.6 * s, y: 6 * s), control1: CGPoint(x: 2.4 * s, y: 10 * s), control2: CGPoint(x: 2.6 * s, y: 7.2 * s))
-            cut.addLine(to: CGPoint(x: 3.5 * s, y: 3.8 * s))
-            cut.addLine(to: CGPoint(x: 5.6 * s, y: 4.8 * s))
-            cut.addCurve(to: CGPoint(x: 10.4 * s, y: 4.8 * s), control1: CGPoint(x: 7.2 * s, y: 4.4 * s), control2: CGPoint(x: 8.8 * s, y: 4.4 * s))
-            cut.addLine(to: CGPoint(x: 12.5 * s, y: 3.8 * s))
-            cut.addLine(to: CGPoint(x: 12.4 * s, y: 6 * s))
-            cut.addCurve(to: CGPoint(x: 12.8 * s, y: 11.6 * s), control1: CGPoint(x: 13.4 * s, y: 7.2 * s), control2: CGPoint(x: 13.6 * s, y: 10 * s))
-            cut.addCurve(to: CGPoint(x: 10 * s, y: 13 * s), control1: CGPoint(x: 12.4 * s, y: 12.4 * s), control2: CGPoint(x: 11.6 * s, y: 13.3 * s))
-            cut.addLine(to: CGPoint(x: 10 * s, y: 15.6 * s))
-            cut.closeSubpath()
-            context.fill(path, with: .foreground)
-            context.blendMode = .destinationOut
-            context.fill(cut, with: .color(.black))
-        }
-        .compositingGroup()
     }
 }
