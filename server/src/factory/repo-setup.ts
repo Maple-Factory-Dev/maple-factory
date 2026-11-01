@@ -8,6 +8,7 @@
 import type { Machine, PromptAdditions, RepoSetupRun, RepoSetupSuggestion, ServerToClient, ServerToRunner, WorktreeScripts } from "../wire.ts";
 import { lastJson } from "./drafts.ts";
 import { cleanPrompts } from "./prompts.ts";
+import { TAG } from "../machines.ts";
 import type { Store } from "./store.ts";
 
 /** The id a setup run goes by on the runner (its token requests and its worktree's name). */
@@ -52,6 +53,92 @@ export function checkCommands(s: WorktreeScripts | null | undefined): string[] {
   return typeof s?.checks === "string" ? s.checks.split("\n").map((l) => l.trim()).filter(Boolean) : [];
 }
 
+/** The most path rules a repo may have. */
+export const MAX_PATH_RULES = 20;
+
+/** One check line read: its command and the machine tags it needs (from a leading `[macos] ` or `[xcode,macos] `), or why the prefix can't be read. */
+export function parseCheck(line: string): { command: string; requires: string[] } | { error: string } {
+  const l = line.trim();
+  if (!l.startsWith("[")) return { command: l, requires: [] };
+  const close = l.indexOf("]");
+  if (close < 0) return { error: `The check \`${l}\` opens a [ for its machine tags but never closes it; write it like \`[macos] xcodebuild test\`.` };
+  const tags = l.slice(1, close).split(",").map((t) => t.trim());
+  const command = l.slice(close + 1).trim();
+  if (tags.every((t) => !t)) return { error: `The check \`${l}\` has an empty [ ]; name the machine tags it needs, like [macos].` };
+  const bad = tags.find((t) => !TAG.test(t) || t.length > 32);
+  if (bad != null) return { error: `The check \`${l}\` asks for the tag "${bad}"; a tag is lowercase a-z, 0-9 and dashes, like macos or xcode.` };
+  if (!command) return { error: `The check \`${l}\` has machine tags but no command after them.` };
+  return { command, requires: [...new Set(tags)].sort() };
+}
+
+/** A repo's checks split for a machine with these tags: the commands it runs (prefixes stripped), and those it skips with the tags it lacks. A line that can't be read runs as written, so the check fails loudly instead of vanishing. */
+export function checksFor(s: WorktreeScripts | null | undefined, tags: readonly string[]): { run: string[]; skipped: { command: string; missing: string[] }[] } {
+  const have = new Set(tags);
+  const run: string[] = [];
+  const skipped: { command: string; missing: string[] }[] = [];
+  for (const line of checkCommands(s)) {
+    const c = parseCheck(line);
+    if ("error" in c) { run.push(line); continue; }
+    const missing = c.requires.filter((t) => !have.has(t));
+    if (missing.length) skipped.push({ command: c.command, missing });
+    else run.push(c.command);
+  }
+  return { run, skipped };
+}
+
+/** One path rule: a repo-relative glob and the tags a file matching it needs. */
+export type PathRule = { glob: string; tags: string[] };
+
+/** A repo's path rules, one `glob tag[,tag]` per line, or why one can't be read. */
+function readPathRules(s: WorktreeScripts | null | undefined): { rules: PathRule[] } | { error: string } {
+  const lines = typeof s?.requirePaths === "string" ? s.requirePaths.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+  if (lines.length > MAX_PATH_RULES) return { error: `A repo has at most ${MAX_PATH_RULES} path rules.` };
+  const rules: PathRule[] = [];
+  for (const line of lines) {
+    const m = /^(\S+)\s+(\S+)$/.exec(line);
+    if (!m) return { error: `The path rule \`${line}\` should be a path and its tags, like \`apps/mac/** macos\`.` };
+    const [, glob, list] = m;
+    if (glob!.startsWith("/") || glob!.startsWith("~") || glob!.split(/[\\/]/).includes("..")) return { error: `The path rule's ${glob} isn't inside the repo; use a path relative to its root.` };
+    const tags = list!.split(",").map((t) => t.trim());
+    const bad = tags.find((t) => !TAG.test(t) || t.length > 32);
+    if (bad != null) return { error: `The path rule \`${line}\` asks for the tag "${bad}"; a tag is lowercase a-z, 0-9 and dashes, like macos.` };
+    rules.push({ glob: glob!, tags: [...new Set(tags)].sort() });
+  }
+  return { rules };
+}
+
+/** A repo's path rules; none when they can't be read (scriptsProblem refuses those when saved). */
+export function pathRules(s: WorktreeScripts | null | undefined): PathRule[] {
+  const r = readPathRules(s);
+  return "rules" in r ? r.rules : [];
+}
+
+/** A glob as a regex: `**` any path, `*` within one folder, `?` one character. A path with no wildcard also matches everything under it. */
+function globRegex(glob: string): RegExp {
+  const g = glob.replace(/^\.\//, "").replace(/\/+$/, "");
+  let re = "";
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i]!;
+    if (c === "*" && g[i + 1] === "*") {
+      i++;
+      if (g[i + 1] === "/") { i++; re += "(?:.*/)?"; } else re += ".*";
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(/[*?]/.test(g) ? `^${re}$` : `^${re}(?:/.*)?$`);
+}
+
+/** The tags these repo-relative files need under the rules: sorted, once each. */
+export function requiresFor(files: readonly string[], rules: readonly PathRule[]): string[] {
+  const out = new Set<string>();
+  for (const r of rules) {
+    const re = globRegex(r.glob);
+    if (files.some((f) => re.test(f.trim().replace(/^\.\//, "")))) for (const t of r.tags) out.add(t);
+  }
+  return [...out].sort();
+}
+
 /** What's wrong with a repo's worktree scripts, or none: each command at most 4 KB, at most 20 repo-relative watch paths, at most 20 checks, the timeout 1–3600 seconds. */
 export function scriptsProblem(s: WorktreeScripts): string | null {
   for (const f of SCRIPT_COMMANDS) {
@@ -61,6 +148,12 @@ export function scriptsProblem(s: WorktreeScripts): string | null {
   const checks = checkCommands(s);
   if (checks.length > MAX_CHECKS) return `A repo has at most ${MAX_CHECKS} checks.`;
   if (checks.some((c) => new TextEncoder().encode(c).length > MAX_SCRIPT)) return "A check is over 4 KB; put it in a file in the repo and run that.";
+  for (const c of checks) {
+    const r = parseCheck(c);
+    if ("error" in r) return r.error;
+  }
+  const rules = readPathRules(s);
+  if ("error" in rules) return rules.error;
   const watch = watchPaths(s);
   if (watch.length > MAX_WATCH) return `Preflight watches at most ${MAX_WATCH} files.`;
   const outside = watch.find((p) => p.startsWith("/") || p.startsWith("~") || p.split(/[\\/]/).includes(".."));
@@ -80,8 +173,10 @@ export function tidyScripts(s: WorktreeScripts): WorktreeScripts | null {
   if (watch.length) out.preflightWatch = watch.join("\n");
   const checks = checkCommands(s);
   if (checks.length) out.checks = checks.join("\n");
+  const rules = typeof s.requirePaths === "string" ? s.requirePaths.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+  if (rules.length) out.requirePaths = rules.join("\n");
   if (s.timeoutSecs != null) out.timeoutSecs = s.timeoutSecs;
-  return SCRIPT_COMMANDS.some((f) => out[f]) || out.checks ? out : null;
+  return SCRIPT_COMMANDS.some((f) => out[f]) || out.checks || out.requirePaths ? out : null;
 }
 
 /** The agent's suggestion from its reply, or why it can't be used. */
