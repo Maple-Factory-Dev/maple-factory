@@ -30,7 +30,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
-import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestBody, pullRequestState, repoToken, updatePullRequestBody, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -1930,6 +1930,29 @@ export class Engine {
     }
   }
 
+  /** Brings an open pull request's Artifacts section up to date after an artifact is shared: reads the body
+   *  as it is now (people may have edited it), swaps only the factory's marked block and writes it back.
+   *  Best-effort: what GitHub refused goes on the timeline. */
+  private async syncPullArtifacts(id: string) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.url || !gh || task.pr.state !== "open") return;
+    const number = task.pr.number;
+    try {
+      const isPrivate = this.store.repos().find((r) => r.name.toLowerCase() === `${gh.owner}/${gh.repo}`.toLowerCase())?.isPrivate ?? false;
+      const block = pullArtifacts(task, { base: this.env.PUBLIC_URL?.replace(/\/+$/, ""), isPrivate });
+      const current = await pullRequestBody(app, gh.owner, gh.repo, number);
+      const next = swapArtifacts(current, block).slice(0, 65_000);
+      if (next !== current) await updatePullRequestBody(app, gh.owner, gh.repo, number, next);
+    } catch (e) {
+      const t = this.store.task(id);
+      if (!t) return;
+      this.event(t, "factory", `couldn't update the pull request's artifacts: ${(e as Error).message}`.slice(0, 2000));
+      this.save(t);
+    }
+  }
+
   /** Makes the task's owner the pull request's assignee and, when its base branch's rules require approving
    *  reviews, asks them for one. Best-effort: what GitHub refused goes on the timeline. */
   private async assignOwner(id: string, app: GitHubApp, owner: string, repo: string, number: number) {
@@ -2366,6 +2389,8 @@ export class Engine {
       const out = this.run(task, s, name, args);
       this.save(task);
       if (name === "submit_review") await this.autoMerge(task);
+      // Off the tool's critical path: a share never waits on, or fails with, GitHub.
+      if (name === "share_artifact") this.hooks.waitUntil(this.syncPullArtifacts(task.id));
       return { result: out };
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
