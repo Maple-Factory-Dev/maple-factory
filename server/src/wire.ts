@@ -168,6 +168,7 @@ export interface PromptOption {
 
 /** What a turn used, when the transcript says. */
 export interface TurnUsage {
+  /** The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call. */
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number | null;
@@ -1699,7 +1700,7 @@ export interface RunnerMessage_SessionActivity {
   activity: Activity;
 }
 
-/** Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows. */
+/** Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages, each echoing the subscribe's `nonce`), then live ones as the transcript grows (no `nonce`: they go to every subscriber). */
 export interface RunnerMessage_SessionEvents {
   type: "session.events";
   id: string;
@@ -1707,6 +1708,10 @@ export interface RunnerMessage_SessionEvents {
   backfill: boolean;
   /** The seq the next event will have; subscribe with since = nextSeq - 1 to resume. */
   nextSeq: number;
+  /** Names this numbering of the stream. It changes when the runner rebuilds the stream from the transcript's start (lost state, a new transcript), so seq starts again at 1; a `since` from another epoch means nothing. */
+  epoch: string;
+  /** On a backfill: the `session.events.subscribe` nonce it answers, so the server sends it only to the viewer that asked. */
+  nonce?: string | null;
   cursor?: SessionEventCursor | null;
 }
 
@@ -1915,8 +1920,12 @@ export interface ServerToRunner_SessionEventsSubscribe {
   type: "session.events.subscribe";
   id: string;
   since?: number | null;
+  /** The epoch `since` came from; when it isn't the stream's current epoch, `since` is ignored and the backfill starts from seq 1. */
+  epoch?: string | null;
   limit?: number | null;
   stop?: boolean | null;
+  /** Echoed on the backfill `session.events` this asks for, so the server routes it to the viewer that asked (like `session.replay`). Live events carry none. */
+  nonce?: string | null;
 }
 
 /** Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share). */
@@ -2139,6 +2148,8 @@ export interface ClientMessage_SessionSubscribeEvents {
   machine: string;
   id: string;
   since?: number | null;
+  /** The epoch `since` came from. If the stream's epoch is now different, `since` is ignored and the backfill starts from the beginning. */
+  epoch?: string | null;
   limit?: number | null;
 }
 
@@ -2965,7 +2976,7 @@ export interface ServerToClient_SessionEnded {
   end: SessionEnd;
 }
 
-/** A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events. */
+/** A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) goes only to the connection that asked, and always comes before live events. */
 export interface ServerToClient_SessionEvents {
   type: "session.events";
   machine: string;
@@ -2973,6 +2984,8 @@ export interface ServerToClient_SessionEvents {
   events: SessionEvent[];
   backfill: boolean;
   nextSeq: number;
+  /** When it differs from the epoch a viewer already holds, the runner renumbered the stream: drop what's shown and subscribe again without `since`. */
+  epoch: string;
 }
 
 /** The statistics `stats.get` asked for, to that connection only. */

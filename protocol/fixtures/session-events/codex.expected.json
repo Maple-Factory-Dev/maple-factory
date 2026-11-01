@@ -61,9 +61,10 @@
     "agent": "codex",
     "state": "done",
     "usage": {
-      "inputTokens": 23464,
-      "outputTokens": 114,
-      "cacheReadTokens": 23040
+      "inputTokens": 46645,
+      "outputTokens": 218,
+      "cacheReadTokens": 41728,
+      "durationMs": 3700
     }
   }
 ]

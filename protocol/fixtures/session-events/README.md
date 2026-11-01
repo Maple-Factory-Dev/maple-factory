@@ -14,9 +14,11 @@ Not in the samples, because no rollout on the machine had them: a Codex `apply_p
 through the `exec` tool's script) and a non-empty reasoning summary. The runner task should add fixtures when it sees them.
 
 Rules the expected files follow: `seq` starts at 1 and goes up by one per event; an event's `id` is the record's own id
-(Claude `uuid`, with `:<n>` when one message holds several blocks; Codex item id, or `<session>:<line>` for turn
-markers); `at` is the record's timestamp in ms; empty thinking/reasoning produces no event; tool output is kept whole up to
-4000 chars.
+(Claude `uuid`, with `:<n>` when one message holds several blocks; Codex item id, or `<session>:<ordinal>` for turn
+markers, from the record's own `ordinal` field, not its line in the file); `at` is the record's timestamp in ms; empty thinking/reasoning produces no event; tool output is kept whole up to
+4000 chars; a turn's usage covers the whole turn (Codex: sum the `last_token_usage` of every `token_count`
+between `task_started` and `task_complete`, plus `task_complete.duration_ms`). Records that map to no event (Claude's
+`api-request-shape`, `file-history-snapshot`, Codex `turn_context`, rate limits) are skipped.
 
 `npm run gen:check` validates every `*.expected.json` against the schema and parses every `*.jsonl` line;
 `npm run test:fixtures` also proves the checker fails on broken input.

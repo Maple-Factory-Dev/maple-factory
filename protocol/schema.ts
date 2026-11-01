@@ -229,6 +229,7 @@ export const structs: Record<string, Struct> = {
   TurnUsage: {
     doc: "What a turn used, when the transcript says.",
     fields: { inputTokens: "u64", outputTokens: "u64", cacheReadTokens: "u64?", cacheWriteTokens: "u64?", costUsd: "f64?", durationMs: "u64?" },
+    fieldDocs: { inputTokens: "The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call." },
   },
   SessionInfo: {
     fields: { id: "uuid", agent: "string", cwd: "string", pid: "u32?", startedAt: "u64", taskId: "string?" },
@@ -1276,9 +1277,13 @@ export const unions: Record<string, Union> = {
       "session.ended": { fields: { end: "SessionEnd" } },
       "session.activity": { fields: { id: "uuid", activity: "Activity" } },
       "session.events": {
-        doc: "Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows.",
-        fields: { id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64", cursor: "SessionEventCursor?" },
-        fieldDocs: { nextSeq: "The seq the next event will have; subscribe with since = nextSeq - 1 to resume." },
+        doc: "Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages, each echoing the subscribe's `nonce`), then live ones as the transcript grows (no `nonce`: they go to every subscriber).",
+        fields: { id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64", epoch: "string", nonce: "string?", cursor: "SessionEventCursor?" },
+        fieldDocs: {
+          nextSeq: "The seq the next event will have; subscribe with since = nextSeq - 1 to resume.",
+          epoch: "Names this numbering of the stream. It changes when the runner rebuilds the stream from the transcript's start (lost state, a new transcript), so seq starts again at 1; a `since` from another epoch means nothing.",
+          nonce: "On a backfill: the `session.events.subscribe` nonce it answers, so the server sends it only to the viewer that asked.",
+        },
       },
       "session.replay": {
         doc: "The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal.",
@@ -1383,7 +1388,11 @@ export const unions: Record<string, Union> = {
       "session.kill": { fields: { id: "uuid" } },
       "session.events.subscribe": {
         doc: "Start (or with `stop`, end) sending `session.events` for a session. `since` is exclusive: events with seq > since. Left out, the runner sends the last `limit` events.",
-        fields: { id: "uuid", since: "u64?", limit: "u32?", stop: "bool?" },
+        fields: { id: "uuid", since: "u64?", epoch: "string?", limit: "u32?", stop: "bool?", nonce: "string?" },
+        fieldDocs: {
+          nonce: "Echoed on the backfill `session.events` this asks for, so the server routes it to the viewer that asked (like `session.replay`). Live events carry none.",
+          epoch: "The epoch `since` came from; when it isn't the stream's current epoch, `since` is ignored and the backfill starts from seq 1.",
+        },
       },
       "session.input": {
         doc: "Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share).",
@@ -1474,7 +1483,8 @@ export const unions: Record<string, Union> = {
       "session.detach": { fields: { id: "uuid" } },
       "session.subscribeEvents": {
         doc: "Show a session's native view: the server answers with `session.events`, a backfill of events after `since` (exclusive; left out, the last `limit`, default 200) and then live ones. Anyone who may watch the terminal may subscribe.",
-        fields: { machine: "string", id: "uuid", since: "u64?", limit: "u32?" },
+        fields: { machine: "string", id: "uuid", since: "u64?", epoch: "string?", limit: "u32?" },
+        fieldDocs: { epoch: "The epoch `since` came from. If the stream's epoch is now different, `since` is ignored and the backfill starts from the beginning." },
       },
       "session.unsubscribeEvents": { fields: { machine: "string", id: "uuid" } },
       "session.sendInput": {
@@ -1823,8 +1833,9 @@ export const unions: Record<string, Union> = {
       "toast": { doc: "Something worth a passing line in the app.", fields: { text: "string", taskId: "string?" } },
       "session.ended": { fields: { machine: "string", end: "SessionEnd" } },
       "session.events": {
-        doc: "A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events.",
-        fields: { machine: "string", id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64" },
+        doc: "A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) goes only to the connection that asked, and always comes before live events.",
+        fields: { machine: "string", id: "uuid", events: "SessionEvent[]", backfill: "bool", nextSeq: "u64", epoch: "string" },
+        fieldDocs: { epoch: "When it differs from the epoch a viewer already holds, the runner renumbered the stream: drop what's shown and subscribe again without `since`." },
       },
       stats: { doc: "The statistics `stats.get` asked for, to that connection only.", fields: { summary: "StatsSummary" } },
       report: { doc: "The day report `report.get` asked for, to that connection only.", fields: { report: "DayReport" } },

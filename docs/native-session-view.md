@@ -136,6 +136,9 @@ Cons:
    memory, plus a cursor token (file and byte offset), so a restart resumes without a full reread.
 4. **Subscribing.** `session.subscribeEvents {since}` sends a backfill (`backfill: true`) of events with `seq > since`,
    then live events. A second subscriber shares the same tail.
+   - The server adds a `nonce` to `session.events.subscribe` and the runner echoes it on that backfill, so a backfill
+     goes only to the viewer that asked (the `session.replay` pattern); live events carry no nonce and go to every
+     subscriber. A viewer joining late never sees another viewer's backfill.
 5. **Input.** `session.sendInput` becomes `session.input` to the runner, which types it with
    `send-keys -t … -H <hex>` (as `tmux.rs` already does for terminal input), then Enter.
    - A `key` input picks a prompt option ("1", "Escape"), with the same keys `task.answerPrompt` uses.
@@ -203,7 +206,11 @@ Checked against the transcripts on this machine (Claude Code with Opus 5.5, Code
   - The cursor `token` (file + byte offset) lets it resume after a restart. After a `/clear`, `/compact` or resume,
     Claude starts a new transcript file. The runner follows the new `transcript_path` from the next hook and keeps
     counting `seq` up, so `since` stays valid.
-  - If the runner loses state entirely, it re-reads from the start and dedupes by event `id`. Clients must also dedupe by `id`.
+  - If the runner loses state entirely, it re-reads from the start and numbers `seq` from 1 again, so an old `since`
+    would skip or repeat events. Every `session.events` therefore carries an `epoch` naming the current numbering; the
+    runner picks a new one whenever it rebuilds the stream from scratch. A client subscribes with `since` plus the
+    `epoch` it came from: if that epoch is stale, the runner ignores `since` and sends a full backfill, and a client
+    that sees a new epoch on a live message drops what it shows and resubscribes. Clients still dedupe by event `id`.
 - **Typing races.** `send-keys` text arriving while the agent is mid-turn is queued by the TUI, same as a person typing.
   - A `key` sent for a prompt that already went away could land in the composer. So `SessionInput.key` names the
     `promptId`, and the runner refuses it unless that prompt is still showing.

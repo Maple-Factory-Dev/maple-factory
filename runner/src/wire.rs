@@ -679,6 +679,7 @@ pub struct PromptOption {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnUsage {
+    /// The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call.
     pub input_tokens: u64,
     pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2721,7 +2722,7 @@ pub enum RunnerMessage {
         id: Uuid,
         activity: Activity,
     },
-    /// Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows.
+    /// Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages, each echoing the subscribe's `nonce`), then live ones as the transcript grows (no `nonce`: they go to every subscriber).
     #[serde(rename = "session.events")]
     SessionEvents {
         id: Uuid,
@@ -2730,6 +2731,11 @@ pub enum RunnerMessage {
         backfill: bool,
         /// The seq the next event will have; subscribe with since = nextSeq - 1 to resume.
         next_seq: u64,
+        /// Names this numbering of the stream. It changes when the runner rebuilds the stream from the transcript's start (lost state, a new transcript), so seq starts again at 1; a `since` from another epoch means nothing.
+        epoch: String,
+        /// On a backfill: the `session.events.subscribe` nonce it answers, so the server sends it only to the viewer that asked.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nonce: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cursor: Option<SessionEventCursor>,
     },
@@ -2957,10 +2963,16 @@ pub enum ServerToRunner {
         id: Uuid,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<u64>,
+        /// The epoch `since` came from; when it isn't the stream's current epoch, `since` is ignored and the backfill starts from seq 1.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stop: Option<bool>,
+        /// Echoed on the backfill `session.events` this asks for, so the server routes it to the viewer that asked (like `session.replay`). Live events carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nonce: Option<String>,
     },
     /// Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share).
     #[serde(rename = "session.input")]
@@ -3181,6 +3193,9 @@ pub enum ClientMessage {
         id: Uuid,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<u64>,
+        /// The epoch `since` came from. If the stream's epoch is now different, `since` is ignored and the backfill starts from the beginning.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
@@ -4002,7 +4017,7 @@ pub enum ServerToClient {
         machine: String,
         end: SessionEnd,
     },
-    /// A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events.
+    /// A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) goes only to the connection that asked, and always comes before live events.
     #[serde(rename = "session.events")]
     SessionEvents {
         machine: String,
@@ -4011,6 +4026,8 @@ pub enum ServerToClient {
         events: Vec<SessionEvent>,
         backfill: bool,
         next_seq: u64,
+        /// When it differs from the epoch a viewer already holds, the runner renumbered the stream: drop what's shown and subscribe again without `since`.
+        epoch: String,
     },
     /// The statistics `stats.get` asked for, to that connection only.
     #[serde(rename = "stats")]

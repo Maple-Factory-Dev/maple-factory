@@ -1945,6 +1945,7 @@ public enum Wire {
 
     /// What a turn used, when the transcript says.
     public struct TurnUsage: Codable, Hashable, Sendable {
+        /// The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call.
         public var inputTokens: UInt64
         public var outputTokens: UInt64
         public var cacheReadTokens: UInt64?
@@ -5187,20 +5188,26 @@ public enum Wire {
         }
     }
 
-    /// Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows.
+    /// Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages, each echoing the subscribe's `nonce`), then live ones as the transcript grows (no `nonce`: they go to every subscriber).
     public struct RunnerMessageSessionEvents: Codable, Hashable, Sendable {
         public var id: String
         public var events: [SessionEvent]
         public var backfill: Bool
         /// The seq the next event will have; subscribe with since = nextSeq - 1 to resume.
         public var nextSeq: UInt64
+        /// Names this numbering of the stream. It changes when the runner rebuilds the stream from the transcript's start (lost state, a new transcript), so seq starts again at 1; a `since` from another epoch means nothing.
+        public var epoch: String
+        /// On a backfill: the `session.events.subscribe` nonce it answers, so the server sends it only to the viewer that asked.
+        public var nonce: String?
         public var cursor: SessionEventCursor?
 
-        public init(id: String, events: [SessionEvent] = [], backfill: Bool, nextSeq: UInt64, cursor: SessionEventCursor? = nil) {
+        public init(id: String, events: [SessionEvent] = [], backfill: Bool, nextSeq: UInt64, epoch: String, nonce: String? = nil, cursor: SessionEventCursor? = nil) {
             self.id = id
             self.events = events
             self.backfill = backfill
             self.nextSeq = nextSeq
+            self.epoch = epoch
+            self.nonce = nonce
             self.cursor = cursor
         }
 
@@ -5210,6 +5217,8 @@ public enum Wire {
             events = try c.decodeIfPresent([SessionEvent].self, forKey: .events) ?? []
             backfill = try c.decode(Bool.self, forKey: .backfill)
             nextSeq = try c.decode(UInt64.self, forKey: .nextSeq)
+            epoch = try c.decode(String.self, forKey: .epoch)
+            nonce = try c.decodeIfPresent(String.self, forKey: .nonce)
             cursor = try c.decodeIfPresent(SessionEventCursor.self, forKey: .cursor)
         }
     }
@@ -5717,14 +5726,20 @@ public enum Wire {
     public struct ServerToRunnerSessionEventsSubscribe: Codable, Hashable, Sendable {
         public var id: String
         public var since: UInt64?
+        /// The epoch `since` came from; when it isn't the stream's current epoch, `since` is ignored and the backfill starts from seq 1.
+        public var epoch: String?
         public var limit: UInt32?
         public var stop: Bool?
+        /// Echoed on the backfill `session.events` this asks for, so the server routes it to the viewer that asked (like `session.replay`). Live events carry none.
+        public var nonce: String?
 
-        public init(id: String, since: UInt64? = nil, limit: UInt32? = nil, stop: Bool? = nil) {
+        public init(id: String, since: UInt64? = nil, epoch: String? = nil, limit: UInt32? = nil, stop: Bool? = nil, nonce: String? = nil) {
             self.id = id
             self.since = since
+            self.epoch = epoch
             self.limit = limit
             self.stop = stop
+            self.nonce = nonce
         }
     }
 
@@ -6207,12 +6222,15 @@ public enum Wire {
         public var machine: String
         public var id: String
         public var since: UInt64?
+        /// The epoch `since` came from. If the stream's epoch is now different, `since` is ignored and the backfill starts from the beginning.
+        public var epoch: String?
         public var limit: UInt32?
 
-        public init(machine: String, id: String, since: UInt64? = nil, limit: UInt32? = nil) {
+        public init(machine: String, id: String, since: UInt64? = nil, epoch: String? = nil, limit: UInt32? = nil) {
             self.machine = machine
             self.id = id
             self.since = since
+            self.epoch = epoch
             self.limit = limit
         }
     }
@@ -8088,20 +8106,23 @@ public enum Wire {
         }
     }
 
-    /// A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events.
+    /// A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) goes only to the connection that asked, and always comes before live events.
     public struct ServerToClientSessionEvents: Codable, Hashable, Sendable {
         public var machine: String
         public var id: String
         public var events: [SessionEvent]
         public var backfill: Bool
         public var nextSeq: UInt64
+        /// When it differs from the epoch a viewer already holds, the runner renumbered the stream: drop what's shown and subscribe again without `since`.
+        public var epoch: String
 
-        public init(machine: String, id: String, events: [SessionEvent] = [], backfill: Bool, nextSeq: UInt64) {
+        public init(machine: String, id: String, events: [SessionEvent] = [], backfill: Bool, nextSeq: UInt64, epoch: String) {
             self.machine = machine
             self.id = id
             self.events = events
             self.backfill = backfill
             self.nextSeq = nextSeq
+            self.epoch = epoch
         }
 
         public init(from decoder: Decoder) throws {
@@ -8111,6 +8132,7 @@ public enum Wire {
             events = try c.decodeIfPresent([SessionEvent].self, forKey: .events) ?? []
             backfill = try c.decode(Bool.self, forKey: .backfill)
             nextSeq = try c.decode(UInt64.self, forKey: .nextSeq)
+            epoch = try c.decode(String.self, forKey: .epoch)
         }
     }
 

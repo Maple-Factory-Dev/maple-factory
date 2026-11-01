@@ -764,6 +764,7 @@ data class PromptOption(
 /** What a turn used, when the transcript says. */
 @Serializable
 data class TurnUsage(
+    /** The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call. */
     val inputTokens: Long,
     val outputTokens: Long,
     val cacheReadTokens: Long? = null,
@@ -2437,7 +2438,7 @@ sealed class RunnerMessage {
         val id: String,
         val activity: dev.maplefactory.wire.Activity,
     ) : RunnerMessage()
-    /** Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages), then live ones as the transcript grows. */
+    /** Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages, each echoing the subscribe's `nonce`), then live ones as the transcript grows (no `nonce`: they go to every subscriber). */
     @Serializable
     data class SessionEvents(
         val id: String,
@@ -2445,6 +2446,10 @@ sealed class RunnerMessage {
         val backfill: Boolean,
         /** The seq the next event will have; subscribe with since = nextSeq - 1 to resume. */
         val nextSeq: Long,
+        /** Names this numbering of the stream. It changes when the runner rebuilds the stream from the transcript's start (lost state, a new transcript), so seq starts again at 1; a `since` from another epoch means nothing. */
+        val epoch: String,
+        /** On a backfill: the `session.events.subscribe` nonce it answers, so the server sends it only to the viewer that asked. */
+        val nonce: String? = null,
         val cursor: dev.maplefactory.wire.SessionEventCursor? = null,
     ) : RunnerMessage()
     /** The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal. */
@@ -2694,8 +2699,12 @@ sealed class ServerToRunner {
     data class SessionEventsSubscribe(
         val id: String,
         val since: Long? = null,
+        /** The epoch `since` came from; when it isn't the stream's current epoch, `since` is ignored and the backfill starts from seq 1. */
+        val epoch: String? = null,
         val limit: Long? = null,
         val stop: Boolean? = null,
+        /** Echoed on the backfill `session.events` this asks for, so the server routes it to the viewer that asked (like `session.replay`). Live events carry none. */
+        val nonce: String? = null,
     ) : ServerToRunner()
     /** Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share). */
     @Serializable
@@ -2940,6 +2949,8 @@ sealed class ClientMessage {
         val machine: String,
         val id: String,
         val since: Long? = null,
+        /** The epoch `since` came from. If the stream's epoch is now different, `since` is ignored and the backfill starts from the beginning. */
+        val epoch: String? = null,
         val limit: Long? = null,
     ) : ClientMessage()
     @Serializable
@@ -3839,7 +3850,7 @@ sealed class ServerToClient {
         val machine: String,
         val end: dev.maplefactory.wire.SessionEnd,
     ) : ServerToClient()
-    /** A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) always comes before live events. */
+    /** A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) goes only to the connection that asked, and always comes before live events. */
     @Serializable
     data class SessionEvents(
         val machine: String,
@@ -3847,6 +3858,8 @@ sealed class ServerToClient {
         val events: List<dev.maplefactory.wire.SessionEvent> = emptyList(),
         val backfill: Boolean,
         val nextSeq: Long,
+        /** When it differs from the epoch a viewer already holds, the runner renumbered the stream: drop what's shown and subscribe again without `since`. */
+        val epoch: String,
     ) : ServerToClient()
     /** The statistics `stats.get` asked for, to that connection only. */
     @Serializable
