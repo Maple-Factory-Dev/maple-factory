@@ -2635,6 +2635,10 @@ final class AppState {
                     policy.scoutItems = n
                     client.save(policy: policy)
                 }
+            // Risk policy › Task budget's When a task goes over picker set: `overbudget:handOff` or `overbudget:ask`.
+            case "overbudget":
+                for _ in 0..<300 where isLive && client?.riskPolicy == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                policy.handOffOverBudget = parts.count > 1 && parts[1] == "handOff"
             // What's on the clipboard, pasted into the editor on screen: `paste:editor`.
             case "paste": NotificationCenter.default.post(name: MarkdownEditor.demoPaste, object: nil)
             // Settings → Connectors' sheet, open on a connector by name, or a new one: `connector:jira`, `connector:new`.
