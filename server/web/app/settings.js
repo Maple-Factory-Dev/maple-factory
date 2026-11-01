@@ -195,6 +195,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   let nameBusy = false;
   let errorReports = null; // GET /api/error-reports: { on, locked }, once loaded
   let errorReportsBusy = false;
+  let push = null; // GET /api/push: { on, locked, enrolled, devices }, once loaded
 
   /** The form's draft, synced to the server's value for it. */
   const draft = (key, server) => {
@@ -253,6 +254,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
         h("div", { class: "set-actions" }, h("span", { class: "spacer" }),
           h("button", { type: "button", class: "btn primary", disabled: !isDirty(d) || nameBusy, onclick: save }, nameBusy ? "Saving…" : "Save"))),
       errorReportsCard(),
+      pushCard(),
       versionCard(),
       macOnly("The factory's icon"),
     ];
@@ -287,6 +289,40 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       locked && h("p", { class: "set-detail muted", style: "margin:0" }, "Set by the Worker's SENTRY_DSN. Change or remove it there to use this toggle."),
       failed && h("p", { class: "set-detail muted", style: "margin:0" }, "Couldn't read whether error reports are on."),
       h("p", { class: "set-detail muted", style: "margin:0" }, h("a", { href: "https://maplefactory.dev/security#errors", target: "_blank", rel: "noopener" }, "What's sent, and what never is")));
+  }
+
+  /** Mobile notifications through maplefactory.dev's push relay (src/push.ts). Off by default. */
+  function pushCard() {
+    if (!push) {
+      push = { on: false, locked: false, devices: 0, loading: true };
+      fetch("/api/push").then((res) => (res.ok ? res.json() : Promise.reject(new Error()))).then((got) => { push = got; render(); },
+        () => { push = { on: false, locked: false, devices: 0, failed: true }; render(); });
+    }
+    const flip = async (on) => {
+      push = { ...push, busy: true };
+      render();
+      try {
+        const res = await fetch("/api/push", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ on }) });
+        if (!res.ok) throw new Error(await res.text());
+        push = await res.json();
+        toast(push.on ? "Mobile notifications are on." : "Mobile notifications are off.");
+      } catch (e) {
+        push = { ...push, busy: false };
+        toast(e.message || "Couldn't change mobile notifications.");
+      }
+      render();
+    };
+    const { on, locked, loading, failed, busy, devices } = push;
+    const admin = state.me?.role === "admin";
+    return h("div", { class: "card set-card" },
+      toggle("Send mobile notifications through Maple Factory's relay",
+        "When a task newly needs someone, this factory asks maplefactory.dev to wake their phone through Apple or Google. Each request holds only the phone's device token, the task's key (like MF-12), why (a raised hand, a question, a plan to approve, a review or a mention) and this factory's relay id. Never titles, comments, code or repo names: the app loads those from here.",
+        on, flip, locked || loading || failed || busy || !admin),
+      !admin && h("p", { class: "set-detail muted", style: "margin:0" }, "Only an admin can change this."),
+      h("p", { class: "set-detail muted", style: "margin:0" }, `${devices ?? 0} ${devices === 1 ? "device" : "devices"} registered${on ? "" : " (nothing is sent while this is off)"}.`),
+      locked && h("p", { class: "set-detail muted", style: "margin:0" }, "Set off by the Worker's PUSH_RELAY. Remove it there to use this toggle."),
+      failed && h("p", { class: "set-detail muted", style: "margin:0" }, "Couldn't read whether mobile notifications are on."),
+      h("p", { class: "set-detail muted", style: "margin:0" }, h("a", { href: "https://maplefactory.dev/security#push", target: "_blank", rel: "noopener" }, "What's sent, and what never is")));
   }
 
   /** The factory's maple-server version (the snapshot's), and a newer release when there is one. */

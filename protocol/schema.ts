@@ -105,6 +105,12 @@ export const enums: Record<string, Enum> = {
     values: { p0: "Do it right away.", p1: "Next.", p2: "Soon.", p3: "When there's room." },
   },
   FindingStatus: { values: { open: "Open.", fixed: "Fixed (see fixedIn).", disputed: "The builder disagrees." } },
+  PushPlatform: {
+    values: { apns: "Apple Push Notification service (iPhone, iPad).", fcm: "Firebase Cloud Messaging (Android)." },
+  },
+  PushEnvironment: {
+    values: { sandbox: "A development build (APNs' sandbox).", production: "An App Store or TestFlight build." },
+  },
   HandReason: {
     values: {
       reviewLoop: "Review rounds ran out.",
@@ -938,6 +944,11 @@ export const structs: Record<string, Struct> = {
       end: "Minutes after midnight it ends. At or before `start`: it runs past midnight into the next day.",
     },
   },
+  PushDevice: {
+    doc: "One of your phones registered for push notifications. Its token is never sent back.",
+    fields: { id: "string", platform: "PushPlatform", environment: "PushEnvironment", createdAt: "u64", lastSeen: "u64" },
+    fieldDocs: { id: "Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding." },
+  },
   QuietHours: {
     doc: "Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.",
     fields: { timeZone: "string", windows: "QuietWindow[]" },
@@ -1353,6 +1364,15 @@ export const unions: Record<string, Union> = {
         fields: { quietHours: "QuietHours?" },
         fieldDocs: { quietHours: "None: no quiet hours." },
       },
+      "push.register": {
+        doc: "Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`.",
+        fields: { platform: "PushPlatform", token: "string", environment: "PushEnvironment" },
+      },
+      "push.unregister": {
+        doc: "Remove one of your push devices, by its token or its id. Answered with `push.devices`.",
+        fields: { token: "string?", id: "string?" },
+      },
+      "push.devices": { doc: "List your push devices. Answered with `push.devices`." },
       "goal.follow": { doc: "Follow a goal (it's in your sidebar) or stop following it.", fields: { id: "string", following: "bool" } },
       "goal.archive": {
         doc: "Its lead or an admin. With unfinished tasks it needs `unfinished`, to say what happens to them.",
@@ -1609,6 +1629,7 @@ export const unions: Record<string, Union> = {
       "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
       "repo.setup.updated": { doc: "How a repo's Set up with AI run is going.", fields: { run: "RepoSetupRun" } },
       "follows.updated": { doc: "Your goal follows, to your apps only.", fields: { follows: "GoalFollow[]" } },
+      "push.devices": { doc: "Your push devices, to your apps only.", fields: { devices: "PushDevice[]" } },
       "quietHours.updated": {
         doc: "Your quiet hours changed, to your apps only.",
         fields: { quietHours: "QuietHours?" },

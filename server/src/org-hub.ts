@@ -5,12 +5,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { deliver } from "./trackers.ts";
 import type { Env } from "./env.ts";
-import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type Task } from "./wire.ts";
+import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
+import { Push, deviceId } from "./push.ts";
 import { Integrations } from "./integrations/store.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
@@ -43,6 +44,7 @@ interface Client {
 export class OrgHub extends DurableObject<Env> {
   private store: Store;
   private engine: Engine;
+  private push: Push;
   private intake: Intake;
   private secrets: Secrets;
   private integrations: Integrations;
@@ -65,8 +67,10 @@ export class OrgHub extends DurableObject<Env> {
         event: (kind, error) => this.integrationEvent(kind, error),
       }),
     });
+    this.push = new Push(env, this.store);
     this.engine = new Engine(env, this.store, {
       broadcast: (message) => this.broadcast(message),
+      taskSaved: (old, task) => ctx.waitUntil(this.push.taskSaved(old, task, () => this.members()).catch((e) => console.error("push:", e))),
       sendTo: (login, message) => this.sendTo(login, message),
       machines: () => this.machines(),
       members: () => this.members(),
@@ -276,6 +280,12 @@ export class OrgHub extends DurableObject<Env> {
         await this.ctx.storage.delete([`m:${id}`, `u:${id}`]);
         this.updates.delete(id);
         this.broadcast({ type: "machine.removed", id });
+        return new Response(null, { status: 204 });
+      }
+      case "/push-devices": return Response.json({ devices: this.store.pushDeviceCount() });
+      case "/push-changed": {
+        // push.ts turned the relay on or off: read the credential again now, not in 30 s.
+        this.push.forget();
         return new Response(null, { status: 204 });
       }
       case "/revoked": {
@@ -575,8 +585,14 @@ export class OrgHub extends DurableObject<Env> {
     return null;
   }
 
+  /** Someone's push devices as the apps see them: never the token. */
+  private async pushDevices(login: string): Promise<PushDevice[]> {
+    return Promise.all(this.store.pushDevices(login).map(async (d) => ({ id: await deviceId(d.token), platform: d.platform, environment: d.environment, createdAt: d.createdAt, lastSeen: d.lastSeen })));
+  }
+
   /** Closes a revoked person's feed sockets and terminals, and tells everyone the members changed. */
   private async cutOff(login: string) {
+    this.store.removePushDevices(login);
     for (const ws of this.ctx.getWebSockets("client")) {
       if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
     }
@@ -843,6 +859,26 @@ export class OrgHub extends DurableObject<Env> {
         this.sendTo(client.member.login, { type: "follows.updated", follows: this.store.follows(client.member.login) });
         return;
       }
+      case "push.register": {
+        const { platform, token, environment } = msg;
+        if (platform !== "apns" && platform !== "fcm") return this.send(ws, { type: "error", message: "A push device is apns or fcm.", requestId: "push.register" });
+        if (environment !== "sandbox" && environment !== "production") return this.send(ws, { type: "error", message: "A push device's environment is sandbox or production.", requestId: "push.register" });
+        if (typeof token !== "string" || !/^[A-Za-z0-9:_\-.]{8,4096}$/.test(token)) return this.send(ws, { type: "error", message: "That isn't a push token.", requestId: "push.register" });
+        try {
+          this.store.registerPushDevice(client.member.login, { platform, token, environment });
+        } catch (e) {
+          return this.send(ws, { type: "error", message: (e as Error).message, requestId: "push.register" });
+        }
+        return this.sendTo(client.member.login, { type: "push.devices", devices: await this.pushDevices(client.member.login) });
+      }
+      case "push.unregister": {
+        const login = client.member.login;
+        if (msg.token) this.store.removePushDevice(msg.token, login);
+        else if (msg.id) for (const d of this.store.pushDevices(login)) if ((await deviceId(d.token)) === msg.id) this.store.removePushDevice(d.token, login);
+        return this.sendTo(login, { type: "push.devices", devices: await this.pushDevices(login) });
+      }
+      case "push.devices":
+        return this.send(ws, { type: "push.devices", devices: await this.pushDevices(client.member.login) });
       case "quietHours.set": {
         let quietHours;
         try {

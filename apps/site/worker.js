@@ -8,8 +8,12 @@
 //   /download/mac  the Mac app's newest stable DMG: a redirect to it, from the appcast every install checks
 //                  (apps/mac/scripts/release.mjs publishes both), so the link never needs changing.
 //
+//   /push/*  the push relay for factories' mobile notifications (push.js): enroll, revoke, send.
+//
 // /deploy is a page (deploy.html): R2 has to be on in the account before the Deploy to Cloudflare
 // button can provision the factory's bucket, so it asks for that first.
+
+import { handlePush } from "./push.js";
 
 const SAFE_PATH = /^(?!.*\.\.)[\w.\-/]+$/;
 const APPCAST = "https://updates.maplefactory.dev/appcast.xml";
@@ -25,6 +29,7 @@ async function latestMac() {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/push/")) return (await handlePush(request, env)) ?? new Response("Not found.", { status: 404 });
     if (url.pathname === "/download/mac") {
       const dmg = await latestMac();
       if (!dmg) return new Response("The Mac app's download isn't available right now; try again in a minute.", { status: 503 });

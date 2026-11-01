@@ -97,6 +97,15 @@ export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0,
 export const SNAPSHOT_WINDOW_MS = 14 * 24 * 3_600_000;
 const FINISHED_SQL = "'merged', 'cancelled', 'closed'";
 
+export const MAX_PUSH_DEVICES = 10;
+export type PushPlatform = "apns" | "fcm";
+export type PushEnvironment = "sandbox" | "production";
+export interface PushDeviceRow { login: string; platform: PushPlatform; token: string; environment: PushEnvironment; createdAt: number; lastSeen: number }
+const deviceRow = (r: Record<string, string | number>): PushDeviceRow => ({
+  login: r.login as string, platform: r.platform as PushPlatform, token: r.token as string,
+  environment: r.environment as PushEnvironment, createdAt: r.created_at as number, lastSeen: r.last_seen as number,
+});
+
 export class Store {
   private sql: SqlStorage;
 
@@ -123,6 +132,11 @@ export class Store {
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
       CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
       CREATE TABLE IF NOT EXISTS quiet_hours (login TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS push_devices (
+        token TEXT PRIMARY KEY, login TEXT NOT NULL COLLATE NOCASE, platform TEXT NOT NULL, environment TEXT NOT NULL,
+        created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS push_devices_login ON push_devices (login);
       CREATE TABLE IF NOT EXISTS stats_events (
         id TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, task TEXT NOT NULL, goal TEXT NOT NULL,
         role TEXT, actor TEXT, detail TEXT NOT NULL DEFAULT '{}'
@@ -494,6 +508,41 @@ export class Store {
       login, JSON.stringify(tidy), Date.now(),
     );
     return tidy;
+  }
+
+  // Push devices (push.ts): each person's phones, for the maplefactory.dev relay. Tokens go to the
+  // relay only; the apps see a device's platform and dates, never its token.
+
+  pushDevices(login: string): PushDeviceRow[] {
+    return this.sql.exec<Record<string, string | number>>("SELECT * FROM push_devices WHERE login = ? ORDER BY created_at", login).toArray().map(deviceRow);
+  }
+
+  pushDeviceCount(): number {
+    return Number(this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM push_devices").one().n);
+  }
+
+  /** Registers (or refreshes) a token for `login`; a token someone else had moves to them. Throws past the cap. */
+  registerPushDevice(login: string, d: { platform: PushPlatform; token: string; environment: PushEnvironment }): void {
+    const at = Date.now();
+    const mine = this.sql.exec("SELECT 1 FROM push_devices WHERE token = ? AND login = ?", d.token, login).toArray().length > 0;
+    if (!mine && this.pushDevices(login).length >= MAX_PUSH_DEVICES) throw new Error(`You can register at most ${MAX_PUSH_DEVICES} devices; remove one first.`);
+    this.sql.exec(
+      `INSERT INTO push_devices (token, login, platform, environment, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (token) DO UPDATE SET login = excluded.login, platform = excluded.platform, environment = excluded.environment, last_seen = excluded.last_seen`,
+      d.token, login, d.platform, d.environment, at, at,
+    );
+  }
+
+  /** Removes one of `login`'s tokens (only theirs); with no login, whoever's it was (the relay said it's gone). */
+  removePushDevice(token: string, login?: string): boolean {
+    const rows = login
+      ? this.sql.exec("DELETE FROM push_devices WHERE token = ? AND login = ? RETURNING token", token, login)
+      : this.sql.exec("DELETE FROM push_devices WHERE token = ? RETURNING token", token);
+    return rows.toArray().length > 0;
+  }
+
+  removePushDevices(login: string): void {
+    this.sql.exec("DELETE FROM push_devices WHERE login = ?", login);
   }
 
   // Policy

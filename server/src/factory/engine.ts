@@ -67,6 +67,8 @@ type Hooks = {
   /** Tell the apps a machine's settings changed. */
   machineChanged(id: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
+  /** A task was saved (`old` as it was before, null for a new one): mobile push looks for who it newly needs (push.ts). */
+  taskSaved?(old: Task | null, task: Task): void;
   /** Call `pollCI`, `mergeDue` and `pump` again in about `ms`: for CI that webhooks may never report (a local server), auto-merge countdowns and scheduled tasks. */
   wakeIn(ms: number): void;
   /** Slack's bot token, and where to note what Slack refused: for @Maple. */
@@ -3404,8 +3406,10 @@ export class Engine {
     }
     // "Merging…" with no merge in flight and no countdown behind it would lock the card for good.
     if (mergingLog(task.liveLog) && task.mergeAt == null && task.state === "reviewing" && !this.store.private(task.id).merging) task.liveLog = null;
+    const old = this.hooks.taskSaved ? this.store.task(task.id) : null;
     this.store.saveTask(task);
     this.hooks.broadcast({ type: "task.updated", task });
+    this.hooks.taskSaved?.(old, task);
   }
 }
 

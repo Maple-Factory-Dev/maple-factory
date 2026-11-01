@@ -12,7 +12,7 @@ export function b64url(bytes: ArrayBuffer | Uint8Array): string {
   return s.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function fromB64url(s: string): Uint8Array {
+export function fromB64url(s: string): Uint8Array {
   const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
