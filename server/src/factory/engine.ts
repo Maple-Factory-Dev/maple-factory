@@ -27,7 +27,7 @@ import { loginFor } from "../slack-links.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
-import { findingDetail, type StatKind } from "./stats.ts";
+import { findingDetail, manualReason, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
@@ -867,6 +867,7 @@ export class Engine {
         rounds.push({ number: rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null, focus, by: who });
         now_.comments.push(comment);
         this.event(now_, who, `asked for a review: ${focus}`);
+        this.stat(now_, "review.requested", { round: rounds.length }, who);
         this.save(now_);
         await this.pump();
         return;
@@ -2217,10 +2218,16 @@ export class Engine {
       this.save(task);
       return;
     }
-    const by = this.store.private(task.id).mergeBy ?? null;
+    const before = this.store.private(task.id);
+    const by = before.mergeBy ?? null;
     // It merged after all (an answer after the watchdog gave up on it): its "didn't merge" hand is moot.
     if (task.hand?.reason === "mergeFailed") this.lowerHand(task, "factory");
-    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt }, by);
+    // Why it wasn't the factory's own merge, from the policy and state as they were before it merged.
+    const a = this.assessment(task);
+    const held = before.mergeHeld != null && before.mergeHeld === (task.pr.head ?? task.pr.branch);
+    const why = manualReason(a, this.store.policy(), { by, held });
+    const heldBy = held ? ([...task.events].reverse().find((e) => e.text.startsWith("held the auto-merge"))?.who ?? null) : null;
+    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt, ...(why ? { why, level: a.level } : {}), ...(heldBy ? { heldBy } : {}) }, by);
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base}${msg.commit ? ` (${msg.commit.slice(0, 7)})` : ""}`);
