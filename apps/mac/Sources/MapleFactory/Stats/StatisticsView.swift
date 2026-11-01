@@ -106,7 +106,7 @@ struct StatisticsView: View {
         let t = s.totals
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: narrow ? 2 : 6), spacing: 14) {
             StatTile(label: "Merged", value: "\(t.merged)", detail: mergedDetail(t))
-            StatTile(label: "Cycle time", value: duration(t.cycleMedianMs), detail: "median, to merge")
+            StatTile(label: "Cycle time", value: duration(t.activeCycleMedianMs ?? t.cycleMedianMs), detail: cycleDetail(t))
             StatTile(label: "First-try plans", value: percent(t.firstTryApproval), detail: t.avgPlanVersions.map { String(format: "%.1f versions on average", $0) } ?? "no approvals yet")
             StatTile(label: "Hands raised", value: "\(t.handsRaised)", detail: t.handOpenMedianMs.map { "up \(duration($0)) (median)" } ?? "\(t.handsOpen) up now")
             StatTile(label: "Steers per task", value: t.steersPerTask.map { String(format: "%.1f", $0) } ?? "–", detail: "\(counted(t.steers, "steer")), \(counted(t.questions, "question"))")
@@ -365,10 +365,10 @@ struct StatisticsView: View {
         StatsCard {
             VStack(alignment: .leading, spacing: 0) {
                 cardTitle("By goal", note: nil).padding(.bottom, 10)
-                tableRow(["Goal", "Tasks", "Merged", "Hands", "Steers", "Rounds", "Cycle"], header: true)
+                tableRow(["Goal", "Tasks", "Merged", "Hands", "Steers", "Rounds", "Cycle", "Idle"], header: true)
                 ForEach(rows, id: \.goal) { r in
                     Hairline()
-                    tableRow([r.name, "\(r.tasks)", "\(r.merged)", "\(r.hands)", "\(r.steers)", "\(r.reviewRounds)", duration(r.cycleMedianMs)], dot: FactoryData.goal(named: r.name).color)
+                    tableRow([r.name, "\(r.tasks)", "\(r.merged)", "\(r.hands)", "\(r.steers)", "\(r.reviewRounds)", duration(r.activeCycleMedianMs ?? r.cycleMedianMs), duration(r.idleMedianMs)], dot: FactoryData.goal(named: r.name).color)
                 }
             }
         }
@@ -522,6 +522,13 @@ func cardTitle(_ title: String, note: String?) -> some View {
                 .foregroundStyle(Theme.textFaint)
         }
     }
+}
+
+/// The cycle tile's line: the idle time before work started, kept apart from the cycle (MF-318).
+/// A server from before the split sends no idle median, so the tile shows the whole cycle.
+private func cycleDetail(_ t: Wire.StatsTotals) -> String {
+    guard t.activeCycleMedianMs != nil, let idle = t.idleMedianMs else { return "median, to merge" }
+    return "median, to merge · \(duration(idle)) idle before"
 }
 
 private func duration(_ ms: UInt64?) -> String {
@@ -916,7 +923,7 @@ extension Wire.StatsSummary {
             days: UInt32(days), goal: nil, since: now - UInt64(days) * 86_400_000, generatedAt: now, inferred: 0,
             totals: .init(merged: 47, autoMerged: 12, cancelled: 3, created: 58, tasksTouched: 61, handsRaised: 16, handsOpen: 2, questions: 9, steers: 34,
                           prompts: 11, restarts: 4, reviewRounds: 83, findings: 112, planVersions: 74, approvals: 52,
-                          cycleMedianMs: 5 * 3_600_000, handOpenMedianMs: 42 * 60_000, answerMedianMs: 18 * 60_000,
+                          cycleMedianMs: 17 * 3_600_000, activeCycleMedianMs: 5 * 3_600_000, idleMedianMs: 12 * 3_600_000, handOpenMedianMs: 42 * 60_000, answerMedianMs: 18 * 60_000,
                           firstTryApproval: 0.71, avgPlanVersions: 1.4, reviewRoundsPerMerge: 1.7, steersPerTask: 0.56),
             handsByReason: [.init(key: "sessionEnded", count: 6, medianMs: 25 * 60_000), .init(key: "needsInput", count: 5, medianMs: 70 * 60_000),
                             .init(key: "proofBurden", count: 3, medianMs: 3_600_000), .init(key: "reviewLoop", count: 2, medianMs: 2 * 3_600_000)],
@@ -926,9 +933,9 @@ extension Wire.StatsSummary {
             prompts: [.init(key: "yes", count: 9), .init(key: "no", count: 2)],
             reviewVerdicts: [.init(key: "passed", count: 49), .init(key: "changesRequested", count: 32), .init(key: "escalated", count: 2)],
             daily: daily,
-            goals: [.init(goal: "auth", name: "Auth overhaul", tasks: 21, merged: 18, hands: 6, steers: 14, reviewRounds: 31, cycleMedianMs: 4 * 3_600_000),
-                    .init(goal: "billing", name: "Billing v2", tasks: 17, merged: 13, hands: 4, steers: 9, reviewRounds: 24, cycleMedianMs: 6 * 3_600_000),
-                    .init(goal: "onboarding", name: "Onboarding revamp", tasks: 12, merged: 10, hands: 3, steers: 7, reviewRounds: 17, cycleMedianMs: 5 * 3_600_000)],
+            goals: [.init(goal: "auth", name: "Auth overhaul", tasks: 21, merged: 18, hands: 6, steers: 14, reviewRounds: 31, cycleMedianMs: 18 * 3_600_000, activeCycleMedianMs: 4 * 3_600_000, idleMedianMs: 14 * 3_600_000),
+                    .init(goal: "billing", name: "Billing v2", tasks: 17, merged: 13, hands: 4, steers: 9, reviewRounds: 24, cycleMedianMs: 8 * 3_600_000, activeCycleMedianMs: 6 * 3_600_000, idleMedianMs: 2 * 3_600_000),
+                    .init(goal: "onboarding", name: "Onboarding revamp", tasks: 12, merged: 10, hands: 3, steers: 7, reviewRounds: 17, cycleMedianMs: 5 * 3_600_000 + 20 * 60_000, activeCycleMedianMs: 5 * 3_600_000, idleMedianMs: 20 * 60_000)],
             agents: [.init(agent: "claude", tasks: 49, merged: 39, hands: 12, steers: 27, reviewRounds: 66, firstTryApproval: 0.74),
                      .init(agent: "codex", tasks: 12, merged: 8, hands: 4, steers: 7, reviewRounds: 17, firstTryApproval: 0.58)],
             topTasks: [.init(task: "ATL-147", title: "Passkey sign-in", goal: "auth", state: .reviewing, touchpoints: 9, hands: 2, steers: 4, questions: 1, reviewRounds: 4, costUsd: 18.42),

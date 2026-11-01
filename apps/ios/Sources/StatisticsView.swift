@@ -67,7 +67,7 @@ struct StatisticsView: View {
         let t = s.totals
         Section("Headline") {
             headline("Merged", "\(t.merged)", t.autoMerged > 0 ? "\(t.autoMerged) auto-merged" : "\(t.created) created")
-            headline("Cycle time", duration(t.cycleMedianMs), "median, to merge")
+            headline("Cycle time", duration(t.activeCycleMedianMs ?? t.cycleMedianMs), cycleDetail(t))
             headline("First-try plans", percent(t.firstTryApproval), t.avgPlanVersions.map { String(format: "%.1f versions on average", $0) } ?? "no approvals yet")
             headline("Hands raised", "\(t.handsRaised)", t.handOpenMedianMs.map { "up \(duration($0)) (median)" } ?? "\(t.handsOpen) up now")
             headline("Steers per task", t.steersPerTask.map { String(format: "%.1f", $0) } ?? "–", "\(counted(t.steers, "steer")), \(counted(t.questions, "question"))")
@@ -175,6 +175,13 @@ struct StatisticsView: View {
 }
 
 // Formatters copied from the Mac's StatisticsView (MapleKit doesn't share them).
+
+/// The cycle line's detail: the idle time before work started, kept apart from the cycle (MF-318).
+/// A server from before the split sends no idle median, so the headline shows the whole cycle.
+private func cycleDetail(_ t: Wire.StatsTotals) -> String {
+    guard t.activeCycleMedianMs != nil, let idle = t.idleMedianMs else { return "median, to merge" }
+    return "median, to merge · \(duration(idle)) idle before"
+}
 
 private func duration(_ ms: UInt64?) -> String {
     guard let ms else { return "–" }
