@@ -142,6 +142,7 @@ struct GoalView: View {
                 let live = state.isLive ? client.goal(named: goal.name) : nil
                 if let live {
                     ScheduledButton(count: client.recurring(goalId: live.id).count) { showingRecurring = true }
+                        .recurringSheet(goal: live, isPresented: $showingRecurring)
                         .padding(.trailing, 6)
                     ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
                         .padding(.trailing, 8)
@@ -163,7 +164,6 @@ struct GoalView: View {
                 .fixedSize()
                 .help("More goal actions")
                 .popover(isPresented: $showingRiskPolicy, arrowEdge: .bottom) { RiskPolicyEditor() }
-                .recurringSheet(goal: live, isPresented: $showingRecurring)
                 .padding(.trailing, 10)
                 Facepile(people: contributors, size: 24)
                     .help("\(contributors.count) people · \(Set(allTasks.compactMap(\.agent?.id)).count) agents")
