@@ -431,6 +431,22 @@ final class AppState {
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
     var postedComments: [String: [Comment]] = [:]
+    /// Task page sections opened from their folded line this session ("<task>#<section>"), or folded by hand ("<task>#<section>!").
+    var sectionFolds: Set<String> = []
+
+    /// Whether a task page section is folded: its stage's default, unless it was opened or closed this session.
+    func isFolded(_ task: String, _ section: TaskPageLayout.Section, byDefault: Bool) -> Bool {
+        let key = "\(task)#\(section.rawValue)"
+        if sectionFolds.contains(key) { return false }
+        if sectionFolds.contains(key + "!") { return true }
+        return byDefault
+    }
+
+    func setFolded(_ task: String, _ section: TaskPageLayout.Section, _ folded: Bool) {
+        let key = "\(task)#\(section.rawValue)"
+        sectionFolds.remove(folded ? key : key + "!")
+        sectionFolds.insert(folded ? key + "!" : key)
+    }
     /// Each task's review being drafted in its Changes tab.
     @ObservationIgnored private var reviewDrafts: [String: ReviewDraft] = [:]
     /// The risk policy and goals' accepted risk: the factory's when signed in (edits go to it).

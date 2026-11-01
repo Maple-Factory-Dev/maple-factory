@@ -16,6 +16,59 @@ struct TaskSection<Content: View>: View {
     }
 }
 
+/// A section that can fold to its title and a one-line summary; the chevron, or clicking the line, toggles it.
+struct FoldableSection<Content: View>: View {
+    let title: String
+    let summary: String
+    @Binding var folded: Bool
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                    .rotationEffect(.degrees(folded ? 0 : 90))
+                SectionLabel(title: title)
+                if folded {
+                    Text(summary)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.snappy(duration: 0.2)) { folded.toggle() } }
+            .help(folded ? "Show the \(title.lowercased())" : "Fold the \(title.lowercased())")
+            if !folded { content }
+        }
+    }
+}
+
+extension FactoryTask {
+    /// "v2 · 6 steps, all done": the plan in a line, for its folded header.
+    var planSummary: String {
+        let done = plan.filter { $0.progress == .done }.count
+        let steps = "\(plan.count) \(plan.count == 1 ? "step" : "steps")"
+        let progress = done == plan.count ? (plan.count == 1 ? "done" : "all done") : done == 0 ? "" : "\(done) done"
+        return [planVersion > 1 ? "v\(planVersion)" : nil, progress.isEmpty ? steps : "\(steps), \(progress)"].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The brief's (or spec's) first sentence, without its markdown, for its folded header.
+    var briefSummary: String {
+        let source = spec.flatMap { $0.isEmpty ? nil : $0 } ?? brief
+        let line = source.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "#>*-_ \t")) }
+            .first { !$0.isEmpty } ?? ""
+        let plain = line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        if let end = plain.range(of: #"[.!?](\s|$)"#, options: .regularExpression) { return String(plain[..<end.upperBound]).trimmingCharacters(in: .whitespaces) }
+        return plain
+    }
+}
+
 struct ViewerPill: View {
     let viewer: Person
 
