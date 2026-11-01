@@ -66,6 +66,10 @@ struct TermMockLine: Hashable {
 
 extension FactoryData {
     static let seedMockups: [String: [Mockup]] = [
+        "ATL-141": [
+            Mockup(id: "default", title: "Sign in (unchanged)", kind: .screen(.loginDefault, url: "atlas.dev/login"),
+                   notes: ["The swap is invisible: the login page looks and behaves as it does today."]),
+        ],
         "ATL-152": [
             Mockup(id: "locked", title: "Locked out", kind: .screen(.loginLockedOut, url: "atlas.dev/login"),
                    notes: [

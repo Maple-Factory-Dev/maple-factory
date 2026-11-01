@@ -15,6 +15,8 @@ struct TaskFocusView: View {
     enum Tab { case overview, diff, session }
 
     static let demoTab = Notification.Name("TaskFocusView.demoTab")
+    /// `jump:<section>` in a demo script: what clicking that link in the summary strip does.
+    static let demoJump = Notification.Name("TaskFocusView.demoJump")
 
     private let mainWidth: CGFloat = 720
     private let railWidth: CGFloat = 300
@@ -162,6 +164,12 @@ struct TaskFocusView: View {
                 .frame(maxWidth: .infinity)
                 // `-scroll doneWhen` opens at the Done when checks, for attesting in demo videos; `-scroll effort`
                 // at its effort, `-scroll details` at the rail's details.
+                .onReceive(NotificationCenter.default.publisher(for: Self.demoJump)) { note in
+                    if note.object as? String == "changes" { withAnimation(.snappy(duration: 0.2)) { tab = .diff } }
+                    if let name = note.object as? String, let target = TaskPageLayout.Section.allCases.first(where: { $0.anchor == name || $0.rawValue == name }) {
+                        jump(target, proxy)
+                    }
+                }
                 .task {
                     guard let target = AppDefaults.string(forKey: "scroll"), ["doneWhen", "effort", "details", "artifacts", "plan", "brief", "review"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
