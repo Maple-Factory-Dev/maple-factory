@@ -42,6 +42,7 @@ async function at<T>(clock: { at: number }, fn: () => Promise<T>): Promise<T> {
 function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<string, unknown> = {}) {
   const store = new Store(sqlStorage());
   const typed: string[] = [];
+  const commands: Record<string, unknown>[] = [];
   const wakes: number[] = [];
   const hooks = {
     broadcast: () => {},
@@ -57,12 +58,14 @@ function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<stri
     get: () => ({
       fetch: async (url: string, init: RequestInit) => {
         if (url.endsWith("/input")) typed.push(JSON.parse(String(init.body)).text);
+        if (url.endsWith("/command")) commands.push(JSON.parse(String(init.body)));
         return new Response(null);
       },
     }),
   };
   const engine = new Engine({ MACHINE } as never, store, hooks as never, { forTask: () => {} } as never, {} as never);
   store.savePolicy(policy(p));
+  store.saveGoal({ id: "g", name: "G", prefix: "FU", summary: "", lead: "me", repos: ["acme/app"], repo: "acme/app", archived: false } as never);
   const started = T0 - minutes * MIN;
   store.saveTask({
     id: "MF-1", goal: "g", title: "Prove it", state: "building", owner: "me", brief: "", createdAt: 1, updatedAt: 1, plan: [], planVersion: 1, doneWhen: [],
@@ -76,7 +79,7 @@ function factory(minutes: number, p: Partial<RiskPolicy> = {}, task: Record<stri
   const clock = { at: T0 };
   const check = () => at(clock, () => engine.checkBudgets());
   const t = () => store.task("MF-1")!;
-  return { store, engine, typed, wakes, clock, check, t };
+  return { store, engine, typed, commands, wakes, clock, check, t };
 }
 
 test("budgetUse adds up ended and live sessions' time and their costs, and a base moves the limit one budget on", () => {
@@ -253,4 +256,111 @@ test("validPolicy takes 0 or 5–1440 minutes and a cost of $0 or more", () => {
   assert.equal(validPolicy(policy({ taskMinutes: null, taskCostUsd: null })), null);
   for (const taskMinutes of [3, 1441, 30.5, -1]) assert.match(validPolicy(policy({ taskMinutes }))!, /5 to 1440 minutes/, String(taskMinutes));
   for (const taskCostUsd of [-1, NaN, Infinity]) assert.match(validPolicy(policy({ taskCostUsd }))!, /below \$0/, String(taskCostUsd));
+});
+
+// Over budget with the policy's "handOff" (MF-306): the agent is asked to say where it is, the factory pushes its
+// work (`task.handoff`), files a draft follow-up for a person to review, and cancels it with its branch kept.
+const HANDOFF_PLAN = {
+  brief: "Make the thing faster.",
+  plan: [
+    { text: "Profile it", file: "a.ts", progress: "done", added: false },
+    { text: "Cache the lookups", file: "b.ts", progress: "active", added: false },
+  ],
+  doneWhen: [{ text: "It's faster", proof: "tests", status: "proven", evidence: { kind: "tests", summary: "bench: 2x" } }],
+};
+const tick = () => new Promise((r) => setImmediate(r));
+const raiseHand = (f: ReturnType<typeof factory>, summary: string) => at(f.clock, () => f.engine.fromRunner("mac", {
+  type: "mcp.request", session: "s1", tool: "raise_hand", args: { reason: "overBudget", summary, options: [] },
+} as never));
+const followUps = (f: ReturnType<typeof factory>) => f.store.tasks().filter((t) => t.followUpOf === "MF-1");
+
+test("handOff: the nudge, then task.handoff once its hand comes, then a follow-up draft and the original cancelled", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  assert.equal(f.typed.length, 1);
+  assert.match(f.typed[0], /being handed off for a person to review\. Don't commit anything; stop at a safe point and call raise_hand with reason overBudget/);
+  assert.equal(f.t().hand ?? null, null);
+
+  const reply = await raiseHand(f, "Profiled it; the cache is half done and its tests flake.");
+  assert.match(JSON.stringify(reply), /pushing your work and filing a follow-up/);
+  assert.equal(f.t().hand ?? null, null, "nobody is asked");
+  const handoff = f.commands.find((c) => c.type === "task.handoff")!;
+  assert.ok(handoff, "the runner is asked to push");
+  assert.equal(handoff.branch, "agent/mf-1");
+  assert.equal(followUps(f).length, 0, "nothing filed before the push");
+
+  await at(f.clock, () => f.engine.fromRunner("mac", { type: "task.handed_off", taskId: "MF-1", ok: true, pushed: "agent/mf-1", commit: "abc1234def" } as never));
+  await tick();
+  const [draft] = followUps(f);
+  assert.equal(followUps(f).length, 1);
+  assert.equal(draft.state, "drafting");
+  assert.equal(draft.title, "Continue MF-1: Prove it");
+  assert.match(draft.brief, /`agent\/mf-1` at abc1234/);
+  assert.match(draft.brief, /## Budget used\n1 h 2 min of the 1 h budget/);
+  assert.match(draft.brief, /Profiled it; the cache is half done and its tests flake\./);
+  assert.match(draft.brief, /1 of 2 plan steps not done/);
+  assert.match(draft.brief, /1\. \[x\] Profile it\n2\. \[ \] Cache the lookups \(in progress\)/);
+  assert.match(draft.brief, /1\. \[x\] It's faster — bench: 2x/);
+  assert.match(draft.brief, /## The original brief\nMake the thing faster\./);
+  assert.equal(f.t().state, "cancelled");
+  assert.ok(f.t().events.some((e) => e.text === `handed it off over budget to ${draft.id}; its branch stays`));
+  assert.ok(f.store.statEvents().some((e) => e.kind === "budget.handedOff" && e.detail.followUp === draft.id && e.detail.commit === "abc1234def"));
+  assert.equal(f.store.private("MF-1").budgetHandOff, null);
+});
+
+test("handOff: with no hand 10 minutes on, the factory hands it off itself", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  f.clock.at = T0 + 10 * MIN;
+  await f.check();
+  assert.equal(f.t().hand ?? null, null);
+  assert.ok(f.commands.some((c) => c.type === "task.handoff"));
+  await at(f.clock, () => f.engine.fromRunner("mac", { type: "task.handed_off", taskId: "MF-1", ok: true, commit: "abc1234def" } as never));
+  await tick();
+  assert.match(followUps(f)[0].brief, /the factory stepped in/);
+  assert.equal(f.t().state, "cancelled");
+});
+
+test("handOff: a failed push raises an overBudget hand instead, and files nothing", async () => {
+  const f = factory(62, { overBudget: "handOff" }, HANDOFF_PLAN);
+  await f.check();
+  await raiseHand(f, "Half done.");
+  await at(f.clock, () => f.engine.fromRunner("mac", { type: "task.handed_off", taskId: "MF-1", ok: false, message: "push rejected" } as never));
+  await tick();
+  assert.equal(followUps(f).length, 0);
+  assert.equal(f.t().state, "building");
+  const hand = f.t().hand!;
+  assert.equal(hand.reason, "overBudget");
+  assert.match(hand.summary, /pushing its work failed \(push rejected\).*Half done\./);
+  assert.deepEqual(hand.options.map((o) => o.title), ["Give it more budget", "Cancel it"]);
+  // Giving it more still works as for any budget hand.
+  await at(f.clock, () => f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Give it more budget", note: "" } as never, ME));
+  assert.deepEqual(f.store.private("MF-1").budgetBase, { minutes: 62, costUsd: 0 });
+});
+
+test("handOff: a planning task with no worktree goes straight to a draft and is cancelled", async () => {
+  const f = factory(62, { overBudget: "handOff" }, { state: "planning", worker: { role: "planner", agent: "claude", machine: "mac", session: "s1", startedAt: T0 - 62 * MIN } });
+  await f.check();
+  await raiseHand(f, "The codebase is bigger than the brief thought.");
+  await tick();
+  assert.ok(!f.commands.some((c) => c.type === "task.handoff"), "nothing to push");
+  const [draft] = followUps(f);
+  assert.match(draft.brief, /Nothing was pushed/);
+  assert.match(draft.brief, /bigger than the brief thought/);
+  assert.equal(f.t().state, "cancelled");
+});
+
+test("ask mode is unchanged: the agent's overBudget hand is raised for a person", async () => {
+  const f = factory(62, { overBudget: "ask" });
+  await f.check();
+  assert.match(f.typed[0], /the options \(carry on, cut the scope, or stop\)/);
+  await raiseHand(f, "Half done.");
+  assert.equal(f.t().hand!.reason, "overBudget");
+  assert.ok(!f.commands.some((c) => c.type === "task.handoff"));
+  assert.equal(followUps(f).length, 0);
+});
+
+test("validPolicy takes ask, handOff or none for overBudget, and nothing else", () => {
+  for (const overBudget of ["ask", "handOff", null]) assert.equal(validPolicy(policy({ overBudget })), null, String(overBudget));
+  for (const overBudget of ["push", "", "HANDOFF"]) assert.match(validPolicy(policy({ overBudget }))!, /asks or hands off/, overBudget);
 });
