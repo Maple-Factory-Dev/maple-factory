@@ -453,7 +453,7 @@ function route() {
   const task = hash.match(/^\/t\/([A-Z][A-Z0-9]*-\d+)$/);
   const note = hash.match(/^\/notes\/([\w-]+)$/);
   const settings = hash.match(/^\/settings(?:\/([\w-]+))?$/);
-  if (task) return { name: "task", nav: "tasks", id: task[1] };
+  if (task) return { name: "task", nav: "tasks", id: task[1], artifact: new URLSearchParams(query).get("artifact") };
   if (note) return { name: "note", nav: "notes", id: note[1] };
   if (settings) return { name: "settings", nav: "settings", section: settings[1] ?? null };
   if (hash === "/new") return { name: "new", nav: "new", note: new URLSearchParams(query).get("note") };
@@ -474,7 +474,7 @@ function render() {
   for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
     document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // Keep what someone's typing: re-render only around the boxes being typed in.
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
@@ -866,13 +866,14 @@ function setOpened(id, key, open) {
   openedSections.set(id, keys);
 }
 
-function taskView(id) {
+function taskView(id, artifact = null) {
   const t = state.tasks.get(id);
   if (!t) {
     // One the snapshot left out (finished over 14 days ago) comes when asked for.
     fetchTask(id);
     return h("div", { class: "card empty" }, state.live && !state.older.fetching.has(id) ? `There's no task ${id}.` : "Loading…");
   }
+  if (artifact) linkToArtifact(t, artifact);
   const goal = goalOf(t);
   const tab = taskTabs.get(id) ?? "overview";
   // Parked in the backlog: as far as its plan got.
@@ -1591,6 +1592,20 @@ const ARTIFACT_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 
 const pickedArtifact = new Map();
 /** Fetched artifact text, by file: they never change (a new version is a new file). */
 const artifactText = new Map();
+
+/** Artifact links followed, by "<task>:<artifact>": a link picks its artifact once, then clicks win. */
+const artifactLinks = new Set();
+
+/** A task link with \`?artifact=<id>\` (from the pull request's Artifacts): pick that artifact, on the
+ *  overview, and scroll to the Artifacts section once it's drawn. */
+function linkToArtifact(t, id) {
+  const key = `${t.id}:${id}`;
+  if (artifactLinks.has(key) || !(t.artifacts ?? []).some((a) => a.id === id)) return;
+  artifactLinks.add(key);
+  pickedArtifact.set(t.id, id);
+  taskTabs.set(t.id, "overview");
+  requestAnimationFrame(() => document.getElementById("s-artifacts")?.scrollIntoView({ block: "start" }));
+}
 
 /** Chips to pick an artifact, above the one picked (the newest by default). */
 function artifacts(t) {

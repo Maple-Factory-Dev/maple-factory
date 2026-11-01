@@ -30,7 +30,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
-import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestBody, pullRequestState, repoToken, updatePullRequestBody, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -1930,6 +1930,29 @@ export class Engine {
     }
   }
 
+  /** Brings an open pull request's Artifacts section up to date after an artifact is shared: reads the body
+   *  as it is now (people may have edited it), swaps only the factory's marked block and writes it back.
+   *  Best-effort: what GitHub refused goes on the timeline. */
+  private async syncPullArtifacts(id: string) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.url || !gh || task.pr.state !== "open") return;
+    const number = task.pr.number;
+    try {
+      const isPrivate = this.store.repos().find((r) => r.name.toLowerCase() === `${gh.owner}/${gh.repo}`.toLowerCase())?.isPrivate ?? false;
+      const block = pullArtifacts(task, { base: this.env.PUBLIC_URL?.replace(/\/+$/, ""), isPrivate });
+      const current = await pullRequestBody(app, gh.owner, gh.repo, number);
+      const next = swapArtifacts(current, block).slice(0, 65_000);
+      if (next !== current) await updatePullRequestBody(app, gh.owner, gh.repo, number, next);
+    } catch (e) {
+      const t = this.store.task(id);
+      if (!t) return;
+      this.event(t, "factory", `couldn't update the pull request's artifacts: ${(e as Error).message}`.slice(0, 2000));
+      this.save(t);
+    }
+  }
+
   /** Makes the task's owner the pull request's assignee and, when its base branch's rules require approving
    *  reviews, asks them for one. Best-effort: what GitHub refused goes on the timeline. */
   private async assignOwner(id: string, app: GitHubApp, owner: string, repo: string, number: number) {
@@ -2366,6 +2389,8 @@ export class Engine {
       const out = this.run(task, s, name, args);
       this.save(task);
       if (name === "submit_review") await this.autoMerge(task);
+      // Off the tool's critical path: a share never waits on, or fails with, GitHub.
+      if (name === "share_artifact") this.hooks.waitUntil(this.syncPullArtifacts(task.id));
       return { result: out };
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
@@ -3554,7 +3579,43 @@ export function pullBody(task: Task, opts: { base?: string | null; isPrivate: bo
   const body = [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, brief, steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
     .join("\n\n");
-  return pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 60_000);
+  // Artifacts last, after attachment links are rewritten: the block is the factory's own and kept current.
+  const artifacts = pullArtifacts(task, opts);
+  return (pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 55_000) + (artifacts ? `\n\n${artifacts}` : "")).slice(0, 60_000);
+}
+
+/** Around the pull request's Artifacts section: the factory swaps what's between them, nothing else. */
+export const ARTIFACTS_START = "<!-- maple:artifacts -->";
+export const ARTIFACTS_END = "<!-- /maple:artifacts -->";
+
+/** The pull request's Artifacts section, between its markers: each artifact the agents shared, linked to
+ *  the task page with it picked. On a public repo only titles and the members-only links (no summaries,
+ *  which can quote the brief), as with evidence. Empty with no artifacts. */
+export function pullArtifacts(task: Task, opts: { base?: string | null; isPrivate: boolean }): string {
+  const list = task.artifacts ?? [];
+  if (!list.length) return "";
+  const base = (opts.base ?? "").replace(/\/+$/, "");
+  const md = (t: string) => t.replace(/[\[\]\\`*_<>|]/g, (c) => `\\${c}`).replace(/\s+/g, " ");
+  const lines = [...list]
+    .sort((a, b) => a.at - b.at)
+    .map((x) => {
+      const title = base ? `[${md(x.title)}](${base}/t/${encodeURIComponent(task.id)}?artifact=${encodeURIComponent(x.id)})` : md(x.title);
+      const meta = `${x.kind}${x.version > 1 ? `, v${x.version}` : ""}, shared by the ${x.by}`;
+      const summary = opts.isPrivate && x.summary ? ` — ${md(x.summary)}` : "";
+      return `- ${title} (${meta})${summary}`;
+    });
+  const where = base ? (opts.isPrivate ? "" : " Links open in Maple Factory, for its members.") : " They're kept in Maple Factory.";
+  return `${ARTIFACTS_START}\n## Artifacts\n\nShared by the agents on ${task.id}.${where}\n\n${lines.join("\n")}\n${ARTIFACTS_END}`;
+}
+
+/** A pull request body with its Artifacts section swapped for \`block\` (appended when a person removed it),
+ *  leaving whatever people wrote around it as it was. An empty \`block\` drops the section. */
+export function swapArtifacts(body: string, block: string): string {
+  const start = body.indexOf(ARTIFACTS_START);
+  const end = start >= 0 ? body.indexOf(ARTIFACTS_END, start) : -1;
+  if (start >= 0 && end >= 0) return body.slice(0, start) + block + body.slice(end + ARTIFACTS_END.length);
+  if (!block) return body;
+  return `${body.replace(/\s+$/, "")}${body.trim() ? "\n\n" : ""}${block}`;
 }
 
 /** A runner's `task.merged` branch note (deleted, gone, moved or `failed: <why>`) as a timeline line,

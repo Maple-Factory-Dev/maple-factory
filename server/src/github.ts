@@ -413,6 +413,22 @@ export async function reopenPullRequest(app: GitHubApp, owner: string, repo: str
   await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/issues/${number}/comments`, auth, { body: comment });
 }
 
+/** A pull request's description as it is on GitHub now (people may have edited it). */
+export async function pullRequestBody(app: GitHubApp, owner: string, repo: string, number: number): Promise<string> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth);
+  if (!res.ok) throw await failure(res, `read pull request #${number}`);
+  const j = (await res.json()) as { body?: string | null };
+  return typeof j.body === "string" ? j.body : "";
+}
+
+/** Replaces a pull request's description. */
+export async function updatePullRequestBody(app: GitHubApp, owner: string, repo: string, number: number, body: string): Promise<void> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "PATCH", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`, auth, { body });
+  if (!res.ok) throw await failure(res, `update pull request #${number}`);
+}
+
 /** Permission to read a pull request's review threads. */
 const READ_PULLS = { pull_requests: "read" } as const;
 

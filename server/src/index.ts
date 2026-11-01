@@ -77,7 +77,7 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 
     const link = path.match(/^\/t\/([A-Z][A-Z0-9]{0,9}-\d+)$/);
-    if (link) return taskLink(link[1]);
+    if (link) return taskLink(link[1], url.searchParams.get("artifact"));
 
     if (path === "/integrations/slack/command" && request.method === "POST") return slackCommand(request, env);
     if (path === "/integrations/slack/events" && request.method === "POST") return slackEvents(request, env, ctx);

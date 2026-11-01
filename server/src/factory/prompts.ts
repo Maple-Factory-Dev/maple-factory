@@ -164,9 +164,18 @@ When every step is done and every item is proven, call \`finish\` with a short s
 const THREADS =
   "People can talk to you in the task's comment threads while you work: it arrives as \"<who> in comment thread <id>: …\" (and \`get_task\` lists any threads still waiting on an answer). Answer briefly with \`reply\` in that thread, then carry on with the work. It's conversation, not a change request.";
 
-/** What \`share_artifact\` is for: something people look at, not evidence (proofs stay that). */
-const ARTIFACTS = (task: Task) =>
-  `When a picture says it better than words, share it with \`share_artifact\`: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. Save the file (HTML with everything inline and no network, SVG, PNG, PDF, Markdown, CSV…) under ~/.cache/maple-proof/${task.branch ?? "<this task's branch>"}/, never in the worktree. It's optional; proofs stay the evidence for Done when.`;
+/** What \`share_artifact\` is for: something people look at, not evidence (proofs stay that). The builder
+ *  also shares a "Change walkthrough" before \`finish\`, which the pull request lists (\`pullArtifacts\`). */
+const ARTIFACTS = (task: Task, role: "builder" | "reviewer" = "builder") => {
+  const where = `Save the file (HTML with everything inline and no network, SVG, PNG, PDF, Markdown, CSV…) under ~/.cache/maple-proof/${task.branch ?? "<this task's branch>"}/, never in the worktree.`;
+  const share = `When a picture says it better than words, share it with \`share_artifact\`: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. ${where} Proofs stay the evidence for Done when; artifacts are for people to look at, and the pull request lists each one.`;
+  return role === "builder"
+    ? `${share}\nBefore \`finish\`, share one artifact titled "${WALKTHROUGH}" with \`share_artifact\`: a self-contained page (HTML, or SVG/Markdown) showing what the change does — before/after for UI, a flow or diagram for logic, sample output for a CLI or API. After a review round, share it again under the same title to add a new version. Skip it only for a trivial one-file fix.`
+    : `${share} You may add your own (e.g. "Review notes"); it's optional.`;
+};
+
+/** The builder's walkthrough artifact's title. */
+export const WALKTHROUGH = "Change walkthrough";
 
 /** The repo's checks, which a finish runs before anything is committed. */
 function checksSection(checks: string[]): string {
@@ -201,6 +210,6 @@ Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/
 
 Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
 List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
-${ARTIFACTS(task)}
+${ARTIFACTS(task, "reviewer")}
 ${THREADS}`;
 }
