@@ -66,6 +66,17 @@ public enum SavedFactories {
     public static func fallback(_ list: [SavedFactory]) -> SavedFactory? {
         list.max { $0.lastUsed < $1.lastUsed }
     }
+
+    /// Whether the factory rail shows: an unset preference shows it once there are two or more
+    /// factories to switch between; a set one (View › Show/Hide Factory Rail) overrides the count.
+    public static func railShown(count: Int, preference: Bool?) -> Bool {
+        preference ?? (count >= 2)
+    }
+
+    /// The factory ⌘N switches to: the Nth in saved order (from 1), nil past the end.
+    public static func factory(forShortcut number: Int, in list: [SavedFactory]) -> SavedFactory? {
+        list.indices.contains(number - 1) ? list[number - 1] : nil
+    }
 }
 
 /// The factory token, in the login keychain under the factory's URL. A plain-http (local dev)
