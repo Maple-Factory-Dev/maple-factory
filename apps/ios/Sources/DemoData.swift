@@ -106,7 +106,9 @@ enum DemoData {
                     .init(text: "Clear the cache on sign-out", file: "apps/ios/Sources/FactoryStore.swift", progress: .pending, added: false),
                 ]
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-studio", session: "s1", startedAt: ago(25))
-                t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory", "Only the last one"], role: .builder, at: ago(9))
+                t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory: keep a separate snapshot for each factory you've signed in to, so switching between them opens instantly too (Recommended)",
+                                                    "Only the last one: keep a single snapshot for the factory you used most recently, and drop it when you switch",
+                                                    "No cache for now"], role: .builder, at: ago(9))
                 t.events = [
                     .init(who: "planner", text: "wrote plan v1", at: yesterday(16)),
                     .init(who: me, text: "approved the plan", at: yesterday(17.5)),
@@ -160,7 +162,7 @@ enum DemoData {
                 t.brief = "Render each invoice as a PDF with its usage line items."
                 t.hand = .init(reason: .needsInput, summary: "Stripe's invoice API doesn't return usage line items for metered prices. Build them from our own usage table instead?", at: ago(35), assignee: me,
                                options: [.init(title: "Use our usage table", detail: "Matches what customers see in the app.", recommended: true),
-                                         .init(title: "Wait for Stripe's line items", detail: "Simpler, but needs their beta.", recommended: false)])
+                                         .init(title: "Wait for Stripe's metered line items to leave beta, then switch the invoice renderer over to their API", detail: "Simpler, but needs their beta.", recommended: false)])
                 t.worker = .init(role: .builder, agent: "codex", machine: "m-mini", session: "s3", startedAt: ago(50))
             },
             task("API-29", goal: "g-api", title: "Token scopes: read, write and admin", state: .reviewing, owner: "kit", updated: 60) { t in

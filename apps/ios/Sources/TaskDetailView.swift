@@ -365,8 +365,17 @@ struct HandCard: View {
             ForEach(hand.options, id: \.title) { option in
                 Button { store.resolveHand(task.id, option: option.title, note: "") } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(option.title + (option.recommended ? " (recommended)" : "")).font(.callout.weight(.medium))
-                        Text(option.detail).font(.caption).foregroundStyle(.secondary)
+                        Text(option.title)
+                            .font(.callout.weight(.medium))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if option.recommended {
+                            Text("Recommended").font(.caption.weight(.medium))
+                        }
+                        Text(option.detail)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -455,12 +464,37 @@ struct QuestionCard: View {
     var body: some View {
         Card("The \(question.role.rawValue) asks", icon: "questionmark.bubble.fill") {
             Text(question.text).font(.callout)
-            HStack {
-                ForEach(question.options, id: \.self) { option in
-                    Button(option) { store.answer(task.id, text: option) }.buttonStyle(.bordered)
+            // Stacked, full-width and wrapping: an agent's options can be whole sentences.
+            VStack(spacing: 8) {
+                ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
+                    let parsed = Self.parse(option)
+                    Button { store.answer(task.id, text: option) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(parsed.label)
+                                .font(.callout.weight(.medium))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if parsed.recommended {
+                                Text("Recommended").font(.caption.weight(.medium))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(parsed.recommended ? Theme.approve : .secondary)
+                    .accessibilityIdentifier("question-option-\(index)")
                 }
             }
         }
+    }
+
+    /// Splits a trailing "(recommended)", in any case, off an option: it shows as a caption instead.
+    static func parse(_ option: String) -> (label: String, recommended: Bool) {
+        let trimmed = option.trimmingCharacters(in: .whitespaces)
+        let suffix = "(recommended)"
+        guard trimmed.lowercased().hasSuffix(suffix) else { return (option, false) }
+        let label = String(trimmed.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        return label.isEmpty ? (option, false) : (label, true)
     }
 }
 
