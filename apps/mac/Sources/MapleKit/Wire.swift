@@ -6046,6 +6046,15 @@ public enum Wire {
         }
     }
 
+    /// Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.
+    public struct ClientMessageTaskRecheckGitHub: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Run one of the pull request's CI checks again, by name.
     public struct ClientMessageTaskRerunCheck: Codable, Hashable, Sendable {
         public var id: String
@@ -6220,6 +6229,7 @@ public enum Wire {
         case taskQueue(ClientMessageTaskQueue)
         case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
+        case taskRecheckGitHub(ClientMessageTaskRecheckGitHub)
         case taskRerunCheck(ClientMessageTaskRerunCheck)
         case taskCheckLog(ClientMessageTaskCheckLog)
         case taskSplit(ClientMessageTaskSplit)
@@ -6303,6 +6313,7 @@ public enum Wire {
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
             case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
+            case "task.recheckGitHub": self = .taskRecheckGitHub(try ClientMessageTaskRecheckGitHub(from: decoder))
             case "task.rerunCheck": self = .taskRerunCheck(try ClientMessageTaskRerunCheck(from: decoder))
             case "task.checkLog": self = .taskCheckLog(try ClientMessageTaskCheckLog(from: decoder))
             case "task.split": self = .taskSplit(try ClientMessageTaskSplit(from: decoder))
@@ -6514,6 +6525,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskRecheckGitHub(let body):
+                try c.encode("task.recheckGitHub", forKey: .type)
                 try body.encode(to: encoder)
             case .taskRerunCheck(let body):
                 try c.encode("task.rerunCheck", forKey: .type)
