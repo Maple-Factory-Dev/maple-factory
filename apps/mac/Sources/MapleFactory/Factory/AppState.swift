@@ -263,7 +263,7 @@ final class AppState {
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
                                         "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks",
-                                        "pageviewport"]
+                                        "pageviewport", "mockup"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 

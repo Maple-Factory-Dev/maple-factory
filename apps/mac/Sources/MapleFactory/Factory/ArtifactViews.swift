@@ -357,13 +357,26 @@ extension FactoryData {
     private static let demoChart = """
     <!doctype html><html><head><style>body{margin:0;font:13px -apple-system,sans-serif;color:#1d2025}h3{margin:16px 20px 4px;font-size:14px}
     p{margin:0 20px;color:#6a707a}canvas{display:block;margin:12px 20px}</style></head><body>
-    <h3>Sign-in attempts per minute</h3><p>Grey: before · Green: with the lockout</p><canvas id="c" width="560" height="260"></canvas>
+    <h3>Sign-in attempts per minute</h3><p>Grey: before · Green: with the lockout</p><canvas id="c" height="260"></canvas>
+    <p id="net" style="font-size:11px">Network: checking…</p>
     <script>
     const before = [42, 58, 61, 77, 93, 120, 140, 162, 171, 188], after = [40, 44, 38, 22, 14, 11, 9, 9, 8, 7];
-    const c = document.getElementById("c"), x = c.getContext("2d"), w = 560, h = 230, max = 200;
-    x.strokeStyle = "#e2e4e8"; for (let i = 0; i <= 4; i++) { x.beginPath(); x.moveTo(30, 10 + i * h / 4); x.lineTo(w, 10 + i * h / 4); x.stroke(); }
-    before.forEach((v, i) => { x.fillStyle = "#c4c8cf"; x.fillRect(40 + i * 52, 10 + h - v / max * h, 20, v / max * h); });
-    after.forEach((v, i) => { x.fillStyle = "#14a866"; x.fillRect(62 + i * 52, 10 + h - v / max * h, 20, v / max * h); });
+    const c = document.getElementById("c"), x = c.getContext("2d"), h = 230, max = 200;
+    let net = "checking…", w = 0;
+    const note = () => { document.getElementById("net").textContent = "Network: " + net + " · drawn at " + w + "px by this page's script"; };
+    // As wide as the page allows, up to 560, so it fits a phone too; drawn again when the page is resized.
+    function draw() {
+      w = Math.max(240, Math.min(560, innerWidth - 40));
+      const step = (w - 40) / 10, bar = Math.max(6, step * 0.38);
+      c.width = w;
+      x.strokeStyle = "#e2e4e8"; for (let i = 0; i <= 4; i++) { x.beginPath(); x.moveTo(30, 10 + i * h / 4); x.lineTo(w, 10 + i * h / 4); x.stroke(); }
+      before.forEach((v, i) => { x.fillStyle = "#c4c8cf"; x.fillRect(40 + i * step, 10 + h - v / max * h, bar, v / max * h); });
+      after.forEach((v, i) => { x.fillStyle = "#14a866"; x.fillRect(40 + i * step + bar + 2, 10 + h - v / max * h, bar, v / max * h); });
+      note();
+    }
+    draw(); addEventListener("resize", draw);
+    // The sandbox shows itself: a request out never gets anywhere.
+    fetch("https://example.com/").then(() => "reached example.com", () => "blocked (sandboxed)").then(t => { net = t; note(); });
     </script></body></html>
     """
 

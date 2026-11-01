@@ -130,8 +130,46 @@ extension FactoryData {
                        "Each passkey shows where it lives and when it was last used.",
                        "Adding one starts the browser's passkey prompt directly.",
                    ]),
+            Mockup(id: "passkeys-html", title: "Passkeys (HTML)", kind: .html(passkeysHTML, url: "atlas.dev/settings/security"),
+                   notes: [
+                       "Two columns on a desktop, one under the other on a tablet.",
+                       "On a phone the nav becomes tabs and each passkey a card.",
+                   ]),
         ],
     ]
+
+    /// A planner's responsive HTML mockup: open it large and try Desktop, Tablet and Mobile (MF-296).
+    static let passkeysHTML = """
+    <!doctype html><html><head><meta name="viewport" content="width=device-width"><style>
+    *{box-sizing:border-box}body{margin:0;font:14px -apple-system,sans-serif;color:#1d2025;background:#f4f5f7}
+    header{display:flex;align-items:center;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid #e2e4e8}
+    header b{font-size:16px}header span{margin-left:auto;color:#6a707a;font-size:12px}
+    .wrap{display:grid;grid-template-columns:220px 1fr;gap:24px;max-width:1100px;margin:24px auto;padding:0 24px}
+    nav{display:flex;flex-direction:column;gap:2px}nav a{padding:8px 12px;border-radius:7px;color:#6a707a;text-decoration:none}
+    nav a.on{background:#fff;color:#1d2025;font-weight:600;box-shadow:0 0 0 1px #e2e4e8}
+    main{background:#fff;border:1px solid #e2e4e8;border-radius:12px;padding:24px}h1{margin:0 0 4px;font-size:20px}
+    p.sub{margin:0 0 20px;color:#6a707a}.list{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .key{display:flex;gap:12px;align-items:center;padding:14px;border:1px solid #e2e4e8;border-radius:10px}
+    .icon{width:36px;height:36px;border-radius:9px;background:#eef3ff;display:grid;place-items:center;font-size:18px}
+    .key small{display:block;color:#6a707a;margin-top:2px}.key button{margin-left:auto}
+    button{font:inherit;border:1px solid #e2e4e8;background:#fff;border-radius:7px;padding:6px 12px}
+    .add{margin-top:20px;background:#2f6feb;color:#fff;border-color:#2f6feb;padding:9px 16px}
+    .badge{font-size:11px;color:#6a707a;border:1px solid #e2e4e8;border-radius:99px;padding:2px 8px}
+    @media (max-width:1000px){.list{grid-template-columns:1fr}}
+    @media (max-width:700px){.wrap{grid-template-columns:1fr;margin:0;padding:0;gap:0}
+    nav{flex-direction:row;overflow:auto;background:#fff;border-bottom:1px solid #e2e4e8;padding:6px 12px}
+    nav a.on{box-shadow:none;background:#f1f2f4}main{border:0;border-radius:0;padding:18px 16px}
+    header span{display:none}.key{flex-wrap:wrap}.key button{margin-left:48px}.add{width:100%}}
+    </style></head><body>
+    <header><b>Atlas</b><span class="badge">Settings</span><span>ana@atlas.dev</span></header>
+    <div class="wrap"><nav><a>Profile</a><a class="on">Security</a><a>Notifications</a><a>Billing</a></nav>
+    <main><h1>Passkeys</h1><p class="sub">Sign in with your fingerprint, face or a security key instead of a password.</p>
+    <div class="list">
+    <div class="key"><div class="icon">💻</div><div><b>MacBook Pro</b><small>iCloud Keychain · used today</small></div><button>Remove</button></div>
+    <div class="key"><div class="icon">📱</div><div><b>iPhone 16</b><small>iCloud Keychain · used 3 days ago</small></div><button>Remove</button></div>
+    <div class="key"><div class="icon">🔑</div><div><b>YubiKey 5C</b><small>Security key · used last month</small></div><button>Remove</button></div>
+    </div><button class="add">Add a passkey</button></main></div></body></html>
+    """
 }
 
 extension AppState {
@@ -173,6 +211,10 @@ struct MockupsSection: View {
         _selected = State(initialValue: task.mockups.first?.id ?? "")
         // `-mockview side` opens built tasks on the side-by-side comparison.
         if AppDefaults.string(forKey: "mockview") == "side" { _view = State(initialValue: .side) }
+        // `-mockup <id>` opens on that one, for screenshots.
+        if let wanted = AppDefaults.string(forKey: "mockup"), task.mockups.contains(where: { $0.id == wanted }) {
+            _selected = State(initialValue: wanted)
+        }
     }
 
     private var mockup: Mockup? { task.mockups.first { $0.id == selected } ?? task.mockups.first }
