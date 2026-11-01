@@ -945,6 +945,8 @@ export interface RiskPolicy {
   taskMinutes?: number | null;
   /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
   taskCostUsd?: number | null;
+  /** What a task past its budget does: "ask" raises a hand for a person; "handOff" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask. */
+  overBudget?: string | null;
   /** The optional risk classifier. None: off. */
   classifier?: RiskClassifier | null;
 }

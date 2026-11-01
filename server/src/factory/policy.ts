@@ -24,6 +24,7 @@ export const DEFAULT_POLICY: RiskPolicy = {
   scoutItems: 3,
   taskMinutes: DEFAULT_TASK_MINUTES,
   taskCostUsd: null,
+  overBudget: "ask",
 };
 
 const ORDER: RiskLevel[] = ["low", "medium", "high"];
@@ -134,6 +135,7 @@ export function validPolicy(p: RiskPolicy): string | null {
     return "A task's time budget is 5 to 1440 minutes, or 0 for none.";
   }
   if (p.taskCostUsd != null && !(Number.isFinite(p.taskCostUsd) && p.taskCostUsd >= 0)) return "A task's cost budget can't be below $0.";
+  if (p.overBudget != null && !OVER_BUDGET_MODES.includes(p.overBudget as OverBudgetMode)) return "A task over its budget either asks or hands off.";
   for (const level of ORDER) {
     if (!(p.planApprovals[level] >= 0) || !(p.finalReviews[level] >= 0)) return `Say how many approvals and reviews ${level} risk needs.`;
   }
@@ -149,6 +151,11 @@ export function validPolicy(p: RiskPolicy): string | null {
   }
   return null;
 }
+
+/** What a task past its budget does: raise a hand (ask), or push its work and file a follow-up (handOff). */
+export type OverBudgetMode = "ask" | "handOff";
+const OVER_BUDGET_MODES: OverBudgetMode[] = ["ask", "handOff"];
+export const overBudgetMode = (policy: RiskPolicy): OverBudgetMode => (policy.overBudget === "handOff" ? "handOff" : "ask");
 
 /** What a task has used of its budget (policy.taskMinutes and taskCostUsd), from its sessions and their costs. */
 export interface BudgetUse {

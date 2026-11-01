@@ -3604,10 +3604,12 @@ public enum Wire {
         public var taskMinutes: UInt32?
         /// Dollars of agent work a task gets before it asks for a hand. None: no cost limit.
         public var taskCostUsd: Double?
+        /// What a task past its budget does: "ask" raises a hand for a person; "handOff" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask.
+        public var overBudget: String?
         /// The optional risk classifier. None: off.
         public var classifier: RiskClassifier?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, classifier: RiskClassifier? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, overBudget: String? = nil, classifier: RiskClassifier? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -3619,6 +3621,7 @@ public enum Wire {
             self.scoutItems = scoutItems
             self.taskMinutes = taskMinutes
             self.taskCostUsd = taskCostUsd
+            self.overBudget = overBudget
             self.classifier = classifier
         }
 
@@ -3635,6 +3638,7 @@ public enum Wire {
             scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
             taskMinutes = try c.decodeIfPresent(UInt32.self, forKey: .taskMinutes)
             taskCostUsd = try c.decodeIfPresent(Double.self, forKey: .taskCostUsd)
+            overBudget = try c.decodeIfPresent(String.self, forKey: .overBudget)
             classifier = try c.decodeIfPresent(RiskClassifier.self, forKey: .classifier)
         }
     }
