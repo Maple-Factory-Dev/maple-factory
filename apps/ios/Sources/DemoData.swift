@@ -97,6 +97,20 @@ enum DemoData {
                 ]
                 t.comments = [.init(id: "c1", author: "sam", text: "@andrea can you take a look before standup?", at: ago(3), mentions: [me])]
             },
+            // Attachments from the phone (images in the brief and a comment) and a Slack file, for AttachmentViewTests.
+            task("ONB-3", goal: "g-onb", title: "Welcome screen looks cropped on small phones", state: .backlog, updated: 60 * 5) { t in
+                t.brief = """
+                The welcome screen's header is cut off on an iPhone SE. Screenshots from my phone:
+
+                ![welcome-se.png](/attachments/demo/welcome-se.png)
+                ![welcome-15.png](/attachments/demo/welcome-15.png)
+
+                ## Attachments
+                - [crash-log.txt](/attachments/demo/crash-log.txt)
+                """
+                t.events = [.init(who: me, text: "created the task", at: ago(60 * 5 + 10))]
+                t.comments = [.init(id: "c-onb3", author: "sam", text: "Same on my mini:\n\n![mini.png](/attachments/demo/mini.png)", at: ago(60 * 5), mentions: [])]
+            },
             task("APP-12", goal: "g-app", title: "Offline cache for the inbox", state: .building, updated: 9) { t in
                 t.brief = "Keep the last snapshot on disk so the inbox opens instantly, even on a plane."
                 t.effort = "Offline"
