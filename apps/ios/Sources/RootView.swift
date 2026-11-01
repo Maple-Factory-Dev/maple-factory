@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
-/// `-stats YES` (with `-statsDays N`) opens Statistics.
+/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
 /// terminal on Machines.
 struct RootView: View {
@@ -42,7 +42,10 @@ struct RootView: View {
         }
         .overlay(alignment: .top) { NoticeBanner() }
         .onAppear {
-            if let id = UserDefaults.standard.string(forKey: "task"), store.feed.task(id) != nil {
+            if UserDefaults.standard.bool(forKey: "usage") {
+                tab = .settings
+                settingsPath.append(UsageRoute())
+            } else if let id = UserDefaults.standard.string(forKey: "task"), store.feed.task(id) != nil {
                 if tab == .goals, let goal = store.feed.task(id)?.goal {
                     goalsPath.append(GoalRoute(id: goal))
                     goalsPath.append(TaskRoute(id: id))
@@ -80,6 +83,7 @@ struct RootView: View {
 struct TaskRoute: Hashable { let id: String }
 struct GoalRoute: Hashable { let id: String }
 struct StatsRoute: Hashable {}
+struct UsageRoute: Hashable {}
 struct SessionRoute: Hashable { let machine: String; let session: String }
 
 extension View {
@@ -679,6 +683,7 @@ struct SettingsView: View {
                 if let server = store.server { LabeledContent("Address", value: server.host() ?? server.absoluteString) }
                 if let version = store.feed.serverVersion { LabeledContent("Server", value: version) }
                 LabeledContent("Members", value: "\(store.feed.members.count)")
+                NavigationLink(value: UsageRoute()) { Label("Usage", systemImage: "gauge.with.dots.needle.33percent") }
                 if store.isAdmin {
                     NavigationLink(value: StatsRoute()) { Label("Statistics", systemImage: "chart.bar") }
                 }
@@ -716,5 +721,6 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
+        .navigationDestination(for: UsageRoute.self) { _ in UsageView() }
     }
 }
