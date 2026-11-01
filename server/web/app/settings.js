@@ -323,7 +323,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
         h("span", { style: "display:flex;align-items:center;gap:14px" }, preview,
           h("span", { class: "set-label" }, h("span", {}, "Icon"),
             h("span", { class: "set-detail" }, "Shown in the header, the tab and the apps. A square PNG, JPEG or WebP, up to 2 MB."))),
-        h("span", { class: "set-inline", style: "flex:none" }, picker,
+        h("span", { class: "set-inline", style: "flex:none;display:flex;align-items:center;gap:8px" }, picker,
           ...(ask("icon-remove", "Remove the icon?", "Remove", remove) ?? [
             state.icon && h("button", { type: "button", class: "btn small danger-text", disabled: iconBusy, onclick: () => { confirming.add("icon-remove"); render(); } }, "Remove"),
             h("button", { type: "button", class: "btn small primary", disabled: iconBusy, onclick: () => picker.click() },
