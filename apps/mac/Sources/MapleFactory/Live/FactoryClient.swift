@@ -619,6 +619,9 @@ import Foundation
             } else {
                 notice = error.message
             }
+        case .pushDevices:
+            // The phone apps' push registrations; the Mac doesn't list them.
+            break
         case .unknown:
             break
         }
