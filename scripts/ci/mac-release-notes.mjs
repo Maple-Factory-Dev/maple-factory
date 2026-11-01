@@ -35,20 +35,23 @@ function lastTag() {
 }
 
 const SKIP = [/^Mac app \S+ released\b/, /^Runner \d/, /^maple-server \d/, /^Merge (pull request|branch|remote-tracking)\b/];
-const ADDED = /^(Add|Adds|Added|New|Introduce|Introduces|Support|Supports|Show|Shows)\b/i;
-const FIXED = /^(Fix|Fixes|Fixed|Correct|Corrects|Repair|Repairs|Stop|Stops|Don't|Do not)\b/i;
+const ADDED = /^(add|adds|added|new|introduce|introduces|support|supports|show|shows|let|lets|allow|allows|create|creates)\b/i;
+const FIXED = /^(fix|fixes|fixed|correct|corrects|repair|repairs|stop|stops)\b|\b(wrongly|broken|crash(es|ed)?|no longer|properly|doesn't|don't|isn't|aren't|bug)\b/i;
 
-/** Subjects since `since`, cleaned and sorted into the three sections. */
-export function sections(subjects) {
+/** Subjects, cleaned and sorted into the three sections. A short "Area: " in front ("Mac: fix …") is kept
+ *  in the bullet but left out when deciding the section. */
+function sections(subjects) {
   const out = { Added: [], Changed: [], Fixed: [] };
   for (const raw of subjects) {
     const s = raw.trim();
     if (!s || SKIP.some((re) => re.test(s))) continue;
     let text = s.replace(/^[A-Z]+-\d+:\s*/, "").replace(/\s*\(#\d+\)\s*$/, "").trim();
     if (!text) continue;
-    text = text[0].toUpperCase() + text.slice(1);
+    // Only a plain lowercase first word: "iPhone", "maple-server" and "release-mac.yml" stay as written.
+    if (/^[a-z]+\b(?![-.])/.test(text)) text = text[0].toUpperCase() + text.slice(1);
     if (!/[.!?]$/.test(text)) text += ".";
-    const section = ADDED.test(text) ? "Added" : FIXED.test(text) ? "Fixed" : "Changed";
+    const what = text.replace(/^[^:]{1,40}:\s+/, "");
+    const section = ADDED.test(what) ? "Added" : FIXED.test(what) ? "Fixed" : "Changed";
     if (!out[section].includes(text)) out[section].push(text);
   }
   return out;
