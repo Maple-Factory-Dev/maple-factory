@@ -189,6 +189,13 @@ impl Service {
             for cmd in &required {
                 println!("  {}", cmd.join(" "));
             }
+            if self.manager == Manager::Systemd {
+                match linger_step(&current_user(), true) {
+                    LingerStep::AlreadyOn => println!("Lingering is already on, so the service keeps running after logout and starts at boot."),
+                    LingerStep::Plan(LingerPlan::Run(cmd)) => println!("Would run:\n  {}   (lingering, so the service outlives logout)", cmd.join(" ")),
+                    LingerStep::Plan(LingerPlan::Print(cmd)) | LingerStep::Failed(cmd, _) => println!("Would ask you to run: {cmd}"),
+                }
+            }
             println!("\nLogs would go to {}", self.logs());
             return Ok(());
         }
@@ -216,6 +223,16 @@ impl Service {
                     }
                     Err(e) => return Err(e),
                 }
+            }
+        }
+        if self.manager == Manager::Systemd {
+            match linger_step(&current_user(), false) {
+                LingerStep::AlreadyOn => println!("{} lingering is on: maple-runner keeps running after you log out and starts at boot.", crate::style::ok("Linger:")),
+                LingerStep::Plan(LingerPlan::Run(_)) => println!("{} turned lingering on: maple-runner keeps running after you log out and starts at boot.", crate::style::ok("Linger:")),
+                LingerStep::Plan(LingerPlan::Print(cmd)) => {
+                    println!("{} lingering is off, so the runner stops when you log out and won't start at boot. Run:\n    {cmd}", crate::style::warn("Linger:"))
+                }
+                LingerStep::Failed(cmd, e) => println!("{} couldn't turn lingering on ({e}). Run:\n    {cmd}", crate::style::warn("Linger:")),
             }
         }
         println!("{} maple-runner starts at login and restarts if it stops.", crate::style::ok("Installed:"));
@@ -311,7 +328,14 @@ impl Service {
             }
         };
         let loaded = if matches!(loaded.as_str(), "loaded, running" | "active") { crate::style::ok(loaded) } else { crate::style::warn(loaded) };
-        format!("installed ({}), {loaded}", crate::style::accent(self.file.display()))
+        let mut out = format!("installed ({}), {loaded}", crate::style::accent(self.file.display()));
+        if self.manager == Manager::Systemd {
+            let user = current_user();
+            if linger_enabled(&user) == Some(false) {
+                out += &format!("\n{}", crate::style::warn(linger_warning(&user)));
+            }
+        }
+        out
     }
 
     /// The process id of the running service, or `None` if it isn't installed, isn't
@@ -492,6 +516,104 @@ pub enum Start {
 struct LogMark {
     offset: u64,
     since: String,
+}
+
+/// How to turn on systemd lingering, without which a user service stops when the last
+/// session (an SSH login, say) ends and doesn't start until someone logs in again.
+#[derive(Debug, PartialEq)]
+pub enum LingerPlan {
+    /// A command that can run here without a password.
+    Run(Vec<String>),
+    /// The command for the user to run themselves.
+    Print(String),
+}
+
+pub fn linger_plan(is_root: bool, sudo_nopasswd: bool, user: &str) -> LingerPlan {
+    if is_root {
+        LingerPlan::Run(args(&["loginctl", "enable-linger", user]))
+    } else if sudo_nopasswd {
+        LingerPlan::Run(args(&["sudo", "-n", "loginctl", "enable-linger", user]))
+    } else {
+        LingerPlan::Print(linger_command(user))
+    }
+}
+
+/// The exact command that turns lingering on for `user`.
+pub fn linger_command(user: &str) -> String {
+    format!("sudo loginctl enable-linger {user}")
+}
+
+/// What `status` says when lingering is off.
+pub fn linger_warning(user: &str) -> String {
+    format!("lingering is off: the runner stops when you log out and won't start at boot; run {}", linger_command(user))
+}
+
+/// `Linger=` from `loginctl show-user <user> -p Linger`.
+pub fn parse_linger(show: &str) -> Option<bool> {
+    match show.lines().find_map(|l| l.trim().strip_prefix("Linger="))? {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether lingering is on for `user`; `None` when loginctl can't say (no logind, say).
+/// A user with no session and no lingering isn't known to logind at all, which is "off".
+pub fn linger_enabled(user: &str) -> Option<bool> {
+    if let Some(out) = quiet(&["loginctl", "show-user", user, "-p", "Linger"]) {
+        return parse_linger(&out);
+    }
+    // logind lists lingering users as files here, session or not.
+    if Path::new("/var/lib/systemd/linger").is_dir() {
+        return Some(Path::new("/var/lib/systemd/linger").join(user).exists());
+    }
+    None
+}
+
+pub enum LingerStep {
+    AlreadyOn,
+    Plan(LingerPlan),
+    /// Running it failed: the command to run by hand, and why.
+    Failed(String, String),
+}
+
+/// Turns lingering on if it's off and that can be done without a password (or, with
+/// `dry_run`, says what would happen). Never fails: the worst case is a command to print.
+pub fn linger_step(user: &str, dry_run: bool) -> LingerStep {
+    if linger_enabled(user) == Some(true) {
+        return LingerStep::AlreadyOn;
+    }
+    let plan = linger_plan(is_root(), sudo_nopasswd(), user);
+    if let (LingerPlan::Run(cmd), false) = (&plan, dry_run)
+        && let Err(e) = run(cmd)
+    {
+        return LingerStep::Failed(linger_command(user), format!("{e:#}"));
+    }
+    LingerStep::Plan(plan)
+}
+
+pub fn current_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .ok()
+        .filter(|u| !u.is_empty())
+        .or_else(|| quiet(&["id", "-un"]).map(|s| s.trim().to_string()))
+        .unwrap_or_default()
+}
+
+pub fn is_root() -> bool {
+    quiet(&["id", "-u"]).is_some_and(|s| s.trim() == "0")
+}
+
+/// Whether `sudo` is here and works without a password.
+pub fn sudo_nopasswd() -> bool {
+    Command::new("sudo")
+        .args(["-n", "true"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Whether `systemctl show -p ActiveState` says the unit is up or coming up (including
@@ -829,6 +951,22 @@ mod tests {
         assert!(svc.remove_installed().unwrap().is_empty());
         assert!(link.exists());
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn linger_plans() {
+        assert_eq!(linger_plan(true, false, "maple"), LingerPlan::Run(args(&["loginctl", "enable-linger", "maple"])));
+        assert_eq!(linger_plan(false, true, "maple"), LingerPlan::Run(args(&["sudo", "-n", "loginctl", "enable-linger", "maple"])));
+        assert_eq!(linger_plan(false, false, "maple"), LingerPlan::Print("sudo loginctl enable-linger maple".into()));
+        assert!(linger_warning("maple").ends_with("run sudo loginctl enable-linger maple"));
+    }
+
+    #[test]
+    fn parses_linger() {
+        assert_eq!(parse_linger("Linger=yes\n"), Some(true));
+        assert_eq!(parse_linger("Linger=no\n"), Some(false));
+        assert_eq!(parse_linger(""), None);
+        assert_eq!(parse_linger("Linger=maybe"), None);
     }
 
     #[test]
