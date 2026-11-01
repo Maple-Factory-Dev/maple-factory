@@ -1799,6 +1799,44 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// A real tmux session in a task worktree backgrounds `sleep`, then ends; then the task is cleaned
+    /// up. `cargo test leftovers_demo -- --ignored --nocapture` prints what happens.
+    #[tokio::test]
+    #[ignore]
+    async fn leftovers_demo() {
+        let _ = tracing_subscriber::fmt().with_target(false).without_time().try_init();
+        let (root, repo, wt, head) = repo_with_task("demo");
+        let (wts, repos) = (wt.to_string_lossy().into_owned(), repo.to_string_lossy().into_owned());
+        let tmux = |args: &[&str]| std::process::Command::new("tmux").args(["-L", "maple-mf-328-demo"]).args(args).output().unwrap();
+        let count = || {
+            let out = std::process::Command::new("lsof").args(["-a", "-d", "cwd", "-Fpcn"]).output().unwrap();
+            parse_lsof(&String::from_utf8_lossy(&out.stdout), &canonical(&wt)).into_iter().filter(|p| p.command == "sleep").map(|p| p.pid).collect::<Vec<_>>()
+        };
+        println!("$ tmux new-session -d -c {wts} 'nohup sleep 600 >/dev/null 2>&1 & exec sleep 3600'");
+        tmux(&["new-session", "-d", "-s", "task", "-c", &wts, "nohup sleep 600 >/dev/null 2>&1 & exec sleep 3600"]);
+        tmux(&["new-session", "-d", "-s", "other", "-c", &wts, "exec sleep 3600"]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        println!("sleeps in the worktree: {:?}", count());
+        println!("$ tmux kill-session -t task   (another session is still in the worktree)");
+        tmux(&["kill-session", "-t", "task"]);
+        let stopped = stop_after_session("MF-328", &wts, std::slice::from_ref(&wts)).await;
+        println!("stopped: {stopped:?}; sleeps in the worktree: {:?}", count());
+        println!("$ tmux kill-session -t other  (the last session in the worktree)");
+        tmux(&["kill-session", "-t", "other"]);
+        let at = Instant::now();
+        let stopped = stop_after_session("MF-328", &wts, &[]).await;
+        println!("stopped: {stopped:?} in {:.1}s; sleeps in the worktree: {:?}", at.elapsed().as_secs_f32(), count());
+        println!("--- task cleanup with a leftover running ---");
+        let pid = detached_sleep(&wt);
+        println!("detached sleep pid {pid}");
+        let done = remove_task(&[], work(&wts, &repos, false, &[head])).await.unwrap();
+        println!("TaskCleaned message: {}", done.message.replace(&std::env::temp_dir().to_string_lossy().into_owned(), "$TMPDIR/"));
+        println!("sleep {pid} alive: {}", alive(pid));
+        let _ = tmux(&["kill-server"]);
+        finish(done.deleting).await;
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn says_what_it_stopped() {
         let p = |pid, c: &str| Program { pid, command: c.into() };
