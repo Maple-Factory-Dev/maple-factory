@@ -246,6 +246,10 @@ struct TaskTimeline: View {
                 .background(RoundedRectangle(cornerRadius: 7).fill(Theme.editorBG))
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.accent.opacity(0.5)))
                 .onSubmit(send)
+                // ⌘↩ is the menu's command (it'd beat a button shortcut here); while this box has focus it posts the reply.
+                .focusedValue(\.composerSubmit, ComposerSubmit(
+                    label: "Send Reply",
+                    send: replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : send))
             HStack(spacing: 8) {
                 Button("Cancel") { withAnimation(.snappy(duration: 0.2)) { replyingTo = nil } }
                     .buttonStyle(.plain)
@@ -253,7 +257,7 @@ struct TaskTimeline: View {
                     .foregroundStyle(Theme.textMuted)
                 Button("Reply", action: send)
                     .controlSize(.small)
-                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Reply (⌘↩)")
                     .disabled(replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

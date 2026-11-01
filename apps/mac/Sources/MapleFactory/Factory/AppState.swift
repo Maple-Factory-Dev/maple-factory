@@ -490,6 +490,9 @@ final class AppState {
 
     var isComposing = false
     var draft = ComposeDraft()
+    /// What's typed in each task's comment box, by task id: the panel and full view share it, so switching
+    /// between them keeps it. Cleared when it's sent.
+    var composerDrafts: [String: String] = [:]
     /// Bumped by every New Task, so the composer puts the caret in the title even when it's already open.
     var composeFocusRequest = 0
     /// Your Scratchpad: the factory's copy when signed in.
@@ -1189,6 +1192,18 @@ final class AppState {
 
     func closeFocus() {
         withAnimation(.snappy(duration: 0.3)) { focusedTask = nil }
+    }
+
+    /// What ⌘↩ does. A focused comment or reply box takes it (sending, or nothing while it's empty) before
+    /// the new-task composer or the full-view toggle, so it never swaps the view under what you're typing.
+    enum ReturnCommand: Equatable {
+        case sendComposer, nothing, sendToPlanning, openFocus, closeFocus
+    }
+
+    func returnCommand(composerFocused: Bool, composerCanSend: Bool) -> ReturnCommand {
+        if composerFocused { return composerCanSend ? .sendComposer : .nothing }
+        if isComposing { return .sendToPlanning }
+        return focusedTask == nil ? .openFocus : .closeFocus
     }
 
     /// A link to the task that opens it in the app (through the factory's server when live).

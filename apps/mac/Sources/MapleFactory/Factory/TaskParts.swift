@@ -1323,16 +1323,51 @@ struct DiscussionPeek: View {
 // MARK: - Composer
 
 /// One input for both audiences: steer the task's agent, or comment to teammates.
+/// A focused comment or reply box, for the ⌘↩ menu command: its title, and how to send what's typed
+/// (nil while there's nothing to send, or an @/# picker is open).
+struct ComposerSubmit {
+    var label: String
+    var send: (() -> Void)?
+}
+
+struct ComposerSubmitKey: FocusedValueKey {
+    typealias Value = ComposerSubmit
+}
+
+extension FocusedValues {
+    var composerSubmit: ComposerSubmit? {
+        get { self[ComposerSubmitKey.self] }
+        set { self[ComposerSubmitKey.self] = newValue }
+    }
+}
+
 struct TaskComposer: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     @Binding var mode: ComposerMode
     var focused: FocusState<Bool>.Binding
 
-    @State private var draft = ""
     @State private var interruptNow = false
     @State private var mention = MentionState()
     @State private var taskRef = MentionState()
+
+    /// Kept in AppState by task, so it survives switching between the panel and full view.
+    private var draft: String {
+        get { appState.composerDrafts[task.id] ?? "" }
+        nonmutating set { appState.composerDrafts[task.id] = newValue.isEmpty ? nil : newValue }
+    }
+    private var draftBinding: Binding<String> { Binding(get: { draft }, set: { draft = $0 }) }
+
+    /// What ⌘↩ shows and does while this box has focus.
+    private var submit: ComposerSubmit {
+        let steering = mode == .steer && task.isSteerable
+        let label = !steering ? "Send Comment"
+            : task.state == .awaitingApproval || task.state == .backlog ? "Revise Plan"
+            : "Steer \(task.agent?.name ?? "Agent")"
+        let ready = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && mentionCandidates.isEmpty && taskCandidates.isEmpty
+        return ComposerSubmit(label: label, send: ready ? { send() } : nil)
+    }
 
     // The box is a TextField, so its cursor isn't known: an `@name` or `#ref` at the end is what's being typed.
     private var mentionQuery: MentionQuery? { mention.query(draft, cursor: (draft as NSString).length) }
@@ -1385,11 +1420,13 @@ struct TaskComposer: View {
                 }
             }
 
-            TextField(placeholder, text: $draft, axis: .vertical)
+            TextField(placeholder, text: draftBinding, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.text)
                 .focused(focused)
+                // ⌘↩ (a menu command, so it runs before the box sees the key) sends this instead of toggling full view.
+                .focusedValue(\.composerSubmit, submit)
                 .onExitCommand { if !pickerKey(.close) { focused.wrappedValue = false } }
                 .onSubmit { if !pickerKey(.pick) { send() } }
                 .onKeyPress(keys: [.upArrow, .downArrow, .tab]) { press in
