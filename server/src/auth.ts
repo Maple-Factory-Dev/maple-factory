@@ -10,7 +10,8 @@
 import type { Env } from "./env.ts";
 import { API, apiBase, githubApp, GitHubError, orgRole } from "./github.ts";
 import type { Member } from "./wire.ts";
-import { audit, isLocal, machineHub, orgHub, randomToken, sha256, sign, text, verify } from "./util.ts";
+import { aesKey, secretsKey } from "./secrets.ts";
+import { audit, b64url, isLocal, machineHub, orgHub, randomToken, sha256, sign, text, verify } from "./util.ts";
 
 const SESSION_TTL = 7 * 24 * 3600; // seconds
 const APP_TOKEN_TTL = 30 * 24 * 3600 * 1000; // ms
@@ -119,6 +120,7 @@ async function memberRow(env: Env, login: string) {
  *  their open sockets and terminals. A later sign-in, if GitHub still lets them, works as usual. */
 export async function revokeMember(env: Env, login: string, by: string, notify = true) {
   await env.DB.prepare("DELETE FROM app_tokens WHERE login = ?").bind(login).run();
+  await env.DB.prepare("DELETE FROM member_github_tokens WHERE login = ?").bind(login).run();
   await env.DB.prepare("UPDATE members SET revoked_at = ?, admin_granted_by = NULL, admin_granted_at = NULL WHERE login = ?").bind(Date.now(), login).run();
   await audit(env, by, "member.revoked", login);
   const { results } = await env.DB.prepare("SELECT id FROM machines WHERE owner = ?").bind(login).all<{ id: string }>();
@@ -195,6 +197,77 @@ export async function currentMember(request: Request, env: Env): Promise<Member 
   return null;
 }
 
+// ---- members' GitHub tokens -------------------------------------------------
+// Each member's user token from their last sign-in, so the factory can approve a pull request as them. Sealed like
+// repo secrets (secrets.ts): AES-GCM under a key SECRETS_KEY derives for this use, a fresh IV each, and the login as
+// additional data, so a row copied onto someone else won't open.
+
+const TOKEN_INFO = "member-github-token v1";
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+/** Refresh this long before GitHub says a token expires (ms). */
+const EXPIRY_SLACK_MS = 60_000;
+
+/** A user token as GitHub hands it over at sign-in or refresh. */
+export interface UserToken {
+  access_token?: string;
+  refresh_token?: string;
+  /** Seconds the access token lasts; absent: it doesn't expire. */
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+}
+
+const tokenAad = (login: string) => enc.encode(`member\n${login.toLowerCase()}`);
+
+async function seal(env: Env, login: string, value: string): Promise<string> {
+  const key = await aesKey(await secretsKey(env), TOKEN_INFO);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: tokenAad(login) }, key, enc.encode(value)));
+  const out = new Uint8Array(iv.length + sealed.length);
+  out.set(iv);
+  out.set(sealed, iv.length);
+  return b64url(out);
+}
+
+async function unseal(env: Env, login: string, sealed: string): Promise<string | null> {
+  try {
+    const bytes = Uint8Array.from(atob(sealed.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+    const key = await aesKey(await secretsKey(env), TOKEN_INFO);
+    const opened = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12), additionalData: tokenAad(login) }, key, bytes.slice(12));
+    return dec.decode(opened);
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps `login`'s user token from a sign-in or refresh, sealed. */
+export async function saveUserToken(env: Env, login: string, token: UserToken) {
+  if (!token.access_token) return;
+  const expiresAt = token.expires_in ? Date.now() + token.expires_in * 1000 : null;
+  await env.DB.prepare(
+    `INSERT INTO member_github_tokens (login, access_token, refresh_token, expires_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT (login) DO UPDATE SET access_token = ?2, refresh_token = ?3, expires_at = ?4, updated_at = ?5`,
+  ).bind(
+    login, await seal(env, login, token.access_token), token.refresh_token ? await seal(env, login, token.refresh_token) : null, expiresAt, Date.now(),
+  ).run();
+}
+
+/** `login`'s GitHub user token, refreshed (and the new pair kept) once it has expired; null when there's none that
+ *  works: they haven't signed in since tokens were kept, it won't open, or GitHub won't refresh it. */
+export async function userToken(env: Env, login: string): Promise<string | null> {
+  const row = await env.DB.prepare("SELECT * FROM member_github_tokens WHERE login = ?").bind(login)
+    .first<{ access_token: string; refresh_token: string | null; expires_at: number | null }>();
+  if (!row) return null;
+  if (row.expires_at === null || row.expires_at - EXPIRY_SLACK_MS > Date.now()) return unseal(env, login, row.access_token);
+  const refresh = row.refresh_token && (await unseal(env, login, row.refresh_token));
+  if (!refresh) return null;
+  const fresh = await exchange(env, { grant_type: "refresh_token", refresh_token: refresh }).catch(() => ({} as UserToken));
+  if (!fresh.access_token) return null;
+  await saveUserToken(env, login, fresh);
+  return fresh.access_token;
+}
+
 // ---- GitHub ----------------------------------------------------------------
 
 interface Identity {
@@ -267,7 +340,7 @@ async function exchange(env: Env, params: Record<string, string>) {
     headers: { accept: "application/json", "content-type": "application/json", "user-agent": UA },
     body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, ...params }),
   });
-  return (await res.json().catch(() => ({}))) as { access_token?: string; error?: string; error_description?: string; interval?: number };
+  return (await res.json().catch(() => ({}))) as UserToken & { interval?: number };
 }
 
 // ---- routes ----------------------------------------------------------------
@@ -304,6 +377,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
     if (!token.access_token) return text(`GitHub didn't sign you in: ${token.error_description ?? "no token returned"}.`, 502);
     const verdict = await admit(env, token.access_token);
     if (!verdict.ok) return text(verdict.message, verdict.status);
+    await saveUserToken(env, verdict.member.login, token);
     await audit(env, verdict.member.login, "auth.login", null, { via: "web" });
     const session = await sign({ login: verdict.member.login, iat: Date.now(), exp: Math.floor(Date.now() / 1000) + SESSION_TTL }, env.SESSION_SECRET!);
     const headers = new Headers({ location: signed.next || "/" });
@@ -341,6 +415,7 @@ export async function handleAuth(request: Request, env: Env): Promise<Response |
     if (!token.access_token) return text(token.error_description ?? "GitHub didn't sign you in.", 400);
     const verdict = await admit(env, token.access_token);
     if (!verdict.ok) return text(verdict.message, verdict.status);
+    await saveUserToken(env, verdict.member.login, token);
     const appToken = randomToken("mft");
     await env.DB.prepare("INSERT INTO app_tokens (token_hash, login, label, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
       .bind(await sha256(appToken), verdict.member.login, label ?? null, Date.now(), Date.now() + APP_TOKEN_TTL).run();
