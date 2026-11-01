@@ -4,7 +4,7 @@
 // fails late (a notarization timeout, an expired R2 token) can be run again without the ones before it:
 //
 //   node apps/mac/scripts/release.mjs new 0.2.0 [--channel beta]   # releases/0.2.0/notes.md, and bumps version.json
-//   node apps/mac/scripts/release.mjs ship 0.2.0                   # build → notarize → dmg → sign → appcast → publish
+//   node apps/mac/scripts/release.mjs ship 0.2.0 [--yes]           # build → notarize → dmg → sign → appcast → publish
 //
 // What a person decided (version, build, channel, notes) is releases/<v>/notes.md; what was measured
 // from the DMG (its length and EdDSA signature) is releases/<v>/release.json. Both are committed, so
@@ -12,12 +12,18 @@
 // a beta is tagged <sparkle:channel>beta</sparkle:channel>, a release isn't (an untagged item is the
 // one every install takes).
 //
-// Credentials and where it goes are in apps/mac/.env.release (gitignored; see .env.release.example).
-// The DMG and notes are signed with the Sparkle key in the login keychain (the one Screenie uses), or
-// SPARKLE_KEY_FILE; bundle.sh builds in its public half as SUPublicEDKey.
+// Credentials and where it goes come from the environment, then apps/mac/.env.release (gitignored, and
+// optional when the environment has them all; see .env.release.example and RELEASING.md). Notarizing uses
+// NOTARY_PROFILE (a keychain profile) or else an App Store Connect API key (NOTARY_KEY_ID, NOTARY_ISSUER_ID,
+// NOTARY_KEY: the .p8 text or its path). The DMG and notes are signed with the Sparkle key in
+// SPARKLE_PRIVATE_KEY (its text), SPARKLE_KEY_FILE, or the login keychain (the one Screenie uses);
+// bundle.sh builds in its public half as SUPublicEDKey. Nothing prompts once `ship` has --yes.
+//
+// `build` tags the tree it built mac-v<version> and pushes it to origin: the next release's base. A
+// rehearsal (MAPLE_RELEASES_DIR set) or --no-tag doesn't.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -38,20 +44,53 @@ const capture = (cmd, argv) => execFileSync(cmd, argv, { cwd: here, encoding: "u
 const heading = (text) => console.log(`\n── ${text} ${"─".repeat(Math.max(0, 60 - text.length))}`);
 const ok = (text) => console.log(`  ✓ ${text}`);
 const fail = (text) => { throw new Error(text); };
+const flag = (name) => process.argv.includes(name);
 
-/** .env.release into process.env, without overriding what's already set. */
+/** .env.release into process.env, without overriding what's already set. Optional: in CI the
+ *  environment has it all, and need() says what's missing from both. */
 function loadEnv() {
   const file = join(here, ".env.release");
-  if (!existsSync(file)) fail(`No ${file}: copy .env.release.example there and fill it in.`);
-  for (const line of readFileSync(file, "utf8").split("\n")) {
+  for (const line of existsSync(file) ? readFileSync(file, "utf8").split("\n") : []) {
     const [, key, value] = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/) ?? [];
     if (key && !process.env[key]) process.env[key] = value.replace(/^"(.*)"$/, "$1");
   }
+  secretFiles();
 }
 function need(...names) {
   const missing = names.filter((n) => !process.env[n]);
-  if (missing.length) fail(`Missing in .env.release: ${missing.join(", ")}`);
+  if (missing.length) fail(`Missing in the environment or .env.release: ${missing.join(", ")}`);
   return names.map((n) => process.env[n]);
+}
+
+// Secrets passed as text (SPARKLE_PRIVATE_KEY, NOTARY_KEY) go to 0600 files in a 0700 folder that's
+// removed on exit, since the tools only read keys from files.
+let secretsDir = null;
+function secretFile(name, text) {
+  if (!secretsDir) {
+    secretsDir = mkdtempSync(join(tmpdir(), "maple-release-secrets-"));
+    process.on("exit", () => rmSync(secretsDir, { recursive: true, force: true }));
+  }
+  const file = join(secretsDir, name);
+  writeFileSync(file, text.replace(/\\n/g, "\n").trimEnd() + "\n", { mode: 0o600 });
+  return file;
+}
+function secretFiles() {
+  if (process.env.SPARKLE_PRIVATE_KEY && !process.env.SPARKLE_KEY_FILE) {
+    process.env.SPARKLE_KEY_FILE = secretFile("sparkle-key", process.env.SPARKLE_PRIVATE_KEY);
+  }
+}
+secretFiles(); // SPARKLE_PRIVATE_KEY from the environment, even for a stage that doesn't load .env.release
+
+/** notarytool's credentials: the keychain profile when NOTARY_PROFILE is set, else the API key. */
+function notaryArgs() {
+  if (process.env.NOTARY_PROFILE) return ["--keychain-profile", process.env.NOTARY_PROFILE];
+  if (!(process.env.NOTARY_KEY_ID || process.env.NOTARY_ISSUER_ID || process.env.NOTARY_KEY)) {
+    fail("Missing in the environment or .env.release: NOTARY_PROFILE, or NOTARY_KEY_ID + NOTARY_ISSUER_ID + NOTARY_KEY");
+  }
+  const [id, issuer, key] = need("NOTARY_KEY_ID", "NOTARY_ISSUER_ID", "NOTARY_KEY");
+  const file = key.includes("BEGIN PRIVATE KEY") ? secretFile(`AuthKey_${id}.p8`, key) : key;
+  if (!existsSync(file)) fail("NOTARY_KEY is neither a .p8 key's text nor the path of one.");
+  return ["--key", file, "--key-id", id, "--issuer", issuer];
 }
 const updatesURL = () => (process.env.UPDATES_URL || "https://updates.maplefactory.dev").replace(/\/+$/, "");
 const signIdentity = () => process.env.SIGN_IDENTITY || "Developer ID Application: Andrea Fomera (TU4485Z3KR)";
@@ -321,6 +360,21 @@ function cmdBuild(v) {
   }
   ok(`signed ${APP}`);
   uploadSymbols();
+  tagBuilt(r.version);
+}
+
+/** Tags HEAD mac-v<v> on origin: what this release was built from, and the next one's base. */
+function tagBuilt(v) {
+  if (process.env.MAPLE_RELEASES_DIR || flag("--no-tag")) return console.log(`  (${process.env.MAPLE_RELEASES_DIR ? "A rehearsal" : "--no-tag"}: not tagging mac-v${v}.)`);
+  const git = (...argv) => capture("git", argv);
+  const tag = `mac-v${v}`;
+  const head = git("rev-parse", "HEAD");
+  const remote = git("ls-remote", "--tags", "origin", `refs/tags/${tag}^{}`).split(/\s/)[0];
+  if (remote === head) return ok(`${tag} is already HEAD on origin`);
+  if (remote) fail(`${tag} is on origin at ${remote.slice(0, 9)}, not HEAD: bump the version, or --no-tag to build without tagging.`);
+  git("tag", "-a", "-f", tag, "-m", `Maple Factory ${v}`);
+  git("push", "-q", "origin", tag);
+  ok(`tagged ${tag} and pushed it`);
 }
 
 /** The app's debug symbols to Sentry, so its crash and hang reports read as source lines. A bundle that
@@ -364,7 +418,7 @@ function sendSymbols(dsym, binary) {
 
 /** One release's dSYM, after the fact: from apps/mac/.build/release (or --built <path to its MapleFactory>,
  *  e.g. another checkout's .build/release) if that's still the shipped binary,
- *  else from its mac-built-<v> tag built in a scratch worktree. Its UUID must be the shipped app's, read
+ *  else from its mac-v<v> tag (mac-built-<v> for releases before those) built in a scratch worktree. Its UUID must be the shipped app's, read
  *  from /Applications or --app <path to Maple Factory.app>. */
 function cmdSymbols(v) {
   if (!v) fail("usage: release.mjs symbols <version> [--app <path to Maple Factory.app>] [--built <path to its release MapleFactory>]");
@@ -383,7 +437,9 @@ function cmdSymbols(v) {
     // builds the same sources, and its UUID check below says whether it came out the same binary.
     const tree = join(tmpdir(), `maple-symbols-${v}`);
     rmSync(tree, { recursive: true, force: true });
-    run("git", ["worktree", "add", "--detach", tree, `mac-built-${v}`]);
+    let tag = `mac-v${v}`;
+    try { capture("git", ["fetch", "-q", "origin", "tag", tag]); } catch { tag = `mac-built-${v}`; } // the older, local-only tags
+    run("git", ["worktree", "add", "--detach", tree, tag]);
     try {
       run("swift", ["build", "-c", "release"], { cwd: join(tree, "apps/mac") });
       built = join(capture("sh", ["-c", `cd "${join(tree, "apps/mac")}" && swift build -c release --show-bin-path`]), "MapleFactory");
@@ -400,14 +456,14 @@ function cmdSymbols(v) {
 /** Notarizes and staples a .app or .dmg. Both get their own round: the app's ticket is what opens it
  *  offline once it's in Applications; the DMG's is what Gatekeeper checks of the download. */
 function notarize(path) {
-  const [profile] = need("NOTARY_PROFILE");
+  const credentials = notaryArgs();
   let submission = path;
   if (path.endsWith(".app")) {
     submission = `${path}.zip`;
     rmSync(submission, { force: true });
     run("ditto", ["-c", "-k", "--keepParent", path, submission]); // ditto keeps the bundle's symlinks
   }
-  run("xcrun", ["notarytool", "submit", submission, "--keychain-profile", profile, "--wait"]);
+  run("xcrun", ["notarytool", "submit", submission, ...credentials, "--wait"]);
   run("xcrun", ["stapler", "staple", path]);
   run("xcrun", ["stapler", "validate", path]);
   if (submission !== path) rmSync(submission, { force: true });
@@ -531,7 +587,10 @@ function cmdPublish() {
 
 async function cmdShip(v) {
   const r = release(v);
+  const yes = flag("--yes");
+  if (!yes && !process.stdin.isTTY) fail("ship asks twice before it goes on, and stdin isn't a terminal: pass --yes to ship unattended.");
   const ask = async (question) => {
+    if (yes) return console.log(`${question} yes (--yes)`), true;
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = await rl.question(`${question} [y/N] `);
     rl.close();
@@ -542,7 +601,8 @@ async function cmdShip(v) {
   if (!(await ask("\nGo ahead?"))) return console.log("Cancelled.");
   // A missing credential fails now, not after ten minutes of notarizing.
   loadEnv();
-  need("NOTARY_PROFILE", "R2_ACCOUNT_ID", "R2_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY");
+  notaryArgs();
+  need("R2_ACCOUNT_ID", "R2_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY");
   if (process.env.MAPLE_SKIP_SYMBOLS !== "1") need("SENTRY_AUTH_TOKEN");
   sparkleBin("sign_update");
   cmdBuild(v);
@@ -551,6 +611,7 @@ async function cmdShip(v) {
   cmdSign(v);
   cmdAppcast();
   if (!(await ask(`Publish to ${updatesURL()}?`))) return console.log("Stopped before publishing; `publish` when ready.");
+  if (process.env.MAPLE_STOP_BEFORE_PUBLISH === "1") return console.log("MAPLE_STOP_BEFORE_PUBLISH=1: stopped before publishing.");
   cmdPublish();
   console.log(`\n  ✓ ${r.version} shipped. Commit apps/mac/releases/${r.version}/ and apps/mac/version.json.`);
 }
@@ -560,15 +621,21 @@ if (!COMMANDS[command]) {
   console.log(`usage: release.mjs <command> [version]
 
   new <version>       releases/<version>/notes.md (--channel beta for a prerelease), and bumps version.json
-  build <version>     bundle.sh with the Developer ID, checks every nested signature, and uploads its dSYM to Sentry
+  build <version>     bundle.sh with the Developer ID, checks every nested signature, uploads its dSYM to Sentry,
+                      and tags mac-v<version> on origin (not in a rehearsal, or with --no-tag)
   notarize <version>  notarizes and staples the app
   dmg <version>       the DMG from the stapled app, signed, notarized and stapled
   sign <version>      notes.html, and the EdDSA signatures in release.json
   appcast             build/updates-site/appcast.xml and changelog.html from every releases/*/release.json
   publish             uploads build/updates-site/ to R2 (the appcast last), and checks it's live
-  ship <version>      all of these, asking before it starts and before it publishes
+  ship <version>      all of these, asking before it starts and before it publishes (--yes doesn't ask)
   symbols <version>   uploads an already-shipped release's dSYM (--app <path> if /Applications isn't that version,
-                      --built <path> for a checkout's .build/release/MapleFactory that built it)`);
+                      --built <path> for a checkout's .build/release/MapleFactory that built it)
+
+Credentials come from the environment, then apps/mac/.env.release; env-only ones (for CI, RELEASING.md):
+  NOTARY_KEY_ID, NOTARY_ISSUER_ID, NOTARY_KEY   an App Store Connect API key, when there's no NOTARY_PROFILE
+  SPARKLE_PRIVATE_KEY                          the Sparkle EdDSA key's text, in place of SPARKLE_KEY_FILE
+  MAPLE_STOP_BEFORE_PUBLISH=1                  ship stops before publishing (a rehearsal)`);
   process.exit(command ? 1 : 0);
 }
 try {
