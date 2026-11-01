@@ -101,6 +101,21 @@ A beta run still takes a `server-v<v>` tag: tags mark released trees, whatever t
 `dry_run: true` bumps only on the runner, publishes to a `dir:` feed and uploads it as the
 `maple-server-<v>-feed` artifact; it pushes no commit and no tag, and needs only `MAPLE_RELEASE_KEY_PEM`.
 
+## Build cache
+
+A Mac release builds in the checkout it runs from, and SwiftBuild keeps its work in `apps/mac/.build`
+(about 2 GB): run `ship` from the long-lived main checkout, never a fresh clone or worktree, or every
+release starts cold (23m40s for a cold bundle on a busy machine, against minutes warm). `bundle.sh` runs
+`swift build -c release` once, builds the runner, tmux and the icon alongside it, and writes the products'
+path to `apps/mac/build/bin-path`; the dSYM sent to Sentry is the one SwiftBuild wrote when its UUID is the
+bundled binary's (otherwise `dsymutil` makes it again). `symbols` builds in `apps/mac/build/symbols-cache`,
+which it keeps between runs. If SwiftBuild ever gets confused (a stale product, an odd link error),
+`rm -rf apps/mac/.build` resets it, at the cost of one cold build.
+
+Before MF-289, on a warm `.build` with one Swift file touched (on a heavily loaded machine): swift build
+13m41s, runner 5s, tmux 0s, icon 5s, signing 13s (bundle 14m05s), then a second `swift build` and
+`dsymutil` for the dSYMs (42s). The after timings are still to be measured: the first release's log has them.
+
 ## Rehearsing
 
 - Feed: `--to dir:<scratch>/feed` writes a feed-shaped folder and tags nothing.
