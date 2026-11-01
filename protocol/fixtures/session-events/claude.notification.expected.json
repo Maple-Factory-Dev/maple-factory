@@ -1,0 +1,38 @@
+[
+  {
+    "type": "prompt",
+    "id": "prompt-1",
+    "session": "3f2b6c1e-8d4a-4f7e-9b0a-1c2d3e4f5a6b",
+    "seq": 10,
+    "at": 1792000000000,
+    "agent": "claude",
+    "kind": "permission",
+    "text": "Claude needs your permission to use Bash",
+    "options": [
+      {
+        "key": "1",
+        "label": "Yes",
+        "choice": "yes"
+      },
+      {
+        "key": "2",
+        "label": "Yes, and don't ask again for this command"
+      },
+      {
+        "key": "Escape",
+        "label": "No",
+        "choice": "no"
+      }
+    ]
+  },
+  {
+    "type": "prompt.resolved",
+    "id": "prompt-1:resolved",
+    "session": "3f2b6c1e-8d4a-4f7e-9b0a-1c2d3e4f5a6b",
+    "seq": 11,
+    "at": 1792000004000,
+    "agent": "claude",
+    "promptId": "prompt-1",
+    "key": "1"
+  }
+]

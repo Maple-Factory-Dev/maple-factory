@@ -8,7 +8,8 @@
   ],
   "scripts": {
     "gen": "node protocol/gen.ts",
-    "gen:check": "node protocol/gen.ts --check",
+    "gen:check": "node protocol/gen.ts --check && node protocol/fixtures/check.ts",
+    "test:fixtures": "node --test protocol/fixtures/check.test.ts",
     "dev": "npm run dev --workspace server",
     "typecheck": "npm run typecheck --workspaces --if-present"
   }
