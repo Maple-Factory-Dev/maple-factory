@@ -180,7 +180,7 @@ struct StatisticsView: View {
 /// A server from before the split sends no idle median, so the headline shows the whole cycle.
 private func cycleDetail(_ t: Wire.StatsTotals) -> String {
     guard t.activeCycleMedianMs != nil, let idle = t.idleMedianMs else { return "median, to merge" }
-    return "median, to merge · \(duration(idle)) idle before"
+    return "median · \(duration(idle)) idle"
 }
 
 private func duration(_ ms: UInt64?) -> String {

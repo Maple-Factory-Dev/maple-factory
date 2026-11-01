@@ -54,6 +54,7 @@ struct StatisticsView: View {
                 case "back": section = nil
                 case "list": withAnimation(.snappy(duration: 0.4)) { proxy.scrollTo("findings-list", anchor: .top) }
                 case "merged": proxy.scrollTo("merged-by-people", anchor: .top)
+                case "goals": proxy.scrollTo("by-goal", anchor: .center)
                 default: break
                 }
             }
@@ -135,7 +136,7 @@ struct StatisticsView: View {
 
         costCard(s).id("cost")
 
-        if !s.goals.isEmpty { goalTable(s.goals) }
+        if !s.goals.isEmpty { goalTable(s.goals).id("by-goal") }
         if !s.agents.isEmpty { agentTable(s.agents) }
         topTasks(s.topTasks)
 
@@ -528,7 +529,7 @@ func cardTitle(_ title: String, note: String?) -> some View {
 /// A server from before the split sends no idle median, so the tile shows the whole cycle.
 private func cycleDetail(_ t: Wire.StatsTotals) -> String {
     guard t.activeCycleMedianMs != nil, let idle = t.idleMedianMs else { return "median, to merge" }
-    return "median, to merge · \(duration(idle)) idle before"
+    return "median · \(duration(idle)) idle"
 }
 
 private func duration(_ ms: UInt64?) -> String {
