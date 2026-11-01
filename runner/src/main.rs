@@ -590,7 +590,10 @@ async fn unenroll(dry_run: bool, local_only: bool) -> Result<()> {
             style::bold(&cfg.runner_id)
         );
     } else {
-        match anyhow::Context::context(config::unenroll(&cfg).await, "unenrolling didn't finish, so runner.json is kept; try again, or use --local-only for a machine that's offline for good")? {
+        match anyhow::Context::context(
+            config::unenroll(&cfg).await,
+            "unenrolling didn't finish, so runner.json is kept; try again, or use --local-only for a machine that's offline for good",
+        )? {
             config::Unenrolled::Forgotten => println!("{} {} from {}; its token no longer works.", style::ok("Removed"), style::bold(&cfg.runner_id), cfg.url),
             config::Unenrolled::AlreadyGone => println!("{} wasn't on {} any more (or its token was already revoked).", style::bold(&cfg.runner_id), cfg.url),
         }
@@ -1213,9 +1216,15 @@ mod tests {
         assert!(matches!(Cli::try_parse_from(["maple-runner", "stop"]).unwrap().command, Some(Cmd::Stop { dry_run: false })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "stop", "--dry-run"]).unwrap().command, Some(Cmd::Stop { dry_run: true })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "uninstall"]).unwrap().command, Some(Cmd::Uninstall { dry_run: false, unenroll: false })));
-        assert!(matches!(Cli::try_parse_from(["maple-runner", "uninstall", "--dry-run", "--unenroll"]).unwrap().command, Some(Cmd::Uninstall { dry_run: true, unenroll: true })));
+        assert!(matches!(
+            Cli::try_parse_from(["maple-runner", "uninstall", "--dry-run", "--unenroll"]).unwrap().command,
+            Some(Cmd::Uninstall { dry_run: true, unenroll: true })
+        ));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "unenroll"]).unwrap().command, Some(Cmd::Unenroll { dry_run: false, local_only: false })));
-        assert!(matches!(Cli::try_parse_from(["maple-runner", "unenroll", "--local-only"]).unwrap().command, Some(Cmd::Unenroll { dry_run: false, local_only: true })));
+        assert!(matches!(
+            Cli::try_parse_from(["maple-runner", "unenroll", "--local-only"]).unwrap().command,
+            Some(Cmd::Unenroll { dry_run: false, local_only: true })
+        ));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "run", "--force"]).unwrap().command, Some(Cmd::Run(Args { force: true, .. }))));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "status", "--url", "https://x.dev"]).unwrap().command, Some(Cmd::Status { url: Some(_) })));
     }

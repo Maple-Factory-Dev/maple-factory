@@ -328,7 +328,8 @@ mod tests {
         let path = dir.join("runner.json");
         // Not enrolled: nothing to delete, and that's fine.
         assert!(!forget(&path).unwrap());
-        let config = Config { url: "http://localhost:8787".into(), runner_id: "a".into(), token: "t".into(), test: false, repo_roots: None, repo_clone_days: None };
+        let config =
+            Config { url: "http://localhost:8787".into(), runner_id: "a".into(), token: "t".into(), test: false, repo_roots: None, repo_clone_days: None };
         config.save(&path).unwrap();
         assert!(forget(&path).unwrap());
         assert!(!path.exists());
