@@ -291,8 +291,9 @@ export async function mergePullRequest(app: GitHubApp, owner: string, repo: stri
   // GitHub works out whether a pull request can merge in the background after each push, and says
   // 405 "not mergeable" until it has: so a 405 soon after a push gets a few more tries.
   let res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
-  // A branch that merges only through its merge queue says 405 too, and always will: no retries for that.
-  const queueOnly = async (r: Response) => /merge queue/i.test(await r.clone().text().catch(() => ""));
+  // A branch that merges only through its merge queue says 405 too, and always will, as does one still waiting on
+  // required approving reviews: no retries for those.
+  const queueOnly = async (r: Response) => /merge queue|approving review/i.test(await r.clone().text().catch(() => ""));
   for (let attempt = 1; res.status === 405 && attempt <= MERGE_RETRIES && !(await queueOnly(res)); attempt++) {
     await new Promise((r) => setTimeout(r, attempt * MERGE_RETRY_MS));
     res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
