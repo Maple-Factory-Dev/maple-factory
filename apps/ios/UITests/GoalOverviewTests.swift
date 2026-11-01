@@ -18,8 +18,13 @@ final class GoalOverviewTests: XCTestCase {
         super.tearDown()
     }
 
-    private func open() {
-        app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goal", "g-app", "-goalOverview.landedOpen", "NO"]
+    /// Every section open (Recently landed folded) unless `folds` says otherwise, so a fold left over
+    /// from another run doesn't leak in.
+    private func open(_ folds: [String: Bool] = [:]) {
+        var state = ["needsYou": true, "upNext": true, "drafts": true, "inMotion": true, "landed": false]
+        state.merge(folds) { $1 }
+        app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goal", "g-app"]
+            + state.sorted { $0.key < $1.key }.flatMap { ["-goalOverview.\($0.key)Open", $0.value ? "YES" : "NO"] }
         app.launch()
         XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 60), "the goal didn't open")
     }
@@ -85,6 +90,77 @@ final class GoalOverviewTests: XCTestCase {
         snap("goal-overview-dark-1")
         reveal(app.buttons["recently-landed"])
         snap("goal-overview-dark-2")
+    }
+
+    /// MF-340: tapping a section's header folds its rows away and keeps its title and count.
+    func testSectionsFoldAndUnfold() {
+        XCUIDevice.shared.appearance = .light
+        open()
+        let needsYou = app.buttons["section-needs-you"]
+        XCTAssertTrue(needsYou.exists, "Needs you can't fold")
+        XCTAssertEqual(needsYou.value as? String, "expanded")
+        let card = app.buttons["needs-you-APP-12"]
+        XCTAssertTrue(card.exists, "no APP-12 card")
+        needsYou.tap()
+        XCTAssertTrue(card.waitForNonExistence(timeout: 5), "Needs you didn't fold")
+        XCTAssertTrue(text("Needs you · 2").exists, "folding hid the title and count")
+        XCTAssertEqual(needsYou.value as? String, "collapsed")
+        needsYou.tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5), "Needs you didn't unfold")
+
+        let inMotion = app.buttons["section-in-motion"]
+        reveal(inMotion)
+        XCTAssertTrue(inMotion.exists, "In motion can't fold")
+        let row = app.staticTexts["Crash reports with Sentry"]
+        XCTAssertTrue(row.exists, "no APP-16 in In motion")
+        inMotion.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5), "In motion didn't fold")
+        XCTAssertEqual(inMotion.value as? String, "collapsed")
+        XCTAssertTrue(text("In motion · ").exists, "folding hid In motion's title and count")
+        inMotion.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "In motion didn't unfold")
+        XCTAssertEqual(inMotion.value as? String, "expanded")
+
+        // Drafts folds here too, and its Edit goes with the rows.
+        let drafts = app.buttons["section-drafts"]
+        reveal(drafts)
+        XCTAssertTrue(drafts.exists, "Drafts can't fold")
+        drafts.tap()
+        XCTAssertEqual(drafts.value as? String, "collapsed")
+        XCTAssertFalse(app.buttons["drafts-edit"].exists, "Edit shows on folded Drafts")
+        drafts.tap()
+    }
+
+    /// A fold is kept across launches: started folded, Needs you shows its title and no cards.
+    func testFoldedSectionsComeBackFolded() {
+        XCUIDevice.shared.appearance = .light
+        open(["needsYou": false, "inMotion": false, "drafts": false])
+        XCTAssertEqual(app.buttons["section-needs-you"].value as? String, "collapsed")
+        XCTAssertTrue(text("Needs you · 2").exists)
+        XCTAssertFalse(app.buttons["needs-you-APP-12"].exists, "Needs you started open")
+        XCTAssertEqual(app.buttons["section-up-next"].value as? String, "expanded")
+        snap("goal-overview-folded-light")
+        let drafts = app.buttons["section-drafts"]
+        reveal(drafts)
+        XCTAssertFalse(app.buttons["drafts-edit"].exists, "Edit shows on folded Drafts")
+        snap("goal-overview-folded-drafts-light")
+
+        app.terminate()
+        XCUIDevice.shared.appearance = .dark
+        open(["needsYou": false, "inMotion": false, "drafts": false])
+        XCTAssertFalse(app.buttons["needs-you-APP-12"].exists, "Needs you started open")
+        snap("goal-overview-folded-dark")
+
+        // All tasks' Drafts doesn't fold.
+        let all = app.buttons["goal-all-tasks"]
+        reveal(all)
+        all.tap()
+        XCTAssertTrue(app.navigationBars["All tasks"].waitForExistence(timeout: 10))
+        let edit = app.buttons["drafts-edit"]
+        reveal(edit)
+        XCTAssertTrue(edit.exists, "All tasks' Drafts lost Edit")
+        XCTAssertFalse(app.buttons["section-drafts"].exists, "All tasks' Drafts folds")
+        snap("goal-all-tasks-drafts-dark")
     }
 
     private func snap(_ name: String) {

@@ -74,6 +74,17 @@ struct StageHeader: View {
     }
 }
 
+/// A folding section's chevron: right when folded, down when open.
+struct FoldChevron: View {
+    let open: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .rotationEffect(.degrees(open ? 90 : 0))
+            .foregroundStyle(.secondary)
+    }
+}
+
 /// Swipe a task to planning.
 struct PlanSwipe: View {
     @Environment(FactoryStore.self) private var store
@@ -91,29 +102,40 @@ struct DraftsSection<Header: View>: View {
     let drafts: [Wire.Task]
     @Binding var editMode: EditMode
     var editID = "drafts-edit"
+    /// Set on the goal Overview to fold the section from its header (MF-340); All tasks leaves it nil.
+    var open: Binding<Bool>? = nil
     @ViewBuilder let header: (Int) -> Header
 
     private var editing: Bool { editMode.isEditing }
+    private var isOpen: Bool { open?.wrappedValue ?? true }
 
     var body: some View {
         if !drafts.isEmpty {
             Section {
-                ForEach(drafts) { task in
-                    NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
-                        .swipeActions(edge: .trailing) {
-                            if !editing {
-                                Button { store.sendToBacklog(task.id) } label: { Label("Backlog", systemImage: Wire.TaskState.backlog.icon) }
-                                    .tint(Theme.state(.backlog))
-                                PlanSwipe(task: task)
-                            }
-                        }
-                }
-                .onMove { from, to in move(from: from, to: to) }
+                if isOpen { rows }
             } header: {
                 HStack {
-                    header(drafts.count)
-                    Spacer()
-                    if drafts.count > 1 {
+                    if let open {
+                        Button {
+                            withAnimation {
+                                open.wrappedValue.toggle()
+                                if !open.wrappedValue { editMode = .inactive }
+                            }
+                        } label: {
+                            HStack {
+                                header(drafts.count)
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("section-drafts")
+                        .accessibilityValue(isOpen ? "expanded" : "collapsed")
+                    } else {
+                        header(drafts.count)
+                        Spacer()
+                    }
+                    if drafts.count > 1, isOpen {
                         Button(editing ? "Done" : "Edit") {
                             withAnimation { editMode = editing ? .inactive : .active }
                         }
@@ -121,10 +143,25 @@ struct DraftsSection<Header: View>: View {
                         .textCase(nil)
                         .accessibilityIdentifier(editID)
                     }
+                    if open != nil { FoldChevron(open: isOpen) }
                 }
             }
             .onChange(of: drafts.count > 1) { _, several in if !several { editMode = .inactive } }
         }
+    }
+
+    private var rows: some View {
+        ForEach(drafts) { task in
+            NavigationLink(value: TaskRoute(id: task.id)) { TaskRow(task: task) }
+                .swipeActions(edge: .trailing) {
+                    if !editing {
+                        Button { store.sendToBacklog(task.id) } label: { Label("Backlog", systemImage: Wire.TaskState.backlog.icon) }
+                            .tint(Theme.state(.backlog))
+                        PlanSwipe(task: task)
+                    }
+                }
+        }
+        .onMove { from, to in move(from: from, to: to) }
     }
 
     /// Ranks the dragged draft ahead of the one that now follows it ("top" when it lands first).
