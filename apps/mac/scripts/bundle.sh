@@ -18,9 +18,44 @@ t0=$(date +%s)
 elapsed() { if [ "$1" -ge 60 ]; then printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); else printf '%ds' "$1"; fi; }
 stage() { now=$(date +%s); echo "  ✓ $1 in $(elapsed $((now - t0)))" >&2; t0=$now; }
 
+mkdir -p "$here/build"
+logs="$(mktemp -d)"
+trap 'rm -rf "$logs"' EXIT
+
+# The runner (Apple silicon, like the app), a tmux that needs nothing from Homebrew, and the icon need
+# nothing from Swift, so they build alongside it. Each logs to its own file, shown if it fails.
+target=aarch64-apple-darwin
+rustup target list --installed | grep -qx "$target" || rustup target add "$target"
+alongside() { name="$1"; shift; start=$(date +%s); "$@" > "$logs/$name.log" 2>&1 || return; echo $(($(date +%s) - start)) > "$logs/$name.time"; }
+alongside runner sh -c 'cd "$1/runner" && cargo build --release --target "$2" --quiet' sh "$root" "$target" & runner_job=$!
+alongside tmux "$here/scripts/build-tmux.sh" & tmux_job=$!
+# The icon: every size iconutil wants, from the 1254px source.
+icon() {
+  iconset="$logs/AppIcon.iconset"
+  mkdir -p "$iconset"
+  for size in 16 32 128 256 512; do
+    sips -z $size $size "$root/assets/icon.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    sips -z $((size * 2)) $((size * 2)) "$root/assets/icon.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$iconset" -o "$logs/AppIcon.icns"
+}
+alongside icon icon & icon_job=$!
+
+# One swift build. Its products are in .build/<config> (a link SwiftBuild keeps to out/Products/<Config>);
+# release.mjs reads the path from build/bin-path rather than asking swift again.
+echo "  \$ swift build -c $config" >&2
 swift build -c "$config"
-bin="$(swift build -c "$config" --show-bin-path)"
+bin="$(cd "$here/.build/$config" 2>/dev/null && pwd -P)" || bin="$(swift build -c "$config" --show-bin-path)"
+echo "$bin" > "$here/build/bin-path"
 stage "swift build"
+
+# Any of the three failing stops here, as it would have run in line.
+for job in runner tmux icon; do
+  eval "pid=\$${job}_job"
+  if ! wait "$pid"; then echo "bundle.sh: building the $job failed:" >&2; cat "$logs/$job.log" >&2; exit 1; fi
+  echo "  ✓ $job in $(elapsed "$(cat "$logs/$job.time")") (alongside swift)" >&2
+done
+t0=$(date +%s)
 version="$(plutil -extract version raw "$here/version.json")"
 build="$(plutil -extract build raw "$here/version.json")"
 updates="${UPDATES_URL:-https://updates.maplefactory.dev}"
@@ -37,25 +72,10 @@ mkdir -p "$app/Contents/Frameworks"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/MapleFactory"
 
-# The runner (Apple silicon, like the app), and a tmux that needs nothing from Homebrew.
 mkdir -p "$app/Contents/Helpers"
-target=aarch64-apple-darwin
-rustup target list --installed | grep -qx "$target" || rustup target add "$target"
-(cd "$root/runner" && cargo build --release --target "$target" --quiet)
 cp "$root/runner/target/$target/release/maple-runner" "$app/Contents/Helpers/maple-runner"
-stage "runner"
-cp "$("$here/scripts/build-tmux.sh")" "$app/Contents/Helpers/tmux"
-stage "tmux"
-
-# The icon: every size iconutil wants, from the 1254px source.
-iconset="$(mktemp -d)/AppIcon.iconset"
-mkdir -p "$iconset"
-for size in 16 32 128 256 512; do
-  sips -z $size $size "$root/assets/icon.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
-  sips -z $((size * 2)) $((size * 2)) "$root/assets/icon.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
-done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
-stage "icon"
+cp "$(tail -1 "$logs/tmux.log")" "$app/Contents/Helpers/tmux"
+cp "$logs/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -98,7 +118,7 @@ sign "$sparkle/Versions/B/Autoupdate"
 sign "$sparkle/Versions/B/Updater.app"
 sign "$sparkle"
 sign "$app"
-stage "signing"
+stage "assembling and signing"
 # Tell Launch Services about it, so maplefactory:// links open this copy.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
 echo "$app"

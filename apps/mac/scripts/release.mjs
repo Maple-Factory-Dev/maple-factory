@@ -23,7 +23,7 @@
 // rehearsal (MAPLE_RELEASES_DIR set) or --no-tag doesn't.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -411,9 +411,17 @@ function uploadSymbols() {
       "  Add SENTRY_AUTH_TOKEN=<token> to apps/mac/.env.release (a Sentry auth token with project:releases and project:write),\n" +
       "  or set MAPLE_SKIP_SYMBOLS=1 to ship without symbols.");
   }
+  // SwiftBuild writes a release build's dSYM next to the binary; it's this bundle's when the UUIDs match
+  // (install_name_tool and codesign don't change them). Only a stale or missing one is made again.
+  const bin = existsSync(join(here, "build/bin-path")) ? readFileSync(join(here, "build/bin-path"), "utf8").trim() : join(here, ".build/release");
+  const built = join(bin, "MapleFactory.dSYM");
+  if (existsSync(built) && uuids(built) === uuids(binary)) {
+    ok(`SwiftBuild's dSYM is this binary's: ${built}`);
+    return sendSymbols(built, binary);
+  }
   const dsym = join(here, "build/MapleFactory.dSYM");
   rmSync(dsym, { recursive: true, force: true });
-  run("dsymutil", [join(capture("swift", ["build", "-c", "release", "--show-bin-path"]), "MapleFactory"), "-o", dsym]);
+  run("dsymutil", [join(bin, "MapleFactory"), "-o", dsym]);
   sendSymbols(dsym, binary);
 }
 
@@ -454,15 +462,21 @@ function cmdSymbols(v) {
   if (!existsSync(built) || uuids(built) !== uuids(binary)) {
     // The same path the release was built from isn't ours to rebuild in place; a worktree of the tag
     // builds the same sources, and its UUID check below says whether it came out the same binary.
-    const tree = join(tmpdir(), `maple-symbols-${v}`);
+    // The worktree is always at the same path and builds into build/symbols-cache, which stays: the next
+    // run reuses its dependencies (Sentry, Sparkle, SwiftTerm) and its build, rather than starting cold.
+    const tree = join(tmpdir(), "maple-symbols");
+    const scratch = join(here, "build/symbols-cache");
+    if (existsSync(tree)) run("git", ["worktree", "remove", "--force", tree]);
     rmSync(tree, { recursive: true, force: true });
     let tag = `mac-v${v}`;
     try { capture("git", ["fetch", "-q", "origin", "tag", tag]); } catch { tag = `mac-built-${v}`; } // the older, local-only tags
     run("git", ["worktree", "add", "--detach", tree, tag]);
     try {
-      run("swift", ["build", "-c", "release"], { cwd: join(tree, "apps/mac") });
-      built = join(capture("sh", ["-c", `cd "${join(tree, "apps/mac")}" && swift build -c release --show-bin-path`]), "MapleFactory");
-      run("dsymutil", [built, "-o", dsym]);
+      timed("swift build (symbols)", () => run("swift", ["build", "-c", "release", "--scratch-path", scratch], { cwd: join(tree, "apps/mac") }));
+      const bin = realpathSync(join(scratch, "release"));
+      built = join(bin, "MapleFactory");
+      if (existsSync(join(bin, "MapleFactory.dSYM")) && uuids(join(bin, "MapleFactory.dSYM")) === uuids(built)) cpSync(join(bin, "MapleFactory.dSYM"), dsym, { recursive: true });
+      else run("dsymutil", [built, "-o", dsym]);
     } finally {
       run("git", ["worktree", "remove", "--force", tree]);
     }

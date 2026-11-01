@@ -63,7 +63,8 @@ report.
    - runner: `cargo test -q` in `runner/`.
    - server: `npx tsc --noEmit`, `node --check` on every `server/web/app/*.js` (a syntax error there
      broke the web app once while tsc passed), and `npm test` in `server/`.
-   - mac: `swift build` and `swift test` in `apps/mac`.
+   - mac: `swift test` in `apps/mac` (it builds the debug products itself; a separate `swift build`
+     only built them twice).
    - site: `node --check apps/site/worker.js main.js`.
 5. Release, in this order: version bumps, then server, runner, factory, Mac, and site last.
 
@@ -116,11 +117,13 @@ The app bundles the runner, so its build waits for a runner release in progress.
    `### Added` / `### Changed` / `### Fixed` bullets from the commits since the last release's tag
    (`mac-v<previous>`). Write them for the people using the app: what they can do now, with the UI's own
    names in bold.
-3. `node apps/mac/scripts/release.mjs ship <v> --yes` in the background, after the runner's
+3. `node apps/mac/scripts/release.mjs ship <v> --yes` in the background, from the long-lived main
+   checkout (never a fresh clone or a worktree, whose `apps/mac/.build` starts cold and costs minutes), after the runner's
    `Released maple-runner` line if one is running. `--yes` answers both confirmations (without it, `ship`
    fails at once when stdin isn't a terminal). Its build stage tags `mac-v<v>` at HEAD and pushes it: no
    tag step by hand. A stage that fails late can be run again on its own (`notarize`, `dmg`, `sign`,
-   `appcast`, `publish`).
+   `appcast`, `publish`). Each stage prints `✓ <stage> in <time>`, and a `Timings` table before
+   publishing: a stage that suddenly takes much longer is worth reporting.
 4. Check the log shows `✓ <v> is live` and that
    `curl -s "https://updates.maplefactory.dev/appcast.xml?x=$RANDOM"` lists `<v>` first. Only then
    commit `apps/mac/releases/<v>` (with `release.json`) and `apps/mac/version.json` as
