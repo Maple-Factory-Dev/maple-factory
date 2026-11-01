@@ -157,6 +157,7 @@ ${ARTIFACTS(task)}
 ${THREADS}
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal. Each becomes a draft in this goal for a person to accept; don't build them yourself. (Proposing from planning closes a task; once it's building, it carries on.)
 If you're stuck on a decision only a person can make, call \`ask\`, end your turn and wait. If you can't meet a proof or the fix grows past the plan, call \`raise_hand\`.
+When a proof can't be produced here, ask with \`ask\` or \`raise_hand\` and offer an "Attest it for me" option. If the person picks it (or says to sign it off or skip it), call \`attest\` with those items straight away; don't ask them to do it in the app. Never use \`attest\` to get around a proof you could produce yourself.
 When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${checks.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
 }
 
