@@ -139,6 +139,9 @@ struct MapleFactoryApp: App {
                 .environment(client)
                 .defaultAppStorage(AppDefaults)
         }
+        // Without a title bar, like the main and About windows (OrgSettingsView's SettingsTitleBar finishes the job).
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
     }
 }
 
