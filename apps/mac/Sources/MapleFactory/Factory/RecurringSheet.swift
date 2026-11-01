@@ -2,44 +2,38 @@ import SwiftUI
 import MapleKit
 
 /// Recurring tasks: a goal's saved prompts that start a new task every N hours, days or weeks, on
-/// whichever runner is online. The goal header's button, with a count, opens the sheet that lists them.
-struct RecurringButton: View {
+/// whichever runner is online. The goal header's ⋯ menu opens the sheet that lists them.
+enum RecurringSheetDemo {
     /// Headless `-actions 'recurring'` opens the sheet; `recurring:edit` opens it on its first item's editor.
-    static let demoOpen = Notification.Name("RecurringButton.demoOpen")
-    let goal: Wire.Goal
+    static let demoOpen = Notification.Name("RecurringSheet.demoOpen")
+}
+
+/// Presents the recurring sheet for `goal` (nil: nothing to present) when `isPresented` is set,
+/// and listens for the headless `recurring` / `recurring:edit` actions.
+struct RecurringSheetModifier: ViewModifier {
+    let goal: Wire.Goal?
+    @Binding var isPresented: Bool
     @Environment(FactoryClient.self) private var client
-    @State private var showing = false
     @State private var demoEdit = false
 
-    var body: some View {
-        let items = client.recurring(goalId: goal.id)
-        Button { showing = true } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "clock.arrow.circlepath").font(.system(size: 11))
-                Text("Recurring")
-                if !items.isEmpty {
-                    Text("\(items.count)").foregroundStyle(Theme.textMuted)
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: Binding(get: { isPresented && goal != nil }, set: { isPresented = $0 })) {
+                if let goal {
+                    RecurringSheet(goal: goal, editing: demoEdit ? client.recurring(goalId: goal.id).first : nil)
                 }
             }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Theme.fill)
-                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-        .help("Tasks this goal starts on a schedule, from a saved prompt")
-        .sheet(isPresented: $showing) { RecurringSheet(goal: goal, editing: demoEdit ? items.first : nil) }
-        .onReceive(NotificationCenter.default.publisher(for: Self.demoOpen)) { note in
-            demoEdit = (note.object as? String) == "edit"
-            showing = true
-        }
+            .onReceive(NotificationCenter.default.publisher(for: RecurringSheetDemo.demoOpen)) { note in
+                demoEdit = (note.object as? String) == "edit"
+                isPresented = true
+            }
+            .onChange(of: isPresented) { _, open in if !open { demoEdit = false } }
+    }
+}
+
+extension View {
+    func recurringSheet(goal: Wire.Goal?, isPresented: Binding<Bool>) -> some View {
+        modifier(RecurringSheetModifier(goal: goal, isPresented: isPresented))
     }
 }
 

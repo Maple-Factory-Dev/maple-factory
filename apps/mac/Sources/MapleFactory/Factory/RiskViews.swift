@@ -655,34 +655,3 @@ private struct RiskCheckAdder: View {
         level = .medium
     }
 }
-
-struct RiskPolicyButton: View {
-    @Environment(AppState.self) private var state
-    @SwiftUI.State private var open = false
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "shield.lefthalf.filled").font(.system(size: 11))
-            Text("Risk policy")
-            Text("\(state.policy.maxFiles) files · \(state.policy.maxLines) lines")
-                .foregroundStyle(Theme.textMuted)
-                .monospacedDigit()
-        }
-        .font(.system(size: 12))
-        .foregroundStyle(Theme.text)
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Theme.fill)
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { open = true }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Risk policy")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { open = true }
-        .popover(isPresented: $open, arrowEdge: .bottom) { RiskPolicyEditor() }
-    }
-}
