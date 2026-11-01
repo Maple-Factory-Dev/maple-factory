@@ -5,6 +5,7 @@ mod attachments;
 mod autoupdate;
 mod config;
 mod costs;
+mod doctor;
 mod draft;
 mod ends;
 mod events;
@@ -146,6 +147,14 @@ enum Cmd {
         /// for good). It stays listed in the web app until removed there.
         #[arg(long)]
         local_only: bool,
+    },
+    /// Check this machine has what sessions need (git, tmux, Node, the agent CLIs, Playwright,
+    /// lingering on Linux) and list the command that installs anything missing.
+    Doctor {
+        /// Also turn lingering on and install Playwright's libraries and browser, when that
+        /// needs no password.
+        #[arg(long)]
+        fix: bool,
     },
     /// Show this machine's enrollment, the installed binary, and whether the service is running.
     Status {
@@ -393,6 +402,7 @@ async fn command(cli: Cli) -> Result<()> {
         }
         Some(Cmd::Unenroll { dry_run, local_only }) => unenroll(dry_run, local_only).await,
         Some(Cmd::Status { url }) => status(url.as_deref()),
+        Some(Cmd::Doctor { fix }) => doctor::run(fix),
         Some(Cmd::Start { dry_run }) => start(dry_run),
         Some(Cmd::Stop { dry_run }) => stop(dry_run),
         Some(Cmd::Restart) => restart(),
@@ -1266,6 +1276,8 @@ mod tests {
         assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--check"]).unwrap().command, Some(Cmd::Update { check: true, force: false, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--force"]).unwrap().command, Some(Cmd::Update { check: false, force: true, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "restart"]).unwrap().command, Some(Cmd::Restart)));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "doctor"]).unwrap().command, Some(Cmd::Doctor { fix: false })));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "doctor", "--fix"]).unwrap().command, Some(Cmd::Doctor { fix: true })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "start"]).unwrap().command, Some(Cmd::Start { dry_run: false })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "start", "--dry-run"]).unwrap().command, Some(Cmd::Start { dry_run: true })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "stop"]).unwrap().command, Some(Cmd::Stop { dry_run: false })));
