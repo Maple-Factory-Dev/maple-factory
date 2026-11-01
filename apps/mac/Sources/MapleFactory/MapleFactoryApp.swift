@@ -223,6 +223,7 @@ struct ContentView: View {
         case .goal: page = "goal.\(state.layout.rawValue.lowercased())"
         case .inbox: page = "inbox"
         case .myTasks: page = "mytasks"
+        case .dayReport: page = "report"
         case .activity: page = "activity"
         case .scratchpad: page = "scratchpad"
         case .usage: page = "usage"
@@ -398,7 +399,7 @@ struct ContentView: View {
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
         if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing, state.goalSheet == nil,
-           ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
+           ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
                     .contentShape(Rectangle())
@@ -470,6 +471,7 @@ extension ContentView {
         switch state.destination {
         case .inbox: InboxView()
         case .myTasks: MyTasksView()
+        case .dayReport: DayReportView()
         case .activity: ActivityView()
         case .scratchpad: ScratchpadView()
         case .usage: UsageView()

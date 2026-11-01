@@ -111,6 +111,8 @@ import Foundation
     private(set) var displayName: String?
     /// The last statistics asked for (admins only).
     private(set) var stats: Wire.StatsSummary?
+    /// The last day report asked for (`report.get`), for whichever day Day report shows.
+    private(set) var dayReport: Wire.DayReport?
     /// CI check logs asked for (`task.checkLog`), by CheckLogRequest.id. Logs are never broadcast or kept by the server.
     private(set) var checkLogs: [String: CheckLogLoad] = [:]
     var isAdmin: Bool { me?.role == "admin" }
@@ -594,6 +596,8 @@ import Foundation
             if !page.more, let id = page.goal { older[id] = OlderTasks() }
         case .stats(let reply):
             stats = reply.summary
+        case .report(let reply):
+            dayReport = reply.report
         case .checkLog(let reply):
             let key = CheckLogRequest(taskID: reply.id, check: reply.check).id
             // Only into a sheet still waiting for it: a log forgotten since (the check re-run) stays forgotten.
@@ -1023,6 +1027,13 @@ import Foundation
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
         send(.statsGet(.init(days: UInt32(days), goal: goal)))
+    }
+
+    /// Your day report for `day`'s local calendar day (so time zones stay right); the answer lands in `dayReport`.
+    func requestReport(day: Date) {
+        let start = Calendar.current.startOfDay(for: day)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        send(.reportGet(.init(since: UInt64(start.timeIntervalSince1970 * 1000), until: UInt64(end.timeIntervalSince1970 * 1000))))
     }
 
     /// Reads a CI check's log from GitHub again; the answer (or a refusal) lands in `checkLogs`.
