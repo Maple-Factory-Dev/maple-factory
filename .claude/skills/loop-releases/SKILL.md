@@ -102,7 +102,10 @@ report.
 In the background, so the server and factory can go meanwhile:
 `SIGN_IDENTITY="Developer ID Application: Andrea Fomera (TU4485Z3KR)" node scripts/release-runner.mjs --to feed`
 (no `--notes`: the CHANGELOG section is the notes). It ends with `Released maple-runner <v> for … (latest.json,
-beta.json, changes.json).` and takes several minutes (Linux targets build in Docker).
+beta.json, changes.json).` and takes several minutes (Linux targets build in Docker). The three targets build
+in parallel: the log shows `▸ <target> started` for each, a heartbeat every 30s, then `✓ <target> built in …`
+lines. Each build's own output is in `runner/target/release-logs/<target>.log`; a failed build prints the end of
+its log and nothing is published. Re-run with `--serial` (one target at a time) only if Docker runs out of memory.
 
 ### Mac app
 

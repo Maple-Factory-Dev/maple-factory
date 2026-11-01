@@ -13,10 +13,12 @@
 // committed and pushed, and that tag must not exist yet.
 //
 // Linux targets build in Docker (the official rust image), so it needs to be running.
+// Every target builds at once, each logging to runner/target/release-logs/<target>.log; --serial builds them
+// one at a time with the output in the terminal (for debugging, or a Docker VM that runs out of memory).
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { createWriteStream, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { compareVersions, destination, fetchJson, flag, newKey, option, publish, putJson, releaseKey, root, tagRelease } from "./feed.mjs";
 
@@ -64,24 +66,88 @@ function withRelease(changes, entry) {
 const changelog = readFileSync(join(root, "runner/CHANGELOG.md"), "utf8");
 const notes = option("--notes") ?? changelogNotes(changelog, version);
 if (!notes) console.warn(`(runner/CHANGELOG.md has no section for ${version}; the release goes out without notes.)`);
+const serial = flag("--serial");
+const env = { ...process.env, MAPLE_SENTRY_DSN: sentryDsn };
+const logDir = join(root, "runner/target/release-logs");
+const logFile = (target) => join(logDir, `${target}.log`);
+const elapsed = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
+const builtFile = (target) => target.includes("linux")
+  ? join(root, "runner/target", `docker-${target}`, "release/maple-runner")
+  : join(root, "runner/target", target, "release/maple-runner");
+
+/** The command that builds `target`: cargo here, or cargo in Docker for Linux. */
+function buildCommand(target) {
+  if (!target.includes("linux")) return ["cargo", ["build", "--release", "--target", target]];
+  // In the official Rust image for that platform (emulated when it isn't this Mac's), on bullseye so
+  // the binary's glibc (2.31) is old enough for most distros still in use.
+  const platform = { aarch64: "linux/arm64", x86_64: "linux/amd64" }[target.split("-")[0]];
+  if (!platform) throw new Error(`No Docker platform for ${target}: Linux targets are x86_64-… or aarch64-….`);
+  return ["docker", ["run", "--rm", "--platform", platform, "-v", `${join(root, "runner")}:/src`, "-v", `maple-cargo-${platform.split("/")[1]}:/usr/local/cargo/registry`,
+    "-e", "MAPLE_SENTRY_DSN", "-w", "/src", "rust:1-bullseye", "cargo", "build", "--release", "--target-dir", `target/docker-${target}`]];
+}
+
+/** Builds `target`, its output going to its log (or the terminal with --serial). Resolves with the built file. */
+function buildTarget(target) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const log = serial ? null : createWriteStream(logFile(target));
+    let settled = false;
+    const fail = (message) => { if (settled) return; settled = true; log?.end(`\n${message}\n`); reject(new Error(message)); };
+    let cmd, argv;
+    try { [cmd, argv] = buildCommand(target); } catch (e) { return fail(e.message); }
+    console.log(serial ? `\n▸ ${target} started` : `▸ ${target} started`);
+    log?.write(`$ ${cmd} ${argv.join(" ")}\n`);
+    const child = spawn(cmd, argv, { cwd: join(root, "runner"), env, stdio: serial ? "inherit" : ["ignore", "pipe", "pipe"] });
+    child.stdout?.pipe(log, { end: false });
+    child.stderr?.pipe(log, { end: false });
+    child.on("error", (e) => fail(`${cmd} didn't start: ${e.message}`));
+    child.on("close", (code, signal) => {
+      if (code !== 0) return fail(`${cmd} exited with ${signal ?? code}`);
+      if (settled) return;
+      settled = true;
+      log?.end();
+      console.log(`✓ ${target} built in ${elapsed(Date.now() - started)}`);
+      resolve(builtFile(target));
+    });
+  });
+}
+
+/** The last `n` lines of `target`'s log. */
+function logTail(target, n = 40) {
+  try { return readFileSync(logFile(target), "utf8").trimEnd().split("\n").slice(-n).join("\n"); } catch { return "(no log)"; }
+}
+
+mkdirSync(logDir, { recursive: true });
+const toAdd = targets.filter((t) => !t.includes("linux") && t !== host);
+if (toAdd.length) run("rustup", ["target", "add", ...toAdd]);
+
+const buildStart = Date.now();
+const results = [];
+if (serial) {
+  for (const target of targets) results.push(await buildTarget(target).then((value) => ({ status: "fulfilled", value }), (reason) => ({ status: "rejected", reason })));
+} else {
+  const pending = new Set(targets);
+  const heartbeat = setInterval(() => console.log(`… still building ${[...pending].join(", ")} (${elapsed(Date.now() - buildStart)})`), 30_000);
+  results.push(...await Promise.allSettled(targets.map((t) => buildTarget(t).finally(() => pending.delete(t)))));
+  clearInterval(heartbeat);
+}
+const failed = targets.filter((_, i) => results[i].status === "rejected");
+if (failed.length) {
+  for (const target of failed) {
+    console.error(`\n✗ ${target} failed: ${results[targets.indexOf(target)].reason.message}`);
+    if (!serial) console.error(`--- last 40 lines of ${logFile(target)} ---\n${logTail(target)}\n---`);
+  }
+  console.error(`\nNothing was signed or published: ${failed.join(", ")} didn't build.`);
+  process.exit(1);
+}
+console.log(`\nBuilt ${targets.length} target${targets.length === 1 ? "" : "s"} in ${elapsed(Date.now() - buildStart)}${serial ? " (serial)" : ""}.`);
+
 const manifest = { version, published_at: new Date().toISOString(), notes, targets: {} };
 const uploads = [];
-for (const target of targets) {
-  const linux = target.includes("linux");
-  console.log(`\n▸ ${target}`);
-  if (linux) {
-    // In the official Rust image for that platform (emulated when it isn't this Mac's), on bullseye so
-    // the binary's glibc (2.31) is old enough for most distros still in use.
-    const platform = target.startsWith("aarch64") ? "linux/arm64" : "linux/amd64";
-    run("docker", ["run", "--rm", "--platform", platform, "-v", `${join(root, "runner")}:/src`, "-v", `maple-cargo-${platform.split("/")[1]}:/usr/local/cargo/registry`,
-      "-e", "MAPLE_SENTRY_DSN", "-w", "/src", "rust:1-bullseye", "cargo", "build", "--release", "--target-dir", `target/docker-${target}`]);
-  } else {
-    if (target !== host) run("rustup", ["target", "add", target]);
-    run("cargo", ["build", "--release", "--target", target]);
-  }
-  const file = linux ? join(root, "runner/target", `docker-${target}`, "release/maple-runner") : join(root, "runner/target", target, "release/maple-runner");
+for (const [i, target] of targets.entries()) {
+  const file = results[i].value;
   // macOS kills unsigned binaries on Apple silicon; sign with the Developer ID when there is one.
-  if (!linux) run("codesign", ["--force", "--options", "runtime", "--sign", process.env.SIGN_IDENTITY ?? "-", file]);
+  if (!target.includes("linux")) run("codesign", ["--force", "--options", "runtime", "--sign", process.env.SIGN_IDENTITY ?? "-", file]);
   const bytes = readFileSync(file);
   const path = `maple-runner/${version}/${target}/maple-runner`;
   manifest.targets[target] = { path, sha256: createHash("sha256").update(bytes).digest("hex"), size: statSync(file).size };
