@@ -719,18 +719,78 @@ fn and_list(items: &[String]) -> String {
 
 /// A program whose working folder is inside a worktree.
 #[derive(Debug, Clone, PartialEq)]
-struct Program {
-    pid: i32,
-    command: String,
+pub(crate) struct Program {
+    pub(crate) pid: i32,
+    pub(crate) command: String,
+}
+
+/// Stops what's still running in the worktree at `target` (canonical) once nothing should be: dev
+/// servers, watchers and the like a task's agent left behind. Leaves out what this runner started
+/// (proof dev servers, checks, preflight), besides what `programs_in` already leaves out. SIGTERM,
+/// then SIGKILL after `PROGRAMS_WAIT`. What it stopped.
+pub(crate) async fn stop_leftovers(target: &Path) -> Vec<Program> {
+    let found = programs_in(target).await;
+    if found.is_empty() {
+        return found;
+    }
+    let pids: Vec<u32> = found.iter().filter(|p| p.pid > 1).map(|p| p.pid as u32).collect();
+    let ours = crate::ports::descending_from(&pids, &std::collections::HashSet::from([std::process::id()])).await;
+    let left: Vec<Program> = found.into_iter().filter(|p| p.pid > 1 && !ours.contains(&(p.pid as u32))).collect();
+    if !left.is_empty() {
+        stop(&left, PROGRAMS_WAIT).await;
+    }
+    left
+}
+
+/// "stopped 1 leftover program (sleep)", or nothing when none were.
+pub(crate) fn stopped_line(stopped: &[Program]) -> Option<String> {
+    if stopped.is_empty() {
+        return None;
+    }
+    let mut names: Vec<&str> = Vec::new();
+    for p in stopped {
+        if !names.contains(&p.command.as_str()) {
+            names.push(&p.command);
+        }
+    }
+    let s = if stopped.len() == 1 { "" } else { "s" };
+    Some(format!("stopped {} leftover program{s} ({})", stopped.len(), names.join(", ")))
+}
+
+/// After task `task_id`'s session in `cwd` ended: stops what it left running in its worktree, unless
+/// one of the sessions still running (`others`, their folders) is in that worktree too. Never in a
+/// repository's main checkout. What it stopped, each logged.
+pub(crate) async fn stop_after_session(task_id: &str, cwd: &str, others: &[String]) -> Vec<Program> {
+    let dir = expand_home(cwd);
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let Ok(top) = git(&dir, &["rev-parse", "--show-toplevel"]).await else { return Vec::new() };
+    let target = canonical(Path::new(top.trim()));
+    match main_root(&dir).await {
+        Ok(root) if canonical(&root) != target => {}
+        _ => return Vec::new(),
+    }
+    if others.iter().any(|c| canonical(&expand_home(c)).starts_with(&target)) {
+        return Vec::new();
+    }
+    let stopped = stop_leftovers(&target).await;
+    for p in &stopped {
+        tracing::info!("task {task_id}: stopped {} (pid {}) left running in {}", p.command, p.pid, abbreviate(&target));
+    }
+    stopped
 }
 
 /// The programs whose working folder is inside `target` (canonical), from `lsof`. Never this runner,
 /// the program that started it, or tmux (ending its server would end every session). Empty, with a
 /// warning, when `lsof` isn't there or doesn't answer.
 async fn programs_in(target: &Path) -> Vec<Program> {
+    // One at a time: each reads every process (seconds on a busy Mac), and several at once run out the clock.
+    static LSOF: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _one = LSOF.lock().await;
     let mut cmd = Command::new("lsof");
     cmd.args(["-a", "-d", "cwd", "-Fpcn"]).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
-    let out = match tokio::time::timeout(Duration::from_secs(10), cmd.output()).await {
+    let out = match tokio::time::timeout(Duration::from_secs(30), cmd.output()).await {
         Ok(Ok(out)) => out,
         Ok(Err(e)) => {
             tracing::warn!("couldn't look for programs running in {} (lsof: {e})", target.display());
@@ -1015,6 +1075,7 @@ pub async fn remove_task(session_cwds: &[String], w: TaskWork<'_>) -> Result<Rem
     let mut done = Vec::new();
     let mut deleting = None;
     if let Some(path) = &worktree {
+        done.extend(stopped_line(&stop_leftovers(&canonical(path)).await));
         deleting = take_away(&root, path, false, w.cwd, REMOVE_LIMIT).await?;
         done.push(format!("Removed {}", w.cwd));
     }
@@ -1617,8 +1678,7 @@ mod tests {
 
     #[tokio::test]
     async fn force_stops_programs_running_in_the_worktree() {
-        if std::process::Command::new("lsof").arg("-v").output().is_err() {
-            eprintln!("no lsof here; skipping");
+        if no_lsof() {
             return;
         }
         let (root, repo, wt, _) = repo_with_task("programs");
@@ -1646,6 +1706,105 @@ mod tests {
         assert!(!still, "sleep (pid {pid}) is still running");
         finish(deleting).await;
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `sleep 600` started in `dir` from a shell that exits at once, so it isn't this test's child.
+    fn detached_sleep(dir: &Path) -> i32 {
+        let out = std::process::Command::new("sh").args(["-c", "nohup sleep 600 >/dev/null 2>&1 & echo $!"]).current_dir(dir).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+    }
+
+    fn alive(pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    async fn gone_within(pid: i32, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while alive(pid) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        !alive(pid)
+    }
+
+    fn no_lsof() -> bool {
+        let missing = std::process::Command::new("lsof").arg("-v").output().is_err();
+        if missing {
+            eprintln!("no lsof here; skipping");
+        }
+        missing
+    }
+
+    #[tokio::test]
+    async fn task_cleanup_stops_leftovers_before_removing_the_worktree() {
+        if no_lsof() {
+            return;
+        }
+        let (root, repo, wt, head) = repo_with_task("leftovers");
+        let (wts, repos) = (wt.to_string_lossy().into_owned(), repo.to_string_lossy().into_owned());
+        let pid = detached_sleep(&wt);
+        assert!(alive(pid));
+        let heads = [head];
+        let done = remove_task(&[], work(&wts, &repos, false, &heads)).await.unwrap();
+        let still = !gone_within(pid, Duration::from_secs(2)).await;
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        assert!(!still, "sleep (pid {pid}) is still running");
+        assert!(done.message.starts_with(&format!("stopped 1 leftover program (sleep), Removed {wts}")), "{}", done.message);
+        assert!(!wt.exists());
+        finish(done.deleting).await;
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn leftovers_leave_the_runners_own_programs_alone() {
+        if no_lsof() {
+            return;
+        }
+        let (root, _repo, wt, _) = repo_with_task("ours");
+        // This test's own child, as a proof dev server or check is the runner's.
+        let mut child = std::process::Command::new("sleep").arg("600").current_dir(&wt).spawn().unwrap();
+        let theirs = detached_sleep(&wt);
+        let stopped = stop_leftovers(&canonical(&wt)).await;
+        let ours_alive = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        unsafe { libc::kill(theirs, libc::SIGKILL) };
+        assert_eq!(stopped, [Program { pid: theirs, command: "sleep".into() }]);
+        assert!(ours_alive, "the runner's own child was stopped");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_session_ending_stops_leftovers_only_when_its_the_last_in_the_worktree() {
+        if no_lsof() {
+            return;
+        }
+        let (root, repo, wt, _) = repo_with_task("session-end");
+        let wts = wt.to_string_lossy().into_owned();
+        let pid = detached_sleep(&wt);
+        // Another session is still in the worktree (in a folder inside it): nothing stops.
+        let sub = wt.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let stopped = stop_after_session("MF-1", &wts, &[sub.to_string_lossy().into_owned()]).await;
+        assert!(stopped.is_empty() && alive(pid), "{stopped:?}");
+        // Sessions elsewhere don't count.
+        let repos = repo.to_string_lossy().into_owned();
+        // Never in the main checkout.
+        assert!(stop_after_session("MF-1", &repos, &[]).await.is_empty());
+        // The last one ends: stopped.
+        let stopped = stop_after_session("MF-1", &wts, &[repos]).await;
+        let still = !gone_within(pid, Duration::from_secs(2)).await;
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        assert_eq!(stopped, [Program { pid, command: "sleep".into() }]);
+        assert!(!still, "sleep (pid {pid}) is still running");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn says_what_it_stopped() {
+        let p = |pid, c: &str| Program { pid, command: c.into() };
+        assert_eq!(stopped_line(&[]), None);
+        assert_eq!(stopped_line(&[p(2, "sleep")]).unwrap(), "stopped 1 leftover program (sleep)");
+        assert_eq!(stopped_line(&[p(2, "node"), p(3, "node"), p(4, "esbuild")]).unwrap(), "stopped 3 leftover programs (node, esbuild)");
     }
 
     #[test]

@@ -5,6 +5,11 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.101.0 — 2026-11-01
+
+Programs a task's agent leaves running in its worktree (dev servers, watchers) are stopped when its last
+session there ends, and again before task cleanup removes the worktree; the cleanup message names them.
+
 ## 0.100.0 — 2026-11-01
 
 The runner understands one-off scheduled tasks, which run once at a set time.

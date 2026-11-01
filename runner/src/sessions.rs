@@ -609,8 +609,13 @@ impl Sessions {
 
     /// Records why a session ended, tells the server, and cleans up its tmux session.
     async fn end(&self, id: Uuid, name: &str, seen: &ends::Seen<'_>, last_output: Vec<String>) {
-        let Some(gone) = self.inner.lock().unwrap().remove(&id) else {
-            return;
+        let (gone, others) = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(gone) = inner.remove(&id) else {
+                return;
+            };
+            let others: Vec<String> = inner.values().map(|s| s.info.cwd.clone()).collect();
+            (gone, others)
         };
         // Its last spend reading goes out before the end, so the hub can file it under the session.
         crate::costs::flush(self, &gone.info).await;
@@ -621,6 +626,11 @@ impl Sessions {
         // Its shell removes its secrets file as it starts; this is for one that never did.
         remove_secrets_file(id);
         self.hooks.remove_session_mcp_config(id);
+        // What its agent left running in the task's worktree (dev servers, watchers) goes with it.
+        if let Some(task) = &gone.task {
+            let (task_id, cwd) = (task.id.clone(), gone.info.cwd.clone());
+            tokio::spawn(async move { crate::worktrees::stop_after_session(&task_id, &cwd, &others).await });
+        }
         let (cause, detail) = ends::classify(seen);
         let end = SessionEnd {
             id,
