@@ -61,10 +61,11 @@ import Observation
                 state = t.state
                 if let u = t.usage { usage = u }
                 if t.state != .waiting { prompt = nil }
-            case .user, .toolCall, .assistant, .thinking, .toolResult:
-                if state == nil || state == .done || state == .interrupted || state == .error {
-                    if case .user = event { state = .running }
-                }
+            case .user(let u):
+                // A message starts a turn; a slash command (/rc, /cost) usually answers locally without one.
+                if !u.text.hasPrefix("/"), state == nil || state == .done || state == .interrupted || state == .error { state = .running }
+            case .toolCall, .assistant, .thinking, .toolResult:
+                break
             case .other, .unknown: break
             }
         }
