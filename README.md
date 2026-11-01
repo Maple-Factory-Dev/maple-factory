@@ -322,7 +322,10 @@ node scripts/release-server.mjs --to feed [--channel beta]   # the server bundle
 node scripts/release-runner.mjs --to dir:/tmp/feed           # or a local folder laid out like the feed
 ```
 
-`--to factory` uploads to one factory's own bucket instead, and `--local` to `wrangler dev`'s. The site deploys with `cd apps/site && npx wrangler deploy`.
+`--to factory` uploads to one factory's own bucket instead, and `--local` to `wrangler dev`'s. The site deploys with `node scripts/release-site.mjs`.
+
+[RELEASING.md](RELEASING.md) lists every credential the release scripts read (all from env vars, for CI), where each
+lives (the `release` GitHub Environment), how to rotate it, and the tags on origin each release pushes.
 
 ## Runner install
 
