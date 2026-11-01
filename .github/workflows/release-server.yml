@@ -118,7 +118,9 @@ jobs:
           short=$subjects
           if [ ${#short} -gt 200 ]; then short="${short:0:197}..."; fi
 
-          version=$(cd server && npm version "$BUMP" --no-git-tag-version | sed 's/^v//')
+          # In a workspace `npm version` also prints the package name, so read the result back instead.
+          (cd server && npm version "$BUMP" --no-git-tag-version >/dev/null)
+          version=$(node -p 'require("./server/package.json").version')
           git add server/package.json package-lock.json
           git commit -q -m "maple-server ${version}: ${short}"
           echo "Bumped to ${version} (last release ${last:-none})."
