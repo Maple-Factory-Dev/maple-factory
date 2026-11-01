@@ -146,6 +146,7 @@ try {
   await cdp("Page.reload");
   await wait("the sign-in screen after a reload", () => js(`!!document.querySelector(".signin")`));
   check((await js("location.pathname")) === "/app/" && (await js(`document.getElementById("status").textContent`)) !== "Live", "a reload stays signed out, on the app");
+  check((await js(`document.getElementById("status").textContent`)) === "Signed out", "the header says Signed out, not Reconnecting…");
   await sleep(800);
   if (process.env.FRAMES) await cdp("Page.stopScreencast");
 } catch (e) {

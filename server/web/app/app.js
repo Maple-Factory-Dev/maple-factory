@@ -322,6 +322,10 @@ function status() {
 /** The sign-in screen; `signedOut` just after signing out: say so, and come back to the inbox, not the old page's hash. */
 function signIn({ signedOut = false } = {}) {
   const next = signedOut ? location.pathname : location.pathname + location.hash;
+  // Not "Reconnecting…": nothing will until they sign in.
+  $("status").replaceChildren("Signed out");
+  $("status").className = "status";
+  for (const a of document.querySelectorAll("[data-nav]")) a.classList.remove("on");
   $("main").replaceChildren(h("div", { class: "signin" },
     h("h1", {}, "Sign in"),
     signedOut && h("p", { class: "signed-out", role: "status" }, `You've signed out${state.org ? ` of ${state.org}` : ""}.`),
@@ -379,9 +383,6 @@ async function signOut() {
   account();
   $("nav-settings").hidden = true;
   for (const id of ["inbox-count", "machines-count"]) $(id).textContent = "";
-  const s = $("status");
-  s.replaceChildren("Signed out");
-  s.className = "status";
   document.title = "Maple Factory";
   history.replaceState(null, "", location.pathname);
   signIn({ signedOut: true });
