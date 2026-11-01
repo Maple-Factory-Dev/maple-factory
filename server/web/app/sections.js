@@ -29,9 +29,9 @@ export function toggleCollapsed(collapsed, key, storage) {
 // The task page's sections in its stage's order (TaskPageLayout.sections(for:) on the Mac): while a
 // plan is written and approved the brief leads; once there are changes the review and its proofs
 // lead, and the brief and plan fold to a line each.
-const REVIEW_ORDER = ["summary", "doneWhen", "review", "artifacts", "mockups", "brief", "plan", "risk", "timeline"];
-const BUILD_ORDER = ["plan", "doneWhen", "review", "artifacts", "mockups", "brief", "risk", "timeline"];
-const PLAN_ORDER = ["brief", "review", "mockups", "artifacts", "plan", "doneWhen", "risk", "timeline"];
+const REVIEW_ORDER = ["summary", "doneWhen", "review", "artifacts", "mockups", "brief", "plan", "followUps", "risk", "timeline"];
+const BUILD_ORDER = ["plan", "followUps", "doneWhen", "review", "artifacts", "mockups", "brief", "risk", "timeline"];
+const PLAN_ORDER = ["brief", "review", "mockups", "artifacts", "plan", "followUps", "doneWhen", "risk", "timeline"];
 
 /** `{ order, folded }` for a task in `state`: the section keys top to bottom, and the ones that start folded. */
 export function sectionOrder(state) {

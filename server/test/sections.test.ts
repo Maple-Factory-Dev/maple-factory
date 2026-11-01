@@ -74,3 +74,10 @@ test("sectionOrder: planning and approval keep the brief first, nothing folded",
     assert.equal(folded.size, 0);
   }
 });
+
+test("sectionOrder: the goal's other-repo follow-ups sit right after the plan in every stage", () => {
+  for (const s of ["drafting", "planning", "awaitingApproval", "backlog", "building", "reviewing", "merged", "closed"]) {
+    const { order } = sectionOrder(s);
+    assert.equal(order.indexOf("followUps"), order.indexOf("plan") + 1);
+  }
+});

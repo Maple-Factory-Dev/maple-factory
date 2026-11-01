@@ -783,6 +783,14 @@ function mount(next, keepCompose) {
 // ---- a task ----
 
 const taskTabs = new Map(); // id → "overview" | "diff"
+// The folded sections opened on each task this visit (id → Set of section keys), so a feed update's
+// re-render keeps them open, like AppState.sectionFolds on the Mac.
+const openedSections = new Map();
+function setOpened(id, key, open) {
+  const keys = openedSections.get(id) ?? new Set();
+  if (open) keys.add(key); else keys.delete(key);
+  openedSections.set(id, keys);
+}
 
 function taskView(id) {
   const t = state.tasks.get(id);
@@ -1198,7 +1206,8 @@ function overview(t) {
   const { order, folded } = sectionOrder(t.state);
   // A folded section is a <details> with its one-line summary; open, it's the section as before.
   const fold = (key, title, line, body) => folded.has(key)
-    ? h("details", { class: "fold", id: `s-${key}` }, h("summary", {}, h("span", { class: "fold-title" }, title), " ", h("span", { class: "muted" }, line)), body)
+    ? h("details", { class: "fold", id: `s-${key}`, open: openedSections.get(t.id)?.has(key) ?? false,
+        ontoggle: (e) => setOpened(t.id, key, e.currentTarget.open) }, h("summary", {}, h("span", { class: "fold-title" }, title), " ", h("span", { class: "muted" }, line)), body)
     : h("div", { id: `s-${key}` }, h("h2", {}, title), body);
   const planDone = t.plan.filter((s) => s.progress === "done").length;
   const sections = {
@@ -1211,11 +1220,11 @@ function overview(t) {
       `${t.plan.length} ${t.plan.length === 1 ? "step" : "steps"}${planDone === t.plan.length ? ", all done" : planDone ? `, ${planDone} done` : ""}`,
       h("div", { class: "card" },
         h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
-          h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))),
-    (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
+          h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file)))))))],
+    followUps: () => (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
       t.followUps.map((f) => h("div", { class: "check" }, h("div", {},
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
-        f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))]],
+        f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
     doneWhen: () => t.doneWhen.length > 0 && h("div", { id: "s-doneWhen" }, h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))),
     risk: () => t.risk && riskCard(t.risk),
     timeline: () => timeline(t),
@@ -1243,7 +1252,7 @@ function readyStrip(t) {
   const jump = (key) => (e) => {
     e.preventDefault();
     const el = document.getElementById(`s-${key}`);
-    if (el?.tagName === "DETAILS") el.open = true;
+    if (el?.tagName === "DETAILS") { setOpened(t.id, key, true); el.open = true; }
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const links = [["doneWhen", "Done when", t.doneWhen.length], ["review", "Review", t.autoReview || t.pr], ["artifacts", "Artifacts", (t.artifacts ?? []).length],
