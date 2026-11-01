@@ -23,10 +23,10 @@ use uuid::Uuid;
 use crate::protocol::Outbound;
 use crate::sessions::{Sessions, expand_home};
 
-/// One file's bytes (the control plane's limit): a screenshot or text capture.
-pub const MAX_FILE: u64 = 5 * 1024 * 1024;
+/// One file's bytes (the control plane's limit): a screenshot or text capture, full-size Retina ones too.
+pub const MAX_FILE: u64 = 20 * 1024 * 1024;
 /// A screen recording's bytes (MP4, MOV or WebM).
-pub const MAX_VIDEO: u64 = 25 * 1024 * 1024;
+pub const MAX_VIDEO: u64 = 95 * 1024 * 1024;
 /// What a session's task is: kept on its tmux session (`@maple_task`) so a restarted runner knows too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskTag {
@@ -185,10 +185,10 @@ pub struct Checked {
 }
 
 /// Checks the file a `prove` call names: `~` expanded and symlinks resolved, it must be inside
-/// `folder`, and PNG, JPEG, WebP or text (at most 5 MB) or MP4, MOV or WebM (at most 25 MB). The message says what to do instead.
+/// `folder`, and PNG, JPEG, WebP or text (at most 20 MB) or MP4, MOV or WebM (at most 95 MB). The message says what to do instead.
 pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, String> {
     let (path, bytes) = read_in_folder(file, home, folder, "Evidence files", MAX_VIDEO, |len| {
-        format!("{file} is {} MB; a video is at most 25 MB and any other file at most 5 MB. Record a shorter clip.", len / 1024 / 1024)
+        format!("{file} is {} MB; a video is at most 95 MB and any other file at most 20 MB. Record a shorter clip.", len / 1024 / 1024)
     })?;
     let kind = sniff(&bytes).ok_or_else(|| {
         format!(
@@ -197,7 +197,7 @@ pub fn check_file(file: &str, home: &Path, folder: &Path) -> Result<Checked, Str
     })?;
     if !kind.starts_with("video/") && bytes.len() as u64 > MAX_FILE {
         return Err(format!(
-            "{file} is {} KB; a file is at most 5 MB. Save a smaller one (a PNG of one screen, or the end of the output).",
+            "{file} is {} KB; a screenshot or text file is at most 20 MB. Save a smaller one (a PNG of one screen, or the end of the output).",
             bytes.len() / 1024
         ));
     }
@@ -333,6 +333,8 @@ async fn upload_to(base: &str, route: &str, runner_id: &str, token: &str, task_i
     url.query_pairs_mut().append_pair("runner", runner_id).append_pair("name", &file.name);
     let res = CLIENT
         .put(url)
+        // A 95 MB recording over a slow uplink takes longer than the client's usual 50 s.
+        .timeout(Duration::from_secs(300))
         .bearer_auth(token)
         .header("content-type", file.kind)
         .body(file.bytes.clone())
@@ -1225,17 +1227,27 @@ mod tests {
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/nope.png", &home, &dir).unwrap_err().contains("no file"));
         assert!(check_file("tasks-390.png", &home, &dir).unwrap_err().contains("full path"));
         std::fs::write(dir.join("big.txt"), vec![b'a'; MAX_FILE as usize + 1]).unwrap();
-        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/big.txt", &home, &dir).unwrap_err().contains("at most 5 MB"));
-        // A video may be bigger, up to 25 MB.
+        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/big.txt", &home, &dir).unwrap_err().contains("at most 20 MB"));
+        // A full-size Retina screenshot goes as it is: 15 MB is fine, 21 MB is over.
+        let mut png = PNG.to_vec();
+        png.resize(15 * 1024 * 1024, 0);
+        std::fs::write(dir.join("retina.png"), &png).unwrap();
+        assert_eq!(check_file("~/.cache/maple-proof/agent/cleanup-badge/retina.png", &home, &dir).unwrap().kind, "image/png");
+        png.resize(21 * 1024 * 1024, 0);
+        std::fs::write(dir.join("huge.png"), &png).unwrap();
+        let err = check_file("~/.cache/maple-proof/agent/cleanup-badge/huge.png", &home, &dir).unwrap_err();
+        assert!(err.contains("at most 20 MB") && err.contains("smaller one"), "{err}");
+        // A video may be bigger, up to 95 MB.
         let mut mp4 = b"\0\0\0\x20ftypisom\0\0\x02\0".to_vec();
-        mp4.resize(MAX_FILE as usize * 3, 0);
+        mp4.resize(60 * 1024 * 1024, 0);
         std::fs::write(dir.join("flow.mp4"), &mp4).unwrap();
         let ok = check_file("~/.cache/maple-proof/agent/cleanup-badge/flow.mp4", &home, &dir).unwrap();
         assert_eq!((ok.name.as_str(), ok.kind), ("flow.mp4", "video/mp4"));
         let mut webm = b"\x1a\x45\xdf\xa3".to_vec();
-        webm.resize(MAX_VIDEO as usize + 1, 0);
+        webm.resize(96 * 1024 * 1024, 0);
         std::fs::write(dir.join("long.webm"), &webm).unwrap();
-        assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/long.webm", &home, &dir).unwrap_err().contains("at most 25 MB"));
+        let err = check_file("~/.cache/maple-proof/agent/cleanup-badge/long.webm", &home, &dir).unwrap_err();
+        assert!(err.contains("at most 95 MB") && err.contains("shorter clip"), "{err}");
         std::fs::write(dir.join("clip.gif"), b"GIF89a\x01\x00\x00").unwrap();
         assert!(check_file("~/.cache/maple-proof/agent/cleanup-badge/clip.gif", &home, &dir).unwrap_err().contains("isn't PNG"));
         std::fs::write(dir.join("empty.txt"), b"").unwrap();
