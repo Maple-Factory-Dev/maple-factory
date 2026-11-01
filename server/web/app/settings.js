@@ -16,7 +16,14 @@ export const SECTIONS = [
   { key: "prompts", title: "Prompts" },
   { key: "integrations", title: "Integrations" },
   { key: "merging", title: "Merging & risk" },
+  { key: "account", title: "Account" },
 ];
+
+/** The Account › Slack row's text for `/api/me`'s `slack` ({ user, team, name, teamName, linkedAt } or null). */
+export function slackLinkLabel(slack) {
+  if (!slack) return null;
+  return `Linked as Slack @${slack.name || slack.user}${slack.teamName ? ` (${slack.teamName})` : ""}`;
+}
 export const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const PROMPT_MAX = 4000;
 
@@ -202,6 +209,8 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   let errorReports = null; // GET /api/error-reports: { on, locked }, once loaded
   let errorReportsBusy = false;
   let push = null; // GET /api/push: { on, locked, enrolled, devices }, once loaded
+  let slack; // GET /api/me's slack: the link, null when not linked; undefined until loaded
+  let slackBusy = false;
 
   /** The form's draft, synced to the server's value for it. */
   const draft = (key, server) => {
@@ -614,19 +623,54 @@ export function createSettings({ state, h, send, toast, render, ago }) {
           : text("paths", { placeholder: "db/migrations/**, lib/auth/**", "aria-label": "Paths", class: "mono", autocapitalize: "off" })));
   }
 
-  const BODIES = { general, repos, secrets, people, prompts, integrations, merging };
+  /** Your own account: the Slack account @Maple knows you by (src/slack-links.ts). Every member sees this. */
+  function account() {
+    if (slack === undefined) {
+      slack = { loading: true };
+      fetch("/api/me").then((res) => (res.ok ? res.json() : Promise.reject(new Error()))).then((got) => { slack = got.slack ?? null; render(); },
+        () => { slack = { failed: true }; render(); });
+    }
+    const unlink = async () => {
+      slackBusy = true;
+      render();
+      try {
+        const res = await fetch("/api/slack/link", { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        slack = null;
+        toast("Unlinked your Slack account.");
+      } catch (e) {
+        toast(e.message || "Couldn't unlink your Slack account.");
+      }
+      slackBusy = false;
+      render();
+    };
+    const linked = slack && !slack.loading && !slack.failed ? slack : null;
+    return [
+      h("div", { class: "card set-card" },
+        h("div", { class: "set-row" },
+          h("span", { class: "set-label" }, h("span", {}, "Slack"),
+            h("span", { class: "set-detail" }, linked
+              ? [slackLinkLabel(linked), " · @Maple knows it's you asking."]
+              : slack?.loading ? "Loading…"
+              : slack?.failed ? "Couldn't read your Slack link."
+              : ["Mention ", h("strong", {}, "@Maple"), " with ", h("code", {}, "link"), " in Slack to connect."])),
+          linked && h("span", { class: "set-inline" }, ...(ask("slack-unlink", "Unlink Slack?", "Unlink", unlink)
+            ?? [h("button", { type: "button", class: "btn", disabled: slackBusy, onclick: () => { confirming.add("slack-unlink"); render(); } }, slackBusy ? "Unlinking…" : "Unlink")])))),
+    ];
+  }
+
+  const BODIES = { general, repos, secrets, people, prompts, integrations, merging, account };
 
   function view(sub) {
-    if (state.me?.role !== "admin") {
-      return h("div", {}, h("h1", {}, "Settings"),
-        h("div", { class: "card empty" }, "Only admins can change factory settings. Ask one of the factory's admins if something here needs to change."));
-    }
-    const key = BODIES[sub] ? sub : "general";
+    const admin = state.me?.role === "admin";
+    const sections = admin ? SECTIONS : SECTIONS.filter((s) => s.key === "account");
+    const key = sections.some((s) => s.key === sub) ? sub : sections[0].key;
     const current = SECTIONS.find((s) => s.key === key);
     return h("div", { class: "settings" },
       h("nav", { class: "set-nav", "aria-label": "Settings sections" },
-        SECTIONS.map((s) => h("a", { href: `#/settings/${s.key}`, class: s.key === key ? "on" : null, "aria-current": s.key === key ? "page" : null }, s.title)),
-        h("p", { class: "set-mac muted" }, "Connectors and worktree scripts: in the Mac app.")),
+        sections.map((s) => h("a", { href: `#/settings/${s.key}`, class: s.key === key ? "on" : null, "aria-current": s.key === key ? "page" : null }, s.title)),
+        admin ? h("p", { class: "set-mac muted" }, "Connectors and worktree scripts: in the Mac app.")
+          : h("p", { class: "set-mac muted" }, "Only admins can change factory settings.")),
       h("div", { class: "set-body" }, h("h1", {}, current.title), BODIES[key]()));
   }
 
