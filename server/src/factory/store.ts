@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -148,6 +148,8 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS session_costs_updated ON session_costs (updated);
       CREATE TABLE IF NOT EXISTS repo_scripts (repo TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS recurring (id TEXT PRIMARY KEY, goal TEXT NOT NULL, doc TEXT NOT NULL, next_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS recurring_next ON recurring (next_at);
     `);
     // A repo's prompt additions came later: added once, to a table made before them.
     if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
@@ -473,6 +475,40 @@ export class Store {
 
   deleteNote(id: string) {
     this.sql.exec("DELETE FROM notes WHERE id = ?", id);
+  }
+
+  // Recurring tasks: a goal's saved prompts that start a new task every interval.
+
+  recurringAll(): Recurring[] {
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM recurring ORDER BY goal, id").toArray().map((r) => JSON.parse(r.doc));
+  }
+
+  recurring(id: string): Recurring | null {
+    const row = this.sql.exec<{ doc: string }>("SELECT doc FROM recurring WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.doc) : null;
+  }
+
+  saveRecurring(r: Recurring) {
+    this.sql.exec(
+      "INSERT INTO recurring (id, goal, doc, next_at) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET goal = excluded.goal, doc = excluded.doc, next_at = excluded.next_at",
+      r.id, r.goal, JSON.stringify(r), r.nextAt,
+    );
+  }
+
+  deleteRecurring(id: string) {
+    this.sql.exec("DELETE FROM recurring WHERE id = ?", id);
+  }
+
+  /** The unpaused recurring tasks due by `now`, soonest first. */
+  dueRecurring(now: number): Recurring[] {
+    return this.sql.exec<{ doc: string }>("SELECT doc FROM recurring WHERE next_at <= ? ORDER BY next_at", now).toArray()
+      .map((r) => JSON.parse(r.doc) as Recurring).filter((r) => !r.paused);
+  }
+
+  /** When the next unpaused recurring task is due, if any. */
+  nextRecurringAt(): number | null {
+    const next = this.recurringAll().filter((r) => !r.paused).map((r) => r.nextAt);
+    return next.length ? Math.min(...next) : null;
   }
 
   // Follows: only what people chose; the apps work out the rest (goals they lead, work in, or are on the team for).

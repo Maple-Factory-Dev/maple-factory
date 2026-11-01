@@ -19,6 +19,7 @@ import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { Drafts } from "./drafts.ts";
+import { everyText, Recurrings } from "./recurring.ts";
 import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
@@ -173,6 +174,7 @@ export class Engine {
   private drafts: Drafts;
   private scout: Scout;
   private setup: RepoSetup;
+  private recurrings: Recurrings;
   /** @Maple's asks in Slack. */
   readonly slack: SlackAsks;
 
@@ -203,6 +205,14 @@ export class Engine {
       forget: (paths) => hooks.waitUntil(this.env.RELEASES.delete(paths.filter((p) => p.startsWith("/attachments/")).map((p) => p.slice(1)))),
       wakeIn: (ms) => hooks.wakeIn(ms),
     });
+    this.recurrings = new Recurrings(store, {
+      make: (r, goal) => this.recurringRun(r, goal),
+      note: (task, text) => {
+        this.event(task, "factory", text);
+        this.save(task, false);
+      },
+      updated: (recurring) => hooks.broadcast({ type: "recurring.updated", recurring }),
+    });
     this.setup = new RepoSetup(store, {
       broadcast: (message) => hooks.broadcast(message),
       machines: () => hooks.machines(),
@@ -228,6 +238,35 @@ export class Engine {
     return this.scout.runs();
   }
 
+  /** Every goal's recurring tasks, for an app that's just connected. */
+  recurring() {
+    return this.store.recurringAll();
+  }
+
+  /** The alarm: start every due recurring task, then wake for the next one. */
+  async runRecurring() {
+    const next = await this.recurrings.run(now());
+    if (next != null) this.hooks.wakeIn(Math.max(1_000, next - now()));
+  }
+
+  /** One recurring task's run: an ordinary task, sent to planning on its saver's behalf. */
+  private async recurringRun(r: import("../wire.ts").Recurring, goal: Goal): Promise<Task> {
+    const brief = `${r.brief}\n\nRecurring: ${r.title}, ${everyText(r)}`;
+    const task = this.newTask(goal, r.by, { title: r.title, brief, tickets: [], shareable: true, agent: r.agent || "claude", model: null, intake: null, repo: r.repo ?? null, after: [], effort: null });
+    this.event(task, "factory", `started by recurring "${r.title}" (${everyText(r)})`);
+    this.save(task);
+    await audit(this.env, r.by, "task.created", task.id, { title: task.title, recurring: r.id });
+    await this.startPlanning(task, r.by);
+    return this.store.task(task.id) ?? task;
+  }
+
+  /** Recurring tasks are changed by their goal's lead or an admin, like its prompts. */
+  private async mayChangeRecurring(goalId: string, who: string, role: string) {
+    const goal = this.store.goal(goalId) ?? fail("That goal isn't there any more.");
+    if (role !== "admin" && goal.lead !== who) fail(`Only admins or ${goal.lead}, its lead, can change ${goal.name}'s recurring tasks.`);
+    return goal;
+  }
+
   // ---------------------------------------------------------------------------
   // Apps
 
@@ -246,6 +285,40 @@ export class Engine {
           fail((e as Error).message);
         }
         return;
+      case "recurring.save": {
+        await this.mayChangeRecurring(msg.recurring.goal, who, member.role);
+        let saved;
+        try {
+          saved = this.recurrings.clean(msg.recurring, who, now());
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        this.store.saveRecurring(saved!);
+        this.hooks.broadcast({ type: "recurring.updated", recurring: saved! });
+        await audit(this.env, who, "recurring.saved", saved!.id, { goal: saved!.goal, title: saved!.title });
+        return this.runRecurring();
+      }
+      case "recurring.delete":
+      case "recurring.pause":
+      case "recurring.runNow": {
+        const r = this.store.recurring(msg.id) ?? fail("That recurring task isn't there any more.");
+        await this.mayChangeRecurring(r.goal, who, member.role);
+        if (msg.type === "recurring.delete") {
+          this.store.deleteRecurring(r.id);
+          this.hooks.broadcast({ type: "recurring.deleted", id: r.id });
+          await audit(this.env, who, "recurring.deleted", r.id, { goal: r.goal });
+          return;
+        }
+        let saved = r;
+        try {
+          saved = msg.type === "recurring.pause" ? this.recurrings.pause(r, msg.paused, now()) : await this.recurrings.start(r, now());
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        this.store.saveRecurring(saved);
+        this.hooks.broadcast({ type: "recurring.updated", recurring: saved });
+        return this.runRecurring();
+      }
       case "goal.scout":
         try {
           await this.scout.start(who, msg.goal);

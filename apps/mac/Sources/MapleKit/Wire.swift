@@ -550,6 +550,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// How a recurring task's interval is shown.
+    public enum RecurringUnit: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Every N hours.
+        case hours
+        /// Every N days.
+        case days
+        /// Every N weeks.
+        case weeks
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [RecurringUnit] = [.hours, .days, .weeks]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "hours": self = .hours
+            case "days": self = .days
+            case "weeks": self = .weeks
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .hours: "hours"
+            case .days: "days"
+            case .weeks: "weeks"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: RecurringUnit, b: RecurringUnit) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// Where a repo's Set up with AI run is.
     public enum RepoSetupState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Its agent is reading the repo.
@@ -3863,6 +3908,53 @@ public enum Wire {
         }
     }
 
+    /// A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online.
+    public struct Recurring: Codable, Hashable, Sendable {
+        public var id: String
+        public var goal: String
+        public var title: String
+        /// The prompt: each run's task brief.
+        public var brief: String
+        /// One of the goal's repos. None: the goal's own.
+        public var repo: String?
+        /// claude or codex.
+        public var agent: String
+        /// The interval in minutes (60 at least).
+        public var every: UInt32
+        /// How `every` is shown: hours, days or weeks.
+        public var unit: RecurringUnit
+        /// The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST.
+        public var firstAt: UInt64
+        /// An IANA time zone, e.g. America/New_York.
+        public var timeZone: String
+        /// When it next runs (ms).
+        public var nextAt: UInt64
+        public var paused: Bool
+        public var lastRunAt: UInt64?
+        /// The task its last run started. While that one is still open, a due run is skipped.
+        public var lastTask: String?
+        /// Who saved it last; its runs are started on their behalf.
+        public var by: String
+
+        public init(id: String, goal: String, title: String, brief: String, repo: String? = nil, agent: String, every: UInt32, unit: RecurringUnit, firstAt: UInt64, timeZone: String, nextAt: UInt64, paused: Bool, lastRunAt: UInt64? = nil, lastTask: String? = nil, by: String) {
+            self.id = id
+            self.goal = goal
+            self.title = title
+            self.brief = brief
+            self.repo = repo
+            self.agent = agent
+            self.every = every
+            self.unit = unit
+            self.firstAt = firstAt
+            self.timeZone = timeZone
+            self.nextAt = nextAt
+            self.paused = paused
+            self.lastRunAt = lastRunAt
+            self.lastTask = lastTask
+            self.by = by
+        }
+    }
+
     /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
     public struct Draft: Codable, Hashable, Sendable {
         public var id: String
@@ -5622,6 +5714,45 @@ public enum Wire {
         }
     }
 
+    /// The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`.
+    public struct ClientMessageRecurringSave: Codable, Hashable, Sendable {
+        /// nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent.
+        public var recurring: Recurring
+
+        public init(recurring: Recurring) {
+            self.recurring = recurring
+        }
+    }
+
+    /// The goal's lead or an admin.
+    public struct ClientMessageRecurringDelete: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now.
+    public struct ClientMessageRecurringPause: Codable, Hashable, Sendable {
+        public var id: String
+        public var paused: Bool
+
+        public init(id: String, paused: Bool) {
+            self.id = id
+            self.paused = paused
+        }
+    }
+
+    /// The goal's lead or an admin: start a run now; its schedule is kept.
+    public struct ClientMessageRecurringRunNow: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
     public struct ClientMessageRepoSetupStart: Codable, Hashable, Sendable {
         public var repo: String
@@ -6400,6 +6531,10 @@ public enum Wire {
         case draftGoal(ClientMessageDraftGoal)
         case draftCancel(ClientMessageDraftCancel)
         case goalScout(ClientMessageGoalScout)
+        case recurringSave(ClientMessageRecurringSave)
+        case recurringDelete(ClientMessageRecurringDelete)
+        case recurringPause(ClientMessageRecurringPause)
+        case recurringRunNow(ClientMessageRecurringRunNow)
         case repoSetupStart(ClientMessageRepoSetupStart)
         case repoSetupCancel(ClientMessageRepoSetupCancel)
         case quietHoursSet(ClientMessageQuietHoursSet)
@@ -6488,6 +6623,10 @@ public enum Wire {
             case "draft.goal": self = .draftGoal(try ClientMessageDraftGoal(from: decoder))
             case "draft.cancel": self = .draftCancel(try ClientMessageDraftCancel(from: decoder))
             case "goal.scout": self = .goalScout(try ClientMessageGoalScout(from: decoder))
+            case "recurring.save": self = .recurringSave(try ClientMessageRecurringSave(from: decoder))
+            case "recurring.delete": self = .recurringDelete(try ClientMessageRecurringDelete(from: decoder))
+            case "recurring.pause": self = .recurringPause(try ClientMessageRecurringPause(from: decoder))
+            case "recurring.runNow": self = .recurringRunNow(try ClientMessageRecurringRunNow(from: decoder))
             case "repo.setup.start": self = .repoSetupStart(try ClientMessageRepoSetupStart(from: decoder))
             case "repo.setup.cancel": self = .repoSetupCancel(try ClientMessageRepoSetupCancel(from: decoder))
             case "quietHours.set": self = .quietHoursSet(try ClientMessageQuietHoursSet(from: decoder))
@@ -6609,6 +6748,18 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .goalScout(let body):
                 try c.encode("goal.scout", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringSave(let body):
+                try c.encode("recurring.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringDelete(let body):
+                try c.encode("recurring.delete", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringPause(let body):
+                try c.encode("recurring.pause", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringRunNow(let body):
+                try c.encode("recurring.runNow", forKey: .type)
                 try body.encode(to: encoder)
             case .repoSetupStart(let body):
                 try c.encode("repo.setup.start", forKey: .type)
@@ -6841,6 +6992,8 @@ public enum Wire {
         public var setupRuns: [RepoSetupRun]?
         /// Each goal's latest Scout run. None: an older server.
         public var scoutRuns: [ScoutRun]?
+        /// Every goal's recurring tasks. None: an older server.
+        public var recurring: [Recurring]?
         /// The newest released runner version, when there's a release.
         public var runnerLatest: String?
         /// Runner releases, newest first, with their notes (What's new). None: an older server.
@@ -6857,7 +7010,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -6884,6 +7037,7 @@ public enum Wire {
             self.scripts = scripts
             self.setupRuns = setupRuns
             self.scoutRuns = scoutRuns
+            self.recurring = recurring
             self.runnerLatest = runnerLatest
             self.runnerReleases = runnerReleases
             self.serverVersion = serverVersion
@@ -6922,6 +7076,7 @@ public enum Wire {
             scripts = try c.decodeIfPresent([RepoWorktreeScripts].self, forKey: .scripts)
             setupRuns = try c.decodeIfPresent([RepoSetupRun].self, forKey: .setupRuns)
             scoutRuns = try c.decodeIfPresent([ScoutRun].self, forKey: .scoutRuns)
+            recurring = try c.decodeIfPresent([Recurring].self, forKey: .recurring)
             runnerLatest = try c.decodeIfPresent(String.self, forKey: .runnerLatest)
             runnerReleases = try c.decodeIfPresent([RunnerRelease].self, forKey: .runnerReleases)
             serverVersion = try c.decodeIfPresent(String.self, forKey: .serverVersion)
@@ -7045,6 +7200,23 @@ public enum Wire {
 
         public init(run: ScoutRun) {
             self.run = run
+        }
+    }
+
+    /// A recurring task was saved or ran.
+    public struct ServerToClientRecurringUpdated: Codable, Hashable, Sendable {
+        public var recurring: Recurring
+
+        public init(recurring: Recurring) {
+            self.recurring = recurring
+        }
+    }
+
+    public struct ServerToClientRecurringDeleted: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
         }
     }
 
@@ -7347,6 +7519,8 @@ public enum Wire {
         case noteRemoved(ServerToClientNoteRemoved)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
+        case recurringUpdated(ServerToClientRecurringUpdated)
+        case recurringDeleted(ServerToClientRecurringDeleted)
         case repoSetupUpdated(ServerToClientRepoSetupUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
         case pushDevices(ServerToClientPushDevices)
@@ -7390,6 +7564,8 @@ public enum Wire {
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
+            case "recurring.updated": self = .recurringUpdated(try ServerToClientRecurringUpdated(from: decoder))
+            case "recurring.deleted": self = .recurringDeleted(try ServerToClientRecurringDeleted(from: decoder))
             case "repo.setup.updated": self = .repoSetupUpdated(try ServerToClientRepoSetupUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
             case "push.devices": self = .pushDevices(try ServerToClientPushDevices(from: decoder))
@@ -7457,6 +7633,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .scoutUpdated(let body):
                 try c.encode("scout.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringUpdated(let body):
+                try c.encode("recurring.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .recurringDeleted(let body):
+                try c.encode("recurring.deleted", forKey: .type)
                 try body.encode(to: encoder)
             case .repoSetupUpdated(let body):
                 try c.encode("repo.setup.updated", forKey: .type)

@@ -138,6 +138,7 @@ struct GoalView: View {
                 if state.isLive, let live = client.goal(named: goal.name) {
                     ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
                         .padding(.trailing, 6)
+                    RecurringButton(goal: live).padding(.trailing, 6)
                 }
                 RiskPolicyButton()
                     .padding(.trailing, 10)

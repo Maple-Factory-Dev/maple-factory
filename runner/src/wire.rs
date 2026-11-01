@@ -189,6 +189,21 @@ pub enum ScoutState {
     Other,
 }
 
+/// How a recurring task's interval is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecurringUnit {
+    /// Every N hours.
+    Hours,
+    /// Every N days.
+    Days,
+    /// Every N weeks.
+    Weeks,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// Where a repo's Set up with AI run is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1971,6 +1986,40 @@ pub struct ScoutRun {
     pub error: Option<String>,
 }
 
+/// A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recurring {
+    pub id: String,
+    pub goal: String,
+    pub title: String,
+    /// The prompt: each run's task brief.
+    pub brief: String,
+    /// One of the goal's repos. None: the goal's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// claude or codex.
+    pub agent: String,
+    /// The interval in minutes (60 at least).
+    pub every: u32,
+    /// How `every` is shown: hours, days or weeks.
+    pub unit: RecurringUnit,
+    /// The first run (ms); later runs step from it in `timeZone`, so a 9:00 run stays at 9:00 across DST.
+    pub first_at: u64,
+    /// An IANA time zone, e.g. America/New_York.
+    pub time_zone: String,
+    /// When it next runs (ms).
+    pub next_at: u64,
+    pub paused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<u64>,
+    /// The task its last run started. While that one is still open, a due run is skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_task: Option<String>,
+    /// Who saved it last; its runs are started on their behalf.
+    pub by: String,
+}
+
 /// Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2895,6 +2944,28 @@ pub enum ClientMessage {
     GoalScout {
         goal: String,
     },
+    /// The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`.
+    #[serde(rename = "recurring.save")]
+    RecurringSave {
+        /// nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent.
+        recurring: Recurring,
+    },
+    /// The goal's lead or an admin.
+    #[serde(rename = "recurring.delete")]
+    RecurringDelete {
+        id: String,
+    },
+    /// The goal's lead or an admin: pause or resume one. Resuming moves its next run to the next due time from now.
+    #[serde(rename = "recurring.pause")]
+    RecurringPause {
+        id: String,
+        paused: bool,
+    },
+    /// The goal's lead or an admin: start a run now; its schedule is kept.
+    #[serde(rename = "recurring.runNow")]
+    RecurringRunNow {
+        id: String,
+    },
     /// Admins only: run Set up with AI on a repo; its suggestion comes back in `repo.setup.updated`.
     #[serde(rename = "repo.setup.start")]
     RepoSetupStart {
@@ -3418,6 +3489,9 @@ pub enum ServerToClient {
         /// Each goal's latest Scout run. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scout_runs: Option<Vec<ScoutRun>>,
+        /// Every goal's recurring tasks. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recurring: Option<Vec<Recurring>>,
         /// The newest released runner version, when there's a release.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         runner_latest: Option<String>,
@@ -3499,6 +3573,15 @@ pub enum ServerToClient {
     #[serde(rename = "scout.updated")]
     ScoutUpdated {
         run: ScoutRun,
+    },
+    /// A recurring task was saved or ran.
+    #[serde(rename = "recurring.updated")]
+    RecurringUpdated {
+        recurring: Recurring,
+    },
+    #[serde(rename = "recurring.deleted")]
+    RecurringDeleted {
+        id: String,
     },
     /// How a repo's Set up with AI run is going.
     #[serde(rename = "repo.setup.updated")]
