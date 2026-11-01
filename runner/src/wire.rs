@@ -63,6 +63,21 @@ pub enum TaskState {
     Other,
 }
 
+/// What a task stage span was waiting on, when it wasn't being worked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StageWait {
+    /// Ready to run, waiting for a free slot (the task's `waiting`).
+    Queued,
+    /// A hand was up for a person.
+    Hand,
+    /// The agent's question waited for its answer.
+    Question,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// What a factory session is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1170,6 +1185,23 @@ pub struct TaskEvent {
     pub at: u64,
 }
 
+/// A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageSpan {
+    pub stage: TaskState,
+    /// None: being worked (or, for awaitingApproval, waiting on its approvals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<StageWait>,
+    pub from: u64,
+    /// When it ended (ms); none: still open. Terminal states get a zero-length marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<u64>,
+    /// Worked out after the fact from the task's events, so an estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred: Option<bool>,
+}
+
 /// An agent asking a person something it can't decide.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1615,6 +1647,9 @@ pub struct Task {
     pub changes: Vec<ChangeRequest>,
     #[serde(default)]
     pub events: Vec<TaskEvent>,
+    /// Its time, span by span: each stage and what it waited on. Empty on older servers.
+    #[serde(default)]
+    pub stages: Vec<StageSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<Question>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

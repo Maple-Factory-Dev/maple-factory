@@ -120,6 +120,22 @@ enum class TaskState(val raw: String) {
     object Serializer : WireEnumSerializer<TaskState>("TaskState", entries, { it.raw }, Unknown)
 }
 
+/** What a task stage span was waiting on, when it wasn't being worked. */
+@Serializable(with = StageWait.Serializer::class)
+enum class StageWait(val raw: String) {
+    /** Ready to run, waiting for a free slot (the task's `waiting`). */
+    Queued("queued"),
+    /** A hand was up for a person. */
+    Hand("hand"),
+    /** The agent's question waited for its answer. */
+    Question("question"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<StageWait>("StageWait", entries, { it.raw }, Unknown)
+}
+
 /** What a factory session is for. */
 @Serializable(with = Role.Serializer::class)
 enum class Role(val raw: String) {
@@ -1141,6 +1157,19 @@ data class TaskEvent(
     val at: Long,
 )
 
+/** A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes. */
+@Serializable
+data class StageSpan(
+    val stage: TaskState,
+    /** None: being worked (or, for awaitingApproval, waiting on its approvals). */
+    val wait: StageWait? = null,
+    val from: Long,
+    /** When it ended (ms); none: still open. Terminal states get a zero-length marker. */
+    val to: Long? = null,
+    /** Worked out after the fact from the task's events, so an estimate. */
+    val inferred: Boolean? = null,
+)
+
 /** An agent asking a person something it can't decide. */
 @Serializable
 data class Question(
@@ -1491,6 +1520,8 @@ data class Task(
     val comments: List<Comment> = emptyList(),
     val changes: List<ChangeRequest> = emptyList(),
     val events: List<TaskEvent> = emptyList(),
+    /** Its time, span by span: each stage and what it waited on. Empty on older servers. */
+    val stages: List<StageSpan> = emptyList(),
     val question: Question? = null,
     val hand: Hand? = null,
     val worker: Worker? = null,

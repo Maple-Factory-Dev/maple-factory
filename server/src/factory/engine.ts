@@ -28,6 +28,7 @@ import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFI
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
 import { findingDetail, type StatKind } from "./stats.ts";
+import { trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
@@ -1149,6 +1150,7 @@ export class Engine {
             events: [{ who, text: `split it off ${task.id}`, at: t }],
             mockups: [],
             artifacts: [],
+            stages: [],
             question: null,
             hand: null,
             worker: null,
@@ -1349,6 +1351,7 @@ export class Engine {
       events: [{ who, text: "created it", at: t }],
       mockups: [],
       artifacts: [],
+      stages: [],
       followUps: [],
       queueRank: t,
       draftRank: t,
@@ -3607,6 +3610,7 @@ export class Engine {
   }
 
   private save(task: Task, touch = true) {
+    trackStage(task, now());
     if (touch) task.updatedAt = now();
     // An auto-merge counts down only while every gate still holds, on the head it started for.
     if (task.mergeAt != null) {

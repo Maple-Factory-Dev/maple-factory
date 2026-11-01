@@ -66,6 +66,7 @@ struct TaskInspector: View {
                     }
                     SinceLastViewedBanner(task: task, compact: true)
                     PipelineStepper(state: task.state)
+                    if !task.stages.isEmpty { TaskTimeCard(task: task) }
                     // What needs attention now comes first; the rest is a line each, opening the full view.
                     if task.liveLog != nil, task.state == .planning || task.state == .building { LiveStrip(task: task) }
                     if let question = task.question, task.hand == nil { QuestionBlock(task: task, question: question) }
@@ -242,5 +243,118 @@ struct PipelineStepper: View {
                     .foregroundStyle(Theme.textMuted)
             }
         }
+    }
+}
+
+/// How long the task has taken (MF-302): total, worked and waiting, a bar of its stages, and a row
+/// per stage with the waits inside it. The open stage ticks while the task is unfinished.
+struct TaskTimeCard: View {
+    let task: FactoryTask
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: task.state.isFinished ? 3600 : 15)) { context in
+            content(TaskTimes(createdAt: task.createdAtMs, stages: task.stages, now: context.date))
+        }
+    }
+
+    private func content(_ times: TaskTimes) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionLabel(title: "Time")
+                Spacer()
+                if times.estimated {
+                    Text("estimated")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textFaint)
+                        .help("Worked out from the task's history: it started before the factory kept its stages.")
+                }
+            }
+            HStack(spacing: 14) {
+                headline("Total", times.total)
+                headline("Working", times.working)
+                headline("Waiting", times.waiting)
+            }
+            TaskTimeBar(times: times)
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(times.stages) { stage in
+                    let mac = LiveAdapter.state(stage.stage)
+                    HStack(spacing: 7) {
+                        Circle().fill(mac.color).frame(width: 7, height: 7)
+                        Text(mac.title).foregroundStyle(Theme.text)
+                        if stage.open {
+                            Text("now").font(.system(size: 10, weight: .medium)).foregroundStyle(mac.color)
+                        }
+                        Spacer(minLength: 8)
+                        Text(Self.detail(stage))
+                            .foregroundStyle(Theme.textMuted)
+                            .monospacedDigit()
+                    }
+                    .font(.system(size: 12))
+                }
+            }
+        }
+    }
+
+    private func headline(_ label: String, _ ms: UInt64) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(TaskTimes.format(ms))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .monospacedDigit()
+            Text(label)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    /// "1h 40m · 22m queued · 10m on a hand".
+    static func detail(_ stage: TaskTimes.Stage) -> String {
+        var parts = [TaskTimes.format(stage.total)]
+        if stage.queued > 0 { parts.append("\(TaskTimes.format(stage.queued)) queued") }
+        if stage.hand > 0 { parts.append("\(TaskTimes.format(stage.hand)) on a hand") }
+        if stage.question > 0 { parts.append("\(TaskTimes.format(stage.question)) on a question") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// The stages side by side, by their share of the time: worked time solid, waits hatched.
+struct TaskTimeBar: View {
+    let times: TaskTimes
+
+    var body: some View {
+        let total = max(1, times.stages.reduce(0) { $0 + $1.total })
+        GeometryReader { geo in
+            HStack(spacing: 1.5) {
+                ForEach(times.stages) { stage in
+                    let color = LiveAdapter.state(stage.stage).color
+                    let width = geo.size.width * CGFloat(stage.total) / CGFloat(total)
+                    let waitShare = stage.total == 0 ? 0 : CGFloat(stage.waiting) / CGFloat(stage.total)
+                    HStack(spacing: 0) {
+                        Rectangle().fill(color).frame(width: width * (1 - waitShare))
+                        Rectangle().fill(color.opacity(0.22))
+                            .overlay(Hatch().stroke(color.opacity(0.7), lineWidth: 1).clipped())
+                            .frame(width: width * waitShare)
+                    }
+                    .frame(width: max(2, width))
+                    .help("\(LiveAdapter.state(stage.stage).title): \(TaskTimeCard.detail(stage))")
+                }
+            }
+        }
+        .frame(height: 8)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+/// Diagonal stripes: the waiting part of a bar.
+struct Hatch: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            p.move(to: CGPoint(x: x, y: rect.maxY))
+            p.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += 4
+        }
+        return p
     }
 }

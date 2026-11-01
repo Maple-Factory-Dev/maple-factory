@@ -147,6 +147,8 @@ import SwiftUI
         }
         task.mockups = t.mockups.map(mockup)
         task.artifacts = t.artifacts
+        task.stages = t.stages
+        task.createdAtMs = t.createdAt
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)
