@@ -93,16 +93,19 @@ export function home(request: Request, env: Env, me: Member | null, update: Serv
 }
 
 /** Where a task link (`/t/<id>`) lands: it opens the task in the app. Says nothing about the task,
- *  so a link that travels further than the team gives nothing away. */
-export function taskLink(id: string): Response {
+ *  so a link that travels further than the team gives nothing away. \`?artifact=<id>\` (the pull request's
+ *  Artifacts links) carries on to the web app, which picks that artifact. */
+export function taskLink(id: string, artifact: string | null = null): Response {
   const app = `maplefactory://task/${encodeURIComponent(id)}`;
+  const pick = artifact && /^[\w-]{1,64}$/.test(artifact) ? `?artifact=${artifact}` : "";
+  const web = `/app#/t/${encodeURIComponent(id)}${pick}`;
   return page(`${id} · Maple Factory`, `<p class="opening"><span class="spinner" aria-hidden="true"></span>Opening <b>${escape(id)}</b> in Maple Factory…</p>
-    <p class="row"><a class="button primary" href="${escape(app)}">Open it in the app</a><a class="button" href="/app#/t/${escape(encodeURIComponent(id))}">Open in the browser</a></p>
+    <p class="row"><a class="button primary" href="${escape(app)}">Open it in the app</a><a class="button" href="${escape(web)}">Open in the browser</a></p>
     <p class="note">No app on this machine? Install it from your factory's admin.</p>
     <script>
       // Try the app; if nothing takes the link (no app here, or a phone), go to the web app.
       location.href = ${JSON.stringify(app)};
-      setTimeout(() => { if (!document.hidden) location.replace(${JSON.stringify(`/app#/t/${id}`)}); }, 1500);
+      setTimeout(() => { if (!document.hidden) location.replace(${JSON.stringify(web)}); }, 1500);
     </script>`, { card: true, eyebrow: "Task link", heading: escape(id) });
 }
 
