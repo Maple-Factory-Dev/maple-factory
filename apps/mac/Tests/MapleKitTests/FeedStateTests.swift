@@ -214,4 +214,34 @@ struct FeedStateTests {
         #expect(state.activity().map(\.id) == state.activity().map(\.id))
         #expect(Set(state.activity().map(\.id)).count == 4)
     }
+
+    private func recurring(_ id: String, goal: String = "g1", nextAt: Int, paused: Bool = false, title: String? = nil) -> String {
+        """
+        {"id":"\(id)","goal":"\(goal)","title":"\(title ?? id)","brief":"Do it","agent":"claude","every":10080,"unit":"weeks",
+         "firstAt":1,"timeZone":"UTC","nextAt":\(nextAt),"paused":\(paused),"by":"sam"}
+        """
+    }
+
+    @Test func recurringFollowsSnapshotAndDeltas() throws {
+        var state = FeedState()
+        // An older server sends no recurring list: none.
+        state.apply(try decode(snapshot))
+        #expect(state.recurring.isEmpty)
+
+        let withRecurring = snapshot.replacingOccurrences(of: #""runnerLatest":"0.10.1"}"#,
+            with: #""runnerLatest":"0.10.1","recurring":[\#(recurring("r1", nextAt: 300)),\#(recurring("r2", nextAt: 100, paused: true)),\#(recurring("r9", goal: "g2", nextAt: 50))]}"#)
+        state.apply(try decode(withRecurring))
+        // Running first, then soonest; another goal's stay out.
+        #expect(state.recurring(goal: "g1").map(\.id) == ["r1", "r2"])
+        #expect(state.recurring(goal: "g2").map(\.id) == ["r9"])
+
+        // A new one due sooner goes first; a changed one is replaced.
+        state.apply(try decode(#"{"type":"recurring.updated","recurring":\#(recurring("r3", nextAt: 200))}"#))
+        state.apply(try decode(#"{"type":"recurring.updated","recurring":\#(recurring("r2", nextAt: 100, title: "Renamed"))}"#))
+        #expect(state.recurring(goal: "g1").map(\.id) == ["r2", "r3", "r1"])
+        #expect(state.recurring["r2"]?.title == "Renamed")
+
+        state.apply(try decode(#"{"type":"recurring.deleted","id":"r3"}"#))
+        #expect(state.recurring(goal: "g1").map(\.id) == ["r2", "r1"])
+    }
 }
