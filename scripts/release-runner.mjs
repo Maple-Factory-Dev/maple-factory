@@ -9,13 +9,16 @@
 // The manifest's notes are runner/CHANGELOG.md's section for the version (--notes overrides them), and the
 // release goes to the front of maple-runner/changes.json, the list of releases the Mac app shows as What's new.
 //
+// A feed release is tagged runner-v<version> on GitHub first (the next release's base), so runner/ has to be
+// committed and pushed, and that tag must not exist yet.
+//
 // Linux targets build in Docker (the official rust image), so it needs to be running.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { compareVersions, destination, fetchJson, flag, newKey, option, publish, putJson, releaseKey, root } from "./feed.mjs";
+import { compareVersions, destination, fetchJson, flag, newKey, option, publish, putJson, releaseKey, root, tagRelease } from "./feed.mjs";
 
 if (flag("--new-key")) {
   newKey();
@@ -33,6 +36,7 @@ const version = readFileSync(join(root, "runner/Cargo.toml"), "utf8").match(/^ve
 // Release builds report errors to Maple Factory's Sentry project; the DSN is built in (runner/src/telemetry.rs).
 const sentryDsn = JSON.parse(readFileSync(join(root, "server/web/sentry.json"), "utf8")).projects.runner.dsn;
 if (where.to === "feed" && !sentryDsn) throw new Error("server/web/sentry.json has no runner DSN.");
+if (where.to === "feed") tagRelease("runner-v", version, ["runner"], `maple-runner ${version}`);
 const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { stdio: "inherit", cwd: join(root, "runner"), env: { ...process.env, MAPLE_SENTRY_DSN: sentryDsn }, ...opts });
 
 /** CHANGELOG.md's section for `v` (the lines under its `## v — date` heading), or null. */

@@ -8,9 +8,14 @@
 //   local      `wrangler dev`'s copy of that bucket.
 //   dir:PATH   files in a folder, laid out like the feed (to serve and test against).
 //
-// The private key lives at ~/.config/maple-factory/release-key.pem (MAPLE_RELEASE_KEY to move it),
-// never in the repo; runner/src/update.rs and installer/maple.mjs build in the public half. Without
-// that key a stolen Worker or bucket can't push a release anyone will run, so keep a copy somewhere safe.
+// The private key comes from MAPLE_RELEASE_KEY_PEM (the PEM text itself, for CI; RELEASING.md), else the
+// file at MAPLE_RELEASE_KEY, else ~/.config/maple-factory/release-key.pem; never from the repo.
+// runner/src/update.rs and installer/maple.mjs build in the public half. Without that key a stolen Worker
+// or bucket can't push a release anyone will run, so keep a copy somewhere safe.
+//
+// Uploads run `npx --no-install wrangler`: with CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID set it needs
+// no login and never prompts (neither wrangler.jsonc names an account, so the token needs the ID beside it);
+// without them it uses your `wrangler login`.
 
 import { execFileSync } from "node:child_process";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
@@ -38,15 +43,61 @@ export function newKey() {
   console.log(`Wrote ${keyPath}. Back it up; put this in runner/src/update.rs and installer/maple.mjs as RELEASE_PUBLIC_KEY:\n${publicHalf(privateKey)}`);
 }
 
+/** The private signing key and where it came from (named in errors; the key itself never is). */
+export function signingKey() {
+  const pem = process.env.MAPLE_RELEASE_KEY_PEM;
+  if (pem) {
+    try {
+      return { key: createPrivateKey(pem.replace(/\\n/g, "\n")), source: "MAPLE_RELEASE_KEY_PEM" };
+    } catch {
+      throw new Error("MAPLE_RELEASE_KEY_PEM isn't a PEM private key.");
+    }
+  }
+  if (!existsSync(keyPath)) throw new Error(`No signing key: set MAPLE_RELEASE_KEY_PEM, or make one at ${keyPath} with --new-key.`);
+  try {
+    return { key: createPrivateKey(readFileSync(keyPath)), source: keyPath };
+  } catch {
+    throw new Error(`${keyPath} isn't a PEM private key.`);
+  }
+}
+
 /** The signing key, after checking that `files` (repo paths) all build in its public half. */
 export function releaseKey(files) {
-  if (!existsSync(keyPath)) throw new Error(`No signing key at ${keyPath}. Make one with --new-key.`);
-  const key = createPrivateKey(readFileSync(keyPath));
+  const { key, source } = signingKey();
   for (const file of files) {
     const built = readFileSync(join(root, file), "utf8").match(/RELEASE_PUBLIC_KEY(?:: &str)? = "([^"]+)"/)?.[1];
-    if (built !== publicHalf(key)) throw new Error(`${file} has RELEASE_PUBLIC_KEY ${built}, but ${keyPath} is ${publicHalf(key)}; it wouldn't trust this release.`);
+    if (built !== publicHalf(key)) throw new Error(`${file} has RELEASE_PUBLIC_KEY ${built}, but ${source} is ${publicHalf(key)}; it wouldn't trust this release.`);
   }
   return key;
+}
+
+/** Fails before any upload when a Cloudflare token is set without its account (wrangler would go
+ *  looking for the account, which a CI token may not be allowed to do). */
+export function checkCloudflareEnv() {
+  if (process.env.CLOUDFLARE_API_TOKEN && !process.env.CLOUDFLARE_ACCOUNT_ID) {
+    throw new Error("CLOUDFLARE_API_TOKEN is set without CLOUDFLARE_ACCOUNT_ID; set both (RELEASING.md).");
+  }
+}
+
+/** Runs wrangler from the repo's install, never fetching it or asking to. */
+export function wrangler(argv, opts) {
+  checkCloudflareEnv();
+  return execFileSync("npx", ["--no-install", "wrangler", ...argv], opts);
+}
+
+/** Tags HEAD `<prefix><version>` and pushes the tag to origin, after checking `paths` are committed,
+ *  HEAD is on origin, and the tag isn't there yet. Release bases are these pushed tags, so CI sees them. */
+export function tagRelease(prefix, version, paths, message = `${prefix}${version}`) {
+  const git = (...argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" }).trim();
+  const tag = `${prefix}${version}`;
+  if (git("status", "--porcelain", "--", ...paths)) throw new Error(`${paths.join(", ")} has uncommitted changes; the release is tagged from what's committed.`);
+  git("fetch", "-q", "origin");
+  if (git("branch", "-r", "--contains", "HEAD") === "") throw new Error("Push this commit first: the release is tagged from what's on GitHub.");
+  if (git("ls-remote", "--tags", "origin", tag)) throw new Error(`${tag} is already released; bump the version.`);
+  git("tag", "-a", tag, "-m", message);
+  git("push", "-q", "origin", tag);
+  console.log(`Tagged ${tag}.`);
+  return tag;
 }
 
 /** Where this release goes, from --to (or --local). */
@@ -80,7 +131,7 @@ function put(to, path, file, type) {
     return;
   }
   const [bucket, cwd] = to === "feed" ? ["maplefactory-releases", "apps/site"] : ["maple-releases", "server"];
-  execFileSync("npx", ["wrangler", "r2", "object", "put", `${bucket}/${path}`, "--file", file, "--content-type", type, to === "local" ? "--local" : "--remote"],
+  wrangler(["r2", "object", "put", `${bucket}/${path}`, "--file", file, "--content-type", type, to === "local" ? "--local" : "--remote"],
     { stdio: "inherit", cwd: join(root, cwd) });
 }
 
@@ -93,7 +144,7 @@ export async function fetchJson(to, path) {
       return res.ok ? await res.json() : null;
     }
     const file = join(tmpdir(), `maple-get-${process.pid}.json`);
-    execFileSync("npx", ["wrangler", "r2", "object", "get", `maple-releases/${path}`, "--file", file, to === "local" ? "--local" : "--remote"],
+    wrangler(["r2", "object", "get", `maple-releases/${path}`, "--file", file, to === "local" ? "--local" : "--remote"],
       { stdio: "ignore", cwd: join(root, "server") });
     return JSON.parse(readFileSync(file, "utf8"));
   } catch {
