@@ -18,7 +18,9 @@
 //                                                        login), and an installation's repos
 //   GET  /orgs/:org/installation, /orgs/:org/members/:login   an account's installation; 204 if a member (members:read)
 //   GET  /orgs/:org/memberships/:login                   { state: "active", role } if a member, else 404 (members:read)
-//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close or reopen), POST …/issues/:n/comments
+//   POST /repos/:o/:r/pulls, GET …/pulls?head=, GET/PATCH …/pulls/:n (close, reopen or a new body), POST …/issues/:n/comments
+//   POST /_setBody { number, body }                      a person's edit of a pull request's description, made on GitHub
+//   POST /_failBody { on: true|false }                   a PATCH of a pull request's body answers 422 while it's on
 //   PUT  /repos/:o/:r/pulls/:n/merge                     squash-merges into the bare repo (409 if `sha` isn't the head; 405 on a
 //                                                        branch that requires a merge queue)
 //   GET  /repos/:o/:r/rules/branches/:branch             [{ type: "merge_queue" }] when /_queue says the branch requires one, and
@@ -100,6 +102,7 @@ const threads = new Map(); // `${owner}/${repo}#${number}` → [{ path, line, �
 const reviewRules = new Map(); // `${owner}/${repo}:${branch}` → required approving reviews
 const queues = new Map(); // `${owner}/${repo}:${branch}` → { then, reason, delayMs }
 const publicRepos = new Set(); // `${owner}/${repo}`, lower case: the rest are private
+let failBody = false;
 let lastNumber = 0;
 let lastRun = 0;
 
@@ -113,7 +116,7 @@ const headOf = (p) => {
   }
 };
 const pullJson = (p) => ({
-  number: p.number, html_url: p.html_url, state: p.state, merged: Boolean(p.merged), title: p.title,
+  number: p.number, html_url: p.html_url, state: p.state, merged: Boolean(p.merged), title: p.title, body: p.body ?? null,
   head: { ref: p.head, sha: headOf(p) }, base: { ref: p.base },
   assignees: (p.assignees ?? []).map((login) => ({ login })), requested_reviewers: (p.requestedReviewers ?? []).map((login) => ({ login })),
   reviews: p.reviews ?? [],
@@ -261,6 +264,15 @@ createServer((req, res) => {
     let m;
 
     if (req.method === "GET" && url.pathname === "/_log") return send(res, 200, { log, pulls: pulls.map(pullJson), tokens: tokenRequests });
+    if (req.method === "POST" && url.pathname === "/_setBody") {
+      const p = pulls.find((x) => x.number === body.number);
+      if (p) p.body = body.body;
+      return send(res, p ? 200 : 404, {});
+    }
+    if (req.method === "POST" && url.pathname === "/_failBody") {
+      failBody = Boolean(body?.on);
+      return send(res, 200, { failBody });
+    }
     if (req.method === "POST" && url.pathname === "/_deleteBranch") {
       git(bare(body.owner, body.repo), "branch", "-D", body.branch);
       return send(res, 200, {});
@@ -468,6 +480,10 @@ createServer((req, res) => {
       if (req.method === "PATCH") {
         if (body.state === "open" && p.state === "merged") return send(res, 422, { message: "Validation Failed: state cannot be changed. The pull request is merged." });
         if (body.state === "open" && p.state === "closed" && !headOf(p)) return send(res, 422, { message: `Validation Failed: state cannot be changed. The ${p.head} branch has been deleted.` });
+        if (typeof body.body === "string") {
+          if (failBody) return send(res, 422, { message: "Validation Failed: body is too long (maximum is 65536 characters)" });
+          p.body = body.body;
+        }
         Object.assign(p, body.state === "closed" || body.state === "open" ? { state: body.state } : {});
         return send(res, 200, pullJson(p));
       }

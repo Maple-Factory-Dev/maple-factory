@@ -275,3 +275,69 @@ test("with no PUBLIC_URL a public repo's PR body still leaves out the brief", ()
   assert.ok(out.includes("\n\nThe brief is kept in Maple Factory.\n\n"));
   assert.ok(!out.includes("/t/MF-169"));
 });
+
+// The pull request's Artifacts section (engine.ts pullArtifacts, swapArtifacts) — MF-209.
+import { ARTIFACTS_END, ARTIFACTS_START, pullArtifacts, swapArtifacts } from "../src/factory/engine.ts";
+
+const artifactTask = () =>
+  ({
+    ...sentinelTask(),
+    artifacts: [
+      { id: "a-review", title: "Review notes", kind: "markdown", summary: "Globex Corporation's flow, checked", by: "reviewer", at: 2, version: 1 },
+      { id: "a-walk", title: "Change walkthrough", kind: "html", summary: "Before/after for Globex Corporation", by: "builder", at: 1, version: 2 },
+    ],
+  }) as any;
+
+test("a private repo's PR body lists each artifact with its summary, linked to it on the task page", () => {
+  const out = pullBody(artifactTask(), { base, isPrivate: true });
+  assert.ok(out.endsWith(
+    `${ARTIFACTS_START}\n## Artifacts\n\nShared by the agents on MF-169.\n\n` +
+      `- [Change walkthrough](${base}/t/MF-169?artifact=a-walk) (html, v2, shared by the builder) — Before/after for Globex Corporation\n` +
+      `- [Review notes](${base}/t/MF-169?artifact=a-review) (markdown, shared by the reviewer) — Globex Corporation's flow, checked\n` +
+      ARTIFACTS_END,
+  ), out);
+});
+
+test("a public repo's PR body lists artifacts by title and members-only link, without summaries", () => {
+  const out = pullArtifacts(artifactTask(), { base, isPrivate: false });
+  assert.ok(!out.includes("Globex"), out);
+  assert.ok(out.includes(`- [Change walkthrough](${base}/t/MF-169?artifact=a-walk) (html, v2, shared by the builder)\n`));
+  assert.ok(out.includes("Links open in Maple Factory, for its members."));
+  assert.ok(!pullBody(artifactTask(), { base, isPrivate: false }).includes("Globex"));
+});
+
+test("with no PUBLIC_URL artifacts are named, not linked", () => {
+  const out = pullArtifacts(artifactTask(), { base: undefined, isPrivate: false });
+  assert.ok(out.includes("- Change walkthrough (html, v2, shared by the builder)\n"), out);
+  assert.ok(!out.includes("/t/"));
+});
+
+test("no artifacts, no Artifacts section", () => {
+  assert.equal(pullArtifacts(sentinelTask(), { base, isPrivate: true }), "");
+  assert.ok(!pullBody(sentinelTask(), { base, isPrivate: true }).includes("Artifacts"));
+});
+
+test("artifact titles can't break out of their link", () => {
+  const t = { ...sentinelTask(), artifacts: [{ id: "x", title: "a](https://evil.example) [b", kind: "html", by: "builder", at: 1, version: 1 }] } as any;
+  assert.ok(pullArtifacts(t, { base, isPrivate: true }).includes("[a\\](https://evil.example) \\[b]("));
+});
+
+test("swapping the Artifacts block keeps what people wrote above and below it", () => {
+  const v1 = pullArtifacts(artifactTask(), { base, isPrivate: true });
+  const body = `Built by Maple Factory.\n\nA note a person added above.\n\n${v1}\n\nAnd one below, by @bo.`;
+  const t2 = artifactTask();
+  t2.artifacts[1] = { ...t2.artifacts[1], id: "a-walk-3", version: 3 };
+  const v2 = pullArtifacts(t2, { base, isPrivate: true });
+  const out = swapArtifacts(body, v2);
+  assert.equal(out, `Built by Maple Factory.\n\nA note a person added above.\n\n${v2}\n\nAnd one below, by @bo.`);
+  assert.ok(out.includes("?artifact=a-walk-3) (html, v3,"));
+  assert.equal(out.split(ARTIFACTS_START).length, 2);
+});
+
+test("a removed Artifacts block is appended again; an empty one drops it", () => {
+  const block = pullArtifacts(artifactTask(), { base, isPrivate: true });
+  assert.equal(swapArtifacts("Edited by a person.\n", block), `Edited by a person.\n\n${block}`);
+  assert.equal(swapArtifacts("", block), block);
+  assert.equal(swapArtifacts(`Above\n\n${block}\n\nBelow`, ""), "Above\n\n\n\nBelow");
+  assert.equal(swapArtifacts("No block here", ""), "No block here");
+});
