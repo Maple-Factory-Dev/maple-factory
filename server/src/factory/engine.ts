@@ -1369,7 +1369,7 @@ export class Engine {
     onMade(task);
     // `by` is @login when the clicker linked their Slack account (slack-links.ts), else their Slack name.
     await audit(this.env, by.startsWith("@") ? by.slice(1) : `slack:${by}`, "task.created", task.id, { title: task.title, slack: ask.id });
-    await this.startPlanning(task, by);
+    await this.startPlanning(task, by.startsWith("@") ? by.slice(1) : by);
     this.intake.accepted(request, this.store.task(task.id) ?? task, "created", by);
     return this.store.task(task.id) ?? task;
   }
