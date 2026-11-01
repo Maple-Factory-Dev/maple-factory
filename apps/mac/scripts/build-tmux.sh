@@ -42,6 +42,30 @@ stamp="$out/tmux.stamp"
 
 die() { echo "build-tmux: $*" >&2; exit 1; }
 
+# The SDK decides which APIs configure finds (pipe2 came in with one), so a new Xcode rebuilds.
+SDK="$(xcrun --sdk macosx --show-sdk-version)-$(xcrun --sdk macosx --show-sdk-build-version 2>/dev/null || true)"
+
+# verify BIN: what ships must be universal, the right version, macOS $MACOS_MIN+, and macOS-only links.
+# Prints why and returns 1 otherwise. Cheap (~0.1 s), so it runs on cache hits too.
+verify() {
+  want_archs="$(printf '%s\n' $ARCHS | sort | paste -sd' ' -)"
+  got_archs="$(lipo -archs "$1" | tr ' ' '\n' | sort | paste -sd' ' -)"
+  [ "$got_archs" = "$want_archs" ] || { echo "tmux has archs '$got_archs', want '$want_archs'" >&2; return 1; }
+  v="$("$1" -V)"
+  [ "$v" = "tmux $TMUX_VERSION" ] || { echo "tmux -V says '$v', want 'tmux $TMUX_VERSION'" >&2; return 1; }
+  for a in $ARCHS; do
+    minos="$(vtool -arch "$a" -show-build "$1" | awk '$1 == "minos" { print $2 }')"
+    [ "$minos" = "$MACOS_MIN" ] || { echo "tmux ($a) has minos '$minos', want $MACOS_MIN" >&2; return 1; }
+  done
+  if otool -L "$1" | grep -q "/opt/homebrew\|/usr/local\|libevent"; then
+    otool -L "$1" >&2; echo "tmux links outside macOS (or to a libevent dylib)" >&2; return 1
+  fi
+  # A weak import is an API newer than MACOS_MIN that the SDK let through; it'd be NULL on older macOS.
+  if nm -m "$1" | grep "(undefined) weak" >&2; then
+    echo "tmux weak-imports symbols missing on macOS $MACOS_MIN" >&2; return 1
+  fi
+}
+
 # Everything that decides what the binary looks like. The stamp holds this text and its hash.
 inputs="RECIPE=$RECIPE
 TMUX_VERSION=$TMUX_VERSION
@@ -52,6 +76,7 @@ ARCHS=$ARCHS
 MACOS_MIN=$MACOS_MIN
 CFLAGS=$CFLAGS
 LDFLAGS=$LDFLAGS
+SDK=$SDK
 LIBEVENT_CONFIGURE=$LIBEVENT_CONFIGURE
 TMUX_CONFIGURE=$TMUX_CONFIGURE"
 key="$(printf '%s\n' "$inputs" | shasum -a 256 | cut -c1-64)"
@@ -59,11 +84,13 @@ stamp_text="$inputs
 KEY=$key"
 
 if [ -x "$out/tmux" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$stamp_text" ]; then
-  echo "tmux: cached (key ${key%"${key#????????????}"})" >&2
-  echo "$out/tmux"
-  exit 0
-fi
-if [ -f "$stamp" ]; then
+  if verify "$out/tmux"; then
+    echo "tmux: cached (key ${key%"${key#????????????}"})" >&2
+    echo "$out/tmux"
+    exit 0
+  fi
+  echo "tmux: building (cached binary failed its checks)" >&2
+elif [ -f "$stamp" ]; then
   changed="$(printf '%s\n' "$inputs" | grep -vxF -f "$stamp" | cut -d= -f1 | paste -sd, - || true)"
   echo "tmux: building (key changed: ${changed:-binary missing})" >&2
 else
@@ -76,7 +103,7 @@ fetch() {
   # A cached file that doesn't match is left alone: it's replaced only by a download that does.
   [ -f "$f" ] && echo "$3  $f" | shasum -a 256 -c -s && return 0
   mkdir -p "$cache"
-  curl -fsSL "$1" -o "$f.part" || die "couldn't download $1"
+  curl -fsSL "$1" -o "$f.part" || { rm -f "$f.part"; die "couldn't download $1"; }
   if ! echo "$3  $f.part" | shasum -a 256 -c -s; then
     actual="$(shasum -a 256 "$f.part" | cut -c1-64)"
     rm -f "$f.part"
@@ -121,20 +148,7 @@ step make -j"$jobs"
 bin="$work/tmux-$TMUX_VERSION/tmux"
 
 # Check what ships before it replaces anything.
-want_archs="$(printf '%s\n' $ARCHS | sort | paste -sd' ' -)"
-got_archs="$(lipo -archs "$bin" | tr ' ' '\n' | sort | paste -sd' ' -)"
-[ "$got_archs" = "$want_archs" ] || die "tmux has archs '$got_archs', want '$want_archs'"
-[ "$("$bin" -V)" = "tmux $TMUX_VERSION" ] || die "tmux -V says '$("$bin" -V)', want 'tmux $TMUX_VERSION'"
-for a in $ARCHS; do
-  minos="$(vtool -arch "$a" -show-build "$bin" | awk '$1 == "minos" { print $2 }')"
-  [ "$minos" = "$MACOS_MIN" ] || die "tmux ($a) has minos '$minos', want $MACOS_MIN"
-done
-if otool -L "$bin" | grep -q "/opt/homebrew\|/usr/local\|libevent"; then
-  otool -L "$bin" >&2
-  die "tmux links outside macOS (or to a libevent dylib)"
-fi
-# A weak import is an API newer than MACOS_MIN that the SDK let through; it'd be NULL on older macOS.
-if nm -m "$bin" | grep "(undefined) weak" >&2; then die "tmux weak-imports symbols missing on macOS $MACOS_MIN"; fi
+verify "$bin" || die "the built tmux failed its checks"
 
 mkdir -p "$out"
 rm -f "$stamp"
