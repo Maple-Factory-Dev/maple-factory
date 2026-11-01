@@ -619,6 +619,9 @@ import Foundation
             } else {
                 notice = error.message
             }
+        case .pushDevices:
+            // Phone push devices: only the iPhone and Android apps register or list them.
+            break
         case .unknown:
             break
         }
