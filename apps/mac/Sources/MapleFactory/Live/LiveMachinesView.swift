@@ -310,13 +310,21 @@ struct LiveMachineCard: View {
             if settings?.paused == true {
                 HStack(spacing: 4) {
                     Image(systemName: "pause.circle.fill")
-                    Text(settings?.pausedUntil.map { "Paused until \(Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened))" } ?? "Paused")
+                    Text(pauseLabel(settings!))
                 }
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Theme.State.awaitingApproval)
             }
         }
         .sheet(isPresented: $editing) { MachineSettingsSheet(machine: machine) }
+    }
+
+    /// "Paused" for a full pause; under a new-work pause, how many tasks here are still finishing.
+    private func pauseLabel(_ settings: Wire.MachineSettings) -> String {
+        let until = settings.pausedUntil.map { " until \(Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened))" } ?? ""
+        guard settings.pauseNew == true else { return "Paused\(until)" }
+        let finishing = client.factoryTasks.filter { $0.machine == machine.id && !$0.state.isFinished }.count
+        return "Paused for new work\(until)\(finishing > 0 ? " · \(finishing) finishing" : "")"
     }
 
     private var moreMenu: some View {
@@ -331,7 +339,18 @@ struct LiveMachineCard: View {
                     var changed = settings
                     changed.paused.toggle()
                     changed.pausedUntil = nil
+                    changed.pauseNew = nil
                     client.send(.machineSettings(.init(machine: machine.id, settings: changed)))
+                }
+                if !settings.paused {
+                    // Tasks already here finish; nothing new starts, so there's nothing to hand off.
+                    Button("Pause New Work") {
+                        var changed = settings
+                        changed.paused = true
+                        changed.pausedUntil = nil
+                        changed.pauseNew = true
+                        client.send(.machineSettings(.init(machine: machine.id, settings: changed)))
+                    }
                 }
             }
             switch client.runnerAction(machine) {
