@@ -462,8 +462,7 @@ struct TaskRow: View {
             }
             Text(task.title).lineLimit(2)
             if let effort = task.effort, !effort.isEmpty {
-                Label(effort, systemImage: "square.stack.3d.up").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("task.effort")
+                EffortChip(effort: effort).accessibilityIdentifier("task.effort")
             }
             if let permission {
                 Text("Needs permission: \(permission.tool)").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))

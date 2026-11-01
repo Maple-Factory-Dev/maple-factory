@@ -398,6 +398,22 @@ final class FactoryStore {
         }
     }
 
+    /// Puts the task in effort `name` (whitespace collapsed), or takes it out when `name` is nil or
+    /// empty; nothing is sent when it's already there. The wire's `task.edit` clears it on an empty string.
+    func setEffort(_ id: String, _ name: String?) {
+        guard let task = feed.task(id) else { return }
+        let name = name?.split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
+        let was = task.effort ?? ""
+        guard name != was else { return }
+        send(.taskEdit(.init(id: id, effort: name)))
+        notice = .toast(name.isEmpty ? "Took \(id) out of \(was)" : "Put \(id) in \(name)", taskId: id)
+    }
+
+    /// Every task in `goal` that's part of `effort`, in feed order: the Effort card's rows.
+    func tasks(inEffort effort: String, goal: String) -> [Wire.Task] {
+        feed.tasks(in: goal).filter { $0.effort == effort }
+    }
+
     /// Moves a task to another goal; it keeps its id, branch and pull request.
     func moveGoal(_ id: String, to goal: Wire.Goal) {
         guard feed.task(id)?.goal != goal.id else { return }
@@ -829,7 +845,14 @@ final class FactoryStore {
             update(m.id) { task in
                 if let title = m.title { task.title = title }
                 if let brief = m.brief { task.brief = brief }
-                task.events.append(.init(who: me, text: m.title != nil ? "renamed it to \(m.title!)" : "edited the brief", at: DemoData.now))
+                if let effort = m.effort {
+                    let was = task.effort
+                    task.effort = effort.isEmpty ? nil : effort
+                    task.events.append(.init(who: me, text: effort.isEmpty ? "took it out of effort \(was ?? "")" : "put it in effort \(effort)", at: DemoData.now))
+                }
+                if m.title != nil || m.brief != nil {
+                    task.events.append(.init(who: me, text: m.title != nil ? "renamed it to \(m.title!)" : "edited the brief", at: DemoData.now))
+                }
             }
         case .taskMoveGoal(let m):
             guard let goal = feed.goal(m.goal) else { return }

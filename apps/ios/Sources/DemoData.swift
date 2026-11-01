@@ -175,8 +175,13 @@ enum DemoData {
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s5", startedAt: ago(330))
             },
             task("BIL-5", goal: "g-web", title: "Plans page", state: .planning, owner: "sam", updated: 3),
-            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120),
-            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90),
+            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120) { $0.effort = "Bigger screens" },
+            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90) { $0.effort = "Bigger screens" },
+            // With APP-12, the Offline effort: one merged and one building, so its card has something to count.
+            task("APP-11", goal: "g-app", title: "Queue actions taken offline", state: .merged, updated: 60 * 30) { t in
+                t.brief = "Hold approvals and comments made offline and send them once the socket is back."
+                t.effort = "Offline"
+            },
             task("API-33", goal: "g-api", title: "Webhooks for task events", state: .backlog, owner: "kit", updated: 300),
         ]
     }

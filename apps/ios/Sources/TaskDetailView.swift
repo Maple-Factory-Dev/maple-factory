@@ -89,6 +89,7 @@ struct TaskDetailView: View {
                     .accessibilityIdentifier("task.brief").accessibilityValue(task.brief)
             }
         }
+        if let effort = task.effort, !effort.isEmpty { EffortCard(task: task, effort: effort) }
         if !task.plan.isEmpty { PlanCard(task: task) }
         if !task.doneWhen.isEmpty {
             Card("Done when", icon: "checklist") {
