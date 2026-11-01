@@ -46,7 +46,7 @@ struct SensitiveArea: Identifiable {
 
 /// One reason the server gave for a task's risk level (Wire.RiskFactor).
 struct RiskFactor: Identifiable, Equatable {
-    enum Source { case planner, check, size, acceptance }
+    enum Source { case planner, check, size, classifier, acceptance }
     let source: Source
     let label: String
     let level: RiskLevel
@@ -77,6 +77,9 @@ struct RiskPolicy {
     var taskMinutes = 60
     /// Dollars of agent work a task gets before it asks for a hand; nil is no cost limit.
     var taskCostUsd: Double?
+    /// The reviewer grades each built change against this prompt; it can raise the risk and ask for a person's review.
+    var classifierEnabled = false
+    var classifierPrompt = ""
 
     func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
         guard let footprint = task.footprint else { return nil }
