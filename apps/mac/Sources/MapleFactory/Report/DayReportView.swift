@@ -5,6 +5,8 @@ import SwiftUI
 /// Your day report ("EOD"): what you merged, reviewed for others, have waiting on review and have in
 /// progress, across every goal, for one local day (`report.get`). Copy as Markdown or for Slack to post it.
 struct DayReportView: View {
+    /// Headless `-actions`: `report:markdown`, `report:slack`, `report:prev`, `report:today`.
+    static let demo = Notification.Name("DayReportView.demo")
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @State private var day = Calendar.current.startOfDay(for: Date())
@@ -46,6 +48,15 @@ struct DayReportView: View {
         }
         .task(id: day) { if state.isLive { client.requestReport(day: day) } }
         .onChange(of: feedKey) { if state.isLive { client.requestReport(day: day) } }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            switch note.object as? String {
+            case "markdown": if let report { copy(report.markdown, as: "Markdown") }
+            case "slack": if let report { copy(report.slack, as: "Slack") }
+            case "prev": step(-1)
+            case "today": day = Calendar.current.startOfDay(for: Date())
+            default: break
+            }
+        }
     }
 
     private var header: some View {
