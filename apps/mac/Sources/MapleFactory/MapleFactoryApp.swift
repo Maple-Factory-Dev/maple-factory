@@ -96,6 +96,16 @@ struct MapleFactoryApp: App {
                 Button(state.sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { state.toggleSidebar() }
                     .keyboardShortcut("b", modifiers: .command)
 
+                Button(state.showsFactoryRail ? "Hide Factory Rail" : "Show Factory Rail") { state.toggleFactoryRail() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(state.showOnboarding)
+                // ⌘1–⌘9: the saved factories in rail order.
+                ForEach(Array(client.savedFactories.prefix(9).enumerated()), id: \.element.id) { index, factory in
+                    Button("Switch to \(factory.name)") { state.switchToFactory(at: index + 1) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                        .disabled(state.showOnboarding)
+                }
+
                 Button("Add New Factory…") { state.startOnboarding() }
                 if client.isSignedIn {
                     Button("Sign Out of \(client.workspaceName)") {
@@ -263,6 +273,12 @@ struct ContentView: View {
     private var workspace: some View {
         GeometryReader { geo in
             HStack(spacing: 0) {
+                if state.showsFactoryRail {
+                    FactoryRail()
+                        .frame(width: state.railSpace)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .zIndex(2)
+                }
                 Group {
                     if state.sidebarCollapsed || state.isCompact {
                         SidebarRail().transition(.opacity)
@@ -270,7 +286,7 @@ struct ContentView: View {
                         FactorySidebar().transition(.opacity)
                     }
                 }
-                .frame(width: state.sidebarSpace)
+                .frame(width: state.sidebarSpace - state.railSpace)
                 .zIndex(1)
 
                 slab
@@ -445,6 +461,7 @@ struct ContentView: View {
                     .overlay(alignment: .trailing) { Hairline(vertical: true) }
                     .shadow(color: .black.opacity(0.2), radius: 20, x: 4)
             }
+            .padding(.leading, state.railSpace)
             .transition(.opacity.combined(with: .move(edge: .leading)))
         }
     }
