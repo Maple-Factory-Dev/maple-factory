@@ -186,6 +186,9 @@ function receive(m) {
       Object.assign(state, { policy: m.policy ?? null, prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
       // null: a server too old to have integrations.
       state.integrations = m.integrations ?? null;
+      // The maple-server running now (not the bundle this tab loaded), and a newer release (admins only).
+      state.serverVersion = m.serverVersion ?? null;
+      state.serverUpdate = m.serverUpdate ?? null;
       $("org").textContent = m.name || m.org || "Maple Factory";
       showIcon(m.icon);
       status();
