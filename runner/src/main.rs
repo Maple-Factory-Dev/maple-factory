@@ -1255,7 +1255,10 @@ mod tests {
             Cli::try_parse_from(["maple-runner", "lock", "ios-simulator", "--slots", "2", "--timeout", "60", "--", "xcodebuild", "-scheme", "App"]).unwrap().command,
             Some(Cmd::Lock { ref name, slots: 2, timeout: Some(60), ref command, .. }) if name == "ios-simulator" && command == &["xcodebuild", "-scheme", "App"]
         ));
-        assert!(matches!(Cli::try_parse_from(["maple-runner", "lock", "db", "--", "rails", "test"]).unwrap().command, Some(Cmd::Lock { slots: 1, timeout: None, .. })));
+        assert!(matches!(
+            Cli::try_parse_from(["maple-runner", "lock", "db", "--", "rails", "test"]).unwrap().command,
+            Some(Cmd::Lock { slots: 1, timeout: None, .. })
+        ));
         assert!(Cli::try_parse_from(["maple-runner", "lock", "db"]).is_err());
         assert!(matches!(Cli::try_parse_from(["maple-runner", "locks"]).unwrap().command, Some(Cmd::Locks { .. })));
         // Run flags belong to `run` now.

@@ -557,8 +557,14 @@ const MAX_LOCK_NAME: usize = 64;
 /// as its place changes and `{"granted":true}` once it has one, then holds it until the peer closes
 /// the connection (or it breaks). Either way the ticket is dropped, so the slot or place is freed.
 /// `on_wait` hears each new waiting line, then the grant or the peer leaving the queue, for the session's activity.
-pub async fn serve_lock<R, W>(locks: std::sync::Arc<crate::locks::Locks>, request: &Value, who: crate::locks::Holder, mut read: R, mut write: W, mut on_wait: impl FnMut(crate::locks::Wait))
-where
+pub async fn serve_lock<R, W>(
+    locks: std::sync::Arc<crate::locks::Locks>,
+    request: &Value,
+    who: crate::locks::Holder,
+    mut read: R,
+    mut write: W,
+    mut on_wait: impl FnMut(crate::locks::Wait),
+) where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
@@ -1176,10 +1182,7 @@ mod lock_tests {
         drop(a);
         assert_eq!(b.next().await, json!({ "granted": true }));
         assert_eq!(c.next().await["queued"]["position"], 1);
-        assert_eq!(
-            b.waits.lock().unwrap().clone(),
-            vec![Wait::Queued("Waiting for sim · 1 ahead (MF-1 has it)".into()), Wait::Granted]
-        );
+        assert_eq!(b.waits.lock().unwrap().clone(), vec![Wait::Queued("Waiting for sim · 1 ahead (MF-1 has it)".into()), Wait::Granted]);
         c.nothing_yet().await;
         drop(b);
         assert_eq!(c.next().await, json!({ "granted": true }));

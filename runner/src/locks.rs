@@ -72,7 +72,10 @@ pub enum Wait {
 pub enum State {
     Granted,
     /// `position` is its place in line from 1; `holders` hold the slots now.
-    Queued { position: usize, holders: Vec<Holder> },
+    Queued {
+        position: usize,
+        holders: Vec<Holder>,
+    },
     /// Released (only after the ticket is gone; never seen through a live one).
     Gone,
 }
