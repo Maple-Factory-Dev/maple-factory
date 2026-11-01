@@ -41,7 +41,8 @@ export function effectiveTags(capabilities: string[] | null | undefined, setting
   return [...tags].sort();
 }
 
-const TAG = /^[a-z0-9][a-z0-9-]*$/;
+/** A machine tag: lowercase a-z, 0-9 and dashes. */
+export const TAG = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_TAGS = 20;
 const MAX_TAG_LENGTH = 32;
 

@@ -3120,7 +3120,7 @@ public enum Wire {
         public var preflightWatch: String?
         /// Runs once the worktree exists, before the agent starts.
         public var setup: String?
-        /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.
+        /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. A line may start with `[macos] ` or `[xcode,macos] `: only a machine with those tags runs it.
         public var checks: String?
         /// Runs before the worktree is removed when a finished task is cleaned up.
         public var teardown: String?
@@ -3128,8 +3128,10 @@ public enum Wire {
         public var archive: String?
         /// How long each one may run (default 600).
         public var timeoutSecs: UInt32?
+        /// Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags.
+        public var requirePaths: String?
 
-        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, checks: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil) {
+        public init(create: String? = nil, preflight: String? = nil, preflightWatch: String? = nil, setup: String? = nil, checks: String? = nil, teardown: String? = nil, archive: String? = nil, timeoutSecs: UInt32? = nil, requirePaths: String? = nil) {
             self.create = create
             self.preflight = preflight
             self.preflightWatch = preflightWatch
@@ -3138,6 +3140,7 @@ public enum Wire {
             self.teardown = teardown
             self.archive = archive
             self.timeoutSecs = timeoutSecs
+            self.requirePaths = requirePaths
         }
     }
 
@@ -3491,8 +3494,10 @@ public enum Wire {
         public var classification: Classification?
         /// A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).
         public var findings: Findings?
+        /// Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.
+        public var requires: [String]?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3550,6 +3555,7 @@ public enum Wire {
             self.mergeForecast = mergeForecast
             self.classification = classification
             self.findings = findings
+            self.requires = requires
         }
 
         public init(from decoder: Decoder) throws {
@@ -3611,6 +3617,7 @@ public enum Wire {
             mergeForecast = try c.decodeIfPresent(MergeForecast.self, forKey: .mergeForecast)
             classification = try c.decodeIfPresent(Classification.self, forKey: .classification)
             findings = try c.decodeIfPresent(Findings.self, forKey: .findings)
+            requires = try c.decodeIfPresent([String].self, forKey: .requires)
         }
     }
 

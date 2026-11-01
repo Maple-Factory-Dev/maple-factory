@@ -1469,7 +1469,7 @@ pub struct WorktreeScripts {
     /// Runs once the worktree exists, before the agent starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
-    /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook.
+    /// Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. A line may start with `[macos] ` or `[xcode,macos] `: only a machine with those tags runs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks: Option<String>,
     /// Runs before the worktree is removed when a finished task is cleaned up.
@@ -1481,6 +1481,9 @@ pub struct WorktreeScripts {
     /// How long each one may run (default 600).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u32>,
+    /// Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_paths: Option<String>,
 }
 
 /// One repo's worktree scripts, and who last changed them.
@@ -1784,6 +1787,9 @@ pub struct Task {
     /// A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub findings: Option<Findings>,
+    /// Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Vec<String>>,
 }
 
 /// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).

@@ -656,6 +656,7 @@ async fn run_checks(emit: Emit<'_>, f: &Finish, dir: &Path) -> Result<Vec<crate:
         teardown: None,
         archive: None,
         timeout_secs: None,
+        require_paths: None,
     };
     if crate::worktree_scripts::check_commands(Some(&scripts)).is_empty() {
         return Ok(vec![]);
@@ -2135,6 +2136,7 @@ mod tests {
                 teardown: teardown.map(String::from),
                 archive: archive.map(String::from),
                 timeout_secs: Some(30),
+                require_paths: None,
             }),
         }
     }

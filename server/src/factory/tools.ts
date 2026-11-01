@@ -65,6 +65,7 @@ const TOOLS: Tool[] = [
           ["level", "reasons"],
         ),
         footprint: obj({ files: int("Files changed."), lines: int("Lines changed.") }, ["files", "lines"]),
+        requires: list(str(""), "Machine tags the build needs, e.g. [\"macos\"] when a step builds or tests the Mac or iOS app: only a machine with every tag takes it. Leave it out when any machine will do. The repo's path rules add theirs on their own."),
         mockups: list(
           obj(
             {

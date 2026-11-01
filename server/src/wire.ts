@@ -722,7 +722,7 @@ export interface WorktreeScripts {
   preflightWatch?: string | null;
   /** Runs once the worktree exists, before the agent starts. */
   setup?: string | null;
-  /** Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. */
+  /** Commands, one per line, that must exit 0 in the worktree before a builder's finish is committed and pushed: linters, formatters, lefthook. A line may start with `[macos] ` or `[xcode,macos] `: only a machine with those tags runs it. */
   checks?: string | null;
   /** Runs before the worktree is removed when a finished task is cleaned up. */
   teardown?: string | null;
@@ -730,6 +730,8 @@ export interface WorktreeScripts {
   archive?: string | null;
   /** How long each one may run (default 600). */
   timeoutSecs?: number | null;
+  /** Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags. */
+  requirePaths?: string | null;
 }
 
 /** One repo's worktree scripts, and who last changed them. */
@@ -942,6 +944,8 @@ export interface Task {
   classification?: Classification | null;
   /** A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server). */
   findings?: Findings | null;
+  /** Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine. */
+  requires?: string[] | null;
 }
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
