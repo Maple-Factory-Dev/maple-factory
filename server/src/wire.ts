@@ -1224,7 +1224,7 @@ export interface ScoutRun {
   error?: string | null;
 }
 
-/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. */
+/** A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. With `once`, a scheduled task instead: it runs one time at `firstAt` and is then removed. */
 export interface Recurring {
   id: string;
   goal: string;
@@ -1251,6 +1251,8 @@ export interface Recurring {
   lastTask?: string | null;
   /** Who saved it last; its runs are started on their behalf. */
   by: string;
+  /** A one-off: it runs once at `firstAt` and is then removed (its task is the record); `every` and `unit` are ignored. None: repeating. */
+  once?: boolean | null;
 }
 
 /** Draft with AI: a rough idea turned into a task's title, brief and Done when by an agent that reads the code (and can't change it). Only its owner sees it. */
@@ -2346,7 +2348,7 @@ export interface ClientMessage_GoalScout {
   goal: string;
 }
 
-/** The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`. */
+/** The goal's lead or an admin: add a recurring or scheduled (`once`) task (a new id) or change one. A scheduled one's time can't be in the past. Answered with `recurring.updated`, or an `error`. */
 export interface ClientMessage_RecurringSave {
   type: "recurring.save";
   /** nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent. */
@@ -2366,7 +2368,7 @@ export interface ClientMessage_RecurringPause {
   paused: boolean;
 }
 
-/** The goal's lead or an admin: start a run now; its schedule is kept. */
+/** The goal's lead or an admin: start a run now; its schedule is kept. A scheduled (`once`) one is then removed. */
 export interface ClientMessage_RecurringRunNow {
   type: "recurring.runNow";
   id: string;

@@ -4223,7 +4223,7 @@ public enum Wire {
         }
     }
 
-    /// A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online.
+    /// A goal's recurring task: every interval the server starts a new task from its saved prompt, for whichever runner is online. With `once`, a scheduled task instead: it runs one time at `firstAt` and is then removed.
     public struct Recurring: Codable, Hashable, Sendable {
         public var id: String
         public var goal: String
@@ -4250,8 +4250,10 @@ public enum Wire {
         public var lastTask: String?
         /// Who saved it last; its runs are started on their behalf.
         public var by: String
+        /// A one-off: it runs once at `firstAt` and is then removed (its task is the record); `every` and `unit` are ignored. None: repeating.
+        public var once: Bool?
 
-        public init(id: String, goal: String, title: String, brief: String, repo: String? = nil, agent: String, every: UInt32, unit: RecurringUnit, firstAt: UInt64, timeZone: String, nextAt: UInt64, paused: Bool, lastRunAt: UInt64? = nil, lastTask: String? = nil, by: String) {
+        public init(id: String, goal: String, title: String, brief: String, repo: String? = nil, agent: String, every: UInt32, unit: RecurringUnit, firstAt: UInt64, timeZone: String, nextAt: UInt64, paused: Bool, lastRunAt: UInt64? = nil, lastTask: String? = nil, by: String, once: Bool? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -4267,6 +4269,7 @@ public enum Wire {
             self.lastRunAt = lastRunAt
             self.lastTask = lastTask
             self.by = by
+            self.once = once
         }
     }
 
@@ -6629,7 +6632,7 @@ public enum Wire {
         }
     }
 
-    /// The goal's lead or an admin: add a recurring task (a new id) or change one. Answered with `recurring.updated`, or an `error`.
+    /// The goal's lead or an admin: add a recurring or scheduled (`once`) task (a new id) or change one. A scheduled one's time can't be in the past. Answered with `recurring.updated`, or an `error`.
     public struct ClientMessageRecurringSave: Codable, Hashable, Sendable {
         /// nextAt, lastRunAt, lastTask and by are the server's; it ignores what's sent.
         public var recurring: Recurring
@@ -6659,7 +6662,7 @@ public enum Wire {
         }
     }
 
-    /// The goal's lead or an admin: start a run now; its schedule is kept.
+    /// The goal's lead or an admin: start a run now; its schedule is kept. A scheduled (`once`) one is then removed.
     public struct ClientMessageRecurringRunNow: Codable, Hashable, Sendable {
         public var id: String
 
