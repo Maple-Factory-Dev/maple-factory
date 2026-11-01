@@ -294,7 +294,8 @@ enum FactoryData {
         ),
 
         FactoryTask(id: "ATL-133", title: "Auth guard for the assistant panel", state: .merged,
-                    agent: agents[0], detail: "#482 · 1d ago", span: 3...10, updated: "1d"),
+                    agent: agents[0], detail: "#482 · 1d ago", span: 3...10, updated: "1d",
+                    pr: PullRequest(number: 482, state: .merged, checks: CICheck.standard())),
         FactoryTask(id: "ATL-136", title: "Password reset tokens expire after 30 min", state: .merged,
                     agent: agents[1], owner: chris, detail: "#476 · 3d ago", span: 1...8, updated: "3d"),
         FactoryTask(id: "ATL-138", title: "CSRF protection on form posts", state: .merged,
@@ -345,7 +346,9 @@ enum FactoryData {
         FactoryTask(id: "DOC-5", goal: "Docs site", title: "Search with keyboard navigation", state: .building,
                     agent: agents[4], owner: chris, detail: "Step 5 of 7", progress: 0.7, span: 7...15, updated: "now", footprint: (11, 480, false), pr: PullRequest(number: 486, state: .draft, checks: CICheck.standard(running: ["preview deploy"]))),
         FactoryTask(id: "DOC-3", goal: "Docs site", title: "MDX component library", state: .merged,
-                    agent: agents[2], owner: chris, detail: "#450 · 9d ago", span: 0...3, updated: "9d"),
+                    agent: agents[2], owner: chris, detail: "#450 · 9d ago", span: 0...3, updated: "9d",
+                    // A local repo's change: pushed to its origin, with no pull request page or CI.
+                    pr: PullRequest(number: 450, state: .merged, checks: [], branch: "agent/doc-3", base: "main")),
     ]
 
     // MARK: Inbox
