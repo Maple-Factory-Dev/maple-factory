@@ -10,6 +10,8 @@ publishes it, with the sections of earlier releases, to the feed's `maple-runner
 Programs a task's agent leaves running in its worktree (dev servers, watchers) are stopped when its last
 session there ends, and again before task cleanup removes the worktree; the cleanup message names them.
 
+Shared resource locks: `maple-runner lock <name> -- <command>` waits its turn for a resource that sessions on this machine compete for (an iOS simulator, a test database), then runs the command, and lets go when it ends or is killed. A session that's waiting shows "Waiting for ios-simulator · 1 ahead (MF-327 has it)" on its task. `maple-runner locks` lists who holds and waits for each, and `~/.config/maple/locks.toml` sets how many slots a lock has on this machine. Sessions get `MAPLE_RUNNER`, the runner's path, for scripts to call it. See docs/resource-locks.md.
+
 ## 0.100.0 — 2026-11-01
 
 The runner understands one-off scheduled tasks, which run once at a set time.

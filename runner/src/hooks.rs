@@ -21,6 +21,8 @@ use crate::wire::{McpConnector, McpTransport};
 
 pub const SOCKET_ENV: &str = "MAPLE_HOOK_SOCKET";
 pub const SESSION_ENV: &str = "MAPLE_SESSION_ID";
+/// The runner binary, for scripts in a session (`"$MAPLE_RUNNER" lock …`).
+pub const RUNNER_ENV: &str = "MAPLE_RUNNER";
 
 /// Paths the agents need to reach the runner.
 pub struct Hooks {
@@ -467,10 +469,34 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
         tokio::spawn(async move {
             let (read, mut write) = stream.split();
             let mut buf = Vec::new();
-            if BufReader::new(read.take(1 << 20)).read_until(b'\n', &mut buf).await.is_err() {
+            let mut reader = BufReader::new(read.take(1 << 20));
+            if reader.read_until(b'\n', &mut buf).await.is_err() {
                 return;
             }
             let Ok(event) = serde_json::from_slice::<Value>(&buf) else { return };
+            if let Some(request) = event.get("lock") {
+                // A session's own id, if it's live; anything else (the owner's terminal) waits as itself.
+                let session = request.get("session").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()).filter(|id| sessions.is_live(*id));
+                let task = session.and_then(|id| sessions.task_of(id)).map(|(t, _)| t.id);
+                let who = crate::locks::Holder { session, task, pid: peer, since: 0 };
+                let locks = crate::locks::Locks::shared();
+                locks.set_overrides(crate::locks::load_overrides());
+                let name = request.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+                let sessions = sessions.clone();
+                serve_lock(locks, request, who, reader, write, |wait| {
+                    if let Some(id) = session {
+                        sessions.show_lock_wait(id, &name, wait);
+                    }
+                })
+                .await;
+                return;
+            }
+            if event.get("locks").is_some() {
+                let mut line = serde_json::to_vec(&crate::locks::Locks::shared().snapshot()).unwrap_or_default();
+                line.push(b'\n');
+                let _ = write.write_all(&line).await;
+                return;
+            }
             if let Some(usage) = event.get("usage") {
                 crate::usage::observe_claude(usage);
                 crate::costs::observe_claude(usage);
@@ -522,6 +548,72 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             }
         });
     }
+}
+
+/// The longest lock name taken: names show on task cards.
+const MAX_LOCK_NAME: usize = 64;
+
+/// A `{"lock":{name,slots}}` connection (locks.rs): queues for a slot, sends `{"queued":{position,holders}}`
+/// as its place changes and `{"granted":true}` once it has one, then holds it until the peer closes
+/// the connection (or it breaks). Either way the ticket is dropped, so the slot or place is freed.
+/// `on_wait` hears each new waiting line, then the grant or the peer leaving the queue, for the session's activity.
+pub async fn serve_lock<R, W>(
+    locks: std::sync::Arc<crate::locks::Locks>,
+    request: &Value,
+    who: crate::locks::Holder,
+    mut read: R,
+    mut write: W,
+    mut on_wait: impl FnMut(crate::locks::Wait),
+) where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use crate::locks::State;
+    let name = request.get("name").and_then(Value::as_str).unwrap_or_default().trim();
+    if name.is_empty() || name.len() > MAX_LOCK_NAME || name.chars().any(char::is_control) {
+        let _ = write.write_all(b"{\"error\":\"a lock needs a name of at most 64 characters\"}\n").await;
+        return;
+    }
+    let slots = request.get("slots").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).unwrap_or(1);
+    let mut changed = locks.subscribe();
+    let ticket = locks.enqueue(name, slots, who);
+    let mut said: Option<(usize, Vec<crate::locks::Holder>)> = None;
+    let mut waited = false;
+    let mut byte = [0u8; 64];
+    loop {
+        changed.borrow_and_update();
+        match ticket.state() {
+            State::Granted => break,
+            State::Gone => return,
+            State::Queued { position, holders } => {
+                if said.as_ref() != Some(&(position, holders.clone())) {
+                    let line = json!({ "queued": { "position": position, "holders": holders } });
+                    if write.write_all(format!("{line}\n").as_bytes()).await.is_err() {
+                        return;
+                    }
+                    on_wait(crate::locks::Wait::Queued(crate::locks::waiting_line(name, position, &holders)));
+                    waited = true;
+                    said = Some((position, holders));
+                }
+            }
+        }
+        tokio::select! {
+            r = changed.changed() => if r.is_err() { return },
+            n = read.read(&mut byte) => if !matches!(n, Ok(n) if n > 0) {
+                if waited { on_wait(crate::locks::Wait::Left) }
+                return;
+            },
+        }
+    }
+    if waited {
+        on_wait(crate::locks::Wait::Granted);
+    }
+    if write.write_all(b"{\"granted\":true}\n").await.is_err() {
+        return;
+    }
+    // Held until the peer goes: it sends nothing more, so any read ending is the close.
+    while matches!(read.read(&mut byte).await, Ok(n) if n > 0) {}
+    drop(ticket);
 }
 
 /// What a hook tells the native view that the transcript doesn't (docs/native-session-view.md).
@@ -1029,5 +1121,106 @@ mod tests {
     #[test]
     fn quotes_paths_for_the_shell() {
         assert_eq!(shell_quote("/a b/it's"), r"'/a b/it'\''s'");
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
+
+    use super::serve_lock;
+    use crate::locks::{Holder, Locks, Wait};
+
+    /// A client connected to a `serve_lock` task: lines it got, and its end of the connection.
+    struct Client {
+        lines: tokio::io::Lines<BufReader<tokio::io::ReadHalf<DuplexStream>>>,
+        conn: tokio::io::WriteHalf<DuplexStream>,
+        waits: Arc<Mutex<Vec<Wait>>>,
+    }
+
+    impl Client {
+        async fn next(&mut self) -> Value {
+            let line = tokio::time::timeout(std::time::Duration::from_secs(2), self.lines.next_line()).await.expect("a line in time").unwrap().unwrap();
+            serde_json::from_str(&line).unwrap()
+        }
+        async fn nothing_yet(&mut self) {
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(100), self.lines.next_line()).await.is_err());
+        }
+    }
+
+    fn connect(locks: &Arc<Locks>, name: &str, slots: u32, task: &str) -> Client {
+        let (ours, theirs) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(theirs);
+        let (cread, cwrite) = tokio::io::split(ours);
+        let waits: Arc<Mutex<Vec<Wait>>> = Arc::default();
+        let seen = waits.clone();
+        let who = Holder { session: None, task: Some(task.into()), pid: None, since: 0 };
+        let request = json!({ "name": name, "slots": slots });
+        let locks = locks.clone();
+        tokio::spawn(async move { serve_lock(locks, &request, who, read, write, move |w| seen.lock().unwrap().push(w)).await });
+        Client { lines: BufReader::new(cread).lines(), conn: cwrite, waits }
+    }
+
+    #[tokio::test]
+    async fn one_slot_is_served_in_order_and_freed_when_the_holder_goes() {
+        let locks = Locks::new(HashMap::new());
+        let mut a = connect(&locks, "sim", 1, "MF-1");
+        assert_eq!(a.next().await, json!({ "granted": true }));
+        let mut b = connect(&locks, "sim", 1, "MF-2");
+        let queued = b.next().await;
+        assert_eq!(queued["queued"]["position"], 1);
+        assert_eq!(queued["queued"]["holders"][0]["task"], "MF-1");
+        let mut c = connect(&locks, "sim", 1, "MF-3");
+        assert_eq!(c.next().await["queued"]["position"], 2);
+        b.nothing_yet().await;
+        // The holder's connection closes (a crash looks the same): the next in line gets it.
+        a.conn.shutdown().await.unwrap();
+        drop(a);
+        assert_eq!(b.next().await, json!({ "granted": true }));
+        assert_eq!(c.next().await["queued"]["position"], 1);
+        assert_eq!(b.waits.lock().unwrap().clone(), vec![Wait::Queued("Waiting for sim · 1 ahead (MF-1 has it)".into()), Wait::Granted]);
+        c.nothing_yet().await;
+        drop(b);
+        assert_eq!(c.next().await, json!({ "granted": true }));
+    }
+
+    #[tokio::test]
+    async fn two_slots_admit_two() {
+        let locks = Locks::new(HashMap::new());
+        let mut a = connect(&locks, "db", 2, "MF-1");
+        let mut b = connect(&locks, "db", 2, "MF-2");
+        assert_eq!(a.next().await, json!({ "granted": true }));
+        assert_eq!(b.next().await, json!({ "granted": true }));
+        let mut c = connect(&locks, "db", 2, "MF-3");
+        assert_eq!(c.next().await["queued"]["holders"].as_array().unwrap().len(), 2);
+        drop(a);
+        assert_eq!(c.next().await, json!({ "granted": true }));
+    }
+
+    #[tokio::test]
+    async fn the_machine_override_beats_slots() {
+        let locks = Locks::new(HashMap::from([("sim".to_string(), 1)]));
+        let mut a = connect(&locks, "sim", 4, "MF-1");
+        assert_eq!(a.next().await, json!({ "granted": true }));
+        let mut b = connect(&locks, "sim", 4, "MF-2");
+        assert_eq!(b.next().await["queued"]["position"], 1);
+    }
+
+    #[tokio::test]
+    async fn leaving_the_queue_says_so() {
+        let locks = Locks::new(HashMap::new());
+        let mut a = connect(&locks, "sim", 1, "MF-1");
+        assert_eq!(a.next().await, json!({ "granted": true }));
+        let mut b = connect(&locks, "sim", 1, "MF-2");
+        b.next().await;
+        let waits = b.waits.clone();
+        drop(b);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(waits.lock().unwrap().last(), Some(&Wait::Left));
+        assert_eq!(locks.snapshot()["locks"][0]["waiters"], json!([]));
     }
 }
