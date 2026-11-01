@@ -6,6 +6,7 @@ struct CommandPalette: View {
     static let rowHeight: CGFloat = 36
 
     @Environment(AppState.self) private var state
+    @AppStorage("appearance") private var appearance = Appearance.system
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -144,7 +145,11 @@ struct CommandPalette: View {
                 icon(action.icon, color: Theme.accent)
                 Text(action.title).font(.system(size: 13.5)).foregroundStyle(Theme.text)
                 Spacer(minLength: 8)
-                hint(action.shortcut)
+                if let theme = action.appearance {
+                    hint(theme == appearance ? "✓ Current" : "")
+                } else {
+                    hint(action.shortcut)
+                }
             }
         }
         .padding(.horizontal, 10)

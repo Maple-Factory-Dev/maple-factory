@@ -8,6 +8,7 @@ import type { SessionCostRow } from "./store.ts";
 export type StatKind =
   | "plan.submitted" // detail: version
   | "plan.approved" // detail: version
+  | "changes.approved" // actor: who approved the changes in review
   | "steer" // detail: state
   | "question.asked"
   | "question.answered" // detail: waitMs

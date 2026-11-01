@@ -291,8 +291,9 @@ export async function mergePullRequest(app: GitHubApp, owner: string, repo: stri
   // GitHub works out whether a pull request can merge in the background after each push, and says
   // 405 "not mergeable" until it has: so a 405 soon after a push gets a few more tries.
   let res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
-  // A branch that merges only through its merge queue says 405 too, and always will: no retries for that.
-  const queueOnly = async (r: Response) => /merge queue/i.test(await r.clone().text().catch(() => ""));
+  // A branch that merges only through its merge queue says 405 too, and always will, as does one still waiting on
+  // required approving reviews: no retries for those.
+  const queueOnly = async (r: Response) => /merge queue|approving review/i.test(await r.clone().text().catch(() => ""));
   for (let attempt = 1; res.status === 405 && attempt <= MERGE_RETRIES && !(await queueOnly(res)); attempt++) {
     await new Promise((r) => setTimeout(r, attempt * MERGE_RETRY_MS));
     res = await call(app, "PUT", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/merge`, auth, body);
@@ -312,6 +313,45 @@ export async function mergeQueueRequired(app: GitHubApp, owner: string, repo: st
   if (!res.ok) throw await failure(res, `read the rules on ${branch}`);
   const rules = (await res.json().catch(() => [])) as { type?: string }[];
   return Array.isArray(rules) && rules.some((r) => r?.type === "merge_queue");
+}
+
+/** Makes `logins` assignees of pull request `number` (an issue, to GitHub). */
+export async function addAssignees(app: GitHubApp, owner: string, repo: string, number: number, logins: string[]): Promise<void> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/issues/${number}/assignees`, auth, { assignees: logins });
+  if (!res.ok) throw await failure(res, `assign ${logins.join(", ")} to pull request #${number}`);
+}
+
+/** Asks `logins` to review pull request `number`. */
+export async function requestReviewers(app: GitHubApp, owner: string, repo: string, number: number, logins: string[]): Promise<void> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/requested_reviewers`, auth, { reviewers: logins });
+  if (!res.ok) throw await failure(res, `ask ${logins.join(", ")} to review pull request #${number}`);
+}
+
+/** How many approving reviews `branch`'s rules require before a pull request into it merges: the most any
+ *  `pull_request` rule asks for. A 404 (no rules) is 0. */
+export async function requiredApprovals(app: GitHubApp, owner: string, repo: string, branch: string): Promise<number> {
+  const auth = `token ${(await repoToken(app, owner, repo, PERMISSIONS.pulls)).token}`;
+  const res = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/rules/branches/${branch.split("/").map(seg).join("/")}?per_page=100`, auth);
+  if (res.status === 404) return 0;
+  if (!res.ok) throw await failure(res, `read the rules on ${branch}`);
+  const rules = (await res.json().catch(() => [])) as { type?: string; parameters?: { required_approving_review_count?: number } }[];
+  if (!Array.isArray(rules)) return 0;
+  return Math.max(0, ...rules.filter((r) => r?.type === "pull_request").map((r) => Number(r.parameters?.required_approving_review_count) || 0));
+}
+
+/** Approves pull request `number` as the person whose user token this is, pinned to `headSha`: GitHub ties the
+ *  review to that commit, so it's the code they saw. */
+export async function approvePullRequest(app: GitHubApp, userToken: string, owner: string, repo: string, number: number, headSha: string | null, body: string): Promise<void> {
+  const res = await call(app, "POST", `/repos/${seg(owner)}/${seg(repo)}/pulls/${number}/reviews`, `Bearer ${userToken}`,
+    { event: "APPROVE", body, ...(headSha ? { commit_id: headSha } : {}) });
+  if (!res.ok) throw await failure(res, `approve pull request #${number}`);
+}
+
+/** GitHub's refusal of a merge that's still waiting on required approving reviews. */
+export function needsReviews(e: unknown): boolean {
+  return e instanceof GitHubError && e.status === 405 && /review/i.test(e.message);
 }
 
 const PR_ID_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {

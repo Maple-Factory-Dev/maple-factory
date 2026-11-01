@@ -321,7 +321,7 @@ final class AppState {
     var sidebarSpace: CGFloat { sidebarCollapsed || isCompact ? 68 : 250 }
     var inspectorInline: Bool {
         showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
-            && ![.scratchpad, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
+            && ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
     var contentWidth: CGFloat { windowWidth - sidebarSpace - (inspectorInline ? 380 : 0) }
@@ -1129,7 +1129,16 @@ final class AppState {
         case .action(.toggleSidebar): toggleSidebar()
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
+        case .action(let action):
+            if let appearance = action.appearance { setAppearance(appearance) }
         }
+    }
+
+    /// The same `appearance` default the sidebar's toggle writes; set on NSApp too so it changes at once.
+    func setAppearance(_ appearance: Appearance) {
+        AppDefaults.set(appearance.rawValue, forKey: "appearance")
+        NSApp.appearance = appearance.nsAppearance
+        showToast("Theme: \(appearance.rawValue.capitalized)", icon: appearance.icon)
     }
 
     /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.
@@ -2446,6 +2455,8 @@ final class AppState {
             // The Activity page: `activity:seed:2400` gives the mockup's tasks that many events, `activity:more` is Show 50 more,
             // `activity:bottom` and `activity:top` scroll to its footer and its header, `activity:filter:Agents` picks a filter.
             case "activity": NotificationCenter.default.post(name: ActivityView.demo, object: Array(parts.dropFirst()))
+            // Day report: `report:markdown` / `report:slack` press its Copy buttons, `report:prev` / `report:today` step the day.
+            case "report": NotificationCenter.default.post(name: DayReportView.demo, object: parts[1])
             case "ui":
                 switch parts[1] {
                 case "compose": startCompose()

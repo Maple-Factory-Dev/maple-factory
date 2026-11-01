@@ -2,7 +2,17 @@ import Foundation
 
 /// Something the ⌘K palette can run that isn't a place: the menu's common commands.
 enum PaletteAction: String, CaseIterable, Hashable {
-    case newTask, newGoal, toggleSidebar, toggleTaskPanel, settings
+    case newTask, newGoal, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark
+
+    /// The theme a "Theme: …" action switches to; nil for the rest.
+    var appearance: Appearance? {
+        switch self {
+        case .themeSystem: .system
+        case .themeLight: .light
+        case .themeDark: .dark
+        default: nil
+        }
+    }
 
     var title: String {
         switch self {
@@ -11,6 +21,9 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "Toggle sidebar"
         case .toggleTaskPanel: "Toggle task panel"
         case .settings: "Settings…"
+        case .themeSystem: "Theme: System"
+        case .themeLight: "Theme: Light"
+        case .themeDark: "Theme: Dark"
         }
     }
 
@@ -21,6 +34,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "sidebar.left"
         case .toggleTaskPanel: "sidebar.right"
         case .settings: "gearshape"
+        case .themeSystem, .themeLight, .themeDark: appearance!.icon
         }
     }
 
@@ -31,6 +45,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "⌃⌘S"
         case .toggleTaskPanel: "⌥⌘I"
         case .settings: "⌘,"
+        case .themeSystem, .themeLight, .themeDark: ""
         }
     }
 
@@ -42,6 +57,9 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: ["hide", "show", "collapse", "expand"]
         case .toggleTaskPanel: ["hide", "show", "inspector", "peek"]
         case .settings: ["preferences", "options", "config"]
+        case .themeSystem: ["theme", "appearance", "mode", "color scheme", "auto"]
+        case .themeLight: ["theme", "appearance", "mode", "color scheme", "light mode"]
+        case .themeDark: ["theme", "appearance", "mode", "color scheme", "dark mode"]
         }
     }
 }
@@ -56,6 +74,7 @@ struct PalettePage: Hashable {
     static let all: [PalettePage] = [
         PalettePage(destination: .inbox, title: "Inbox", icon: "tray", keywords: ["approvals", "mentions"]),
         PalettePage(destination: .myTasks, title: "My tasks", icon: "checkmark.circle", keywords: ["mine"]),
+        PalettePage(destination: .dayReport, title: "Day report", icon: "doc.text", keywords: ["eod", "standup", "today", "report"]),
         PalettePage(destination: .needsHand, title: "Needs a hand", icon: "hand.raised", keywords: ["help", "stuck"]),
         PalettePage(destination: .intake, title: "Requests", icon: "tray.and.arrow.down", keywords: ["intake"]),
         PalettePage(destination: .activity, title: "Activity", icon: "waveform.path.ecg", keywords: ["feed"]),

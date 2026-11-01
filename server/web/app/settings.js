@@ -144,6 +144,14 @@ export function integrationSave(i, draft, enabled) {
   return { type: "integrations.save", kind: i.kind, enabled, values: { ...keptValues(i), ...draft } };
 }
 
+/** What Settings → General's Version card says: this factory's maple-server, and either "Up to date" or
+ *  the newer release and how this factory gets it. A null version is a server too old to say. */
+export function serverVersionInfo(version, update) {
+  if (!version) return { version: "Unknown", status: "This server doesn't report its version.", update: null };
+  if (update?.version) return { version: `maple-server ${version}`, status: `${update.version} is out`, update: { version: update.version, how: update.how ?? "" } };
+  return { version: `maple-server ${version}`, status: "Up to date", update: null };
+}
+
 /** The URL to paste into Slack, Linear or Jira: on this server when it only gives a path, and for Jira
  *  with the webhook secret it has to carry. */
 export function webhookUrl(i, origin) {
@@ -247,6 +255,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
           h("button", { type: "button", class: "btn primary", disabled: !isDirty(d) || nameBusy, onclick: save }, nameBusy ? "Saving…" : "Save"))),
       errorReportsCard(),
       pushCard(),
+      versionCard(),
       macOnly("The factory's icon"),
     ];
   }
@@ -312,6 +321,20 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       locked && h("p", { class: "set-detail muted", style: "margin:0" }, "Set off by the Worker's PUSH_RELAY. Remove it there to use this toggle."),
       failed && h("p", { class: "set-detail muted", style: "margin:0" }, "Couldn't read whether mobile notifications are on."),
       h("p", { class: "set-detail muted", style: "margin:0" }, h("a", { href: "https://maplefactory.dev/security#push", target: "_blank", rel: "noopener" }, "What's sent, and what never is")));
+  }
+
+  /** The factory's maple-server version (the snapshot's), and a newer release when there is one. */
+  function versionCard() {
+    const v = serverVersionInfo(state.serverVersion, state.serverUpdate);
+    return h("div", { class: "card set-card" },
+      h("div", { class: "set-row" },
+        h("span", { class: "set-label" }, h("span", {}, "Version"), !v.update && h("span", { class: "set-detail" }, v.status)),
+        h("span", { class: "set-version mono" }, v.version)),
+      v.update && h("div", { class: "set-update" },
+        h("strong", {}, v.status),
+        v.update.how && " · ",
+        // `maple update` reads as code, as on the server's own update notice (src/page.ts).
+        ...v.update.how.split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part))));
   }
 
   function repos() {

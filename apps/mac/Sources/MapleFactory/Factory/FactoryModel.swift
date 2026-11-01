@@ -500,12 +500,12 @@ struct InboxItem: Identifiable {
 }
 
 enum Destination: Hashable {
-    case inbox, myTasks, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals
+    case inbox, myTasks, dayReport, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals
     case goal(String)
 
     /// The pages that aren't goals, by the names `-destination` takes.
     private static let pages: [String: Destination] = [
-        "inbox": .inbox, "mytasks": .myTasks, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
+        "inbox": .inbox, "mytasks": .myTasks, "report": .dayReport, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
         "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals,
     ]
 

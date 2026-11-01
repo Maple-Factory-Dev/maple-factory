@@ -8,7 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Push, deviceId } from "./push.ts";
@@ -18,6 +18,7 @@ import { redacted } from "./factory/connectors.ts";
 import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
 import { statsWindow, summarize } from "./factory/stats.ts";
+import { dayReport } from "./factory/report.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
 import { githubAppInfo } from "./github.ts";
@@ -83,6 +84,7 @@ export class OrgHub extends DurableObject<Env> {
         token: async () => (await this.integrations.config("slack"))?.botToken ?? null,
         problem: (text) => ctx.waitUntil(this.integrationEvent("slack", text)),
       },
+      userToken: (login) => userToken(env, login),
     }, this.intake, this.secrets);
   }
 
@@ -395,6 +397,14 @@ export class OrgHub extends DurableObject<Env> {
         const events = this.store.statEvents(summary.since).filter((e) => !summary.goal || e.goal === summary.goal);
         return Response.json({ ...summary, events });
       }
+      case "/report": {
+        // The Worker passes who's asking as `login`; since and until are their local day's bounds (ms).
+        const login = url.searchParams.get("login") ?? "";
+        const since = Number(url.searchParams.get("since"));
+        const until = Number(url.searchParams.get("until"));
+        if (!login || !Number.isFinite(since) || !Number.isFinite(until) || until <= since) return new Response("Pass since and until (ms), since first.", { status: 400 });
+        return Response.json(this.report(login, since, until));
+      }
       case "/threads": {
         try {
           return Response.json(await this.engine.threads(url.searchParams.get("task") ?? ""));
@@ -444,6 +454,13 @@ export class OrgHub extends DurableObject<Env> {
     const events = [...this.store.statRoundsBefore(merged, since), ...recent];
     const costs = this.store.sessionCosts(since, goal || null);
     return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs });
+  }
+
+  /** `login`'s day report for [since, until) (at most two days, so a stray range can't read the whole log). */
+  private report(login: string, since: number, until: number) {
+    const end = Math.min(until, since + 2 * 86_400_000);
+    const events = this.store.statEvents(since).filter((e) => e.at < end);
+    return dayReport(login, since, end, this.store.tasks(), events, this.store.goals(), this.env.PUBLIC_URL ?? "");
   }
 
   private latest: { version: string | null; at: number } | null = null;
@@ -882,6 +899,11 @@ export class OrgHub extends DurableObject<Env> {
       case "stats.get": {
         if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
         this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
+        return;
+      }
+      case "report.get": {
+        // Anyone signed in, for themselves: their own tasks and the approvals they gave.
+        this.send(ws, { type: "report", report: this.report(client.member.login, msg.since, msg.until) });
         return;
       }
       case "task.checkLog": {

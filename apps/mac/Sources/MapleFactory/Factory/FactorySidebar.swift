@@ -22,6 +22,7 @@ struct FactorySidebar: View {
                     .contextMenu { NotificationMenu() }
                 navRow("Requests", icon: "tray.and.arrow.down", destination: .intake, count: state.newIntake == 0 ? nil : "\(state.newIntake)")
                 navRow("My tasks", icon: "checkmark.circle", destination: .myTasks)
+                navRow("Day report", icon: "doc.text", destination: .dayReport)
                 navRow("Needs a hand", icon: "hand.raised", destination: .needsHand, badge: state.handRaises.isEmpty ? nil : "\(state.handRaises.count)")
                     .contextMenu { NotificationMenu() }
                 navRow("Activity", icon: "waveform.path.ecg", destination: .activity)

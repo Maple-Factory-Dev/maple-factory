@@ -2005,6 +2005,49 @@ data class GoalTally(
     val total: Long,
 )
 
+/** One task on a day report. */
+@Serializable
+data class ReportItem(
+    val id: String,
+    /** The task in the Factory: <factory>/t/<id>. */
+    val url: String,
+    val title: String,
+    /** Its goal's name. */
+    val goal: String? = null,
+    val owner: String,
+    val pr: Long? = null,
+    /** Its pull request on GitHub; none for a local repo. */
+    val prUrl: String? = null,
+    /** When it merged or was approved; for pending and in-progress rows, when it last changed. */
+    val at: Long? = null,
+    /** What happened: "approved the plan", "review"… */
+    val note: String? = null,
+)
+
+/** A day report's section; empty ones are left out. */
+@Serializable
+data class ReportSection(
+    /** merged, reviewed, pendingReview or inProgress. */
+    val key: String,
+    val title: String,
+    val items: List<ReportItem> = emptyList(),
+)
+
+/** What a member merged, reviewed for others, has waiting on review and has in progress, for one local day across every goal. */
+@Serializable
+data class DayReport(
+    val login: String,
+    val since: Long,
+    val until: Long,
+    /** "EOD - Fri, Oct 31". */
+    val title: String,
+    val sections: List<ReportSection> = emptyList(),
+    /** The report as Markdown, ready to paste. */
+    val markdown: String,
+    /** The report as Slack mrkdwn, ready to paste. */
+    val slack: String,
+)
+
 /** The factory's statistics over the last `days`: what people had to step in for, for tuning prompts and loops. Admins only. */
 @Serializable
 data class StatsSummary(
@@ -2962,6 +3005,12 @@ sealed class ClientMessage {
         val days: Long,
         val goal: String? = null,
     ) : ClientMessage()
+    /** Your day report for [since, until), your local day's bounds in ms, answered with `report`. */
+    @Serializable
+    data class ReportGet(
+        val since: Long,
+        val until: Long,
+    ) : ClientMessage()
     /** Finished tasks the snapshot left out, newest first, answered with `tasks.page` to this connection only. */
     @Serializable
     data class TasksOlder(
@@ -3061,6 +3110,7 @@ sealed class ClientMessage {
             "task.checkedIt" -> json.decodeFromJsonElement(TaskCheckedIt.serializer(), body)
             "task.mockupChange" -> json.decodeFromJsonElement(TaskMockupChange.serializer(), body)
             "stats.get" -> json.decodeFromJsonElement(StatsGet.serializer(), body)
+            "report.get" -> json.decodeFromJsonElement(ReportGet.serializer(), body)
             "tasks.older" -> json.decodeFromJsonElement(TasksOlder.serializer(), body)
             "task.get" -> json.decodeFromJsonElement(TaskGet.serializer(), body)
             else -> Unknown(type)
@@ -3144,6 +3194,7 @@ sealed class ClientMessage {
             is TaskCheckedIt -> "task.checkedIt" to json.encodeToJsonElement(TaskCheckedIt.serializer(), value)
             is TaskMockupChange -> "task.mockupChange" to json.encodeToJsonElement(TaskMockupChange.serializer(), value)
             is StatsGet -> "stats.get" to json.encodeToJsonElement(StatsGet.serializer(), value)
+            is ReportGet -> "report.get" to json.encodeToJsonElement(ReportGet.serializer(), value)
             is TasksOlder -> "tasks.older" to json.encodeToJsonElement(TasksOlder.serializer(), value)
             is TaskGet -> "task.get" to json.encodeToJsonElement(TaskGet.serializer(), value)
             is Unknown -> value.type to null
@@ -3374,6 +3425,11 @@ sealed class ServerToClient {
     data class Stats(
         val summary: dev.maplefactory.wire.StatsSummary,
     ) : ServerToClient()
+    /** The day report `report.get` asked for, to that connection only. */
+    @Serializable
+    data class Report(
+        val report: dev.maplefactory.wire.DayReport,
+    ) : ServerToClient()
     /** The CI check log `task.checkLog` asked for, to that connection only. */
     @Serializable
     data class CheckLog(
@@ -3431,6 +3487,7 @@ sealed class ServerToClient {
             "toast" -> json.decodeFromJsonElement(Toast.serializer(), body)
             "session.ended" -> json.decodeFromJsonElement(SessionEnded.serializer(), body)
             "stats" -> json.decodeFromJsonElement(Stats.serializer(), body)
+            "report" -> json.decodeFromJsonElement(Report.serializer(), body)
             "checkLog" -> json.decodeFromJsonElement(CheckLog.serializer(), body)
             "error" -> json.decodeFromJsonElement(Error.serializer(), body)
             else -> Unknown(type)
@@ -3469,6 +3526,7 @@ sealed class ServerToClient {
             is Toast -> "toast" to json.encodeToJsonElement(Toast.serializer(), value)
             is SessionEnded -> "session.ended" to json.encodeToJsonElement(SessionEnded.serializer(), value)
             is Stats -> "stats" to json.encodeToJsonElement(Stats.serializer(), value)
+            is Report -> "report" to json.encodeToJsonElement(Report.serializer(), value)
             is CheckLog -> "checkLog" to json.encodeToJsonElement(CheckLog.serializer(), value)
             is Error -> "error" to json.encodeToJsonElement(Error.serializer(), value)
             is Unknown -> value.type to null
