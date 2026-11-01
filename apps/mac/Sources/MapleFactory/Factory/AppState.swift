@@ -2572,6 +2572,8 @@ final class AppState {
             case "native": NotificationCenter.default.post(name: NativeSessionView.demo, object: Array(parts.dropFirst()).map { String($0) })
             // A press on one of the Risk policy editor's sign-off steppers (with `-window riskpolicy`):
             // `riskstep:approvals:low:-` (row approvals or reviews, a level, + or -).
+            // Follow or unfollow a goal, as its header star would: `follow:Auth overhaul:off`.
+            case "follow": setFollowing(FactoryData.goal(named: parts[1]), parts.count > 2 ? parts[2] != "off" : true)
             case "riskstep": NotificationCenter.default.post(name: RiskPolicyEditor.demoStep, object: Array(parts.dropFirst()).map { String($0) })
             case "recurring": NotificationCenter.default.post(name: RecurringSheetDemo.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
