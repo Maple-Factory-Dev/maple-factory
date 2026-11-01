@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- How scripts/testflight.sh exports the archive: signed for App Store Connect and uploaded to it.
+     `testflight.sh --no-upload` swaps destination to export and leaves the .ipa in build/. -->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>upload</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>teamID</key>
+	<string>TU4485Z3KR</string>
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>

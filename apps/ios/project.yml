@@ -11,8 +11,10 @@ settings:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    # Simulator builds need no signing; a device build picks its team in Xcode.
+    # Simulator builds need no signing; device builds and TestFlight archives (scripts/testflight.sh) sign
+    # with the team below.
     CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: TU4485Z3KR
     CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: "NO"
 packages:
   # The wire protocol, factory API and sign-in storage, shared with the Mac app.
@@ -68,6 +70,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # HTTPS only (no custom crypto), so App Store Connect asks no export-compliance question per build.
+        ITSAppUsesNonExemptEncryption: false
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
