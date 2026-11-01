@@ -30,6 +30,7 @@ mod tasks;
 mod telemetry;
 mod thumbs;
 mod tmux;
+mod transcript;
 mod trust;
 mod update;
 mod usage;
