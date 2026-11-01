@@ -70,6 +70,8 @@ import Foundation
     }
     /// Each goal's latest Scout run since this app connected, by goal id.
     private(set) var scoutRuns: [String: Wire.ScoutRun] = [:]
+    /// Every goal's recurring tasks, by id.
+    private(set) var recurring: [String: Wire.Recurring] = [:]
     /// Each repo's latest Set up with AI run, by lowercased repo name.
     private(set) var setupRuns: [String: Wire.RepoSetupRun] = [:]
     /// Notes edited here whose save hasn't gone out yet; the server's echo of an older save mustn't undo typing.
@@ -318,6 +320,7 @@ import Foundation
         follows = [:]
         quietHours = nil
         scoutRuns = [:]
+        recurring = [:]
         setupRuns = [:]
         policy = nil
         prompts = nil
@@ -468,6 +471,7 @@ import Foundation
             repoScripts = snapshot.scripts ?? []
             setupRuns = Dictionary((snapshot.setupRuns ?? []).map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
             scoutRuns = Dictionary((snapshot.scoutRuns ?? []).map { ($0.goal, $0) }, uniquingKeysWith: { _, last in last })
+            recurring = Dictionary((snapshot.recurring ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
@@ -551,6 +555,10 @@ import Foundation
             drafts[update.draft.id] = update.draft
         case .scoutUpdated(let update):
             scoutRuns[update.run.goal] = update.run
+        case .recurringUpdated(let update):
+            recurring[update.recurring.id] = update.recurring
+        case .recurringDeleted(let update):
+            recurring[update.id] = nil
         case .repoSetupUpdated(let update):
             setupRuns[update.run.repo.lowercased()] = update.run
         case .followsUpdated(let update):
@@ -727,6 +735,30 @@ import Foundation
     func scout(goal name: String) {
         guard let goal = goal(named: name) else { return }
         send(.goalScout(.init(goal: goal.id)))
+    }
+
+    /// A goal's recurring tasks (by goal id), soonest next run first.
+    func recurring(goalId: String) -> [Wire.Recurring] {
+        recurring.values.filter { $0.goal == goalId }.sorted { ($0.paused ? 1 : 0, $0.nextAt) < ($1.paused ? 1 : 0, $1.nextAt) }
+    }
+
+    /// Add or change a recurring task; the server works out its next run.
+    func saveRecurring(_ item: Wire.Recurring) {
+        send(.recurringSave(.init(recurring: item)))
+    }
+
+    func deleteRecurring(id: String) {
+        recurring[id] = nil
+        send(.recurringDelete(.init(id: id)))
+    }
+
+    func pauseRecurring(id: String, paused: Bool) {
+        send(.recurringPause(.init(id: id, paused: paused)))
+    }
+
+    /// Start a run now; its schedule is kept.
+    func runRecurringNow(id: String) {
+        send(.recurringRunNow(.init(id: id)))
     }
 
     /// Every GitHub team someone in the org is on, for a goal's team.
