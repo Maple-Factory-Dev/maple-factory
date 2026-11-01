@@ -2,7 +2,7 @@
 // merge…) is a row in `stats_events` as it happens, and `summarize` adds a window of them up for the
 // Statistics page and `GET /api/stats`. Pure, so test/stats.test.ts runs it on fixtures.
 
-import type { Finding, Goal, StatsCostRow, StatsCount, StatsFindings, StatsSummary, Task } from "../wire.ts";
+import type { Finding, Goal, StatsCostRow, StatsCount, StatsFindings, StatsManualMerges, StatsSummary, Task } from "../wire.ts";
 import type { SessionCostRow } from "./store.ts";
 
 export type StatKind =
@@ -19,7 +19,8 @@ export type StatKind =
   | "review.classified" // detail: round, level, humanReview, reasons
   | "session.restarted" // detail: cause
   | "session.ended" // detail: cause (an end nobody chose that stopped the task)
-  | "merged" // detail: auto, cycleMs
+  | "review.requested" // detail: round; actor: the person who asked for another review round
+  | "merged" // detail: auto, cycleMs, why (manualReason, or none for the factory's own), level, heldBy
   | "cancelled" // detail: state
   | "closed" // detail: proposed (finished with nothing to merge)
   | "budget.reached" // detail: over (time or cost), minutes, costUsd, allowMinutes, allowCostUsd
@@ -84,11 +85,34 @@ export function inferEvents(task: Task): Omit<StatEvent, "id">[] {
   if (task.state === "merged") {
     const at = [...events].reverse().find((e) => e.text.startsWith("merged into"))?.at ?? task.updatedAt;
     const auto = events.some((e) => e.who === "factory" && e.text.startsWith("auto-merged"));
-    add(at, "merged", null, auto ? "factory" : null, { auto, cycleMs: at - task.createdAt });
+    add(at, "merged", null, auto ? "factory" : null, { auto, cycleMs: at - task.createdAt, ...(auto ? {} : { why: "unknown" }) });
   }
   if (task.state === "cancelled") add(task.updatedAt, "cancelled", null, null, {});
   if (task.state === "closed") add(task.updatedAt, "closed", null, null, {});
   return out;
+}
+
+/** Why a merge wasn't the factory's own. */
+export type ManualReason = "autoMergeOff" | "classifier" | "risk" | "held" | "mergedFirst" | "github";
+
+/**
+ * Why the factory didn't merge a task itself, from the assessment and private state as they were just
+ * before it merged; null for the factory's own merge. The first that applies: auto-merge off org-wide,
+ * the risk classifier wanting a person, a level the policy doesn't auto-merge, a person holding the
+ * countdown, a merge on GitHub (no one clicked Merge here), else a person who merged before the factory would have.
+ */
+export function manualReason(
+  assessment: { autoMerge: boolean; humanReview?: boolean },
+  policy: { autoMerges?: boolean | null },
+  ctx: { by: string | null; held: boolean },
+): ManualReason | null {
+  if (ctx.by === "factory") return null;
+  if (policy.autoMerges === false) return "autoMergeOff";
+  if (assessment.humanReview) return "classifier";
+  if (!assessment.autoMerge) return "risk";
+  if (ctx.held) return "held";
+  if (ctx.by == null) return "github";
+  return "mergedFirst";
 }
 
 /** What a review.round row keeps of each finding: enough to show it once its task is gone. */
@@ -250,7 +274,37 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     costByRole: costRows(costs, (c) => c.role),
     costByAgent: costRows(costs, (c) => (c.model ? `${c.agent} · ${c.model}` : c.agent)),
     findings: findingsBreakdown(rounds, byId),
+    manualMerges: manualBreakdown(merges, scoped, byId),
   };
+}
+
+/**
+ * The window's merges a person made, with the changes people asked for while each was in review: a
+ * steer in review or a review a person requested, over the task's whole life. None means merged as is.
+ */
+function manualBreakdown(merges: StatEvent[], scoped: StatEvent[], byId: Map<string, Task>): StatsManualMerges {
+  const manual = merges.filter((e) => e.detail.auto !== true);
+  const asked = new Map<string, number>();
+  for (const e of scoped) {
+    const change = (e.kind === "steer" && e.detail.state === "reviewing") || e.kind === "review.requested";
+    if (change) asked.set(e.task, (asked.get(e.task) ?? 0) + 1);
+  }
+  const reason = (e: StatEvent) => (typeof e.detail.why === "string" && e.detail.why ? e.detail.why : "unknown");
+  const changes = (e: StatEvent) => asked.get(e.task) ?? 0;
+  const recent = [...manual]
+    .sort((a, b) => b.at - a.at || a.task.localeCompare(b.task))
+    .slice(0, 20)
+    .map((e) => ({
+      task: e.task,
+      title: byId.get(e.task)?.title ?? e.task,
+      at: e.at,
+      by: e.actor,
+      reason: reason(e),
+      level: typeof e.detail.level === "string" ? e.detail.level : null,
+      changes: changes(e),
+    }));
+  const withChanges = manual.filter((e) => changes(e) > 0).length;
+  return { total: manual.length, asIs: manual.length - withChanges, withChanges, byReason: counts(manual, reason), recent };
 }
 
 const SERIOUS = new Set(["blocker", "major"]);

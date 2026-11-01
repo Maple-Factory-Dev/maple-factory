@@ -39,6 +39,8 @@ export interface Assessment {
   approvals: number;
   reviews: number;
   autoMerge: boolean;
+  /// The risk classifier asked for a person to review it.
+  humanReview: boolean;
   /// Set when a goal's acceptance is what lets it merge without people.
   accepted: boolean;
 }
@@ -124,6 +126,7 @@ export function assess(task: Task, policy: RiskPolicy, acceptance: RiskAcceptanc
     reviews: accepted ? 0 : Math.max(policy.finalReviews[level] ?? 1, human ? 1 : 0),
     // Off for the whole org beats both the level's checkbox and a goal's acceptance; so does the classifier asking for a person.
     autoMerge: !human && policy.autoMerges !== false && (accepted || (policy.autoMerge[level] ?? false)),
+    humanReview: human,
     accepted,
   };
 }

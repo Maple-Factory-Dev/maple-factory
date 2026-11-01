@@ -179,11 +179,12 @@ export class Store {
     return this.statRows("SELECT * FROM stats_events WHERE at >= ? ORDER BY at", since);
   }
 
-  /** The review rounds `tasks` had before `before`: a merge's earlier rounds, for review rounds per merge. */
+  /** The review rounds, steers and review requests `tasks` had before `before`: a merge's earlier rounds,
+   *  for review rounds per merge, and the changes people asked for, for merged as is or after changes. */
   statRoundsBefore(tasks: string[], before: number): StatEvent[] {
     if (!tasks.length) return [];
     return this.statRows(
-      "SELECT * FROM stats_events WHERE kind = 'review.round' AND at < ? AND task IN (SELECT value FROM json_each(?)) ORDER BY at",
+      "SELECT * FROM stats_events WHERE kind IN ('review.round', 'steer', 'review.requested') AND at < ? AND task IN (SELECT value FROM json_each(?)) ORDER BY at",
       before, JSON.stringify(tasks),
     );
   }
@@ -434,7 +435,7 @@ export class Store {
     const s: MachineSettings = { ...DEFAULT_SETTINGS, ...(row ? JSON.parse(row.doc) : {}) };
     // Pauses from before pausedUntil was a field were objects.
     if (typeof s.paused !== "boolean") s.paused = Boolean(s.paused);
-    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null };
+    if (s.paused && s.pausedUntil != null && s.pausedUntil <= Date.now()) return { ...s, paused: false, pausedUntil: null, pauseNew: false };
     return s;
   }
 

@@ -2572,8 +2572,10 @@ final class AppState {
             case "native": NotificationCenter.default.post(name: NativeSessionView.demo, object: Array(parts.dropFirst()).map { String($0) })
             // A press on one of the Risk policy editor's sign-off steppers (with `-window riskpolicy`):
             // `riskstep:approvals:low:-` (row approvals or reviews, a level, + or -).
+            // Follow or unfollow a goal, as its header star would: `follow:Auth overhaul:off`.
+            case "follow": setFollowing(FactoryData.goal(named: parts[1]), parts.count > 2 ? parts[2] != "off" : true)
             case "riskstep": NotificationCenter.default.post(name: RiskPolicyEditor.demoStep, object: Array(parts.dropFirst()).map { String($0) })
-            case "recurring": NotificationCenter.default.post(name: RecurringButton.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
+            case "recurring": NotificationCenter.default.post(name: RecurringSheetDemo.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
             case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
@@ -2731,6 +2733,10 @@ final class AppState {
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
             case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
+            // A sidebar person's hover card, by first name (`hoverperson:chris`; `none` closes it).
+            // A collapsed-rail item's tooltip, by its title (`hoverrail:andrea`; `none` hides it).
+            case "hoverrail": NotificationCenter.default.post(name: RailTooltip.demo, object: nil, userInfo: ["title": parts[1]])
+            case "hoverperson": NotificationCenter.default.post(name: PersonHover.demoHover, object: nil, userInfo: ["name": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.

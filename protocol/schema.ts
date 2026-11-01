@@ -352,6 +352,7 @@ export const structs: Record<string, Struct> = {
       loadCap: "f64",
       paused: "bool",
       pausedUntil: "u64?",
+      pauseNew: "bool?",
       sessionCap: "f64?",
       weeklyCap: "f64?",
       agentCaps: "AgentCap[]?",
@@ -365,6 +366,7 @@ export const structs: Record<string, Struct> = {
       agentCaps: "Per agent account; an agent listed here ignores sessionCap and weeklyCap.",
       capsTeamOnly: "Caps stop only teammates' work; the owner's own tasks keep running past them.",
       pausedUntil: "When a pause ends on its own; none: until resumed.",
+      pauseNew: "With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review.",
       sessionCap: "Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.",
       weeklyCap: "The same for its weekly window.",
     },
@@ -1191,6 +1193,21 @@ export const structs: Record<string, Struct> = {
     },
     fieldDocs: { areas: "Most findings first, up to 12.", recent: "Newest first, up to 60." },
   },
+  StatsManualMergeRow: {
+    doc: "A merge a person made, and why the factory didn't make it.",
+    fields: { task: "string", title: "string", at: "u64", by: "string?", reason: "string", level: "string?", changes: "u32" },
+    fieldDocs: {
+      by: "Who merged it; none for a merge made on GitHub.",
+      reason: "autoMergeOff, classifier, risk, held, mergedFirst, github or unknown.",
+      level: "Its risk level, when that's the reason.",
+      changes: "Change requests and review requests people sent while it was in review; 0 means merged as is.",
+    },
+  },
+  StatsManualMerges: {
+    doc: "The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes.",
+    fields: { total: "u32", asIs: "u32", withChanges: "u32", byReason: "StatsCount[]", recent: "StatsManualMergeRow[]" },
+    fieldDocs: { recent: "Newest first, up to 20." },
+  },
   GoalTally: {
     doc: "How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out).",
     fields: { goal: "string", merged: "u32", cancelled: "u32", closed: "u32", total: "u32" },
@@ -1243,8 +1260,10 @@ export const structs: Record<string, Struct> = {
       costByRole: "StatsCostRow[]",
       costByAgent: "StatsCostRow[]",
       findings: "StatsFindings?",
+      manualMerges: "StatsManualMerges?",
     },
     fieldDocs: {
+      manualMerges: "Merges people made, by reason; none from a server older than it.",
       costByRole: "planner, builder, reviewer, …",
       costByAgent: "Keyed \"agent · model\".",
       inferred: "Rows in the window worked out from older tasks' history rather than recorded as they happened.",

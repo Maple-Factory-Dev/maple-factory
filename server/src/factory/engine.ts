@@ -27,7 +27,7 @@ import { loginFor } from "../slack-links.ts";
 import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
-import { findingDetail, type StatKind } from "./stats.ts";
+import { findingDetail, manualReason, type StatKind } from "./stats.ts";
 import { trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
@@ -485,7 +485,8 @@ export class Engine {
         const s = msg.settings;
         if (s.capacity != null && (s.capacity < 0 || s.capacity > 16)) fail("A machine takes 0 to 16 sessions.");
         if (s.teamSlots > (s.capacity ?? this.capacity(machine))) fail("It can't lend more slots than it has.");
-        const pausing = s.paused && !this.store.settings(machine.id).paused;
+        // Only a full pause hands teammates' tasks off: under a new-work pause they finish here.
+        const pausing = s.paused && !s.pauseNew && this.pause(machine.id) !== "all";
         this.store.saveSettings(machine.id, { ...s, loadCap: Math.min(1, Math.max(0.1, s.loadCap)) });
         await audit(this.env, who, "machine.settings", machine.id, s);
         if (pausing && msg.handOff) {
@@ -899,6 +900,7 @@ export class Engine {
         rounds.push({ number: rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null, focus, by: who });
         now_.comments.push(comment);
         this.event(now_, who, `asked for a review: ${focus}`);
+        this.stat(now_, "review.requested", { round: rounds.length }, who);
         this.save(now_);
         await this.pump();
         return;
@@ -1464,7 +1466,7 @@ export class Engine {
       machine = machines.find((m) => m.id === task.machine);
       if (!machine) return `${task.machine} was removed; move it to start over elsewhere.`;
       if (!machine.online) return `Waiting for ${machine.name} to come back online.`;
-      if (this.store.settings(machine.id).paused) return `${machine.name} is paused.`;
+      if (this.pause(machine.id) === "all") return `${machine.name} is paused.`;
       const capped = this.overCap(machine, task.agent, task.owner);
       if (capped) return capped;
       kind = machine.owner === task.owner ? "personal" : "team";
@@ -1494,6 +1496,7 @@ export class Engine {
         const running = online.filter((m) => !this.store.settings(m.id).paused);
         if (!running.length) {
           const names = online.map((m) => m.name).join(", ");
+          if (online.every((m) => this.pause(m.id) === "new")) return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused for new work; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused for new work.`;
           return task.shareable ? `${names} ${online.length === 1 ? "is" : "are"} paused; waiting for a team slot.` : `${names} ${online.length === 1 ? "is" : "are"} paused.`;
         }
         if (!running.some((m) => this.hasAgent(m, task.agent))) return `None of ${task.owner}'s online machines (${listed(running)}) has ${task.agent} installed.`;
@@ -1551,6 +1554,12 @@ export class Engine {
   }
 
   /** Why a machine's usage cap stops new work for `agent` there (for a task of `owner`'s), if it does. */
+  /** How a machine is paused: "new" holds back only new tasks, "all" stops every session there. */
+  private pause(machine: string): "all" | "new" | null {
+    const s = this.store.settings(machine);
+    return !s.paused ? null : s.pauseNew ? "new" : "all";
+  }
+
   private overCap(machine: Machine, agent: string, owner: string): string | null {
     const s = this.store.settings(machine.id);
     if (s.capsTeamOnly && owner === machine.owner) return null;
@@ -2284,10 +2293,16 @@ export class Engine {
       this.save(task);
       return;
     }
-    const by = this.store.private(task.id).mergeBy ?? null;
+    const before = this.store.private(task.id);
+    const by = before.mergeBy ?? null;
     // It merged after all (an answer after the watchdog gave up on it): its "didn't merge" hand is moot.
     if (task.hand?.reason === "mergeFailed") this.lowerHand(task, "factory");
-    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt }, by);
+    // Why it wasn't the factory's own merge, from the policy and state as they were before it merged.
+    const a = this.assessment(task);
+    const held = before.mergeHeld != null && before.mergeHeld === (task.pr.head ?? task.pr.branch);
+    const why = manualReason(a, this.store.policy(), { by, held });
+    const heldBy = held ? ([...task.events].reverse().find((e) => e.text.startsWith("held the auto-merge"))?.who ?? null) : null;
+    this.stat(task, "merged", { auto: by === "factory", cycleMs: now() - task.createdAt, ...(why ? { why, level: a.level } : {}), ...(heldBy ? { heldBy } : {}) }, by);
     task.state = "merged";
     task.pr.state = "merged";
     this.event(task, "factory", `merged into ${task.pr.base}${msg.commit ? ` (${msg.commit.slice(0, 7)})` : ""}`);

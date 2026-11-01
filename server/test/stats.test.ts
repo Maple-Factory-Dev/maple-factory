@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { findingArea, findingDetail, inferEvents, median, statsWindow, summarize, type StatEvent } from "../src/factory/stats.ts";
+import { findingArea, findingDetail, inferEvents, manualReason, median, statsWindow, summarize, type StatEvent } from "../src/factory/stats.ts";
 import { Store } from "../src/factory/store.ts";
 
 const DAY = 86_400_000;
@@ -386,4 +386,69 @@ test("a finding's area is its first two folders; its stats row trims long text",
   assert.equal(trimmed.text!.length, 200);
   assert.ok(trimmed.text!.endsWith("…"));
   assert.equal(trimmed.file, null);
+});
+
+test("manualReason: the factory's own merge is none; then auto-merge off, classifier, risk, held, GitHub, merged first", () => {
+  const on = { autoMerge: true, humanReview: false };
+  assert.equal(manualReason({ autoMerge: false, humanReview: true }, { autoMerges: false }, { by: "factory", held: true }), null);
+  assert.equal(manualReason({ autoMerge: false, humanReview: true }, { autoMerges: false }, { by: "ann", held: true }), "autoMergeOff");
+  assert.equal(manualReason({ autoMerge: false, humanReview: true }, {}, { by: "ann", held: true }), "classifier");
+  assert.equal(manualReason({ autoMerge: false, humanReview: false }, {}, { by: null, held: true }), "risk");
+  assert.equal(manualReason(on, {}, { by: null, held: true }), "held");
+  assert.equal(manualReason(on, {}, { by: null, held: false }), "github");
+  assert.equal(manualReason(on, { autoMerges: true }, { by: "ann", held: false }), "mergedFirst");
+});
+
+test("merges by people: reasons, as is or after changes, and only steers in review and review requests count", () => {
+  const who = (e: StatEvent, actor: string | null) => ({ ...e, actor });
+  const rows: StatEvent[] = [
+    ev("merged", "M-0", 2 * H, { auto: true, cycleMs: H }),
+    who(ev("merged", "M-1", 3 * H, { auto: false, why: "autoMergeOff", level: "low" }), "ann"),
+    who(ev("merged", "M-2", 4 * H, { auto: false, why: "risk", level: "medium" }), "ann"),
+    who(ev("merged", "M-3", 5 * H, { auto: false, why: "classifier", level: "low" }), "bob"),
+    who(ev("merged", "M-4", 6 * H, { auto: false, why: "held", level: "low", heldBy: "bob" }), "bob"),
+    who(ev("merged", "M-5", 7 * H, { auto: false, why: "mergedFirst", level: "low" }), "ann"),
+    ev("merged", "M-6", 8 * H, { auto: false, why: "github", level: "low" }),
+    ev("merged", "M-7", 9 * H, { auto: false }), // before `why` was kept
+    // M-2: a steer in review and a requested review → 2 changes; M-3: a steer while building doesn't count.
+    ev("steer", "M-2", 5 * H, { state: "reviewing" }),
+    ev("review.requested", "M-2", 6 * H, { round: 2 }),
+    ev("steer", "M-3", 6 * H, { state: "building" }),
+    // M-4's change request was 40 days ago, before the window: still counts.
+    ev("steer", "M-4", 40 * DAY, { state: "reviewing" }),
+  ];
+  const s = summarize(rows, [task("M-2", { title: "Medium one" })], { days: 7, now: NOW });
+  const m = s.manualMerges!;
+  assert.equal(s.totals.merged, 8);
+  assert.equal(s.totals.autoMerged, 1);
+  assert.equal(m.total, 7);
+  assert.equal(m.withChanges, 2);
+  assert.equal(m.asIs, 5);
+  assert.deepEqual(m.byReason.map((c) => [c.key, c.count]).sort(), [
+    ["autoMergeOff", 1], ["classifier", 1], ["github", 1], ["held", 1], ["mergedFirst", 1], ["risk", 1], ["unknown", 1],
+  ]);
+  assert.deepEqual(m.recent.map((r) => r.task), ["M-1", "M-2", "M-3", "M-4", "M-5", "M-6", "M-7"]);
+  assert.deepEqual(m.recent[1], { task: "M-2", title: "Medium one", at: NOW - 4 * H, by: "ann", reason: "risk", level: "medium", changes: 2 });
+  assert.equal(m.recent[2].changes, 0);
+  assert.equal(m.recent[3].changes, 1);
+  assert.equal(m.recent[5].by, null);
+  assert.equal(m.recent[6].reason, "unknown");
+});
+
+test("a backfilled merge a person made reads why: unknown; the factory's own has none", () => {
+  const merged = (auto: boolean) => task("B-1", {
+    state: "merged",
+    events: [...(auto ? [{ at: NOW - H, who: "factory", text: "auto-merged" }] : []), { at: NOW - H, who: "factory", text: "merged into main" }],
+  });
+  assert.equal(inferEvents(merged(false)).find((e) => e.kind === "merged")!.detail.why, "unknown");
+  assert.equal(inferEvents(merged(true)).find((e) => e.kind === "merged")!.detail.why, undefined);
+});
+
+test("the store hands summarize a merged task's earlier steers and review requests too", () => {
+  const store = new Store(sqlStorage());
+  const add = (kind: StatEvent["kind"], task: string, at: number) => store.recordStat({ at, kind, task, goal: "g1", role: null, actor: null, detail: {} });
+  add("steer", "A-1", NOW - 40 * DAY);
+  add("review.requested", "A-1", NOW - 40 * DAY);
+  add("steer", "B-1", NOW - 40 * DAY);
+  assert.deepEqual(store.statRoundsBefore(["A-1"], NOW - 30 * DAY).map((e) => e.kind), ["steer", "review.requested"]);
 });

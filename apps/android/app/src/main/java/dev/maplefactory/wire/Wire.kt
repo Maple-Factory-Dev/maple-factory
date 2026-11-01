@@ -954,6 +954,8 @@ data class MachineSettings(
     val paused: Boolean,
     /** When a pause ends on its own; none: until resumed. */
     val pausedUntil: Long? = null,
+    /** With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review. */
+    val pauseNew: Boolean? = null,
     /** Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap. */
     val sessionCap: Double? = null,
     /** The same for its weekly window. */
@@ -2181,6 +2183,33 @@ data class StatsFindings(
     val recent: List<StatsFindingRow> = emptyList(),
 )
 
+/** A merge a person made, and why the factory didn't make it. */
+@Serializable
+data class StatsManualMergeRow(
+    val task: String,
+    val title: String,
+    val at: Long,
+    /** Who merged it; none for a merge made on GitHub. */
+    val by: String? = null,
+    /** autoMergeOff, classifier, risk, held, mergedFirst, github or unknown. */
+    val reason: String,
+    /** Its risk level, when that's the reason. */
+    val level: String? = null,
+    /** Change requests and review requests people sent while it was in review; 0 means merged as is. */
+    val changes: Long,
+)
+
+/** The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes. */
+@Serializable
+data class StatsManualMerges(
+    val total: Long,
+    val asIs: Long,
+    val withChanges: Long,
+    val byReason: List<StatsCount> = emptyList(),
+    /** Newest first, up to 20. */
+    val recent: List<StatsManualMergeRow> = emptyList(),
+)
+
 /** How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out). */
 @Serializable
 data class GoalTally(
@@ -2263,6 +2292,8 @@ data class StatsSummary(
     val costByAgent: List<StatsCostRow> = emptyList(),
     /** The findings breakdown; none from a server older than it. */
     val findings: StatsFindings? = null,
+    /** Merges people made, by reason; none from a server older than it. */
+    val manualMerges: StatsManualMerges? = null,
 )
 
 /** One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md. */

@@ -97,7 +97,7 @@ struct FactorySidebar: View {
                             }
                         } else {
                             ForEach(FactoryData.presence, id: \.person.id) { entry in
-                                personRow(entry.person, viewing: entry.viewing)
+                                personRow(entry.person, viewing: entry.viewing, status: FactoryData.seedStatus[entry.person.id])
                             }
                         }
                     }
@@ -208,14 +208,28 @@ struct FactorySidebar: View {
         .contextMenu { GoalContextMenu(goal: goal) }
     }
 
-    private func personRow(_ person: Person, viewing: String?, online: Bool = true, mobile: Bool = false) -> some View {
+    private func personRow(_ person: Person, viewing: String?, online: Bool = true, mobile: Bool = false,
+                           status: PersonStatus? = nil) -> some View {
         let isMe = person.id == FactoryData.me.id
 
         return row(selected: false) {
-            AgentAvatar(agent: person, size: 18, online: online, mobile: mobile).frame(width: 16)
+            AgentAvatar(agent: person, size: 21, online: online, mobile: mobile, shape: .roundedSquare)
+                .frame(width: 20)
                 .opacity(online ? 1 : 0.55)
-            Text(isMe ? "\(person.firstName) (you)" : person.firstName)
-            Spacer()
+            HStack(spacing: 4) {
+                Text(person.firstName)
+                if isMe {
+                    Text("you").foregroundStyle(Theme.textMuted)
+                }
+                if let status {
+                    Text(status.emoji)
+                        .font(.system(size: 12))
+                        .accessibilityLabel(status.text)
+                }
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+            Spacer(minLength: 4)
             if let viewing {
                 Image(systemName: "eye")
                     .font(.system(size: 9.5))
@@ -228,14 +242,41 @@ struct FactorySidebar: View {
         .onTapGesture {
             if let viewing { state.openTask(viewing) }
         }
-        .help(Self.presenceHelp(person, viewing: viewing, online: online, mobile: mobile))
+        .personHoverCard(person, presence: Self.presenceLine(person, viewing: viewing, online: online, mobile: mobile),
+                         online: online, mobile: mobile, status: status)
     }
 
-    /// A person row's tooltip: what they're looking at, and whether it's from a phone.
-    static func presenceHelp(_ person: Person, viewing: String?, online: Bool, mobile: Bool) -> String {
+    /// A person row's tooltip: what they're looking at, whether it's from a phone, and their status.
+    static func presenceHelp(_ person: Person, viewing: String?, online: Bool, mobile: Bool,
+                             status: PersonStatus? = nil) -> String {
         let suffix = online && mobile ? " on mobile" : ""
-        if let viewing { return "\(person.firstName) is viewing \(viewing)\(suffix)" }
-        return online ? "Online\(suffix)" : "Offline"
+        let presence = viewing.map { "\(person.firstName) is viewing \($0)\(suffix)" } ?? (online ? "Online\(suffix)" : "Offline")
+        guard let line = statusLine(status) else { return presence }
+        return "\(presence) · \(line)"
+    }
+
+    /// The hover card's presence line: "Online · on mobile", "Viewing MF-123", "Offline".
+    static func presenceLine(_ person: Person, viewing: String?, online: Bool, mobile: Bool) -> String {
+        let mobileSuffix = online && mobile ? " · on mobile" : ""
+        if let viewing { return "Viewing \(viewing)\(mobileSuffix)" }
+        return online ? "Online\(mobileSuffix)" : "Offline"
+    }
+
+    /// A status as one line: "🌴 Out until Monday", plus "until …" when it ends at a set time.
+    static func statusLine(_ status: PersonStatus?, now: Date = .now) -> String? {
+        guard let status else { return nil }
+        let base = "\(status.emoji) \(status.text)"
+        guard let until = untilLine(status, now: now) else { return base }
+        return "\(base), \(until)"
+    }
+
+    /// "until 3:00 PM" today, "until Mon 9:00 AM" on another day; nil when the status has no end.
+    static func untilLine(_ status: PersonStatus, now: Date = .now) -> String? {
+        guard let until = status.until else { return nil }
+        let style: Date.FormatStyle = Calendar.current.isDate(until, inSameDayAs: now)
+            ? .dateTime.hour().minute()
+            : .dateTime.weekday(.abbreviated).hour().minute()
+        return "until \(until.formatted(style))"
     }
 
     private func machineRow(_ machine: Machine) -> some View {

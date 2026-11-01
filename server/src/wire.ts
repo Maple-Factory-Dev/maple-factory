@@ -329,6 +329,8 @@ export interface MachineSettings {
   paused: boolean;
   /** When a pause ends on its own; none: until resumed. */
   pausedUntil?: number | null;
+  /** With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review. */
+  pauseNew?: boolean | null;
   /** Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap. */
   sessionCap?: number | null;
   /** The same for its weekly window. */
@@ -1465,6 +1467,31 @@ export interface StatsFindings {
   recent: StatsFindingRow[];
 }
 
+/** A merge a person made, and why the factory didn't make it. */
+export interface StatsManualMergeRow {
+  task: string;
+  title: string;
+  at: number;
+  /** Who merged it; none for a merge made on GitHub. */
+  by?: string | null;
+  /** autoMergeOff, classifier, risk, held, mergedFirst, github or unknown. */
+  reason: string;
+  /** Its risk level, when that's the reason. */
+  level?: string | null;
+  /** Change requests and review requests people sent while it was in review; 0 means merged as is. */
+  changes: number;
+}
+
+/** The window's merges a person made: why they weren't automatic, and whether they went in as is or after changes. */
+export interface StatsManualMerges {
+  total: number;
+  asIs: number;
+  withChanges: number;
+  byReason: StatsCount[];
+  /** Newest first, up to 20. */
+  recent: StatsManualMergeRow[];
+}
+
 /** How many of a goal's tasks there are, counted over every task (the snapshot leaves old finished ones out). */
 export interface GoalTally {
   goal: string;
@@ -1542,6 +1569,8 @@ export interface StatsSummary {
   costByAgent: StatsCostRow[];
   /** The findings breakdown; none from a server older than it. */
   findings?: StatsFindings | null;
+  /** Merges people made, by reason; none from a server older than it. */
+  manualMerges?: StatsManualMerges | null;
 }
 
 /** What the person (or the factory) typed. */

@@ -3,6 +3,8 @@ import SwiftUI
 struct GoalView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
+    @State private var showingRecurring = false
+    @State private var showingRiskPolicy = false
     let name: String
 
     /// Read from the live goals as the view draws, so a rename, new lead or due date shows at once.
@@ -128,40 +130,43 @@ struct GoalView: View {
             .font(.system(size: 12))
             .foregroundStyle(Theme.textMuted)
 
-            HStack(alignment: .center) {
+            HStack(alignment: .center, spacing: 0) {
                 Text(goal.name)
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(Theme.text)
-                Spacer()
-                FollowButton(following: state.isFollowing(goal)) { state.setFollowing(goal, !state.isFollowing(goal)) }
-                    .padding(.trailing, 6)
-                if state.isLive, let live = client.goal(named: goal.name) {
-                    ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
-                        .padding(.trailing, 6)
-                    RecurringButton(goal: live).padding(.trailing, 6)
+                FollowStarButton(following: state.isFollowing(goal), color: goal.color) {
+                    state.setFollowing(goal, !state.isFollowing(goal))
                 }
-                RiskPolicyButton()
-                    .padding(.trailing, 10)
-                if state.isLive, let live = client.goal(named: goal.name) {
-                    Menu {
+                .padding(.leading, 8)
+                Spacer()
+                let live = state.isLive ? client.goal(named: goal.name) : nil
+                if let live {
+                    ScoutButton(run: client.scoutRuns[live.id]) { client.scout(goal: goal.name) }
+                        .padding(.trailing, 8)
+                }
+                Menu {
+                    if let live {
                         Button("Edit Goal…") { state.goalSheet = .edit(live.id) }
+                        let recurring = client.recurring(goalId: live.id).count
+                        Button(recurring > 0 ? "Recurring Tasks (\(recurring))…" : "Recurring Tasks…") { showingRecurring = true }
+                    }
+                    Button("Risk Policy…") { showingRiskPolicy = true }
+                    if live != nil {
                         Divider()
                         Button(goal.archived ? "Unarchive" : "Archive Goal…") { state.archive(goal, !goal.archived) }
-                    } label: {
-                        Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .padding(.trailing, 8)
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More goal actions")
+                .popover(isPresented: $showingRiskPolicy, arrowEdge: .bottom) { RiskPolicyEditor() }
+                .recurringSheet(goal: live, isPresented: $showingRecurring)
+                .padding(.trailing, 10)
                 Facepile(people: contributors, size: 24)
-                if state.contentWidth > 900 {
-                    Text("\(contributors.count) people · \(Set(allTasks.compactMap(\.agent?.id)).count) agents")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textMuted)
-                        .padding(.leading, 6)
-                }
+                    .help("\(contributors.count) people · \(Set(allTasks.compactMap(\.agent?.id)).count) agents")
             }
 
             Text(goal.summary)
@@ -173,6 +178,30 @@ struct GoalView: View {
             FlowBar(tasks: allTasks)
                 .padding(.top, 8)
         }
+    }
+}
+
+/// Follow as an icon-only star beside the goal's name: filled in the goal's colour when the goal
+/// is in your sidebar, outlined when it isn't; hovering a followed goal shows that a click unfollows.
+struct FollowStarButton: View {
+    let following: Bool
+    let color: Color
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: following ? (hovering ? "star.slash" : "star.fill") : "star")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(following ? color : (hovering ? Theme.text : Theme.textMuted))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovering = $0 }
+        .help(following ? "Following: in your sidebar. Click to unfollow." : "Follow: put this goal in your sidebar")
+        .accessibilityLabel("Follow goal")
+        .accessibilityValue(following ? "On" : "Off")
     }
 }
 
