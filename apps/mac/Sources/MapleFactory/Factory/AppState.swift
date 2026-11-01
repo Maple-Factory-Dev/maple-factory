@@ -123,6 +123,10 @@ final class AppState {
     /// and what's typed into its filter (`assigntype:<text>`).
     var assigningTask: String? = nil
     var assignQuery = ""
+    /// The task whose Builds on row shows its task picker, when a demo script opened it (`linkask:<id>`),
+    /// and what's typed into its filter (`linktype:<text>`).
+    var linkingTask: String? = nil
+    var linkQuery = ""
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
     var showInspector = AppState.panelLeftOpen
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
@@ -2422,6 +2426,14 @@ final class AppState {
                     try? await Task.sleep(for: .milliseconds(120))
                 }
             case "assignpick": NotificationCenter.default.post(name: AssignPopover.demoPick, object: parts[1])
+            // The Builds on row's task picker (`linkask:<id>`), its filter typed in (`linktype:<text>`), then Return (`linkpick:<id>`).
+            case "linkask": linkQuery = ""; linkingTask = parts[1]
+            case "linktype":
+                for character in parts.dropFirst().joined(separator: ":") {
+                    linkQuery.append(character)
+                    try? await Task.sleep(for: .milliseconds(120))
+                }
+            case "linkpick": NotificationCenter.default.post(name: BuildsOnPopover.demoPick, object: parts[1])
             case "schedule":
                 schedulingTask = nil
                 let pick = SchedulePopover.picks.first { $0.label.lowercased().hasPrefix(parts.count > 2 ? parts[2] : "tonight") } ?? SchedulePopover.picks[0]

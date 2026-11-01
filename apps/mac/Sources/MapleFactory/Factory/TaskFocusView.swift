@@ -837,15 +837,17 @@ struct StageTrack: View {
     }
 }
 
-/// The tasks one waits on, as chips: × takes one off, Add… picks another of its goal's open tasks.
+/// The tasks one waits on, as chips: × takes one off, Add… opens a searchable picker over its goal's open tasks.
 private struct BuildsOnChips: View {
     @Environment(AppState.self) private var appState
     let task: FactoryTask
     let editable: Bool
+    @State private var adding = false
+    @State private var frame: CGRect = .zero
 
     var body: some View {
         FlowChips(ids: task.after + (editable ? ["+"] : [])) { id in
-            if id == "+" { addMenu } else { chip(id) }
+            if id == "+" { addButton } else { chip(id) }
         }
     }
 
@@ -874,38 +876,21 @@ private struct BuildsOnChips: View {
         .help(dep.map { "\($0.title) · " + (merged ? "merged" : cancelled ? "cancelled: take it off so this can build" : "it builds once \(id) merges") } ?? id)
     }
 
-    private var candidates: [FactoryTask] {
-        appState.tasks
-            .filter { $0.goal == task.goal && $0.id != task.id && !$0.state.isFinished && !task.after.contains($0.id) && !waitsOn($0.id, task.id) }
-            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
-    }
-
-    /// Whether `id` already waits (directly or not) on `target`, so adding it would make a loop.
-    private func waitsOn(_ id: String, _ target: String) -> Bool {
-        var seen = Set<String>(), stack = [id]
-        while let next = stack.popLast() {
-            if next == target { return true }
-            guard seen.insert(next).inserted else { continue }
-            stack += appState.tasks.first { $0.id == next }?.after ?? []
-        }
-        return false
-    }
-
-    private var addMenu: some View {
-        Menu {
-            let options = candidates
-            if options.isEmpty { Text("No other open tasks in this goal") }
-            ForEach(options, id: \.id) { other in
-                Button("\(other.id) · \(other.title)") { appState.setAfter(task.id, task.after + [other.id]) }
-            }
-        } label: {
+    private var addButton: some View {
+        let open = Binding(get: { adding || appState.linkingTask == task.id },
+                           set: { if !$0 { adding = false; if appState.linkingTask == task.id { appState.linkingTask = nil } } })
+        return Button { adding.toggle() } label: {
             Text("Add…").font(.system(size: 12))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.borderless)
         .fixedSize()
         .foregroundStyle(Theme.textMuted)
         .help("Wait for another task to merge before this one builds")
+        .background(GeometryReader { g in
+            Color.clear.onAppear { frame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in frame = f }
+        })
+        .popover(isPresented: open, arrowEdge: .bottom) { BuildsOnPopover(task: task) }
+        .onChange(of: open.wrappedValue) { _, now in if Headless.isOn { Headless.popoverAnchor = now ? frame : nil } }
     }
 }
 
