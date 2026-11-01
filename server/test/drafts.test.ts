@@ -83,3 +83,32 @@ test("only drafts are reordered, ahead of another draft in the goal", async () =
   await assert.rejects(rank("T-1", "T-1"), /ahead of itself/);
   assert.deepEqual(order(), ["T-1", "T-2", "T-3"]);
 });
+
+/** Draft with AI through the engine for "me", whose one online machine m1 is paused `how`. */
+async function draftOnPaused(how: "new" | "all") {
+  const store = new Store(sqlStorage());
+  const sent: { type: string }[] = [];
+  const updates: { state: string; error: string | null; machine: string | null }[] = [];
+  const env = { MACHINE: { idFromName: (n: string) => n, get: () => ({ fetch: async (_: string, init: { body: string }) => (sent.push(JSON.parse(init.body)), new Response("ok")) }) } };
+  const machine = { id: "m1", name: "m1", owner: "me", online: true, health: null };
+  const noop = () => {};
+  const hooks = { broadcast: noop, sendTo: (_: string, m: { draft: (typeof updates)[number] }) => updates.push({ ...m.draft }), machines: async () => [machine], members: async () => [], machineChanged: async () => {}, waitUntil: noop, wakeIn: noop };
+  const engine = new Engine(env as never, store, hooks as never, {} as never, {} as never);
+  store.saveSettings("m1", { ...store.settings("m1"), paused: true, pauseNew: how === "new", pausedUntil: null });
+  await engine.command({ type: "draft.start", id: crypto.randomUUID(), idea: "Add a dark mode", goal: null, agent: null }, { member: { login: "me", role: "member" } } as never);
+  return { sent, last: updates.at(-1)! };
+}
+
+test("Draft with AI still runs on a machine paused for new work only", async () => {
+  const { sent, last } = await draftOnPaused("new");
+  assert.deepEqual(sent.map((c) => c.type), ["draft.run"]);
+  assert.equal(last.machine, "m1");
+  assert.equal(last.error, null);
+});
+
+test("Draft with AI is refused on a fully paused machine", async () => {
+  const { sent, last } = await draftOnPaused("all");
+  assert.deepEqual(sent, []);
+  assert.equal(last.state, "failed");
+  assert.equal(last.error, "Your machines are paused.");
+});
