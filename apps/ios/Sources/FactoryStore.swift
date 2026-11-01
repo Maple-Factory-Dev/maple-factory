@@ -311,7 +311,42 @@ final class FactoryStore {
     /// Where a note sits, as the Mac's DiffReview anchors it: `path:L12`.
     static func anchor(_ note: Wire.ReviewNote) -> String { "\(note.path):L\(note.start)" }
 
-    func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
+    func retryTask(_ id: String) {
+        send(.taskRetry(.init(id: id)))
+        notice = .toast("Retrying \(id)", taskId: id)
+    }
+
+    /// Reads the task's pull request and CI from GitHub again, for a webhook that never came.
+    func recheckGitHub(_ id: String) {
+        send(.taskRecheckGitHub(.init(id: id)))
+        notice = .toast("Checking GitHub…", taskId: id)
+    }
+
+    /// Splits the task into `parts`: it keeps its first steps, the rest become new tasks for planning.
+    func split(_ id: String, into parts: Int) {
+        send(.taskSplit(.init(id: id, parts: UInt32(parts))))
+        notice = .toast("Splitting \(id) into \(parts) tasks; the new ones go to planning", taskId: id)
+    }
+
+    /// How many parts the PR budget suggests for the task (the Mac's RiskModel.suggestedSplit): none
+    /// while its footprint fits the policy's files and lines.
+    func suggestedSplit(_ task: Wire.Task) -> Int? {
+        guard let footprint = task.footprint, let policy = feed.policy, policy.maxFiles > 0, policy.maxLines > 0,
+              footprint.files > policy.maxFiles || footprint.lines > policy.maxLines else { return nil }
+        return max(Int((Double(footprint.files) / Double(policy.maxFiles)).rounded(.up)),
+                   Int((Double(footprint.lines) / Double(policy.maxLines)).rounded(.up)))
+    }
+
+    /// Which plan steps a split into `parts` gives each task, as the factory splits it: the original
+    /// keeps up to its current step (at least one), the rest spread over the new ones.
+    static func splitSteps(_ plan: [Wire.PlanStep], parts: Int) -> [[Wire.PlanStep]] {
+        guard parts > 1, plan.count >= parts else { return [plan] }
+        let firstEnd = max(plan.firstIndex { $0.progress == .active } ?? (plan.count / parts - 1), 0)
+        let rest = Array(plan[(firstEnd + 1)...])
+        let perPart = max(Int((Double(rest.count) / Double(parts - 1)).rounded(.up)), 1)
+        let chunks = stride(from: 0, to: rest.count, by: perPart).map { Array(rest[$0..<min($0 + perPart, rest.count)]) }
+        return [Array(plan[...firstEnd])] + chunks
+    }
 
     /// Reads a CI check's log from GitHub (again); the answer, or a refusal, lands in `checkLogs`.
     func loadCheckLog(task id: String, check: String) {
@@ -866,6 +901,23 @@ final class FactoryStore {
         case .taskRerunChecks(let m):
             let failed = feed.task(m.id)?.pr?.checks.filter { $0.status == .failed }.map(\.name) ?? []
             demoRerun(m.id, checks: failed, text: "re-ran the failed checks")
+        case .taskRetry(let m):
+            update(m.id) { task in
+                if task.hand?.reason == .sessionEnded { task.hand = nil }
+                if task.state == .cancelled || task.state == .closed {
+                    if task.pr != nil {
+                        task.state = .reviewing
+                        if task.pr?.state == .closed { task.pr?.state = .open }
+                    } else {
+                        task.state = task.plan.isEmpty ? .planning : .building
+                    }
+                }
+                task.events.append(.init(who: me, text: "retried it", at: DemoData.now))
+            }
+        case .taskRecheckGitHub(let m):
+            demoRecheck(m.id)
+        case .taskSplit(let m):
+            demoSplit(m.id, parts: Int(m.parts))
         default:
             break
         }
@@ -898,6 +950,57 @@ extension FactoryStore {
                 }
             }
         }
+    }
+}
+
+extension FactoryStore {
+    /// The demo's GitHub recheck (the Mac's mock): about 2.5 s later running or queued checks have
+    /// passed, or a passing `test` shows up on a PR that reported none.
+    fileprivate func demoRecheck(_ id: String) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard self.status == .demo, var task = self.feed.task(id), var pr = task.pr else { return }
+            if pr.checks.isEmpty { pr.checks = [.init(name: "test", status: .passed, duration: "1m 12s", required: true)] }
+            for index in pr.checks.indices where pr.checks[index].status == .running || pr.checks[index].status == .queued {
+                pr.checks[index].status = .passed
+                pr.checks[index].duration = "1m \(20 + index * 7)s"
+            }
+            task.pr = pr
+            task.events.append(.init(who: self.me, text: "rechecked CI on GitHub", at: DemoData.now))
+            task.updatedAt = DemoData.now
+            self.feed.apply(.taskUpdated(.init(task: task)))
+        }
+    }
+
+    /// The demo's split (the Mac's AppState.split): the original keeps its first steps, each later
+    /// chunk becomes a new task in the same goal and repo, queued for planning.
+    fileprivate func demoSplit(_ id: String, parts: Int) {
+        guard var original = feed.task(id), let goal = feed.goal(original.goal) else { return }
+        let chunks = Self.splitSteps(original.plan, parts: parts)
+        guard chunks.count > 1 else { return }
+        var next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
+        let share = original.footprint.map { Wire.Footprint(files: UInt32((Double($0.files) / Double(parts)).rounded(.up)), lines: $0.lines / UInt32(parts), estimated: true) }
+        var made: [String] = []
+        for chunk in chunks.dropFirst() {
+            var task = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id,
+                                 title: chunk.count > 1 ? "\(chunk[0].text) (+\(chunk.count - 1) more)" : chunk[0].text,
+                                 state: .planning, owner: original.owner,
+                                 brief: "Split from \(id) to stay inside the PR budget. \(original.brief)",
+                                 createdAt: DemoData.now, updatedAt: DemoData.now,
+                                 plan: chunk.map { var step = $0; step.progress = nil; return step },
+                                 planVersion: 0, approvalsNeeded: original.approvalsNeeded, reviewsNeeded: original.reviewsNeeded,
+                                 events: [.init(who: me, text: "made it by splitting \(id)", at: DemoData.now)],
+                                 footprint: share, shareable: original.shareable, agent: original.agent, splitFrom: id, repo: original.repo)
+            task.effort = original.effort
+            feed.apply(.taskUpdated(.init(task: task)))
+            made.append(task.id)
+            next += 1
+        }
+        original.plan = chunks[0]
+        original.footprint = share.map { Wire.Footprint(files: $0.files, lines: $0.lines, estimated: original.footprint?.estimated ?? true) }
+        original.events.append(.init(who: me, text: "Split into \(made.count + 1) tasks: \(([id] + made).joined(separator: ", "))", at: DemoData.now))
+        original.updatedAt = DemoData.now
+        feed.apply(.taskUpdated(.init(task: original)))
     }
 }
 
