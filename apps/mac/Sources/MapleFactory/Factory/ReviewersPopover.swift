@@ -139,6 +139,10 @@ struct ReviewersPopover: View {
 struct ReviewersRow: View {
     let task: FactoryTask
     @State private var picking = false
+    @State private var frame: CGRect = .zero
+
+    /// A demo script's `reviewersask:<id>`: opens the picker.
+    static let demoOpen = Notification.Name("ReviewersRow.demoOpen")
 
     private var signedOff: [Person] { task.state == .reviewing ? task.reviews : task.approvals }
 
@@ -181,8 +185,15 @@ struct ReviewersRow: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(Theme.textMuted)
                 .help("Request a review or plan approval")
+                .background(GeometryReader { g in
+                    Color.clear.onAppear { frame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in frame = f }
+                })
                 .popover(isPresented: $picking, arrowEdge: .bottom) { ReviewersPopover(task: task) }
+                .onChange(of: picking) { _, now in if Headless.isOn { Headless.popoverAnchor = now ? frame : nil } }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoOpen)) { note in
+            if note.object as? String == task.id { picking = true }
         }
     }
 }

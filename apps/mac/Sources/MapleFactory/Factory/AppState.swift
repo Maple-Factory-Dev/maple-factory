@@ -767,7 +767,15 @@ final class AppState {
     /// Everything waiting on anyone, in every goal.
     var allInbox: [InboxItem] {
         if isLive { return liveInbox }
-        return FactoryData.seedInbox.filter { item in
+        // Reviews requested of you lead, in place of the seed's own row for that task.
+        let me = FactoryData.me
+        let asked = tasks.filter { task in
+            task.requested.contains { $0.id == me.id }
+                && (task.state == .awaitingApproval || task.state == .reviewing)
+                && !(task.state == .reviewing ? task.reviews : task.approvals).contains { $0.id == me.id }
+        }.map { InboxItem(kind: $0.state == .reviewing ? .review : .approval, taskID: $0.id, assignee: me, message: "Your review is requested", when: $0.updated) }
+        return asked + FactoryData.seedInbox.filter { item in
+            if [.approval, .review].contains(item.kind), asked.contains(where: { $0.taskID == item.taskID }) { return false }
             let task = task(item.taskID)
             switch item.kind {
             case .mention: return !dismissedMentions.contains(item.id)
@@ -1606,7 +1614,11 @@ final class AppState {
             client.expect(id, change)
             client.send(.taskRequestReviewers(.init(id: id, add: add, remove: remove)))
         } else {
-            update(id, change)
+            update(id) { task in
+                change(&task)
+                for p in people { task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Requested a review from @\(p.github ?? p.name)", when: "now"), at: 0) }
+                if task.requested.contains(where: { $0.id == FactoryData.me.id }) { task.needsYou = true; task.detail = "Your review is requested" }
+            }
         }
     }
 
@@ -1904,6 +1916,7 @@ final class AppState {
                 if task.state == .backlog { task.state = .awaitingApproval }
                 if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
+                task.requested.removeAll { $0.id == me.id }
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
                     if let title = task.suggestedTitle {
@@ -2439,6 +2452,9 @@ final class AppState {
             guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
+            // The Detail panel's Reviewers row: `request:<id>:<login>`, and `reviewersask:<id>` opens its picker.
+            case "request" where parts.count > 2: requestReviewers(parts[1], add: [parts[2]])
+            case "reviewersask": NotificationCenter.default.post(name: ReviewersRow.demoOpen, object: parts[1])
             case "backlog": sendToBacklog(parts[1])
             case "plan": plan(parts[1])
             case "review": approveChanges(parts[1])
