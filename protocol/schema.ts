@@ -47,6 +47,14 @@ export const enums: Record<string, Enum> = {
       closed: "Finished without code to merge, e.g. its planner proposed tasks instead of a plan.",
     },
   },
+  StageWait: {
+    doc: "What a task stage span was waiting on, when it wasn't being worked.",
+    values: {
+      queued: "Ready to run, waiting for a free slot (the task's `waiting`).",
+      hand: "A hand was up for a person.",
+      question: "The agent's question waited for its answer.",
+    },
+  },
   Role: {
     doc: "What a factory session is for.",
     values: { planner: "Writes the plan.", builder: "Builds and proves it.", reviewer: "Reviews the change." },
@@ -491,6 +499,15 @@ export const structs: Record<string, Struct> = {
     fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", status: "ChangeStatus", timing: "string?" },
   },
   TaskEvent: { fields: { who: "string", text: "string", at: "u64" } },
+  StageSpan: {
+    doc: "A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.",
+    fields: { stage: "TaskState", wait: "StageWait?", from: "u64", to: "u64?", inferred: "bool?" },
+    fieldDocs: {
+      wait: "None: being worked (or, for awaitingApproval, waiting on its approvals).",
+      to: "When it ended (ms); none: still open. Terminal states get a zero-length marker.",
+      inferred: "Worked out after the fact from the task's events, so an estimate.",
+    },
+  },
   Question: {
     doc: "An agent asking a person something it can't decide.",
     fields: { text: "string", options: "string[]", role: "Role", at: "u64" },
@@ -705,6 +722,7 @@ export const structs: Record<string, Struct> = {
       comments: "Comment[]",
       changes: "ChangeRequest[]",
       events: "TaskEvent[]",
+      stages: "StageSpan[]",
       question: "Question?",
       hand: "Hand?",
       worker: "Worker?",
@@ -743,6 +761,7 @@ export const structs: Record<string, Struct> = {
     fieldDocs: {
       classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
       artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",
+      stages: "Its time, span by span: each stage and what it waited on. Empty on older servers.",
       mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
       suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",

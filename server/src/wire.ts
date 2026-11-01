@@ -10,6 +10,10 @@ export const EndCauseValues: readonly EndCause[] = ["exited","killed","signaled"
 export type TaskState = "drafting" | "planning" | "awaitingApproval" | "backlog" | "building" | "reviewing" | "merged" | "cancelled" | "closed";
 export const TaskStateValues: readonly TaskState[] = ["drafting","planning","awaitingApproval","backlog","building","reviewing","merged","cancelled","closed"];
 
+/** What a task stage span was waiting on, when it wasn't being worked. */
+export type StageWait = "queued" | "hand" | "question";
+export const StageWaitValues: readonly StageWait[] = ["queued","hand","question"];
+
 /** What a factory session is for. */
 export type Role = "planner" | "builder" | "reviewer";
 export const RoleValues: readonly Role[] = ["planner","builder","reviewer"];
@@ -514,6 +518,18 @@ export interface TaskEvent {
   at: number;
 }
 
+/** A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes. */
+export interface StageSpan {
+  stage: TaskState;
+  /** None: being worked (or, for awaitingApproval, waiting on its approvals). */
+  wait?: StageWait | null;
+  from: number;
+  /** When it ended (ms); none: still open. Terminal states get a zero-length marker. */
+  to?: number | null;
+  /** Worked out after the fact from the task's events, so an estimate. */
+  inferred?: boolean | null;
+}
+
 /** An agent asking a person something it can't decide. */
 export interface Question {
   text: string;
@@ -834,6 +850,8 @@ export interface Task {
   comments: Comment[];
   changes: ChangeRequest[];
   events: TaskEvent[];
+  /** Its time, span by span: each stage and what it waited on. Empty on older servers. */
+  stages: StageSpan[];
   question?: Question | null;
   hand?: Hand | null;
   worker?: Worker | null;

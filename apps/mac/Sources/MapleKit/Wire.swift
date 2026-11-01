@@ -174,6 +174,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// What a task stage span was waiting on, when it wasn't being worked.
+    public enum StageWait: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Ready to run, waiting for a free slot (the task's `waiting`).
+        case queued
+        /// A hand was up for a person.
+        case hand
+        /// The agent's question waited for its answer.
+        case question
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [StageWait] = [.queued, .hand, .question]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "queued": self = .queued
+            case "hand": self = .hand
+            case "question": self = .question
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .queued: "queued"
+            case .hand: "hand"
+            case .question: "question"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: StageWait, b: StageWait) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// What a factory session is for.
     public enum Role: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Writes the plan.
@@ -2657,6 +2702,26 @@ public enum Wire {
         }
     }
 
+    /// A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.
+    public struct StageSpan: Codable, Hashable, Sendable {
+        public var stage: TaskState
+        /// None: being worked (or, for awaitingApproval, waiting on its approvals).
+        public var wait: StageWait?
+        public var from: UInt64
+        /// When it ended (ms); none: still open. Terminal states get a zero-length marker.
+        public var to: UInt64?
+        /// Worked out after the fact from the task's events, so an estimate.
+        public var inferred: Bool?
+
+        public init(stage: TaskState, wait: StageWait? = nil, from: UInt64, to: UInt64? = nil, inferred: Bool? = nil) {
+            self.stage = stage
+            self.wait = wait
+            self.from = from
+            self.to = to
+            self.inferred = inferred
+        }
+    }
+
     /// An agent asking a person something it can't decide.
     public struct Question: Codable, Hashable, Sendable {
         public var text: String
@@ -3303,6 +3368,8 @@ public enum Wire {
         public var comments: [Comment]
         public var changes: [ChangeRequest]
         public var events: [TaskEvent]
+        /// Its time, span by span: each stage and what it waited on. Empty on older servers.
+        public var stages: [StageSpan]
         public var question: Question?
         public var hand: Hand?
         public var worker: Worker?
@@ -3357,7 +3424,7 @@ public enum Wire {
         /// The risk classifier's grade of the built change, when the org's policy turns it on.
         public var classification: Classification?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3379,6 +3446,7 @@ public enum Wire {
             self.comments = comments
             self.changes = changes
             self.events = events
+            self.stages = stages
             self.question = question
             self.hand = hand
             self.worker = worker
@@ -3438,6 +3506,7 @@ public enum Wire {
             comments = try c.decodeIfPresent([Comment].self, forKey: .comments) ?? []
             changes = try c.decodeIfPresent([ChangeRequest].self, forKey: .changes) ?? []
             events = try c.decodeIfPresent([TaskEvent].self, forKey: .events) ?? []
+            stages = try c.decodeIfPresent([StageSpan].self, forKey: .stages) ?? []
             question = try c.decodeIfPresent(Question.self, forKey: .question)
             hand = try c.decodeIfPresent(Hand.self, forKey: .hand)
             worker = try c.decodeIfPresent(Worker.self, forKey: .worker)
