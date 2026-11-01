@@ -129,11 +129,15 @@ The app bundles the runner, so its build waits for a runner release in progress.
 
 ### Site
 
-If `apps/site/` changed since `site-deployed`:
-1. `node scripts/release-site.mjs`. It deploys with `npx --no-install wrangler deploy` (wrangler comes from
-   the root workspace's node_modules), checks `/` is 200 and `/download/mac` redirects (302), then tags
-   `site-v<short sha>`, moves `site-deployed`, and pushes both.
-2. Check the changed pages return 200 too.
+If `apps/site/` changed since `site-deployed`, CI normally has it already: every push to main touching
+`apps/site/**` starts `.github/workflows/deploy-site.yml`, which runs the same script.
+1. `gh run list -w deploy-site.yml -L 5 --json headSha,status,conclusion,url` and look for a run on
+   origin/main's sha (or a later one). Queued, waiting for approval in `release`, or in progress: leave it,
+   report it as waiting, and check again next round. Succeeded: done (`site-deployed` has moved).
+2. Only when there's no run for it, or the run failed, deploy from here: `node scripts/release-site.mjs`.
+   It deploys with `npx --no-install wrangler deploy` (wrangler comes from the root workspace's
+   node_modules), checks `/`, every page changed since `site-deployed` (200) and `/download/mac` (302 to a
+   `.dmg`), then tags `site-v<short sha>`, moves `site-deployed`, and pushes both.
 
 ## Report
 
