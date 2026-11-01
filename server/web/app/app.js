@@ -17,6 +17,7 @@ import { inQuietHours } from "./quiet-hours.js";
 import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
 import { riskBadge, riskDetails } from "./risk.js";
+import { canRerun, checkHref, checkStatusText, checkSummary, octicon, prStateLabel, taskFinished } from "./pull.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
 
@@ -1523,23 +1524,52 @@ function followUpCard(t) {
 
 function pull(t) {
   const pr = t.pr;
-  return [h("h2", {}, "Pull request"), h("div", { class: "card" },
-    h("div", { class: "row" },
-      pr.url ? h("a", { href: pr.url, target: "_blank", rel: "noopener" }, `#${pr.number} ↗`) : h("b", {}, `#${pr.number}`),
-      h("span", { class: "pill" }, t.state === "cancelled" && (pr.state === "open" || pr.state === "draft") ? "closed" : pr.state),
-      h("span", { class: "mono muted" }, `${pr.branch} → ${pr.base}`)),
-    pr.checks.length === 0
-      ? h("p", { class: "muted", style: "margin:8px 0 0" }, pr.url ? "No CI checks reported." : "No CI: a local repo's change is checked by its proofs and review.")
-      : pr.checks.map((c) => ciCheck(t, c)))];
+  const local = !pr.url;
+  const st = prStateLabel(pr, t);
+  const sum = checkSummary(pr.checks);
+  const failing = pr.checks.some((c) => c.status === "failed");
+  const recheck = () => send({ type: "task.recheckGitHub", id: t.id }) && toast("Reading the pull request from GitHub again");
+  const footBtn = (label, ic, onclick, title) => h("button", { class: "btn small", title, onclick }, icon(ic), label);
+  const pill = (name, role) => h("button", { class: "branch-pill", title: `${role} branch ${name}: click to copy`, onclick: () => {
+    navigator.clipboard?.writeText(name).then(() => toast(`Copied ${name}`), () => toast(`Couldn't copy ${name}`));
+  } }, name);
+  const checks = sum.total === 0
+    ? [h("div", { class: "pr-nochecks" }, h("span", { class: "faint" }, local ? "✓" : "◌"),
+        h("span", { class: "muted" }, local ? "No CI: a local repo's change is checked by its proofs and review."
+          : taskFinished(t) ? "No checks ran on this pull request." : "No checks reported yet.")),
+      !local && !taskFinished(t) && h("div", { class: "pr-foot" }, footBtn("Recheck", "refresh-cw", recheck, "Read the pull request and its checks from GitHub again"))]
+    : [h("div", { class: "pr-sum" },
+        h("span", { class: `pr-sum-icon tone-${sum.tone}` }, { passed: "✓", failed: "✕", running: "◔", none: "◌" }[sum.tone]),
+        h("b", {}, sum.headline),
+        sum.tone !== "passed" && h("span", { class: "muted mono-digits" }, sum.detail),
+        h("span", { class: "spacer" }),
+        !local && h("a", { class: "pr-all", href: `${pr.url}/checks`, target: "_blank", rel: "noopener", title: "The pull request's Checks tab on GitHub" }, "All checks ↗")),
+      h("div", { class: "check-bar", role: "img", "aria-label": sum.detail },
+        sum.segments.map((s) => h("span", { class: `seg seg-${s.status}`, style: `flex:${s.count}` }))),
+      h("div", { class: "check-list" }, pr.checks.map((c) => ciCheck(t, c))),
+      pr.state !== "merged" && (failing || !local) && h("div", { class: "pr-foot" },
+        failing && footBtn("Re-run failed", "refresh-cw", () => send({ type: "task.rerunChecks", id: t.id }) && toast("Running the failed checks again")),
+        !local && footBtn("Recheck", "refresh-cw", recheck, "Read the pull request and its checks from GitHub again"))];
+  return [h("h2", {}, "Pull request"), h("div", { class: "card pr-card" },
+    h("div", { class: "pr-head" },
+      octicon("github", 16),
+      h("b", {}, local ? "Branch" : "Pull request"),
+      h("span", { class: "spacer" }),
+      local ? h("span", { class: "pr-local muted", title: "A local repo: the branch is on its origin, with no pull request page" }, "Local branch")
+        : h("a", { class: "btn small pr-open-gh", href: pr.url, target: "_blank", rel: "noopener", title: pr.url }, octicon("github", 12), "Open on GitHub ↗")),
+    h("div", { class: "pr-title", title: t.title }, h("span", { class: "mono" }, `#${pr.number}`), " ", h("span", {}, t.title)),
+    h("span", { class: st.class }, octicon(st.icon, 13), st.label),
+    h("div", { class: "pr-branches", title: `${pr.branch} into ${pr.base}` }, pill(pr.branch, "Head"), h("span", { class: "faint" }, "→"), pill(pr.base, "Base")),
+    h("hr", { class: "pr-rule" }),
+    checks)];
 }
 
-/** A CI check: its link on GitHub, Log (read from GitHub into a panel below it) and Re-run once it's finished. */
+/** A CI check: its status circle, name and how it went; Log (read from GitHub into a panel below it), Re-run and its run on GitHub. */
 function ciCheck(t, c) {
   const pr = t.pr;
   const key = `${t.id}/${c.name}`;
   const log = state.checkLogs.get(key);
-  const finished = c.status === "passed" || c.status === "failed";
-  const href = c.url || (pr.url && `${pr.url}/checks`);
+  const href = checkHref(c, pr);
   const toggleLog = () => {
     if (log && !log.loading) state.checkLogs.delete(key);
     else if (!log && send({ type: "task.checkLog", id: t.id, check: c.name })) state.checkLogs.set(key, { loading: true });
@@ -1552,18 +1582,18 @@ function ciCheck(t, c) {
     toast(`Running ${c.name} again`);
     render();
   };
-  return h("div", { class: "check ci-check" },
-    h("span", { class: `mark ${c.status === "passed" ? "ok" : c.status === "failed" ? "bad" : "wait"}` }, c.status === "passed" ? "✓" : c.status === "failed" ? "✕" : "•"),
-    h("div", { style: "flex:1;min-width:0" },
-      h("div", { class: "row" },
-        href ? h("a", { href, target: "_blank", rel: "noopener", title: `${c.name} on GitHub` }, c.name) : c.name,
-        h("span", { class: "spacer" }),
-        h("span", { class: "muted" }, c.duration ?? c.status),
+  return h("div", { class: `check-item ci-check status-${c.status}` },
+    h("div", { class: "check-row" },
+      h("span", { class: `check-dot dot-${c.status}`, "aria-label": c.status }, c.status === "passed" ? "✓" : c.status === "failed" ? "✕" : c.status === "running" ? h("span", { class: "spin" }) : icon("clock")),
+      h("span", { class: "check-name", title: c.name }, c.name),
+      c.required && h("span", { class: "req-tag" }, "Required"),
+      h("span", { class: "spacer" }),
+      h("span", { class: `check-status${c.status === "failed" ? " bad-text" : ""}` }, checkStatusText(c)),
+      h("span", { class: "check-actions" },
         pr.url && c.status !== "queued" && h("button", { class: "btn small", onclick: toggleLog }, log && !log.loading ? "Hide log" : "Log"),
-        pr.url && finished && (pr.state === "open" || pr.state === "draft") && t.state !== "merged" && t.state !== "cancelled" &&
-          h("button", { class: "btn small", onclick: rerun }, "Re-run"),
-        href && h("a", { class: "btn small", href, target: "_blank", rel: "noopener" }, "GitHub ↗")),
-      log && checkLogPanel(log)));
+        canRerun(c, pr, t) && h("button", { class: "btn small", onclick: rerun }, "Re-run"),
+        href && h("a", { class: "btn small", href, target: "_blank", rel: "noopener", title: `${c.name} on GitHub` }, "GitHub ↗"))),
+    log && h("div", { class: "check-log-wrap" }, checkLogPanel(log)));
 }
 
 function checkLogPanel(log) {
