@@ -422,13 +422,86 @@ final class FactoryStore {
 
     /// Starts a task in `goal`: handed to a planner now (`plan`), or kept as a draft. An empty brief
     /// sends the title as the brief, like the Mac's composer; `repo` counts only when it's one of the goal's.
-    func createTask(goal: Wire.Goal, title: String, brief: String, repo: String?, priority: Wire.Priority?, plan: Bool) {
+    /// `attachments` go at the end of the brief as links (inline images for pictures), the way the Mac's
+    /// composer puts a pasted file in; `agent` and `effort` ride along in `task.create`.
+    func createTask(goal: Wire.Goal, title: String, brief: String, repo: String?, priority: Wire.Priority?, plan: Bool,
+                    agent: String? = nil, effort: String? = nil, attachments: [Attachment] = []) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
-        send(.taskCreate(.init(goal: goal.id, title: title, brief: brief.isEmpty ? title : brief, shareable: false, plan: plan,
-                               repo: repo.flatMap { goal.repos.contains($0) ? $0 : nil }, priority: priority)))
+        let brief = Self.brief(brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? title : brief, attachments: attachments)
+        let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines)
+        send(.taskCreate(.init(goal: goal.id, title: title, brief: brief, shareable: false, plan: plan, agent: agent,
+                               repo: repo.flatMap { goal.repos.contains($0) ? $0 : nil },
+                               effort: effort?.isEmpty == false ? effort : nil, priority: priority)))
         notice = .toast(plan ? "Sent to planning" : "Saved as a draft", taskId: nil)
+    }
+
+    /// The brief with each attachment linked on a line of its own at the end: `![name](path)` for an image.
+    static func brief(_ text: String, attachments: [Attachment]) -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !attachments.isEmpty else { return text }
+        let links = attachments.map { "\($0.mime.hasPrefix("image/") ? "!" : "")[\($0.name)](\($0.path))" }
+        return text + "\n\n" + links.joined(separator: "\n")
+    }
+
+    /// The agents the factory's machines can run, as their health reports it: Claude Code first, then
+    /// Codex, then the rest (the Mac's `liveAgents`). Claude Code is always there, as the default.
+    var agents: [String] {
+        let installed = Set(feed.machines.flatMap { $0.health?.agents.map(\.name) ?? [] })
+        return ["claude", "codex"].filter { installed.contains($0) || $0 == "claude" } + installed.subtracting(["claude", "codex"]).sorted()
+    }
+
+    /// The efforts the goal's tasks are grouped under, sorted: what a new task can join.
+    func efforts(in goal: Wire.Goal) -> [String] {
+        Set(feed.tasks(in: goal.id).compactMap { $0.effort?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }).sorted()
+    }
+
+    // MARK: Attachments
+
+    /// A file stored by the factory for a brief or note (`POST /api/attachments`), as the Mac's FactoryClient has it.
+    struct Attachment: Decodable, Hashable, Sendable {
+        let id: String
+        let name: String
+        let mime: String
+        let size: Int
+        /// `/attachments/<id>/<name>`: what the brief links to.
+        let path: String
+    }
+
+    /// The factory's limit for one attachment.
+    static let maxAttachment = 25 * 1024 * 1024
+
+    enum UploadError: LocalizedError {
+        case message(String)
+        var errorDescription: String? { switch self { case .message(let text): text } }
+    }
+
+    /// Uploads a photo or file for a brief. The demo stores nothing and hands back a made-up path,
+    /// so the UI tests run with no server.
+    func upload(data: Data, filename: String, mime: String) async throws -> Attachment {
+        guard data.count <= Self.maxAttachment else { throw UploadError.message("It's over 25 MB.") }
+        if status == .demo {
+            // `-demoUploadHang IMG-` keeps the files named that way uploading, for a screenshot of the spinner.
+            let hang = UserDefaults.standard.string(forKey: "demoUploadHang").map { !$0.isEmpty && filename.hasPrefix($0) } ?? false
+            try await Task.sleep(for: .seconds(hang ? 3600 : 0.4))
+            let id = "demo"
+            return Attachment(id: id, name: filename, mime: mime, size: data.count, path: "/attachments/\(id)/\(filename)")
+        }
+        guard let server, let token else { throw UploadError.message("Not signed in.") }
+        var components = URLComponents(url: server.appending(path: "/api/attachments"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [.init(name: "name", value: filename)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        let (body, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else {
+            let reason = (try? JSONDecoder().decode([String: String].self, from: body))?["error"]
+            throw UploadError.message(reason ?? "The factory said \(code).")
+        }
+        return try JSONDecoder().decode(Attachment.self, from: body)
     }
 
     // MARK: Goals
@@ -739,10 +812,11 @@ final class FactoryStore {
         case .taskCreate(let m):
             guard let goal = feed.goal(m.goal) else { return }
             let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
-            let task = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id, title: m.title, state: m.plan ? .planning : .drafting, owner: me,
+            var task = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id, title: m.title, state: m.plan ? .planning : .drafting, owner: me,
                                  brief: m.brief, createdAt: DemoData.now, updatedAt: DemoData.now, planVersion: 0, approvalsNeeded: 1, reviewsNeeded: 1,
                                  events: [.init(who: me, text: "created the task", at: DemoData.now)],
                                  shareable: m.shareable, agent: m.agent ?? "claude", repo: m.repo, priority: m.priority)
+            task.effort = m.effort
             feed.apply(.taskUpdated(.init(task: task)))
         case .taskAssign(let m):
             update(m.id) { task in

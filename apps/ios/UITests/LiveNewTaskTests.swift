@@ -41,4 +41,56 @@ final class LiveNewTaskTests: XCTestCase {
         XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 15), "the new task didn't show up in the goal")
         sleep(2)
     }
+
+    /// The extra rows reach the server: a new effort, Codex when a machine has it, and an attachment
+    /// (`-newTaskAttachment`, uploaded to /api/attachments). The task the factory sends back carries
+    /// them: the effort's tag on its row, its agent in the detail, the link at the end of its brief.
+    func testAgentEffortAndAttachment() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let factory = env["MAPLE_FACTORY"], let goal = env["MAPLE_GOAL"] else {
+            throw XCTSkip("set MAPLE_FACTORY to a dev factory and MAPLE_GOAL to one of its goals")
+        }
+        let title = "Phone attachment \(Int(Date().timeIntervalSince1970) % 100000)"
+        let effort = "Phone \(Int(Date().timeIntervalSince1970) % 1000)"
+        let app = XCUIApplication()
+        app.launchArguments = ["-onboardingURL", factory, "-onboardingContinue", "YES", "-tab", "goals", "-goal", goal, "-newTaskAttachment", "1"]
+        app.launch()
+
+        let button = app.buttons["newTask"]
+        XCTAssertTrue(button.waitForExistence(timeout: 30), "the goal has no New task button")
+        sleep(1)
+        button.tap()
+        let titleField = app.textFields["newTask.title"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 5))
+        titleField.tap()
+        titleField.typeText(title)
+        XCTAssertTrue(app.otherElements["newTask.attachment.uploaded"].waitForExistence(timeout: 15), "the attachment didn't upload")
+
+        var agent = "claude"
+        if app.buttons["newTask.agent"].exists {
+            app.buttons["newTask.agent"].tap()
+            if app.buttons["Codex"].waitForExistence(timeout: 2) { app.buttons["Codex"].tap(); agent = "codex" } else { app.buttons["Claude Code"].tap() }
+        }
+        app.buttons["newTask.effort"].tap()
+        app.buttons["New effort…"].tap()
+        let name = app.textFields["newTask.newEffort"]
+        XCTAssertTrue(name.waitForExistence(timeout: 3))
+        name.tap()
+        name.typeText(effort)
+        app.buttons["Save as draft"].tap()
+        app.buttons["newTask.send"].tap()
+
+        let row = app.staticTexts[title]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "the new task didn't show up in the goal")
+        XCTAssertTrue(app.staticTexts.matching(identifier: "task.effort").matching(NSPredicate(format: "label == %@", effort)).firstMatch.exists,
+                      "the server's task has no \(effort) effort")
+        row.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "· \(agent)")).firstMatch.waitForExistence(timeout: 5),
+                      "the server's task doesn't run on \(agent)")
+        let brief = app.descendants(matching: .any)["task.brief"]
+        XCTAssertTrue(brief.waitForExistence(timeout: 5))
+        let value = brief.value as? String ?? ""
+        XCTAssertNotNil(value.range(of: #"!\[screenshot-[0-9-]+\.png\]\(/attachments/[0-9a-f-]+/screenshot-[0-9-]+\.png\)$"#, options: .regularExpression),
+                        "the brief doesn't end with the uploaded link: \(value)")
+    }
 }

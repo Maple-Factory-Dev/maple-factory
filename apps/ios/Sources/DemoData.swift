@@ -77,6 +77,7 @@ enum DemoData {
             },
             task("APP-12", goal: "g-app", title: "Offline cache for the inbox", state: .building, updated: 9) { t in
                 t.brief = "Keep the last snapshot on disk so the inbox opens instantly, even on a plane."
+                t.effort = "Offline"
                 t.plan = [
                     .init(text: "Persist the last snapshot as JSON in Application Support", file: "apps/ios/Sources/FeedCache.swift", progress: .done, added: false),
                     .init(text: "Show the cached inbox while the socket connects", file: "apps/ios/Sources/RootView.swift", progress: .active, added: false),

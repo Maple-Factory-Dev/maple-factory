@@ -82,7 +82,11 @@ struct TaskDetailView: View {
         if let hand = task.hand { HandCard(task: task, hand: hand) }
         if let question = task.question { QuestionCard(task: task, question: question) }
         if !task.brief.isEmpty {
-            Card("Brief", icon: "doc.text") { Text(LocalizedStringKey(task.brief)).font(.callout) }
+            Card("Brief", icon: "doc.text") {
+                Text(LocalizedStringKey(task.brief)).font(.callout)
+                    // The brief as written (links and all), for the UI tests.
+                    .accessibilityIdentifier("task.brief").accessibilityValue(task.brief)
+            }
         }
         if !task.plan.isEmpty { PlanCard(task: task) }
         if !task.doneWhen.isEmpty {

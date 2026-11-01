@@ -70,6 +70,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # New task's PhotosPicker reads picks without asking; this covers any save to the library.
+        NSPhotoLibraryUsageDescription: Photos and screenshots you attach to a task's brief.
         # HTTPS only (no custom crypto), so App Store Connect asks no export-compliance question per build.
         ITSAppUsesNonExemptEncryption: false
         UIApplicationSceneManifest:
