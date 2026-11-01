@@ -7,6 +7,16 @@
 set -eu
 unset CDPATH
 
+# Takes turns on the simulator with other sessions on this machine (docs/resource-locks.md): runs
+# itself again under `maple-runner lock ios-simulator`, or straight on without a runner that has it.
+if [ -z "${MAPLE_LOCKED:-}" ]; then
+  runner=${MAPLE_RUNNER:-$(command -v maple-runner || true)}
+  if [ -n "$runner" ] && "$runner" lock --help >/dev/null 2>&1; then
+    export MAPLE_LOCKED=1
+    exec "$runner" lock ios-simulator -- "$(realpath "$0")" "$@"
+  fi
+fi
+
 cd "$(dirname "$(dirname "$(realpath "$0")")")"
 SIM=${SIM:-iPhone 18 Pro}
 CONFIG=${CONFIG:-Debug}
