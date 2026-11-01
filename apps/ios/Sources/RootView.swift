@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
-/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage.
+/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage; `-activity YES` opens Activity.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
 /// terminal on Machines.
 struct RootView: View {
@@ -42,7 +42,10 @@ struct RootView: View {
         }
         .overlay(alignment: .top) { NoticeBanner() }
         .onAppear {
-            if UserDefaults.standard.bool(forKey: "usage") {
+            if UserDefaults.standard.bool(forKey: "activity") {
+                tab = .inbox
+                inboxPath.append(ActivityRoute())
+            } else if UserDefaults.standard.bool(forKey: "usage") {
                 tab = .settings
                 settingsPath.append(UsageRoute())
             } else if let id = UserDefaults.standard.string(forKey: "task"), store.feed.task(id) != nil {
@@ -91,6 +94,7 @@ extension View {
         navigationDestination(for: TaskRoute.self) { TaskDetailView(id: $0.id) }
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
             .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
+            .navigationDestination(for: ActivityRoute.self) { _ in ActivityView() }
     }
 }
 
@@ -166,6 +170,12 @@ struct InboxView: View {
             .searchable(text: $search, prompt: "Tasks and goals")
             .refreshable { await store.refresh() }
             .overlay { if !store.feed.hasSnapshot { ProgressView() } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(value: ActivityRoute()) { Label("Activity", systemImage: "clock.arrow.circlepath") }
+                        .accessibilityIdentifier("inbox.activity")
+                }
+            }
     }
 
     private var list: some View {

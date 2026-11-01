@@ -249,6 +249,30 @@ public struct FeedState: Sendable {
         return entries.sorted { $0.at > $1.at }
     }
 
+    // MARK: Activity
+
+    /// Every task's events as one feed, newest first: what the Mac's Activity page lists, filtered like it.
+    /// `me` is whose tasks are "My tasks".
+    public func activity(filter: ActivityEntry.Filter = .everyone, me: String? = nil) -> [ActivityEntry] {
+        var all: [ActivityEntry] = []
+        all.reserveCapacity(tasks.reduce(0) { $0 + $1.events.count })
+        for task in tasks {
+            switch filter {
+            case .mine where task.owner != me: continue
+            default: break
+            }
+            for (index, event) in task.events.enumerated() {
+                let entry = ActivityEntry(task: task.id, index: index, who: event.who, text: event.text, at: event.at)
+                switch filter {
+                case .people where entry.isAgent, .agents where !entry.isAgent: continue
+                default: all.append(entry)
+                }
+            }
+        }
+        // Stable for equal times: the order tasks and events arrived in.
+        return all.enumerated().sorted { $0.element.at != $1.element.at ? $0.element.at > $1.element.at : $0.offset < $1.offset }.map(\.element)
+    }
+
     // MARK: Versions
 
     /// Whether `a` is an older version than `b` ("0.2.0" < "0.10.1"); anything after a "-" is ignored.
@@ -304,6 +328,34 @@ public struct InboxEntry: Identifiable, Equatable, Sendable {
         self.message = message
         self.at = at
         self.comment = comment
+    }
+}
+
+/// One line of the Activity feed: something a person or agent did on a task.
+public struct ActivityEntry: Identifiable, Equatable, Sendable {
+    public enum Filter: String, CaseIterable, Sendable { case everyone = "Everyone", people = "People", agents = "Agents", mine = "My tasks" }
+
+    /// Who counts as an agent rather than a person.
+    public static let agents: Set<String> = ["planner", "builder", "reviewer", "factory"]
+    public static let pageSize = 50
+
+    /// "<task>-<index of the event in the task>".
+    public let id: String
+    public let task: String
+    public let who: String
+    public let text: String
+    /// When it happened, in ms since 1970.
+    public let at: UInt64
+
+    public var isAgent: Bool { Self.agents.contains(who) }
+    public var date: Date { Date(timeIntervalSince1970: Double(at) / 1000) }
+
+    public init(task: String, index: Int, who: String, text: String, at: UInt64) {
+        self.id = "\(task)-\(index)"
+        self.task = task
+        self.who = who
+        self.text = text
+        self.at = at
     }
 }
 
