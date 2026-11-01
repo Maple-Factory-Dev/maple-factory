@@ -15,6 +15,7 @@ mod git;
 mod health;
 mod hooks;
 mod images;
+mod locks;
 mod mcp;
 mod media;
 mod ports;
