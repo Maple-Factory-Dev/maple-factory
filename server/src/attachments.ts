@@ -111,13 +111,10 @@ export async function uploadProof(request: Request, env: Env, task: string): Pro
   if (!size || !request.body) return text("The file is empty.", 400);
   const { head, stream } = await peek(request.body, 4096);
   const mime = sniffProof(head.subarray(0, 4096));
-  if (!mime) {
-    await stream.cancel().catch(() => {});
-    return text("A proof file is PNG, JPEG, WebP, MP4, MOV, WebM or text.", 415);
-  }
+  // A refusal leaves the rest of the body unread: the runtime drops it with the request.
+  if (!mime) return text("A proof file is PNG, JPEG, WebP, MP4, MOV, WebM or text.", 415);
   const max = mime.startsWith("video/") ? MAX_PROOF_VIDEO : MAX_PROOF_IMAGE;
   if (size > max) {
-    await stream.cancel().catch(() => {});
     return text(`A ${mime.startsWith("video/") ? "video" : "file"} proof is at most ${mb(max)}.`, 413);
   }
   const id = crypto.randomUUID();
