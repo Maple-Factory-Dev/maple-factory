@@ -946,6 +946,40 @@ export class Engine {
         await audit(this.env, who, "task.rerunChecks", task.id, { asked });
         return;
       }
+      case "task.recheckGitHub": {
+        // A webhook that never came: read the pull request and its CI from GitHub again.
+        const app = githubApp(this.env);
+        const gh = this.store.private(task.id).gh;
+        if (!app || !gh || !task.pr?.url) fail("Its pull request isn't on GitHub.");
+        const pr = task.pr!;
+        const onGitHub = await pullRequestState(app!, gh!.owner, gh!.repo, pr.number).catch((e) => fail(`Couldn't read pull request #${pr.number}: ${(e as Error).message}`));
+        await audit(this.env, who, "task.recheckGitHub", task.id, { state: onGitHub.state });
+        if (onGitHub.state === "merged" && !isFinished(task.state)) {
+          this.event(task, who, `rechecked GitHub: pull request #${pr.number} merged`);
+          this.save(task, false); // merged() reads it again
+          this.merged({ type: "task.merged", taskId: task.id, ok: true, commit: onGitHub.sha, message: null });
+          return;
+        }
+        if (onGitHub.state === "closed" && pr.state === "open") {
+          pr.state = "closed";
+          this.event(task, "factory", `pull request #${pr.number} was closed on GitHub`);
+          this.save(task);
+          return;
+        }
+        const moved = !!onGitHub.head && onGitHub.head !== pr.head;
+        if (moved) {
+          pr.head = onGitHub.head!;
+          this.save(task, false);
+        }
+        const changed = (await this.refreshChecks(task.id)) || moved;
+        const now_ = this.store.task(task.id);
+        if (changed && now_) {
+          this.event(now_, who, moved ? `rechecked CI on GitHub (new head ${onGitHub.head!.slice(0, 7)})` : "rechecked CI on GitHub");
+          this.save(now_);
+        }
+        this.hooks.wakeIn(CI_POLL_MS);
+        return;
+      }
       case "task.rerunCheck": {
         const app = githubApp(this.env);
         const priv = this.store.private(task.id);
@@ -1865,18 +1899,19 @@ export class Engine {
     for (const task of this.store.tasks().filter((t) => this.ciPending(t))) await this.refreshChecks(task.id);
   }
 
-  /** Reads the task's CI from GitHub; all passed may let it merge. Keeps reading while it runs. */
-  async refreshChecks(id: string) {
+  /** Reads the task's CI from GitHub; all passed may let it merge. Keeps reading while it runs.
+   *  True when a check's result changed. */
+  async refreshChecks(id: string): Promise<boolean> {
     const app = githubApp(this.env);
     const task = this.store.task(id);
     const gh = task && this.store.private(id).gh;
-    if (!app || !task?.pr?.head || !gh) return;
+    if (!app || !task?.pr?.head || !gh) return false;
     const found = await checks(app, gh.owner, gh.repo, task.pr.head).catch(() => null);
     const now_ = this.store.task(id);
-    if (!now_?.pr) return;
+    if (!now_?.pr) return false;
     if (!found) {
       if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
-      return;
+      return false;
     }
     const before = now_.pr.checks.map((c) => `${c.name}:${c.status}`).join();
     const links = now_.pr.checks.map((c) => c.url ?? "").join();
@@ -1886,13 +1921,14 @@ export class Engine {
     if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) {
       // Same results, but a check's link changed (a re-run is a new job): the apps get the new one.
       if (now_.pr.checks.map((c) => c.url ?? "").join() !== links) this.save(now_);
-      return;
+      return false;
     }
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
     else if (found.length && found.every((c) => c.status === "passed")) this.event(now_, "factory", "CI passed");
     this.save(now_);
     await this.autoMerge(now_);
+    return true;
   }
 
   /** A GitHub webhook about a repo's checks or pull requests: the tasks it's about read their CI again. */
