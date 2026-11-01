@@ -171,4 +171,77 @@ struct FeedStateTests {
         #expect(Set(state.unfinishedTasks(in: "g1").map(\.id)) == ["MF-1", "MF-2", "MF-5"])
         #expect(state.unfinishedTasks(in: "g2").isEmpty)
     }
+
+    // MARK: Activity
+
+    private var activitySnapshot: String {
+        let one = task("MF-1", state: "building", extra: #","events":[{"who":"andrea","text":"approved the plan","at":100},{"who":"builder","text":"pushed step 1","at":300}]"#)
+        let two = task("MF-2", state: "reviewing", extra: #","events":[{"who":"planner","text":"wrote a plan","at":200},{"who":"sam","text":"steered","at":400}]"#).replacingOccurrences(of: #""owner":"andrea""#, with: #""owner":"sam""#)
+        let tasks = "[\(task("MF-1", state: "awaitingApproval")),\(task("MF-2", state: "building"))]"
+        return snapshot.replacingOccurrences(of: tasks, with: "[\(one),\(two)]")
+    }
+
+    @Test func activityIsNewestFirstAcrossTasks() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        let feed = state.activity()
+        #expect(feed.map(\.at) == [400, 300, 200, 100])
+        #expect(feed.map(\.task) == ["MF-2", "MF-1", "MF-2", "MF-1"])
+        #expect(feed.map(\.text).first == "steered")
+    }
+
+    @Test func activitySplitsAgentsFromPeople() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        #expect(state.activity(filter: .agents).map(\.who) == ["builder", "planner"])
+        #expect(state.activity(filter: .people).map(\.who) == ["sam", "andrea"])
+        #expect(state.activity(filter: .agents).allSatisfy { $0.isAgent })
+        #expect(state.activity(filter: .people).allSatisfy { !$0.isAgent })
+    }
+
+    @Test func activityMyTasksAreTheOnesIOwn() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        #expect(state.activity(filter: .mine, me: "andrea").map(\.id) == ["MF-1-1", "MF-1-0"])
+        #expect(state.activity(filter: .mine, me: "sam").map(\.task) == ["MF-2", "MF-2"])
+        #expect(state.activity(filter: .mine, me: nil).isEmpty)
+    }
+
+    @Test func activityIdsAreStable() throws {
+        var state = FeedState()
+        state.apply(try decode(activitySnapshot))
+        #expect(state.activity().map(\.id) == ["MF-2-1", "MF-1-1", "MF-2-0", "MF-1-0"])
+        #expect(state.activity().map(\.id) == state.activity().map(\.id))
+        #expect(Set(state.activity().map(\.id)).count == 4)
+    }
+
+    private func recurring(_ id: String, goal: String = "g1", nextAt: Int, paused: Bool = false, title: String? = nil) -> String {
+        """
+        {"id":"\(id)","goal":"\(goal)","title":"\(title ?? id)","brief":"Do it","agent":"claude","every":10080,"unit":"weeks",
+         "firstAt":1,"timeZone":"UTC","nextAt":\(nextAt),"paused":\(paused),"by":"sam"}
+        """
+    }
+
+    @Test func recurringFollowsSnapshotAndDeltas() throws {
+        var state = FeedState()
+        // An older server sends no recurring list: none.
+        state.apply(try decode(snapshot))
+        #expect(state.recurring.isEmpty)
+
+        let withRecurring = snapshot.replacingOccurrences(of: #""runnerLatest":"0.10.1"}"#,
+            with: #""runnerLatest":"0.10.1","recurring":[\#(recurring("r1", nextAt: 300)),\#(recurring("r2", nextAt: 100, paused: true)),\#(recurring("r9", goal: "g2", nextAt: 50))]}"#)
+        state.apply(try decode(withRecurring))
+        // Running first, then soonest; another goal's stay out.
+        #expect(state.recurring(goal: "g1").map(\.id) == ["r1", "r2"])
+        #expect(state.recurring(goal: "g2").map(\.id) == ["r9"])
+
+        // A new one due sooner goes first; a changed one is replaced.
+        state.apply(try decode(#"{"type":"recurring.updated","recurring":\#(recurring("r3", nextAt: 200))}"#))
+        state.apply(try decode(#"{"type":"recurring.updated","recurring":\#(recurring("r2", nextAt: 100, title: "Renamed"))}"#))
+        #expect(state.recurring(goal: "g1").map(\.id) == ["r2", "r3", "r1"])
+        #expect(state.recurring["r2"]?.title == "Renamed")
+
+        state.apply(try decode(#"{"type":"recurring.deleted","id":"r3"}"#))
+        #expect(state.recurring(goal: "g1").map(\.id) == ["r2", "r1"])
+    }
 }

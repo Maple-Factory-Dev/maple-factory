@@ -433,6 +433,22 @@ final class FactoryStore {
         }
     }
 
+    /// Puts the task in effort `name` (whitespace collapsed), or takes it out when `name` is nil or
+    /// empty; nothing is sent when it's already there. The wire's `task.edit` clears it on an empty string.
+    func setEffort(_ id: String, _ name: String?) {
+        guard let task = feed.task(id) else { return }
+        let name = name?.split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
+        let was = task.effort ?? ""
+        guard name != was else { return }
+        send(.taskEdit(.init(id: id, effort: name)))
+        notice = .toast(name.isEmpty ? "Took \(id) out of \(was)" : "Put \(id) in \(name)", taskId: id)
+    }
+
+    /// Every task in `goal` that's part of `effort`, in feed order: the Effort card's rows.
+    func tasks(inEffort effort: String, goal: String) -> [Wire.Task] {
+        feed.tasks(in: goal).filter { $0.effort == effort }
+    }
+
     /// Moves a task to another goal; it keeps its id, branch and pull request.
     func moveGoal(_ id: String, to goal: Wire.Goal) {
         guard feed.task(id)?.goal != goal.id else { return }
@@ -570,6 +586,19 @@ final class FactoryStore {
     func updateRunner(_ machine: Wire.Machine) { send(.machineUpdate(.init(machine: machine.id, version: feed.runnerLatest))) }
     /// A nickname everyone sees; empty goes back to its id.
     func renameMachine(_ machine: Wire.Machine, name: String) { send(.machineRename(.init(machine: machine.id, name: name))) }
+    /// Slots, team sharing and pause, as the Mac's machine settings sheet saves them.
+    func saveMachineSettings(_ machine: Wire.Machine, settings: Wire.MachineSettings, handOff: Bool) {
+        send(.machineSettings(.init(machine: machine.id, settings: settings, handOff: handOff)))
+    }
+    /// The swipe's Pause and Resume: pausing holds back new work only, with no end; resuming clears it.
+    func setPaused(_ machine: Wire.Machine, _ paused: Bool) {
+        var settings = machine.settings ?? Wire.MachineSettings(teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false)
+        settings.paused = paused
+        settings.pauseNew = paused ? true : nil
+        settings.pausedUntil = nil
+        saveMachineSettings(machine, settings: settings, handOff: false)
+        if paused { notice = .toast("Paused new work on \(machine.name)", taskId: nil) }
+    }
     /// Moves a task off its offline or paused machine: it re-queues first and carries on from its last push.
     func moveTask(_ id: String) {
         let pushed = feed.task(id)?.pr != nil
@@ -750,6 +779,10 @@ final class FactoryStore {
             let name = m.name.trimmingCharacters(in: .whitespacesAndNewlines)
             machine.name = name.isEmpty ? machine.id : name
             feed.apply(.machineUpdated(.init(machine: machine)))
+        case .machineSettings(let m):
+            guard var machine = feed.machines.first(where: { $0.id == m.machine }) else { break }
+            machine.settings = m.settings
+            feed.apply(.machineUpdated(.init(machine: machine)))
         case .taskMove(let m):
             // The task re-queues: its session leaves the stuck machine.
             for var machine in feed.machines where machine.sessions.contains(where: { $0.session.taskId == m.id }) {
@@ -864,7 +897,14 @@ final class FactoryStore {
             update(m.id) { task in
                 if let title = m.title { task.title = title }
                 if let brief = m.brief { task.brief = brief }
-                task.events.append(.init(who: me, text: m.title != nil ? "renamed it to \(m.title!)" : "edited the brief", at: DemoData.now))
+                if let effort = m.effort {
+                    let was = task.effort
+                    task.effort = effort.isEmpty ? nil : effort
+                    task.events.append(.init(who: me, text: effort.isEmpty ? "took it out of effort \(was ?? "")" : "put it in effort \(effort)", at: DemoData.now))
+                }
+                if m.title != nil || m.brief != nil {
+                    task.events.append(.init(who: me, text: m.title != nil ? "renamed it to \(m.title!)" : "edited the brief", at: DemoData.now))
+                }
             }
         case .taskMoveGoal(let m):
             guard let goal = feed.goal(m.goal) else { return }
@@ -918,6 +958,8 @@ final class FactoryStore {
             demoRecheck(m.id)
         case .taskSplit(let m):
             demoSplit(m.id, parts: Int(m.parts))
+        case .recurringSave, .recurringPause, .recurringRunNow, .recurringDelete:
+            demoRecurring(message)
         default:
             break
         }
@@ -1001,6 +1043,64 @@ extension FactoryStore {
         original.events.append(.init(who: me, text: "Split into \(made.count + 1) tasks: \(([id] + made).joined(separator: ", "))", at: DemoData.now))
         original.updatedAt = DemoData.now
         feed.apply(.taskUpdated(.init(task: original)))
+    }
+}
+
+// MARK: Recurring tasks
+
+extension FactoryStore {
+    /// A goal's recurring tasks: running ones first, then soonest next run.
+    func recurring(goal: String) -> [Wire.Recurring] { feed.recurring(goal: goal) }
+
+    /// Add or change a recurring task (a new one has a new id); the server works out its next run.
+    func saveRecurring(_ item: Wire.Recurring) { send(.recurringSave(.init(recurring: item))) }
+
+    /// Pause or resume one; resuming moves its next run to the next due time from now.
+    func pauseRecurring(id: String, paused: Bool) { send(.recurringPause(.init(id: id, paused: paused))) }
+
+    /// Start a run now; its schedule is kept.
+    func runRecurringNow(id: String) {
+        let title = feed.recurring[id]?.title
+        send(.recurringRunNow(.init(id: id)))
+        notice = .toast(title.map { "Started a run of \($0)" } ?? "Started a run", taskId: nil)
+    }
+
+    /// Gone from the list right away, as on the Mac; the server confirms with `recurring.deleted`.
+    func deleteRecurring(id: String) {
+        feed.recurring[id] = nil
+        send(.recurringDelete(.init(id: id)))
+    }
+
+    /// The demo answers the recurring messages the way the server would.
+    fileprivate func demoRecurring(_ message: Wire.ClientMessage) {
+        func update(_ id: String, _ change: (inout Wire.Recurring) -> Void) {
+            guard var item = feed.recurring[id] else { return }
+            change(&item)
+            feed.apply(.recurringUpdated(.init(recurring: item)))
+        }
+        switch message {
+        case .recurringSave(let m):
+            var item = m.recurring
+            item.nextAt = item.firstAt
+            item.by = me
+            if let was = feed.recurring[item.id] { item.lastTask = was.lastTask; item.lastRunAt = was.lastRunAt; item.paused = was.paused }
+            feed.apply(.recurringUpdated(.init(recurring: item)))
+        case .recurringPause(let m):
+            update(m.id) { $0.paused = m.paused }
+        case .recurringRunNow(let m):
+            guard let item = feed.recurring[m.id], let goal = feed.goal(item.goal) else { return }
+            let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
+            let task = Wire.Task(id: "\(goal.prefix)-\(next)", goal: goal.id, title: item.title, state: .planning, owner: item.by,
+                                 brief: item.brief, createdAt: DemoData.now, updatedAt: DemoData.now, planVersion: 0, approvalsNeeded: 1, reviewsNeeded: 1,
+                                 events: [.init(who: "factory", text: "started it from the recurring task \(item.title)", at: DemoData.now)],
+                                 shareable: false, agent: item.agent, repo: item.repo)
+            feed.apply(.taskUpdated(.init(task: task)))
+            update(m.id) { $0.lastTask = task.id; $0.lastRunAt = DemoData.now }
+        case .recurringDelete(let m):
+            feed.apply(.recurringDeleted(.init(id: m.id)))
+        default:
+            break
+        }
     }
 }
 

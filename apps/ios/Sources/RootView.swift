@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
-/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage.
+/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage; `-activity YES` opens Activity.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
 /// terminal on Machines.
 struct RootView: View {
@@ -42,7 +42,10 @@ struct RootView: View {
         }
         .overlay(alignment: .top) { NoticeBanner() }
         .onAppear {
-            if UserDefaults.standard.bool(forKey: "usage") {
+            if UserDefaults.standard.bool(forKey: "activity") {
+                tab = .inbox
+                inboxPath.append(ActivityRoute())
+            } else if UserDefaults.standard.bool(forKey: "usage") {
                 tab = .settings
                 settingsPath.append(UsageRoute())
             } else if let id = UserDefaults.standard.string(forKey: "task"), store.feed.task(id) != nil {
@@ -91,6 +94,7 @@ extension View {
         navigationDestination(for: TaskRoute.self) { TaskDetailView(id: $0.id) }
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
             .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
+            .navigationDestination(for: ActivityRoute.self) { _ in ActivityView() }
     }
 }
 
@@ -166,6 +170,12 @@ struct InboxView: View {
             .searchable(text: $search, prompt: "Tasks and goals")
             .refreshable { await store.refresh() }
             .overlay { if !store.feed.hasSnapshot { ProgressView() } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(value: ActivityRoute()) { Label("Activity", systemImage: "clock.arrow.circlepath") }
+                        .accessibilityIdentifier("inbox.activity")
+                }
+            }
     }
 
     private var list: some View {
@@ -306,6 +316,7 @@ struct GoalView: View {
     @Environment(FactoryStore.self) private var store
     /// `-newTask YES` opens the New task sheet, for screenshots.
     @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
+    @State private var showRecurring = UserDefaults.standard.bool(forKey: "recurring")
     let id: String
 
     private static let stages: [Wire.TaskState] = [.awaitingApproval, .planning, .building, .reviewing, .drafting, .backlog, .merged, .closed, .cancelled]
@@ -397,6 +408,10 @@ struct GoalView: View {
                     }
                     if let repo = goal.repo { LabeledContent("Repo", value: repo) }
                     Toggle("Follow", isOn: Binding(get: { store.feed.following(goal) }, set: { store.follow(goal.id, $0) }))
+                    NavigationLink(value: RecurringRoute(goal: id)) {
+                        LabeledContent { Text("\(store.recurring(goal: id).count)").accessibilityIdentifier("recurring-count") } label: { Label("Recurring", systemImage: "clock.arrow.circlepath") }
+                    }
+                    .accessibilityIdentifier("goal-recurring")
                 }
                 GoalSettingsSection(goal: goal)
                 ForEach(Self.stages, id: \.self) { stage in
@@ -425,6 +440,9 @@ struct GoalView: View {
                 if goal.archived != true { ToolbarItem(placement: .primaryAction) { NewTaskButton(composing: $composing) } }
             }
             .sheet(isPresented: $composing) { NewTaskView(goal: goal.id) }
+            .navigationDestination(for: RecurringRoute.self) { RecurringView(goalID: $0.goal) }
+            // `-recurring YES` opens the goal's recurring tasks, for screenshots.
+            .navigationDestination(isPresented: $showRecurring) { RecurringView(goalID: id) }
             // `-loadOlder YES` presses Load older once, for screenshots.
             .task { if UserDefaults.standard.bool(forKey: "loadOlder") { store.loadOlder(goal: id) } }
         } else {
@@ -452,8 +470,7 @@ struct TaskRow: View {
             }
             Text(task.title).lineLimit(2)
             if let effort = task.effort, !effort.isEmpty {
-                Label(effort, systemImage: "square.stack.3d.up").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("task.effort")
+                EffortChip(effort: effort).accessibilityIdentifier("task.effort")
             }
             if let permission {
                 Text("Needs permission: \(permission.tool)").font(.caption).foregroundStyle(Theme.state(.awaitingApproval))
@@ -495,9 +512,21 @@ struct MachineRows: View {
     @State private var renaming = false
     @State private var nickname = ""
     @State private var moving: String?
+    @State private var settings = false
 
     var body: some View {
         header
+            .swipeActions(edge: .trailing) {
+                if store.canManage(machine) {
+                    if paused {
+                        Button("Resume", systemImage: "play.fill") { store.setPaused(machine, false) }.tint(Theme.approve)
+                    } else {
+                        Button("Pause", systemImage: "pause.fill") { store.setPaused(machine, true) }.tint(Theme.warning)
+                    }
+                    Button("Settings", systemImage: "slider.horizontal.3") { settings = true }.tint(.gray)
+                }
+            }
+            .sheet(isPresented: $settings) { MachineSettingsSheet(machine: machine) }
             // One dialog for the machine's sessions: Move, from a session's button or swipe.
             .confirmationDialog("Move \(moving ?? "") off \(machine.name)?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } }),
                                 titleVisibility: .visible, presenting: moving) { id in
@@ -567,7 +596,17 @@ struct MachineRows: View {
         HStack(spacing: 10) {
             Image(systemName: "desktopcomputer").font(.title3).foregroundStyle(machine.online ? Theme.approve : .secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(machine.name).font(.body.weight(.medium)).accessibilityIdentifier("machine-name-\(machine.id)")
+                HStack(spacing: 6) {
+                    Text(machine.name).font(.body.weight(.medium)).accessibilityIdentifier("machine-name-\(machine.id)")
+                    if let pausedLabel {
+                        Text(pausedLabel)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.warning)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Theme.warning.opacity(0.15)))
+                            .accessibilityIdentifier("machine-paused-\(machine.id)")
+                    }
+                }
                 Text([machine.owner, machine.os, machine.version.map { "runner \($0)" }].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -585,6 +624,7 @@ struct MachineRows: View {
                     nickname = machine.name
                     renaming = true
                 }
+                Button("Settings…", systemImage: "slider.horizontal.3") { settings = true }
             }
         }
         .alert("Rename \(machine.name)", isPresented: $renaming) {
@@ -594,6 +634,18 @@ struct MachineRows: View {
         } message: {
             Text("A nickname everyone sees in place of \(machine.id). Leave it empty to go back to that.")
         }
+    }
+
+    private var paused: Bool { machine.settings?.paused ?? false }
+
+    /// "Paused", what it holds back and until when, while the machine is paused.
+    private var pausedLabel: String? {
+        guard let s = machine.settings, s.paused else { return nil }
+        var label = s.pauseNew == true ? "Paused · new work" : "Paused"
+        if let until = s.pausedUntil {
+            label += " until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))"
+        }
+        return label
     }
 
     /// A newer runner, with Update for its owner or an admin, and the update while it runs.

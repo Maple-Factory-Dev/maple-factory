@@ -6,6 +6,11 @@ import MapleKit
 enum DemoData {
     static var now: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
     private static func ago(_ minutes: Double) -> UInt64 { now - UInt64(minutes * 60_000) }
+    /// `hour` o'clock yesterday, so Activity always has a Yesterday section.
+    private static func yesterday(_ hour: Double) -> UInt64 {
+        let start = Calendar.current.date(byAdding: .day, value: -1, to: Calendar.current.startOfDay(for: Date()))!
+        return UInt64((start.timeIntervalSince1970 + hour * 3600) * 1000)
+    }
 
     static let me = "andrea"
     /// `-demoRole member` signs the demo in as a plain member, to see what a non-admin sees; admin otherwise.
@@ -32,11 +37,27 @@ enum DemoData {
         feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
                                       autoMerge: ["low": true, "medium": false, "high": false], autoMerges: UserDefaults.standard.string(forKey: "demoAutoMerges") != "off")
         feed.acceptances = [Wire.RiskAcceptance(goal: "g-api", upTo: .low, by: "kit", at: ago(60 * 24 * 3))]
+        feed.recurring = Dictionary(uniqueKeysWithValues: recurring().map { ($0.id, $0) })
         feed.machines = machines()
         feed.runnerLatest = "0.65.0"
         feed.serverVersion = "0.51.0"
         feed.hasSnapshot = true
         return feed
+    }
+
+    /// Two on Mobile app (yours to change), one paused with a last run; one on Kit's Public API (read-only as a member).
+    private static func recurring() -> [Wire.Recurring] {
+        let week: UInt32 = 7 * 24 * 60
+        func ahead(_ minutes: Double) -> UInt64 { now + UInt64(minutes * 60_000) }
+        return [
+            Wire.Recurring(id: "rec-deps", goal: "g-app", title: "Check for dependency updates", brief: "Update the Swift packages and CocoaPods to their latest minor versions; fix anything that breaks.",
+                           agent: "claude", every: 2 * week, unit: .weeks, firstAt: ago(60 * 24 * 12), timeZone: "America/New_York", nextAt: ahead(60 * 26), paused: false, by: me),
+            Wire.Recurring(id: "rec-crash", goal: "g-app", title: "Triage new crash reports", brief: "Read this week's new Sentry issues and propose a task for each real crash.",
+                           repo: "acme/push", agent: "codex", every: 24 * 60, unit: .days, firstAt: ago(60 * 24 * 5), timeZone: "America/New_York", nextAt: ahead(60 * 5), paused: true,
+                           lastRunAt: ago(60 * 26), lastTask: "APP-9", by: me),
+            Wire.Recurring(id: "rec-spec", goal: "g-api", title: "Refresh the OpenAPI spec", brief: "Regenerate the OpenAPI spec from the routes and open a PR if it changed.",
+                           agent: "claude", every: week, unit: .weeks, firstAt: ago(60 * 24 * 3), timeZone: "Europe/London", nextAt: ahead(60 * 24 * 4), paused: false, by: "kit"),
+        ]
     }
 
     private static func task(_ id: String, goal: String, title: String, state: Wire.TaskState, owner: String = me, updated: Double,
@@ -85,6 +106,12 @@ enum DemoData {
                 ]
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-studio", session: "s1", startedAt: ago(25))
                 t.question = .init(text: "Should the cache be per factory, or only the last one you used?", options: ["Per factory", "Only the last one"], role: .builder, at: ago(9))
+                t.events = [
+                    .init(who: "planner", text: "wrote plan v1", at: yesterday(16)),
+                    .init(who: me, text: "approved the plan", at: yesterday(17.5)),
+                    .init(who: "builder", text: "proved FeedCache round-trips a snapshot", at: ago(15)),
+                    .init(who: "builder", text: "asked whether the cache is per factory", at: ago(9)),
+                ]
                 t.doneWhen = [
                     .init(text: "FeedCache round-trips a snapshot", proof: .tests, status: .proven,
                           evidence: .init(kind: .tests, summary: "FeedCacheTests: 4 passed", command: "xcodebuild test -only-testing:MapleFactoryTests/FeedCacheTests", passed: 4, failed: 0, by: "builder", at: ago(15))),
@@ -122,6 +149,11 @@ enum DemoData {
                 t.doneWhen = [.init(text: "Server tests cover the limit and Retry-After", proof: .tests, status: .proven,
                                     evidence: .init(kind: .tests, summary: "14 tests pass", command: "npm test -- ratelimit", output: ["✓ allows 600 a minute", "✓ answers 429 with Retry-After: 12", "Tests: 14 passed"], passed: 14, failed: 0, by: "builder", at: ago(22)))]
                 t.mergeAt = now + 8 * 60_000
+                t.events = [
+                    .init(who: "kit", text: "created the task", at: yesterday(10)),
+                    .init(who: "reviewer", text: "requested changes: 2 findings", at: ago(40)),
+                    .init(who: "reviewer", text: "passed round 2", at: ago(20)),
+                ]
             },
             task("BIL-7", goal: "g-web", title: "Invoice PDFs with line items", state: .building, owner: "sam", updated: 35) { t in
                 t.brief = "Render each invoice as a PDF with its usage line items."
@@ -143,6 +175,10 @@ enum DemoData {
             },
             task("APP-9", goal: "g-app", title: "Sign in with GitHub's device flow", state: .merged, updated: 60 * 26) { t in
                 t.brief = "Sign in on the phone with a code, like the Mac app."
+                t.events = [
+                    .init(who: "sam", text: "approved the change", at: yesterday(14)),
+                    .init(who: "factory", text: "merged #398", at: yesterday(14.2)),
+                ]
             },
             // Both stranded on Kit's MacBook Air, which went offline: Machines offers to move them.
             task("BIL-8", goal: "g-web", title: "Receipt emails after a payment", state: .building, updated: 300) { t in
@@ -165,8 +201,13 @@ enum DemoData {
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s5", startedAt: ago(330))
             },
             task("BIL-5", goal: "g-web", title: "Plans page", state: .planning, owner: "sam", updated: 3),
-            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120),
-            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90),
+            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120) { $0.effort = "Bigger screens" },
+            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90) { $0.effort = "Bigger screens" },
+            // With APP-12, the Offline effort: one merged and one building, so its card has something to count.
+            task("APP-11", goal: "g-app", title: "Queue actions taken offline", state: .merged, updated: 60 * 30) { t in
+                t.brief = "Hold approvals and comments made offline and send them once the socket is back."
+                t.effort = "Offline"
+            },
             task("API-33", goal: "g-api", title: "Webhooks for task events", state: .backlog, owner: "kit", updated: 300),
         ]
     }
@@ -198,6 +239,7 @@ enum DemoData {
                                           activity: .init(state: .waiting, message: "Asked a question", at: ago(9))),
                                     .init(session: .init(id: "s2", agent: "claude", cwd: "~/maple/worktrees/app-16", startedAt: ago(6), taskId: "APP-16"),
                                           activity: .init(state: .waiting, message: "Claude needs your permission to use Bash", question: permissionQuestion, at: ago(2)))],
+                         settings: .init(teamSlots: 1, lendIdle: false, loadCap: 0.85, paused: false),
                          capacity: 4, usage: noUsage ? [] : [claude(observed: ago(9))]),
             Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
                          health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),
