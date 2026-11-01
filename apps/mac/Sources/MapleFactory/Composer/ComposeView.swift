@@ -45,7 +45,8 @@ struct ComposeView: View {
                         MarkdownEditor(
                             text: $state.draft.body,
                             placeholder: "Describe the outcome, context and constraints.\n\nAdd a “## Done when” checklist: each item becomes a check the builder has to prove.",
-                            minHeight: 420
+                            minHeight: 420,
+                            onBacktab: focusTitle
                         )
                     }
                     .frame(maxWidth: editorWidth, alignment: .leading)
