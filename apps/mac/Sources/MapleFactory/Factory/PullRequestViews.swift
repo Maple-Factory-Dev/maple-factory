@@ -236,9 +236,14 @@ struct PullRequestCard: View {
                     Text(summary.headline)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Theme.text)
-                    Text(summary.detail)
-                        .font(.system(size: 11.5).monospacedDigit())
-                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                        .fixedSize()
+                    if summary.tone != .passed {
+                        Text(summary.detail)
+                            .font(.system(size: 11.5).monospacedDigit())
+                            .foregroundStyle(Theme.textMuted)
+                            .lineLimit(1)
+                    }
                     Spacer(minLength: 4)
                     Link(destination: pr.url.appending(path: "checks")) {
                         HStack(spacing: 3) {
