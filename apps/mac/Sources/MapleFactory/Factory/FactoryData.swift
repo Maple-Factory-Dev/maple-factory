@@ -37,6 +37,16 @@ enum FactoryData {
         (chris, "ATL-147"),
     ]
 
+    /// Sample statuses for the signed-out demo, by person id. Nothing sets one when connected yet.
+    static let seedStatus: [String: PersonStatus] = [
+        chris.id: PersonStatus(emoji: "🎧", text: "Heads down on releases"),
+    ]
+
+    /// A person's status: the demo's sample when signed out, none when connected (not synced yet).
+    @MainActor static func status(for person: Person) -> PersonStatus? {
+        livePresence == nil ? seedStatus[person.id] : nil
+    }
+
     static let agents: [Agent] = [
         Agent(name: "Maple-1", color: Theme.State.awaitingApproval),
         Agent(name: "Maple-2", color: Theme.State.building),
