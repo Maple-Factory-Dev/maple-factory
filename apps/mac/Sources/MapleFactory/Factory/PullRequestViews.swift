@@ -46,14 +46,6 @@ enum GitHubMark: CaseIterable {
         return image
     }
 
-    /// The icon at `size` points, tinted by the foreground style.
-    @MainActor func image(size: CGFloat = 14) -> Image {
-        guard let mark = bundled, let sized = mark.copy() as? NSImage else { return Image(systemName: fallbackSymbol) }
-        sized.size = NSSize(width: size, height: size)
-        sized.isTemplate = true
-        return Image(nsImage: sized)
-    }
-
     @MainActor private static var cache: [GitHubMark: NSImage] = [:]
 }
 
