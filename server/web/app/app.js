@@ -196,7 +196,7 @@ function receive(m) {
       state.serverVersion = m.serverVersion ?? null;
       state.serverUpdate = m.serverUpdate ?? null;
       $("org").textContent = m.name || m.org || "Maple Factory";
-      showIcon(m.icon);
+      state.icon = m.icon ?? null; showIcon(m.icon);
       status();
       // The first version seen is the bundle this tab loaded; a reconnect after a deploy reports the new one.
       state.loadedVersion ??= m.serverVersion || null;
@@ -205,7 +205,7 @@ function receive(m) {
       break;
     case "github.status": showGitHubStatus(m.status); return;
     case "quietHours.updated": state.quietHours = m.quietHours ?? null; return;
-    case "icon.updated": showIcon(m.icon); return;
+    case "icon.updated": state.icon = m.icon ?? null; showIcon(m.icon); break;
     case "name.updated": state.name = m.name ?? null; $("org").textContent = m.name || state.org || "Maple Factory"; break;
     case "policy.updated": state.policy = m.policy; state.acceptances = m.acceptances ?? state.acceptances; break;
     case "prompts.updated": state.prompts = m.prompts; break;
