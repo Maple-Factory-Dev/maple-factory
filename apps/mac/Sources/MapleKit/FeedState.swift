@@ -10,6 +10,8 @@ public struct FeedState: Sendable {
     public var members: [Wire.Member] = []
     public var machines: [Wire.Machine] = []
     public var goals: [Wire.Goal] = []
+    /// The org's repos (Settings → Repositories on the Mac), for a goal's repo picker.
+    public var repos: [Wire.OrgRepo] = []
     /// Newest first, as the server sends them.
     public var tasks: [Wire.Task] = []
     public var intake: [Wire.IntakeRequest] = []
@@ -54,6 +56,7 @@ public struct FeedState: Sendable {
             members = snapshot.members
             machines = snapshot.machines
             goals = snapshot.goals
+            repos = snapshot.repos
             tasks = snapshot.tasks
             older = Self.older(tallies: snapshot.tallies, tasks: snapshot.tasks)
             loadingOlder = []
@@ -93,6 +96,8 @@ public struct FeedState: Sendable {
             if let login = me?.login, let updated = members.first(where: { $0.login == login }) { me = updated }
         case .presence(let presence):
             online = presence.online
+        case .reposUpdated(let update):
+            repos = update.repos
         case .nameUpdated(let update):
             name = update.name
         case .runnerReleased(let release):
