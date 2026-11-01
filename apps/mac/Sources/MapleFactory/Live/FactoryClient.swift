@@ -636,6 +636,8 @@ import Foundation
             } else {
                 notice = error.message
             }
+        case .sessionEvents:
+            break // The native session view (MF-199) isn't built yet.
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break

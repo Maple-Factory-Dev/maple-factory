@@ -604,6 +604,96 @@ pub enum AgentState {
     Other,
 }
 
+/// Where an agent's turn is, in a session's native view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnState {
+    /// Working: thinking, writing or running tools.
+    Running,
+    /// Stopped on a prompt for the person (see the `prompt` event before it).
+    Waiting,
+    /// Finished its turn; the composer is free.
+    Done,
+    /// Stopped by Esc or Ctrl-C before it finished.
+    Interrupted,
+    /// The turn failed (an API error, a usage limit); `message` says why.
+    Error,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PromptKind {
+    /// The agent wants to run a tool and asks first (Claude's allow menu, Codex's approval).
+    Permission,
+    /// The agent asked the person something, with or without options.
+    Question,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// Where a native-view stream is up to. `seq` orders a session's events and only goes up; `token` is the runner's own (transcript file and byte offset), opaque to everyone else, so a restarted runner can resume without rereading the whole file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEventCursor {
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+/// A tool the agent called, as the native view shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallInfo {
+    /// The agent's own id (Claude's tool_use id, Codex's call_id); its `tool.result` carries the same.
+    pub call_id: String,
+    /// The tool's name as the agent calls it: Bash, Edit, Write, Read, exec_command, apply_patch, an MCP tool's mcp__server__name…
+    pub name: String,
+    /// One line for the card: the command, the file, the pattern.
+    pub summary: String,
+    /// The file it touches, for file tools (Edit, Write, Read, apply_patch), relative to the session's cwd when it's inside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// A unified diff for Edit, Write and apply_patch, so the view can show the change without asking for the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// The tool's input as the agent sent it, for a details sheet; long string values are cut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
+}
+
+/// One answer a prompt offers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptOption {
+    /// What `session.sendInput` sends back to pick it: the menu's number ("1") or a key name ("Escape").
+    pub key: String,
+    pub label: String,
+    /// When the option is plainly allow-once or deny, the PromptChoice it is, so `task.answerPrompt` and the native view agree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<PromptChoice>,
+}
+
+/// What a turn used, when the transcript says.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnUsage {
+    /// The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
@@ -2464,6 +2554,165 @@ pub struct StatsSummary {
     pub findings: Option<StatsFindings>,
 }
 
+/// One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
+pub enum SessionEvent {
+    /// What the person (or the factory) typed.
+    #[serde(rename = "user")]
+    User {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        text: String,
+    },
+    /// What the agent said, as markdown.
+    #[serde(rename = "assistant")]
+    Assistant {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        markdown: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+    },
+    /// The agent's visible reasoning (Claude's thinking, Codex's reasoning summary).
+    #[serde(rename = "thinking")]
+    Thinking {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        text: String,
+    },
+    #[serde(rename = "tool.call")]
+    ToolCall {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        call: ToolCallInfo,
+    },
+    #[serde(rename = "tool.result")]
+    ToolResult {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        call_id: String,
+        ok: bool,
+        /// The output, cut to the runner's limit (4000 chars: head and tail kept).
+        text: String,
+        /// Whether `text` was cut.
+        truncated: bool,
+    },
+    /// The agent is waiting on the person: a permission menu or a question. Comes from hooks and the pane, not the transcript (the TUI doesn't write its menus there).
+    #[serde(rename = "prompt")]
+    Prompt {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        kind: PromptKind,
+        text: String,
+        #[serde(default)]
+        options: Vec<PromptOption>,
+        /// The tool call it asks about, for a permission.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
+    },
+    /// The prompt with `promptId` is answered (here, in the terminal, or by a hook) or went away.
+    #[serde(rename = "prompt.resolved")]
+    PromptResolved {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        prompt_id: String,
+        /// The option picked, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// The turn's state changed; `done` carries what it used when the transcript says.
+    #[serde(rename = "turn")]
+    Turn {
+        /// Stable per event (Claude's message uuid, or the rollout line with a suffix), so a backfill and a live copy dedupe.
+        id: String,
+        session: Uuid,
+        /// The event's place in the session; strictly increasing, no reuse.
+        seq: u64,
+        /// Unix ms, from the transcript record's own timestamp.
+        at: u64,
+        /// claude or codex.
+        agent: String,
+        state: TurnState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TurnUsage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+}
+
+/// What `session.sendInput` types into a session. The runner sends it with tmux send-keys, the same as typing in the terminal, so anything the TUI takes works (`/rc` included).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
+pub enum SessionInput {
+    /// A message, pasted then submitted with Enter.
+    #[serde(rename = "text")]
+    Text {
+        text: String,
+    },
+    /// A slash command, e.g. `/rc` or `/compact keep the plan`, submitted with Enter.
+    #[serde(rename = "slash")]
+    Slash {
+        command: String,
+    },
+    /// Pick an option on the prompt that's showing.
+    #[serde(rename = "key")]
+    Key {
+        prompt_id: String,
+        /// A PromptOption's `key`. Refused when `promptId` isn't the prompt showing now.
+        key: String,
+    },
+}
+
 /// Runner → server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
@@ -2503,6 +2752,23 @@ pub enum RunnerMessage {
     SessionActivity {
         id: Uuid,
         activity: Activity,
+    },
+    /// Native-view events for a session someone subscribed to: first the backfill after `since` (`backfill` true, maybe in several messages, each echoing the subscribe's `nonce`), then live ones as the transcript grows (no `nonce`: they go to every subscriber).
+    #[serde(rename = "session.events")]
+    SessionEvents {
+        id: Uuid,
+        #[serde(default)]
+        events: Vec<SessionEvent>,
+        backfill: bool,
+        /// The seq the next event will have; subscribe with since = nextSeq - 1 to resume.
+        next_seq: u64,
+        /// Names this numbering of the stream. It changes when the runner rebuilds the stream from the transcript's start (lost state, a new transcript), so seq starts again at 1; a `since` from another epoch means nothing.
+        epoch: String,
+        /// On a backfill: the `session.events.subscribe` nonce it answers, so the server sends it only to the viewer that asked.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nonce: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<SessionEventCursor>,
     },
     /// The screen and scrollback asked for by `session.replay`, as bytes that repaint a fresh terminal.
     #[serde(rename = "session.replay")]
@@ -2722,6 +2988,31 @@ pub enum ServerToRunner {
     SessionKill {
         id: Uuid,
     },
+    /// Start (or with `stop`, end) sending `session.events` for a session. `since` is exclusive: events with seq > since. Left out, the runner sends the last `limit` events.
+    #[serde(rename = "session.events.subscribe")]
+    SessionEventsSubscribe {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<u64>,
+        /// The epoch `since` came from; when it isn't the stream's current epoch, `since` is ignored and the backfill starts from seq 1.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop: Option<bool>,
+        /// Echoed on the backfill `session.events` this asks for, so the server routes it to the viewer that asked (like `session.replay`). Live events carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nonce: Option<String>,
+    },
+    /// Type into a session from the native composer. The server already checked the viewer may type (the same rule as the terminal share).
+    #[serde(rename = "session.input")]
+    SessionInput {
+        id: Uuid,
+        input: SessionInput,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
+    },
     /// Send the session's screen and scrollback, so a new viewer starts with what's there.
     #[serde(rename = "session.replay")]
     SessionReplay {
@@ -2925,6 +3216,31 @@ pub enum ClientMessage {
     #[serde(rename = "session.detach")]
     SessionDetach {
         id: Uuid,
+    },
+    /// Show a session's native view: the server answers with `session.events`, a backfill of events after `since` (exclusive; left out, the last `limit`, default 200) and then live ones. Anyone who may watch the terminal may subscribe.
+    #[serde(rename = "session.subscribeEvents")]
+    SessionSubscribeEvents {
+        machine: String,
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<u64>,
+        /// The epoch `since` came from. If the stream's epoch is now different, `since` is ignored and the backfill starts from the beginning.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    #[serde(rename = "session.unsubscribeEvents")]
+    SessionUnsubscribeEvents {
+        machine: String,
+        id: Uuid,
+    },
+    /// Type into a session from the native composer: text, a slash command, or a prompt's option. Refused, like terminal input, unless the viewer owns the machine, is an admin, or was shared it with `canType`.
+    #[serde(rename = "session.sendInput")]
+    SessionSendInput {
+        machine: String,
+        id: Uuid,
+        input: SessionInput,
     },
     #[serde(rename = "session.resize")]
     SessionResize {
@@ -3731,6 +4047,18 @@ pub enum ServerToClient {
     SessionEnded {
         machine: String,
         end: SessionEnd,
+    },
+    /// A session's native-view events, to the connections subscribed to it. A backfill (`backfill` true) goes only to the connection that asked, and always comes before live events.
+    #[serde(rename = "session.events")]
+    SessionEvents {
+        machine: String,
+        id: Uuid,
+        #[serde(default)]
+        events: Vec<SessionEvent>,
+        backfill: bool,
+        next_seq: u64,
+        /// When it differs from the epoch a viewer already holds, the runner renumbered the stream: drop what's shown and subscribe again without `since`.
+        epoch: String,
     },
     /// The statistics `stats.get` asked for, to that connection only.
     #[serde(rename = "stats")]
