@@ -954,6 +954,8 @@ data class MachineSettings(
     val paused: Boolean,
     /** When a pause ends on its own; none: until resumed. */
     val pausedUntil: Long? = null,
+    /** With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review. */
+    val pauseNew: Boolean? = null,
     /** Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap. */
     val sessionCap: Double? = null,
     /** The same for its weekly window. */

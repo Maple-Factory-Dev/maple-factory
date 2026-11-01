@@ -14,6 +14,8 @@ struct MachineSettingsSheet: View {
     @State private var lendIdle: Bool
     @State private var loadCap: Double
     @State private var paused: Bool
+    /// What a pause holds back: only new tasks, or every session here.
+    @State private var pauseScope: PauseScope
     @State private var sessionCap: Double?
     @State private var weeklyCap: Double?
     /// Caps per agent account, for the agents that report usage here.
@@ -21,6 +23,10 @@ struct MachineSettingsSheet: View {
     @State private var teamOnly: Bool
     @State private var pauseFor: PauseLength = .untilResumed
     @State private var handOff = true
+
+    enum PauseScope: String, CaseIterable {
+        case newWork = "New work", everything = "Everything"
+    }
 
     enum PauseLength: String, CaseIterable {
         case hour = "1 hour", tonight = "Until tomorrow", untilResumed = "Until I resume"
@@ -49,6 +55,7 @@ struct MachineSettingsSheet: View {
         _lendIdle = State(initialValue: s?.lendIdle ?? false)
         _loadCap = State(initialValue: s?.loadCap ?? 0.85)
         _paused = State(initialValue: s?.paused ?? false)
+        _pauseScope = State(initialValue: s?.paused == true && s?.pauseNew != true ? .everything : .newWork)
         _sessionCap = State(initialValue: s?.sessionCap)
         _weeklyCap = State(initialValue: s?.weeklyCap)
         // Accounts without their own caps yet start from the machine-wide ones.
@@ -134,22 +141,27 @@ struct MachineSettingsSheet: View {
             group("Pause") {
                 Toggle("Pause factory work here", isOn: $paused)
                     .toggleStyle(.switch).controlSize(.small)
+                if paused {
+                    Picker("", selection: $pauseScope) {
+                        ForEach(PauseScope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
                 if paused && !(machine.settings?.paused ?? false) {
                     Picker("", selection: $pauseFor) {
                         ForEach(PauseLength.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    if !teammates.isEmpty {
+                    if !teammates.isEmpty && pauseScope == .everything {
                         Toggle("Hand off \(teammates.count == 1 ? "\(teammates[0].owner.firstName)'s task" : "\(teammates.count) teammates' tasks") (\(teammates.map(\.id).joined(separator: ", ")))",
                                isOn: $handOff)
                             .toggleStyle(.checkbox)
                             .font(.system(size: 12.5))
                     }
                 }
-                Text(paused && !teammates.isEmpty && handOff && !(machine.settings?.paused ?? false)
-                     ? "Their work so far is pushed and they carry on on another machine. Your own sessions finish here; nothing new starts while it's paused."
-                     : "Running sessions finish what they're doing; nothing new starts here while it's paused.")
+                Text(pauseHelp)
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textFaint)
             }
@@ -167,6 +179,18 @@ struct MachineSettingsSheet: View {
         .frame(width: embedded ? nil : 520)
     }
 
+    private var wasFullyPaused: Bool { machine.settings?.paused == true && machine.settings?.pauseNew != true }
+
+    private var pauseHelp: String {
+        if paused && pauseScope == .newWork {
+            return "No new tasks start here. Tasks already on this machine keep going through planning, building and review until they're done."
+        }
+        if paused && !teammates.isEmpty && handOff && !wasFullyPaused {
+            return "Their work so far is pushed and they carry on on another machine. Your own sessions finish what they're doing; nothing else starts here while it's paused."
+        }
+        return "Running sessions finish what they're doing; no session of any kind starts here while it's paused, not even for tasks already here."
+    }
+
     /// Teammates' tasks running here, in team slots.
     private var teammates: [FactoryTask] {
         client.factoryTasks.filter { $0.worker?.machine == machine.id && $0.worker?.role != "reviewer" && $0.owner.github != machine.owner }
@@ -181,12 +205,14 @@ struct MachineSettingsSheet: View {
             loadCap: loadCap,
             paused: paused,
             pausedUntil: paused ? (wasPaused ? machine.settings?.pausedUntil : pauseFor.until) : nil,
+            pauseNew: paused && pauseScope == .newWork ? true : nil,
             sessionCap: sessionCap,
             weeklyCap: weeklyCap,
             agentCaps: machine.usage.isEmpty ? machine.settings?.agentCaps : machine.usage.compactMap { agentCaps[$0.agent] },
             capsTeamOnly: teamOnly
         )
-        let pausing = paused && !wasPaused
+        // Only a full pause hands teammates' tasks off; under a new-work pause they finish here.
+        let pausing = paused && pauseScope == .everything && !wasFullyPaused
         client.send(.machineSettings(.init(machine: machine.id, settings: settings, handOff: pausing && handOff && !teammates.isEmpty)))
         if embedded { withAnimation { saved = true } } else { dismiss() }
     }

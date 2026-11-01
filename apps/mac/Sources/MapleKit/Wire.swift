@@ -2310,6 +2310,8 @@ public enum Wire {
         public var paused: Bool
         /// When a pause ends on its own; none: until resumed.
         public var pausedUntil: UInt64?
+        /// With paused: only new tasks are held back. Tasks whose work is already on this machine keep going through planning, building and review.
+        public var pauseNew: Bool?
         /// Stop starting factory work here once an agent's 5-hour window is this used (0–1); none: no cap.
         public var sessionCap: Double?
         /// The same for its weekly window.
@@ -2319,13 +2321,14 @@ public enum Wire {
         /// Caps stop only teammates' work; the owner's own tasks keep running past them.
         public var capsTeamOnly: Bool?
 
-        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil) {
+        public init(capacity: UInt32? = nil, teamSlots: UInt32, lendIdle: Bool, loadCap: Double, paused: Bool, pausedUntil: UInt64? = nil, pauseNew: Bool? = nil, sessionCap: Double? = nil, weeklyCap: Double? = nil, agentCaps: [AgentCap]? = nil, capsTeamOnly: Bool? = nil) {
             self.capacity = capacity
             self.teamSlots = teamSlots
             self.lendIdle = lendIdle
             self.loadCap = loadCap
             self.paused = paused
             self.pausedUntil = pausedUntil
+            self.pauseNew = pauseNew
             self.sessionCap = sessionCap
             self.weeklyCap = weeklyCap
             self.agentCaps = agentCaps
