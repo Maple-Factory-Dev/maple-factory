@@ -211,6 +211,17 @@ const TOOLS: Tool[] = [
           "New problems found this round.",
         ),
         fixed: list(str(""), "Ids of earlier findings this round resolves."),
+        classification: {
+          ...obj(
+          {
+            level: oneOf(["low", "medium", "high"], "The change's risk against the org's guidance."),
+            humanReview: { type: "boolean", description: "Whether a person should review it before it merges." },
+            reasons: list(str(""), "Why, a short line each."),
+          },
+            ["level", "humanReview", "reasons"],
+          ),
+          description: "The org's risk grade of the change. Required when your prompt has a Risk classification section; leave it out otherwise.",
+        },
       },
       ["verdict", "summary", "ask", "proofs", "findings"],
     ),
