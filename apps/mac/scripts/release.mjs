@@ -45,6 +45,21 @@ const heading = (text) => console.log(`\n── ${text} ${"─".repeat(Math.max(
 const ok = (text) => console.log(`  ✓ ${text}`);
 const fail = (text) => { throw new Error(text); };
 const flag = (name) => process.argv.includes(name);
+// Every stage says how long it took, and `ship` ends with them all and a total: where a release's time goes.
+const stages = [];
+const elapsed = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
+function timed(name, fn) {
+  const start = Date.now();
+  const result = fn();
+  stages.push([name, Date.now() - start]);
+  ok(`${name} in ${elapsed(Date.now() - start)}`);
+  return result;
+}
+function timings() {
+  heading("Timings");
+  for (const [name, ms] of stages) console.log(`  ${name.padEnd(28)} ${elapsed(ms)}`);
+  console.log(`  ${"total".padEnd(28)} ${elapsed(stages.reduce((sum, [, ms]) => sum + ms, 0))}`);
+}
 
 /** .env.release into process.env, without overriding what's already set. Optional: in CI the
  *  environment has it all, and need() says what's missing from both. */
@@ -345,7 +360,13 @@ function cmdBuild(v) {
   loadEnv();
   const { version: cv, build: cb } = current();
   if (cv !== r.version || cb !== r.build) bump(r.version, r.build);
-  run(join(here, "scripts/bundle.sh"), ["release"], { env: { ...process.env, SIGN_IDENTITY: signIdentity(), UPDATES_URL: updatesURL() } });
+  timed("bundle", () => run(join(here, "scripts/bundle.sh"), ["release"], { env: { ...process.env, SIGN_IDENTITY: signIdentity(), UPDATES_URL: updatesURL() } }));
+  timed("signature checks", () => verifySignatures());
+  timed("dSYMs", () => uploadSymbols());
+  tagBuilt(r.version);
+}
+
+function verifySignatures() {
   // An unsigned or ad hoc helper deep in the bundle otherwise shows up as a user's "app is damaged".
   run("codesign", ["--verify", "--deep", "--strict", APP]);
   // codesign -d reports on stderr.
@@ -359,8 +380,6 @@ function cmdBuild(v) {
     run("codesign", ["--verify", "--strict", join(APP, nested)]);
   }
   ok(`signed ${APP}`);
-  uploadSymbols();
-  tagBuilt(r.version);
 }
 
 /** Tags HEAD mac-v<v> on origin: what this release was built from, and the next one's base. */
@@ -606,13 +625,15 @@ async function cmdShip(v) {
   if (process.env.MAPLE_SKIP_SYMBOLS !== "1") need("SENTRY_AUTH_TOKEN");
   sparkleBin("sign_update");
   cmdBuild(v);
-  cmdNotarize(v);
-  cmdDmg(v);
-  cmdSign(v);
-  cmdAppcast();
+  timed("notarize app", () => cmdNotarize(v));
+  timed("dmg (notarized)", () => cmdDmg(v));
+  timed("sparkle signatures", () => cmdSign(v));
+  timed("appcast", () => cmdAppcast());
+  timings();
   if (!(await ask(`Publish to ${updatesURL()}?`))) return console.log("Stopped before publishing; `publish` when ready.");
   if (process.env.MAPLE_STOP_BEFORE_PUBLISH === "1") return console.log("MAPLE_STOP_BEFORE_PUBLISH=1: stopped before publishing.");
-  cmdPublish();
+  timed("publish", () => cmdPublish());
+  timings();
   console.log(`\n  ✓ ${r.version} shipped. Commit apps/mac/releases/${r.version}/ and apps/mac/version.json.`);
 }
 

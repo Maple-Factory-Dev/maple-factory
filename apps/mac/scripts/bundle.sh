@@ -13,8 +13,14 @@ here="$(dirname "$(dirname "$(realpath "$0")")")"
 root="$(dirname "$(dirname "$here")")"
 cd "$here"
 
+# Each stage says how long it took (on stderr: stdout's last line is the app's path, for dmg.sh).
+t0=$(date +%s)
+elapsed() { if [ "$1" -ge 60 ]; then printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); else printf '%ds' "$1"; fi; }
+stage() { now=$(date +%s); echo "  ✓ $1 in $(elapsed $((now - t0)))" >&2; t0=$now; }
+
 swift build -c "$config"
 bin="$(swift build -c "$config" --show-bin-path)"
+stage "swift build"
 version="$(plutil -extract version raw "$here/version.json")"
 build="$(plutil -extract build raw "$here/version.json")"
 updates="${UPDATES_URL:-https://updates.maplefactory.dev}"
@@ -37,7 +43,9 @@ target=aarch64-apple-darwin
 rustup target list --installed | grep -qx "$target" || rustup target add "$target"
 (cd "$root/runner" && cargo build --release --target "$target" --quiet)
 cp "$root/runner/target/$target/release/maple-runner" "$app/Contents/Helpers/maple-runner"
+stage "runner"
 cp "$("$here/scripts/build-tmux.sh")" "$app/Contents/Helpers/tmux"
+stage "tmux"
 
 # The icon: every size iconutil wants, from the 1254px source.
 iconset="$(mktemp -d)/AppIcon.iconset"
@@ -47,6 +55,7 @@ for size in 16 32 128 256 512; do
   sips -z $((size * 2)) $((size * 2)) "$root/assets/icon.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+stage "icon"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -89,6 +98,7 @@ sign "$sparkle/Versions/B/Autoupdate"
 sign "$sparkle/Versions/B/Updater.app"
 sign "$sparkle"
 sign "$app"
+stage "signing"
 # Tell Launch Services about it, so maplefactory:// links open this copy.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
 echo "$app"
