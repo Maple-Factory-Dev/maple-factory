@@ -36,6 +36,7 @@ function storage() {
 function hub(opts: { fail?: boolean; revoked?: string[] } = {}) {
   const store = storage();
   const posted: Machine[] = [];
+  const sent: { url: string; body: unknown }[] = [];
   const db = { queries: 0, fail: opts.fail ?? false };
   const env = {
     DB: {
@@ -51,14 +52,14 @@ function hub(opts: { fail?: boolean; revoked?: string[] } = {}) {
     },
     ORG: {
       idFromName: (name: string) => name,
-      get: () => ({ async fetch(_url: string, init: RequestInit) { posted.push(JSON.parse(init.body as string)); return new Response(null, { status: 204 }); } }),
+      get: () => ({ async fetch(url: string, init: RequestInit) { sent.push({ url, body: JSON.parse(init.body as string) }); if (url.endsWith("/machine")) posted.push(JSON.parse(init.body as string)); return new Response(null, { status: 204 }); } }),
     },
   };
   const ctx = { storage: store, getWebSockets: () => [], setWebSocketAutoResponse() {} };
   const instance = new MachineHub(ctx as never, env as never);
   let clock = 1_000_000;
   instance.now = () => clock;
-  return { instance, store, posted, db, tick: (ms: number) => { clock += ms; } };
+  return { instance, store, posted, sent, db, tick: (ms: number) => { clock += ms; } };
 }
 
 function machine(...sessions: string[]): Machine {
@@ -217,4 +218,13 @@ test("a hello that reports a session's end itself doesn't get a made-up one", as
   const ended = posts.filter((p) => p.url === "https://org/ended");
   assert.equal(ended.length, 1);
   assert.equal(ended[0].body.end.cause, "exited");
+});
+
+test("a runner's session.events goes to the org hub's /session-events with the machine, and doesn't publish it", async () => {
+  const { instance, store, posted, sent } = hub();
+  await store.put("machine", machine("s1"));
+  const msg = { type: "session.events", id: "s1", events: [], backfill: true, nextSeq: 1, epoch: "e1", nonce: "n1" };
+  await (instance as unknown as { fromRunner(m: unknown): Promise<void> }).fromRunner(msg);
+  assert.deepEqual(sent, [{ url: "https://org/session-events", body: { machine: "m1", msg } }]);
+  assert.equal(posted.length, 0);
 });
