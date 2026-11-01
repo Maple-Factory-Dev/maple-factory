@@ -75,7 +75,7 @@ struct TaskActionBar: View {
                         Label(action.title, systemImage: action.icon)
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.regular)
+                    .controlSize(.large)
                     .disabled(busy)
                     .help(action.help)
                     .popover(isPresented: action == .schedule ? $scheduling : .constant(false), arrowEdge: .bottom) {
