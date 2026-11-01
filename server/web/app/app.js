@@ -319,9 +319,9 @@ function status() {
   s.className = `status${state.live ? " live" : ""}`;
 }
 
-/** The sign-in screen; `signedOut` just after signing out: say so, and come back to the inbox, not the old page. */
+/** The sign-in screen; `signedOut` just after signing out: say so, and come back to the inbox, not the old page's hash. */
 function signIn({ signedOut = false } = {}) {
-  const next = signedOut ? "/" : location.pathname + location.hash;
+  const next = signedOut ? location.pathname : location.pathname + location.hash;
   $("main").replaceChildren(h("div", { class: "signin" },
     h("h1", {}, "Sign in"),
     signedOut && h("p", { class: "signed-out", role: "status" }, `You've signed out${state.org ? ` of ${state.org}` : ""}.`),
@@ -383,7 +383,7 @@ async function signOut() {
   s.replaceChildren("Signed out");
   s.className = "status";
   document.title = "Maple Factory";
-  history.replaceState(null, "", "/");
+  history.replaceState(null, "", location.pathname);
   signIn({ signedOut: true });
 }
 
