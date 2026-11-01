@@ -415,6 +415,38 @@ export class Engine {
         // Their repos come in (or the removed ones' go) once the app's installations are read again.
         return this.refreshRepos(true);
       }
+      case "repos.holdMerges": {
+        // Any member: whoever is on call during an incident.
+        const repo = this.store.repos().find((r) => r.name.toLowerCase() === msg.repo.trim().toLowerCase());
+        if (!REPO.test(msg.repo.trim()) || !repo) fail(`${msg.repo} isn't one of the factory's repos.`);
+        const reason = msg.reason.trim();
+        if (!reason) fail("Say why merges are on hold.");
+        if (reason.length > 200) fail("Keep the reason to 200 characters.");
+        const hold = { repo: repo!.name, reason, by: who, at: now() };
+        this.store.saveMergeHolds([...this.store.mergeHolds().filter((h) => h.repo.toLowerCase() !== repo!.name.toLowerCase()), hold]);
+        await audit(this.env, who, "repo.merges_held", null, { repo: hold.repo, reason });
+        for (const task of this.reviewingOn(hold.repo)) {
+          // save() drops a running countdown now that mergeReady() says no.
+          this.event(task, who, `merges into ${hold.repo} are on hold: ${reason}`);
+          this.save(task);
+        }
+        this.hooks.broadcast({ type: "mergeHolds.updated", holds: this.store.mergeHolds() });
+        this.hooks.broadcast({ type: "toast", text: `${who} put merges into ${hold.repo} on hold: ${reason}` });
+        return;
+      }
+      case "repos.releaseMerges": {
+        const hold = this.store.mergeHold(msg.repo.trim()) ?? fail(`Merges into ${msg.repo} aren't on hold.`);
+        this.store.saveMergeHolds(this.store.mergeHolds().filter((h) => h !== hold && h.repo.toLowerCase() !== hold.repo.toLowerCase()));
+        await audit(this.env, who, "repo.merges_released", null, { repo: hold.repo });
+        this.hooks.broadcast({ type: "mergeHolds.updated", holds: this.store.mergeHolds() });
+        this.hooks.broadcast({ type: "toast", text: `${who} lifted the hold on merges into ${hold.repo}.` });
+        for (const task of this.reviewingOn(hold.repo)) {
+          this.event(task, who, `lifted the hold on merges into ${hold.repo}`);
+          this.save(task);
+          await this.autoMerge(this.store.task(task.id) ?? task);
+        }
+        return;
+      }
       case "repos.remove": {
         if (member.role !== "admin") fail("Only admins can remove repos.");
         const repos = this.store.repos();
@@ -913,6 +945,7 @@ export class Engine {
         // factory has it. Nothing to do, and nothing to complain about.
         if (task.state === "merged" || this.store.private(task.id).merging || this.countdownDone(task)) return;
         if (task.state !== "reviewing" || !task.pr) fail("There's nothing to merge.");
+        this.failIfHeld(task);
         if (task.hand?.reason === "mergeFailed") fail("It didn't merge last time; pick a way forward on its hand.");
         if (task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It hasn't passed automatic review.");
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
@@ -2946,7 +2979,24 @@ export class Engine {
     if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return false;
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return false;
     if (task.pr.checks.some((c) => c.status !== "passed")) return false; // CI first
+    if (this.heldFor(task)) return false; // an incident freeze on its repo
     return !this.store.private(task.id).merging && !task.hand;
+  }
+
+  /** The merge hold on this task's repo, if any. */
+  private heldFor(task: Task) {
+    return this.store.mergeHold(taskRepo(task, this.store.goal(task.goal) ?? null));
+  }
+
+  private failIfHeld(task: Task) {
+    const hold = this.heldFor(task);
+    if (hold) fail(`Merges into ${hold.repo} are on hold: ${hold.reason} (held by ${hold.by}).`);
+  }
+
+  /** Every reviewing task whose repo is `repo`, across all goals. */
+  private reviewingOn(repo: string) {
+    const key = repo.toLowerCase();
+    return this.store.tasks().filter((t) => t.state === "reviewing" && taskRepo(t, this.store.goal(t.goal) ?? null)?.toLowerCase() === key);
   }
 
   private mergeGraceMs() {
@@ -3152,6 +3202,7 @@ export class Engine {
   }
 
   private async startMerge(task: Task, who: string, text = "merged it") {
+    this.failIfHeld(task); // a backstop: retries and conflict picks come through here too
     const priv = this.store.private(task.id);
     const app = githubApp(this.env);
     // A repo on GitHub merges through its pull request, never around it and its CI.
