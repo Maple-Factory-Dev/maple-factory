@@ -6,7 +6,7 @@ login`). With the variables below set, each one runs unattended: nothing waits o
 
 | Script | Releases | Base it records |
 |---|---|---|
-| `scripts/release-runner.mjs --to feed` | maple-runner to the feed | `runner-v<version>` |
+| `scripts/release-runner.mjs --to feed` (or `build` per target, then `publish`) | maple-runner to the feed | `runner-v<version>` |
 | `scripts/release-server.mjs --to feed` | the server bundle to the feed | `server-v<version>` |
 | `apps/mac/scripts/release.mjs ship <v> --yes` | Maple Factory.app (DMG + appcast) | `mac-v<version>` |
 | `scripts/release-site.mjs` | maplefactory.dev | `site-v<short sha>`, `site-deployed` |
@@ -25,11 +25,11 @@ aren't secret and can be plain Environment variables. Nothing here is ever commi
 | `MAPLE_RELEASE_KEY_PEM` | release-runner, release-server (`scripts/feed.mjs`) | The Ed25519 release key's PKCS#8 PEM text (escaped `\n` newlines work too). Signs the feed's manifests; its public half is `RELEASE_PUBLIC_KEY` in `runner/src/update.rs` and `installer/maple.mjs`, checked before every release. | `MAPLE_RELEASE_KEY` (a path), then `~/.config/maple-factory/release-key.pem` |
 | `CLOUDFLARE_API_TOKEN` | feed uploads (`wrangler r2 object put/get`), release-server's bundle, release-site | A Cloudflare API token: Workers R2 Storage Edit (both release buckets), Workers Scripts Edit and Workers KV Storage Edit (the site), Workers Routes Edit on the maplefactory.dev zone. | `wrangler login` |
 | `CLOUDFLARE_ACCOUNT_ID` (variable) | same | The Cloudflare account. Required with the token: neither `wrangler.jsonc` names an account, and the scripts stop before any upload if the token is set without it. | `wrangler login` |
-| `RELEASE_APP_ID` (variable) | `.github/workflows/release-server.yml` | The ID of the GitHub App the release workflow pushes as. The App needs Contents: write on this repo and must be on `main`'s bypass list, so it can push the version bump and the `server-v` tags. | none: releases from a Mac push as you |
+| `RELEASE_APP_ID` (variable) | `.github/workflows/release-server.yml`, `release-runner.yml` | The ID of the GitHub App the release workflow pushes as. The App needs Contents: write on this repo and must be on `main`'s bypass list, so it can push the version bumps and the `server-v` and `runner-v` tags. | none: releases from a Mac push as you |
 | `RELEASE_APP_PRIVATE_KEY` | same | That App's private key (the `.pem` text). A dry run doesn't use it. | |
-| `APPLE_CERT_P12` | `scripts/ci/import-signing-cert.sh` | Base64 of a `.p12` holding the "Developer ID Application" certificate and its private key. | the login keychain |
+| `APPLE_CERT_P12` | `scripts/ci/import-signing-cert.sh` (release-runner.yml's macOS leg) | Base64 of a `.p12` holding the "Developer ID Application" certificate and its private key. | the login keychain |
 | `APPLE_CERT_PASSWORD` | same | The `.p12`'s export password. | |
-| `SIGN_IDENTITY` (variable) | release-runner (feed), release.mjs | `Developer ID Application: Andrea Fomera (TU4485Z3KR)`. | release.mjs defaults to it |
+| `SIGN_IDENTITY` (variable) | release-runner (feed, and `build` for macOS), release.mjs | `Developer ID Application: Andrea Fomera (TU4485Z3KR)`. | release.mjs defaults to it |
 | `NOTARY_KEY_ID` | release.mjs (`notarize`, `dmg`) | An App Store Connect API key's ID: Users and Access › Integrations › Team Keys, **Developer** role. Used when no `NOTARY_PROFILE` is set. | `NOTARY_PROFILE=screenie-notary` (a keychain profile) |
 | `NOTARY_ISSUER_ID` | same | That team's issuer ID (same page). | |
 | `NOTARY_KEY` | same | The key's `.p8` text (written to a 0600 temp file, removed on exit) or a path to it. | |
@@ -77,7 +77,7 @@ Mac or in CI) diffs against the same thing. `.claude/skills/loop-releases` reads
 
 | Tag | Pushed by | Marks |
 |---|---|---|
-| `runner-v<version>` | `release-runner.mjs --to feed`, before building | the runner tree that release built (older releases: the `Runner 0.` commit) |
+| `runner-v<version>` | `release-runner.mjs --to feed`, before building; in CI, release-runner.yml's prepare job | the runner tree that release built (older releases: the `Runner 0.` commit) |
 | `server-v<version>` | `release-server.mjs --to feed`, before building | the server tree; Deploy-button factories update from it |
 | `mac-v<version>` | `release.mjs build` (not in a rehearsal with `MAPLE_RELEASES_DIR`, or with `--no-tag`) | the tree the app was built from; `symbols` rebuilds from it (older releases: local `mac-built-<version>`) |
 | `site-v<short sha>` | `release-site.mjs`, after a deploy answers | every site deploy |
@@ -100,6 +100,33 @@ workflow calls it with `uses: ./.github/workflows/release-server.yml` and `secre
 A beta run still takes a `server-v<v>` tag: tags mark released trees, whatever the channel.
 `dry_run: true` bumps only on the runner, publishes to a `dir:` feed and uploads it as the
 `maple-server-<v>-feed` artifact; it pushes no commit and no tag, and needs only `MAPLE_RELEASE_KEY_PEM`.
+
+`.github/workflows/release-runner.yml` releases maple-runner the same way: Actions › Release maple-runner ›
+Run workflow (or `gh workflow run release-runner.yml -f bump=minor -f channel=beta [-f changelog="…"]`), or
+`uses: ./.github/workflows/release-runner.yml` with `secrets: inherit`. Every job runs in `release`, one run at
+a time:
+
+1. **prepare** runs `cargo test -q` in `runner/`, bumps `runner/Cargo.toml` (`bump`: minor or patch) and
+   `Cargo.lock`, and needs a `## <v> — <date>` section at the top of `runner/CHANGELOG.md`: one already
+   committed, or the `changelog` input written as one. With neither it stops before pushing anything. It
+   commits `Runner <v>: <the section's first sentence>`, pushes it to `main` as the release App and pushes
+   the `runner-v<v>` tag.
+2. **build**, one leg per target on its own kind of machine, from the tagged commit:
+   `release-runner.mjs build --target <t> --out dist`. `macos-14` builds `aarch64-apple-darwin`, signed with
+   the Developer ID (`import-signing-cert.sh import` with `APPLE_CERT_P12` / `APPLE_CERT_PASSWORD`,
+   `SIGN_IDENTITY`, then `cleanup`); `ubuntu-24.04` and `ubuntu-24.04-arm` build the two Linux targets in a
+   `rust:1-bullseye` container, so they need glibc 2.31 at most (the leg checks `objdump -T` and fails on
+   anything newer). `MAPLE_SENTRY_DSN` comes from `server/web/sentry.json`. Each leg uploads
+   `dist/<t>/maple-runner` and its `.sha256`.
+3. **publish** downloads the three into `dist/` and runs `release-runner.mjs publish --from dist --to feed`
+   (`--channel beta` for `channel: beta`) with `MAPLE_RELEASE_KEY_PEM`, `CLOUDFLARE_API_TOKEN` and
+   `CLOUDFLARE_ACCOUNT_ID`; `publish` checks each binary against its `.sha256` and that `runner-v<v>` points at
+   the commit it's publishing. It then waits for `latest.json` or `beta.json` to list the version.
+
+With required reviewers on `release`, each of the three jobs waits for an approval.
+
+Locally, `release-runner.mjs` with no subcommand still does both halves: it tags, builds every target into
+`runner/target/release-dist` (Linux in Docker unless it's this machine's own) and publishes from there.
 
 ## Rehearsing
 
