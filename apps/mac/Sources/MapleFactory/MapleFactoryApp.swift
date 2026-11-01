@@ -224,7 +224,7 @@ struct ContentView: View {
                     let remembered = state.pageRestored || state.demoLaunch ? nil : client.server.flatMap { LastPage.load(factory: $0) }
                     defer { state.pageRestored = true }
                     guard let next = AppState.destinationAfterSnapshot(state.destination, goals: names, focusedGoal: open.map { state.task($0).goal },
-                                                                       remembered: remembered) else { return }
+                                                                       remembered: remembered, renamed: client.goalRenames) else { return }
                     state.destination = next
                     state.focusedTask = open
                 }

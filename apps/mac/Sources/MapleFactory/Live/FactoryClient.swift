@@ -179,6 +179,9 @@ import Foundation
     var savingGoal = false
     /// Bumped on every goal.updated, so a saving goal editor hears an update even when nothing changed.
     private(set) var goalUpdates = 0
+    /// Goals renamed this session, old name → current name (chains collapsed), so a page open on the old
+    /// name can follow the goal instead of falling back to the first one.
+    private(set) var goalRenames: [String: String] = [:]
 
     private var token: String?
     private var socket: URLSessionWebSocketTask?
@@ -521,6 +524,12 @@ import Foundation
             factoryTasks.removeAll { $0.id == removed.id }
         case .goalUpdated(let update):
             if let index = goals.firstIndex(where: { $0.id == update.goal.id }) {
+                let old = goals[index].name, new = update.goal.name
+                if old != new {
+                    for (from, to) in goalRenames where to == old { goalRenames[from] = new }
+                    goalRenames[old] = new
+                    goalRenames[new] = nil
+                }
                 goals[index] = update.goal
             } else {
                 goals.append(update.goal)
@@ -544,6 +553,9 @@ import Foundation
             scoutRuns[update.run.goal] = update.run
         case .repoSetupUpdated(let update):
             setupRuns[update.run.repo.lowercased()] = update.run
+        // Phone push registrations; the Mac app doesn't show them yet.
+        case .pushDevices:
+            break
         case .followsUpdated(let update):
             follows = Dictionary(update.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             rebuildGoals()

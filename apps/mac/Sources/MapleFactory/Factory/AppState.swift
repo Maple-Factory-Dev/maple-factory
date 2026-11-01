@@ -363,14 +363,19 @@ final class AppState {
     /// Where to land once the workspace's goals are known, or nil to stay put: a goal that isn't the
     /// workspace's (the mock's starting one) gives way to the focused task's goal, else the first, else the inbox.
     /// `remembered`, the page this factory was last on, wins while it's still there: any page that isn't a goal,
-    /// or a goal the workspace still has.
+    /// or a goal the workspace still has. `renamed` (old → new name) follows a goal renamed while you were on it.
     nonisolated static func destinationAfterSnapshot(_ current: Destination, goals: [String], focusedGoal: String?,
-                                                     remembered: Destination? = nil) -> Destination? {
-        if let remembered {
+                                                     remembered: Destination? = nil, renamed: [String: String] = [:]) -> Destination? {
+        func follow(_ destination: Destination) -> Destination {
+            guard case .goal(let name) = destination, !goals.contains(name), let new = renamed[name], goals.contains(new) else { return destination }
+            return .goal(new)
+        }
+        if let remembered = remembered.map(follow) {
             let exists = if case .goal(let name) = remembered { goals.contains(name) } else { true }
             if exists { return remembered == current ? nil : remembered }
         }
         guard case .goal(let name) = current, !goals.contains(name) else { return nil }
+        if case .goal(let new) = follow(current), new != name { return .goal(new) }
         if let focusedGoal, goals.contains(focusedGoal) { return .goal(focusedGoal) }
         return goals.first.map(Destination.goal) ?? .inbox
     }

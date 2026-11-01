@@ -736,10 +736,14 @@ struct GoalEditorView: View {
     }
 
     /// Back to the page you were on; a goal just made opens instead, unless a draft is waiting on it.
+    /// Renaming the goal you're on keeps you on it, under its new name.
     private func close(savedAs goal: Wire.Goal?) {
         withAnimation(.snappy(duration: 0.2)) {
             state.goalSheet = nil
             if editing == nil, let goal, !state.isComposing { state.destination = .goal(goal.name) }
+            if let editing, let goal, goal.name != editing.name, state.destination == .goal(editing.name) {
+                state.destination = .goal(goal.name)
+            }
         }
     }
 
