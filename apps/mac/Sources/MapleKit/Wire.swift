@@ -4524,6 +4524,23 @@ public enum Wire {
         }
     }
 
+    /// One weekday × hour of a window, in the summary's `timeZone`: how many merges and hands landed then.
+    public struct StatsHourCell: Codable, Hashable, Sendable {
+        /// 0 is Sunday … 6 Saturday.
+        public var weekday: UInt16
+        /// 0–23.
+        public var hour: UInt16
+        public var merges: UInt32
+        public var hands: UInt32
+
+        public init(weekday: UInt16, hour: UInt16, merges: UInt32, hands: UInt32) {
+            self.weekday = weekday
+            self.hour = hour
+            self.merges = merges
+            self.hands = hands
+        }
+    }
+
     public struct StatsGoalRow: Codable, Hashable, Sendable {
         public var goal: String
         public var name: String
@@ -4917,8 +4934,12 @@ public enum Wire {
         public var findings: StatsFindings?
         /// Merges people made, by reason; none from a server older than it.
         public var manualMerges: StatsManualMerges?
+        /// All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it.
+        public var hours: [StatsHourCell]?
+        /// The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.
+        public var timeZone: String?
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil, manualMerges: StatsManualMerges? = nil) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil, manualMerges: StatsManualMerges? = nil, hours: [StatsHourCell]? = nil, timeZone: String? = nil) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -4940,6 +4961,8 @@ public enum Wire {
             self.costByAgent = costByAgent
             self.findings = findings
             self.manualMerges = manualMerges
+            self.hours = hours
+            self.timeZone = timeZone
         }
 
         public init(from decoder: Decoder) throws {
@@ -4965,6 +4988,8 @@ public enum Wire {
             costByAgent = try c.decodeIfPresent([StatsCostRow].self, forKey: .costByAgent) ?? []
             findings = try c.decodeIfPresent(StatsFindings.self, forKey: .findings)
             manualMerges = try c.decodeIfPresent(StatsManualMerges.self, forKey: .manualMerges)
+            hours = try c.decodeIfPresent([StatsHourCell].self, forKey: .hours)
+            timeZone = try c.decodeIfPresent(String.self, forKey: .timeZone)
         }
     }
 
@@ -7387,10 +7412,13 @@ public enum Wire {
     public struct ClientMessageStatsGet: Codable, Hashable, Sendable {
         public var days: UInt32
         public var goal: String?
+        /// The viewer's IANA time zone, for the weekday × hour chart; UTC when left out.
+        public var tz: String?
 
-        public init(days: UInt32, goal: String? = nil) {
+        public init(days: UInt32, goal: String? = nil, tz: String? = nil) {
             self.days = days
             self.goal = goal
+            self.tz = tz
         }
     }
 

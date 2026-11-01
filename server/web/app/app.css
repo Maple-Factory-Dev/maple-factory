@@ -460,6 +460,24 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .risk-check-body > input { width: 100%; }
 .risk-dot-low { background: var(--merged); } .risk-dot-medium { background: var(--awaiting); } .risk-dot-high { background: var(--cancelled); }
 .risk-factor .lvl { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+/* A task's risk: the header pill and the Risk card's budget meters, classifier and sign-off rows. */
+.pill.risk-pill.risk-low { color: var(--merged); background: color-mix(in srgb, var(--merged) 12%, transparent); }
+.pill.risk-pill.risk-medium { color: var(--awaiting); background: color-mix(in srgb, var(--awaiting) 14%, transparent); }
+.pill.risk-pill.risk-high { color: var(--cancelled); background: color-mix(in srgb, var(--cancelled) 12%, transparent); }
+h2 .risk-pill { vertical-align: 2px; margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.risk-card { display: flex; flex-direction: column; gap: 14px; }
+.risk-block + .risk-block { border-top: 1px solid var(--stroke); padding-top: 12px; }
+.risk-label { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.risk-budget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.risk-meter-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+.risk-bar { height: 6px; border-radius: 99px; background: var(--fill); overflow: hidden; }
+.risk-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--merged); }
+.risk-meter.over .risk-bar > span { background: var(--cancelled); }
+.risk-classifier .row { gap: 8px; }
+.risk-reasons { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+.risk-sign { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 14px; }
+.risk-sign > span:first-child { color: var(--muted); }
+@media (max-width: 560px) { .risk-budget { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
 @media (max-width: 600px) {
   .settings { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .set-nav { position: static; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 6px; border-bottom: 1px solid var(--stroke); }
@@ -511,6 +529,17 @@ input[type="password"], input[type="number"] { width: 100%; min-width: 0; border
 .status-pill.updating { --tone: var(--building); }
 .status-pill.paused, .status-pill.limit { --tone: var(--awaiting); }
 .status-pill.offline { --tone: var(--closed); }
+.machine-control { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pause-panel { flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--awaiting) 35%, transparent); background: color-mix(in srgb, var(--awaiting) 7%, transparent); }
+.pause-row { display: flex; gap: 10px; align-items: center; font-size: 14px; }
+.pause-label { width: 70px; flex: none; font-size: 12px; font-weight: 600; color: var(--muted); }
+.pause-row select { flex: 1; min-width: 0; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--stroke); background: var(--fill); }
+.pause-help { font-size: 13px; }
+.pause-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.segmented { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--fill); border: 1px solid var(--stroke); }
+.segmented button { border: 0; background: none; padding: 3px 12px; border-radius: 7px; font-size: 13px; font-weight: 550; cursor: pointer; color: var(--muted); }
+.segmented button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .machine-sessions { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--stroke); padding-top: 10px; }
 .machine-session { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; min-width: 0; }
 .machine-session > div { min-width: 0; }

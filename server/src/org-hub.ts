@@ -17,7 +17,7 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
 import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
-import { statsWindow, summarize } from "./factory/stats.ts";
+import { statsWindow, summarize, type StatEvent } from "./factory/stats.ts";
 import { dayReport } from "./factory/report.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
@@ -353,6 +353,12 @@ export class OrgHub extends DurableObject<Env> {
         if (priv.budgetAskedAt != null) this.store.savePrivate(task, { ...priv, budgetAskedAt: priv.budgetAskedAt - ms });
         return new Response(null, { status: 204 });
       }
+      case "/dev/stat-events": {
+        // Local dev (the Worker checked): record statistics rows as given, to try the Statistics page on made-up history.
+        const { events } = (await request.json()) as { events: (Pick<StatEvent, "at" | "kind" | "task" | "goal"> & Partial<StatEvent>)[] };
+        for (const e of events) this.store.recordStat({ at: e.at, kind: e.kind, task: e.task, goal: e.goal, role: e.role ?? null, actor: e.actor ?? null, detail: e.detail ?? {} });
+        return new Response(null, { status: 204 });
+      }
       case "/intake": {
         // A new request from an integration or the API (the Worker checked who's asking).
         const input = (await request.json()) as NewRequest;
@@ -408,7 +414,7 @@ export class OrgHub extends DurableObject<Env> {
         return Response.json(list);
       }
       case "/stats": {
-        const summary = this.stats(Number(url.searchParams.get("days")), url.searchParams.get("goal"));
+        const summary = this.stats(Number(url.searchParams.get("days")), url.searchParams.get("goal"), url.searchParams.get("tz"));
         if (url.searchParams.get("raw") !== "1") return Response.json(summary);
         const events = this.store.statEvents(summary.since).filter((e) => !summary.goal || e.goal === summary.goal);
         return Response.json({ ...summary, events });
@@ -464,7 +470,7 @@ export class OrgHub extends DurableObject<Env> {
   }
 
   /** The statistics over the last `days` (1, 3, 7, 30 or 90; anything else reads as 30). */
-  private stats(days: number, goal?: string | null) {
+  private stats(days: number, goal?: string | null, tz?: string | null) {
     const window = statsWindow(days);
     const at = Date.now();
     const since = at - window * 86_400_000;
@@ -473,7 +479,7 @@ export class OrgHub extends DurableObject<Env> {
     const merged = [...new Set(recent.filter((e) => e.kind === "merged").map((e) => e.task))];
     const events = [...this.store.statRoundsBefore(merged, since), ...recent];
     const costs = this.store.sessionCosts(since, goal || null);
-    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs });
+    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs, tz });
   }
 
   /** `login`'s day report for [since, until) (at most two days, so a stray range can't read the whole log). */
@@ -998,7 +1004,7 @@ export class OrgHub extends DurableObject<Env> {
       }
       case "stats.get": {
         if (client.member.role !== "admin") return this.send(ws, { type: "error", message: "Only admins can see statistics.", requestId: null });
-        this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal) });
+        this.send(ws, { type: "stats", summary: this.stats(msg.days, msg.goal, msg.tz) });
         return;
       }
       case "report.get": {

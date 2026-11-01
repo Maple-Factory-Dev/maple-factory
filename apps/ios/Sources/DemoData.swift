@@ -38,11 +38,27 @@ enum DemoData {
         feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
                                       autoMerge: ["low": true, "medium": false, "high": false], autoMerges: UserDefaults.standard.string(forKey: "demoAutoMerges") != "off")
         feed.acceptances = [Wire.RiskAcceptance(goal: "g-api", upTo: .low, by: "kit", at: ago(60 * 24 * 3))]
+        feed.recurring = Dictionary(uniqueKeysWithValues: recurring().map { ($0.id, $0) })
         feed.machines = machines()
         feed.runnerLatest = "0.65.0"
         feed.serverVersion = "0.51.0"
         feed.hasSnapshot = true
         return feed
+    }
+
+    /// Two on Mobile app (yours to change), one paused with a last run; one on Kit's Public API (read-only as a member).
+    private static func recurring() -> [Wire.Recurring] {
+        let week: UInt32 = 7 * 24 * 60
+        func ahead(_ minutes: Double) -> UInt64 { now + UInt64(minutes * 60_000) }
+        return [
+            Wire.Recurring(id: "rec-deps", goal: "g-app", title: "Check for dependency updates", brief: "Update the Swift packages and CocoaPods to their latest minor versions; fix anything that breaks.",
+                           agent: "claude", every: 2 * week, unit: .weeks, firstAt: ago(60 * 24 * 12), timeZone: "America/New_York", nextAt: ahead(60 * 26), paused: false, by: me),
+            Wire.Recurring(id: "rec-crash", goal: "g-app", title: "Triage new crash reports", brief: "Read this week's new Sentry issues and propose a task for each real crash.",
+                           repo: "acme/push", agent: "codex", every: 24 * 60, unit: .days, firstAt: ago(60 * 24 * 5), timeZone: "America/New_York", nextAt: ahead(60 * 5), paused: true,
+                           lastRunAt: ago(60 * 26), lastTask: "APP-9", by: me),
+            Wire.Recurring(id: "rec-spec", goal: "g-api", title: "Refresh the OpenAPI spec", brief: "Regenerate the OpenAPI spec from the routes and open a PR if it changed.",
+                           agent: "claude", every: week, unit: .weeks, firstAt: ago(60 * 24 * 3), timeZone: "Europe/London", nextAt: ahead(60 * 24 * 4), paused: false, by: "kit"),
+        ]
     }
 
     private static func task(_ id: String, goal: String, title: String, state: Wire.TaskState, owner: String = me, updated: Double,
@@ -170,14 +186,29 @@ enum DemoData {
                 t.brief = "Email a receipt with the invoice PDF once a payment clears."
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s4", startedAt: ago(320))
                 t.approvals = [me]
+                // A draft PR whose CI webhook never came, and a plan over the PR budget: Recheck GitHub and Split.
+                t.plan = [
+                    .init(text: "Render the receipt email from the invoice", file: "web/src/billing/receipt.tsx", progress: .done, added: false),
+                    .init(text: "Attach the invoice PDF", file: "web/src/billing/receipt.ts", progress: .active, added: false),
+                    .init(text: "Send it from the payment webhook", file: "web/src/billing/webhook.ts", progress: .pending, added: false),
+                    .init(text: "Let customers resend a receipt from Billing", file: "web/src/billing/BillingPage.tsx", progress: .pending, added: false),
+                ]
+                t.footprint = .init(files: 44, lines: 900, estimated: true)
+                t.pr = .init(number: 88, url: "https://github.com/acme/web/pull/88", state: .draft, branch: "agent/bil-8", base: "main",
+                             checks: [.init(name: "test", status: .running, required: true), .init(name: "lint", status: .queued, required: true)])
             },
             task("API-34", goal: "g-api", title: "OpenAPI spec from the routes", state: .building, owner: "kit", updated: 300) { t in
                 t.brief = "Generate an OpenAPI document from the route table."
                 t.worker = .init(role: .builder, agent: "claude", machine: "m-air", session: "s5", startedAt: ago(330))
             },
             task("BIL-5", goal: "g-web", title: "Plans page", state: .planning, owner: "sam", updated: 3),
-            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120),
-            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90),
+            task("APP-15", goal: "g-app", title: "iPad layout with a sidebar", state: .drafting, updated: 120) { $0.effort = "Bigger screens" },
+            task("APP-17", goal: "g-app", title: "Home screen widget for the inbox", state: .drafting, updated: 90) { $0.effort = "Bigger screens" },
+            // With APP-12, the Offline effort: one merged and one building, so its card has something to count.
+            task("APP-11", goal: "g-app", title: "Queue actions taken offline", state: .merged, updated: 60 * 30) { t in
+                t.brief = "Hold approvals and comments made offline and send them once the socket is back."
+                t.effort = "Offline"
+            },
             task("API-33", goal: "g-api", title: "Webhooks for task events", state: .backlog, owner: "kit", updated: 300),
         ]
     }
@@ -209,6 +240,7 @@ enum DemoData {
                                           activity: .init(state: .waiting, message: "Asked a question", at: ago(9))),
                                     .init(session: .init(id: "s2", agent: "claude", cwd: "~/maple/worktrees/app-16", startedAt: ago(6), taskId: "APP-16"),
                                           activity: .init(state: .waiting, message: "Claude needs your permission to use Bash", question: permissionQuestion, at: ago(2)))],
+                         settings: .init(teamSlots: 1, lendIdle: false, loadCap: 0.85, paused: false),
                          capacity: 4, usage: noUsage ? [] : [claude(observed: ago(9))]),
             Wire.Machine(id: "m-mini", name: "Build Mini", owner: "sam", online: true, version: "0.63.2", os: "macOS 26.4",
                          health: .init(cpu: 0.18, cores: 10, load1: 1.4, memUsed: 9 * gig, memTotal: 32 * gig, diskUsed: 120 * gig, diskTotal: 512 * gig, uptime: 86400 * 12, agents: agents),

@@ -47,7 +47,9 @@ pub fn tag_org(url: &str) {
 /// tag_org, waited for.
 pub async fn org(url: String) {
     let Some(healthz) = healthz_url(&url) else { return };
-    let org = async { reqwest::get(&healthz).await.ok()?.json::<serde_json::Value>().await.ok()?.get("org")?.as_str().map(str::to_owned) };
+    let org = async {
+        crate::http_client().build().ok()?.get(&healthz).send().await.ok()?.json::<serde_json::Value>().await.ok()?.get("org")?.as_str().map(str::to_owned)
+    };
     if let Some(org) = org.await {
         sentry::configure_scope(|scope| scope.set_tag("org", org));
     }

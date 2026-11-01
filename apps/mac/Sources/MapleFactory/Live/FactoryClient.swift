@@ -1156,7 +1156,7 @@ import Foundation
 
     /// The factory's statistics over the last `days`; the answer lands in `stats`.
     func loadStats(days: Int, goal: String? = nil) {
-        send(.statsGet(.init(days: UInt32(days), goal: goal)))
+        send(.statsGet(.init(days: UInt32(days), goal: goal, tz: TimeZone.current.identifier)))
     }
 
     /// Your day report for `day`'s local calendar day (so time zones stay right); the answer lands in `dayReport`.

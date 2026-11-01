@@ -1,7 +1,8 @@
 // Maple Factory on the web: review on the go. The same live feed as the apps (/client/connect, signed
 // in by the session cookie): the inbox, and a task's plan, mockups, diff, review and proofs, with the
 // decisions a person makes on them; new tasks and drafts, and the scratchpad. Nothing here touches
-// terminals or machines, except to answer an agent's permission prompt with Yes or No.
+// terminals or machines, except to answer an agent's permission prompt with Yes or No and to pause or resume a
+// machine its owner (or an admin) manages.
 //
 // Every string from the factory goes in with textContent; agents' screen mockups render in an iframe
 // with an empty sandbox (no scripts, no same-origin).
@@ -13,8 +14,9 @@ import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected,
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { inQuietHours } from "./quiet-hours.js";
-import { machineStatus, meters, sortMachines, usageRows } from "./machines.js";
+import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
+import { riskBadge, riskDetails } from "./risk.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
 
@@ -186,7 +188,7 @@ function receive(m) {
       state.quietHours = m.quietHours ?? null;
       state.machines = m.machines ?? [];
       // The factory's settings, for admins' Settings page.
-      Object.assign(state, { policy: m.policy ?? null, prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
+      Object.assign(state, { policy: m.policy ?? null, acceptances: m.acceptances ?? [], prompts: m.prompts ?? null, repos: m.repos ?? [], repoOwners: m.repoOwners ?? [], githubApp: m.githubApp ?? null, secrets: m.secrets ?? [], name: m.name ?? null });
       // null: a server too old to have integrations.
       state.integrations = m.integrations ?? null;
       // The maple-server running now (not the bundle this tab loaded), and a newer release (admins only).
@@ -204,7 +206,7 @@ function receive(m) {
     case "quietHours.updated": state.quietHours = m.quietHours ?? null; return;
     case "icon.updated": showIcon(m.icon); return;
     case "name.updated": state.name = m.name ?? null; $("org").textContent = m.name || state.org || "Maple Factory"; break;
-    case "policy.updated": state.policy = m.policy; break;
+    case "policy.updated": state.policy = m.policy; state.acceptances = m.acceptances ?? state.acceptances; break;
     case "prompts.updated": state.prompts = m.prompts; break;
     case "members.updated":
       state.members = m.members;
@@ -581,7 +583,7 @@ function tasksView() {
         : loadOlderLink())));
 }
 
-// ---- machines: read-only; what each one is doing, how loaded it is and how much plan it has left ----
+// ---- machines: what each one is doing, how loaded it is and how much plan it has left; its owner (or an admin) can pause it ----
 
 const ACTIVITY_TITLE = { working: "Working", waiting: "Waiting on someone", done: "Done its turn", idle: "Idle" };
 
@@ -608,6 +610,7 @@ function machineCard(m, now) {
         h("div", { class: "sub muted" }, [m.owner === state.me?.login ? "Yours" : name(m.owner), m.os, m.version && `runner ${m.version}`].filter(Boolean).join(" · "))),
       h("span", { class: `pill status-pill ${st.kind}` }, h("span", { class: "pill-dot", "aria-hidden": "true" }), st.label)),
     st.detail && h("div", { class: "machine-detail muted" }, st.detail),
+    canManage(m, state.me) && pauseControl(m),
     m.sessions.length > 0 && h("div", { class: "machine-sessions" }, m.sessions.map((s) => sessionLine(s))),
     gauges.length > 0 && h("div", { class: "meters" }, gauges.map((g) => meter(g))),
     usage.length > 0 && h("div", { class: "usage" }, usage.map((u) => h("div", { class: "usage-agent" },
@@ -618,6 +621,53 @@ function machineCard(m, now) {
         bar(r.used / 100, r.cap == null ? null : r.cap / 100, `${r.label}: ${r.usedText} used${r.cap == null ? "" : `, cap ${r.cap}%`}`),
         h("span", { class: "usage-num" }, r.usedText),
         h("span", { class: "usage-reset faint" }, r.resets)))))));
+}
+
+// The open Pause panels, by machine id, so a live redraw (about once a second here) doesn't close one.
+const pausing = new Map();
+const PAUSE_LENGTHS = [["hour", "1 hour"], ["tomorrow", "Until tomorrow"], ["resume", "Until I resume"]];
+
+/** Pause (and its choices) or Resume, for a machine the viewer can manage. */
+function pauseControl(m) {
+  if (m.settings?.paused) {
+    return h("div", { class: "machine-control" },
+      h("button", { class: "btn small", "data-action": "resume", onclick: () => send({ type: "machine.settings", machine: m.id, settings: resumeSettings(m) }) }, "Resume"));
+  }
+  const p = pausing.get(m.id);
+  if (!p) {
+    return h("div", { class: "machine-control" },
+      h("button", { class: "btn small", "data-action": "pause", onclick: () => { pausing.set(m.id, { scope: "new", length: "hour", handOff: true }); render(); } }, "Pause"));
+  }
+  const teammates = teammatesTasks(m, state.tasks.values());
+  const offerHandOff = p.scope === "all" && teammates.length > 0;
+  const help = p.scope === "new"
+    ? "No new tasks start here. Tasks already on this machine keep going until they're done."
+    : offerHandOff && p.handOff
+      ? "Their work so far is pushed and they carry on elsewhere. Your own sessions finish what they're doing."
+      : "Running sessions finish what they're doing; nothing starts here while it's paused.";
+  const set = (patch) => { Object.assign(p, patch); render(); };
+  const confirm = () => {
+    const msg = { type: "machine.settings", machine: m.id, settings: pauseSettings(m, { scope: p.scope, until: pauseUntil(p.length, Date.now()) }) };
+    if (offerHandOff) msg.handOff = p.handOff;
+    if (send(msg)) { pausing.delete(m.id); render(); }
+  };
+  return h("div", { class: "machine-control pause-panel" },
+    h("div", { class: "pause-row" },
+      h("span", { class: "pause-label" }, "Hold back"),
+      h("div", { class: "segmented", role: "radiogroup", "aria-label": "Hold back" },
+        [["new", "New work"], ["all", "Everything"]].map(([v, label]) =>
+          h("button", { type: "button", role: "radio", "aria-checked": String(p.scope === v), class: p.scope === v ? "on" : null, "data-scope": v, onclick: () => set({ scope: v }) }, label)))),
+    h("label", { class: "pause-row" },
+      h("span", { class: "pause-label" }, "For"),
+      h("select", { "aria-label": "Pause for", onchange: (e) => set({ length: e.target.value }) },
+        PAUSE_LENGTHS.map(([v, label]) => h("option", { value: v, selected: p.length === v }, label)))),
+    offerHandOff && h("label", { class: "checkrow" },
+      h("input", { type: "checkbox", checked: p.handOff, onchange: (e) => set({ handOff: e.target.checked }) }),
+      h("span", {}, `Hand off ${teammates.length === 1 ? "1 teammate's task" : `${teammates.length} teammates' tasks`} (${teammates.map((t) => t.id).join(", ")})`)),
+    h("div", { class: "pause-help muted" }, help),
+    h("div", { class: "pause-actions" },
+      h("button", { class: "btn small", onclick: () => { pausing.delete(m.id); render(); } }, "Cancel"),
+      h("button", { class: "btn small primary", "data-action": "confirm-pause", onclick: confirm }, "Pause")));
 }
 
 function sessionLine(s) {
@@ -886,6 +936,7 @@ function taskView(id, artifact = null) {
     h("h1", {}, t.title),
     h("div", { class: "row" },
       h("span", { class: `pill s-${t.state}` }, stateLabel(t)),
+      t.risk && riskPill(t.risk.level),
       ownerControl(t),
       h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
@@ -1305,7 +1356,7 @@ function overview(t) {
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
         f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
     doneWhen: () => t.doneWhen.length > 0 && h("div", { id: "s-doneWhen" }, h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))),
-    risk: () => t.risk && riskCard(t.risk),
+    risk: () => t.risk && riskCard(t, state.policy, state.acceptances),
     timeline: () => timeline(t),
   };
   return h("div", {}, order.map((key) => sections[key]()));
@@ -1334,7 +1385,7 @@ function readyStrip(t) {
     if (el?.tagName === "DETAILS") { setOpened(t.id, key, true); el.open = true; }
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const links = [["doneWhen", "Done when", t.doneWhen.length], ["review", "Review", t.autoReview || t.pr], ["artifacts", "Artifacts", (t.artifacts ?? []).length],
+  const links = [["doneWhen", "Done when", t.doneWhen.length], ["review", "Review", t.autoReview || t.pr], ["risk", "Risk", t.risk], ["artifacts", "Artifacts", (t.artifacts ?? []).length],
     ["plan", "Plan", t.plan.length], ["brief", "Brief", t.brief]].filter(([, , has]) => has);
   return [h("h2", {}, t.state === "reviewing" ? "Ready to review" : "Review"), h("div", { class: "card review-summary" },
     h("div", { class: "row" },
@@ -1349,20 +1400,48 @@ function readyStrip(t) {
     links.length > 0 && h("div", { class: "row muted", style: "margin-top:8px" }, "Jump to", links.map(([key, label]) => h("a", { href: `#s-${key}`, onclick: jump(key) }, label))))];
 }
 
-/** The server's reasons for the risk level, highest first; older servers send none. */
-function riskCard(risk) {
-  const factors = risk.factors ?? [];
-  return [h("h2", {}, `Risk · ${risk.level}`), h("div", { class: "card" },
-    h("div", { class: "muted", style: "font-size:13px;margin-bottom:4px" }, "Why this risk"),
-    factors.length
-      ? h("div", {}, factors.map((f) => h("div", { class: "check risk-factor" },
-        h("span", { class: `dot risk-dot-${f.level}`, title: f.level }),
-        h("div", { style: "flex:1;min-width:0" },
-          h("div", {}, h("b", {}, f.label), " ", h("span", { class: "lvl" }, f.level)),
-          f.detail && h("div", { class: "muted" }, f.detail),
-          (f.files ?? []).length > 0 && h("div", { class: "mono muted" }, f.files.join(", "))))))
-      : h("div", { class: "muted" }, risk.reasons.join("; ") || "The planner's read.")),
-  ];
+/** A coloured "Medium risk" pill for the task header. */
+function riskPill(level) {
+  const b = riskBadge(level);
+  return h("span", { class: `pill ${b.class}` }, b.label);
+}
+
+const LEVEL = { low: "Low", medium: "Medium", high: "High" };
+
+/** The task's risk the way the Mac app's Risk box shows it: the budget, why, the classifier's grade and the
+ *  sign-off it needs. Blocks the server didn't send (older servers) are left out. */
+function riskCard(t, policy, acceptances) {
+  const d = riskDetails(t, policy, acceptances);
+  const label = (text) => h("div", { class: "risk-label" }, text);
+  const meter = (name, m) => m && h("div", { class: `risk-meter${m.over ? " over" : ""}` },
+    h("div", { class: "risk-meter-row" }, h("span", {}, name),
+      h("span", { class: "mono" }, `${m.used} / ${m.max}`, d.budget.estimated ? h("span", { class: "muted" }, " (est.)") : null, m.over ? h("b", { class: "bad" }, " over") : null)),
+    h("div", { class: "risk-bar" }, h("span", { style: `width:${Math.min(100, m.max ? (m.used / m.max) * 100 : 100)}%` })));
+  const signRow = (name, value, ok) => h("div", { class: "risk-sign" }, h("span", {}, name), h("span", { class: ok ? "ok" : "" }, value));
+  const counted = (c) => c.needed === 0 ? "None needed" : `${c.have} of ${c.needed}`;
+  const s = d.signOff;
+  return h("div", { id: "s-risk" }, h("h2", {}, "Risk ", riskPill(d.level)), h("div", { class: "card risk-card" },
+    d.budget && h("div", { class: "risk-block risk-budget" }, d.budget.files && meter("Files", d.budget.files), d.budget.lines && meter("Lines", d.budget.lines)),
+    h("div", { class: "risk-block" }, label("Why this risk"),
+      d.factors.length
+        ? h("div", {}, d.factors.map((f) => h("div", { class: "check risk-factor" },
+          h("span", { class: `dot risk-dot-${f.level}`, title: f.level }),
+          h("div", { style: "flex:1;min-width:0" },
+            h("div", {}, h("b", {}, f.label), " ", h("span", { class: "lvl" }, f.level)),
+            f.detail && h("div", { class: "muted" }, f.detail),
+            (f.files ?? []).length > 0 && h("div", { class: "mono muted" }, f.files.join(", "))))))
+        : h("div", { class: "muted" }, d.fallback.reasons.join("; ") || "The planner's read.",
+          d.fallback.areas.length > 0 && h("div", { class: "mono" }, d.fallback.areas.join(", ")))),
+    d.classifier && h("div", { class: "risk-block risk-classifier" }, label("The classifier's grade"),
+      h("div", { class: "row" }, h("span", { class: `pill ${riskBadge(d.classifier.level).class}` }, riskBadge(d.classifier.level).label),
+        d.classifier.note && h("b", { class: "wait" }, d.classifier.note)),
+      d.classifier.reasons.length > 0 && h("ul", { class: "risk-reasons" }, d.classifier.reasons.map((r) => h("li", {}, r)))),
+    s && h("div", { class: "risk-block" }, label(`Sign-off at ${LEVEL[d.level] ?? d.level} risk`),
+      s.planApprovals && signRow("Plan approvals", counted(s.planApprovals), s.planApprovals.have >= s.planApprovals.needed),
+      s.finalReviews && signRow("Final reviews", counted(s.finalReviews), s.finalReviews.have >= s.finalReviews.needed),
+      s.autoMerge && signRow("Auto-merge", s.autoMerge.label, s.autoMerge.on)),
+    d.acceptance && h("div", { class: "risk-block muted" }, `This goal accepts risk up to ${LEVEL[d.acceptance.upTo] ?? d.acceptance.upTo}`,
+      d.acceptance.by ? ` (${d.acceptance.by})` : "", d.acceptance.note ? `: ${d.acceptance.note}` : "")));
 }
 
 function review(t) {

@@ -26,6 +26,8 @@ public struct FeedState: Sendable {
     public var policy: Wire.RiskPolicy?
     /// Goals letting the factory auto-merge up to a risk level.
     public var acceptances: [Wire.RiskAcceptance] = []
+    /// Every goal's recurring tasks, by id. Empty from an older server.
+    public var recurring: [String: Wire.Recurring] = [:]
     public var hasSnapshot = false
     /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
     /// Empty from an older server, which sends every task.
@@ -70,6 +72,7 @@ public struct FeedState: Sendable {
             githubStatus = Self.githubNotice(snapshot.githubStatus)
             policy = snapshot.policy
             acceptances = snapshot.acceptances
+            recurring = Dictionary((snapshot.recurring ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             hasSnapshot = true
         case .taskUpdated(let update) where fetching.contains(update.task.id):
             // A task asked for by ID (`task.get`), maybe one the snapshot left out.
@@ -107,6 +110,10 @@ public struct FeedState: Sendable {
         case .policyUpdated(let update):
             policy = update.policy
             acceptances = update.acceptances
+        case .recurringUpdated(let update):
+            recurring[update.recurring.id] = update.recurring
+        case .recurringDeleted(let deleted):
+            recurring[deleted.id] = nil
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
@@ -201,6 +208,11 @@ public struct FeedState: Sendable {
     public var activeGoals: [Wire.Goal] { goals.filter { $0.archived != true } }
 
     public func tasks(in goal: String) -> [Wire.Task] { tasks.filter { $0.goal == goal } }
+
+    /// A goal's recurring tasks (by goal id): running ones first, then soonest next run, as the Mac lists them.
+    public func recurring(goal: String) -> [Wire.Recurring] {
+        recurring.values.filter { $0.goal == goal }.sorted { ($0.paused ? 1 : 0, $0.nextAt, $0.id) < ($1.paused ? 1 : 0, $1.nextAt, $1.id) }
+    }
 
     /// How far the factory may auto-merge the goal's work, on the record; nil: not at all.
     public func acceptance(for goal: String) -> Wire.RiskAcceptance? { acceptances.last { $0.goal == goal } }

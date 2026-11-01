@@ -105,6 +105,7 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
       if (path === "/dev/alarm" && request.method === "POST") return orgHub(env).fetch(`https://org/dev/alarm${url.search}`, { method: "POST" });
       if (path === "/dev/age-tasks" && request.method === "POST") return orgHub(env).fetch("https://org/dev/age-tasks", { method: "POST", body: await request.text() });
       if (path === "/dev/age-sessions" && request.method === "POST") return orgHub(env).fetch("https://org/dev/age-sessions", { method: "POST", body: await request.text() });
+      if (path === "/dev/stat-events" && request.method === "POST") return orgHub(env).fetch("https://org/dev/stat-events", { method: "POST", body: await request.text() });
     }
 
     const me = await currentMember(request, env);

@@ -2079,6 +2079,17 @@ data class StatsDay(
     val hands: Long,
 )
 
+/** One weekday × hour of a window, in the summary's `timeZone`: how many merges and hands landed then. */
+@Serializable
+data class StatsHourCell(
+    /** 0 is Sunday … 6 Saturday. */
+    val weekday: Int,
+    /** 0–23. */
+    val hour: Int,
+    val merges: Long,
+    val hands: Long,
+)
+
 @Serializable
 data class StatsGoalRow(
     val goal: String,
@@ -2307,6 +2318,10 @@ data class StatsSummary(
     val findings: StatsFindings? = null,
     /** Merges people made, by reason; none from a server older than it. */
     val manualMerges: StatsManualMerges? = null,
+    /** All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it. */
+    val hours: List<StatsHourCell>? = null,
+    /** The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one. */
+    val timeZone: String? = null,
 )
 
 /** One thing in a session's native (chat-style) view, read from the agent's own transcript (Claude) or rollout (Codex). The tmux session stays the source of truth; these mirror it. See docs/native-session-view.md. */
@@ -3555,6 +3570,8 @@ sealed class ClientMessage {
     data class StatsGet(
         val days: Long,
         val goal: String? = null,
+        /** The viewer's IANA time zone, for the weekday × hour chart; UTC when left out. */
+        val tz: String? = null,
     ) : ClientMessage()
     /** Your day report for [since, until), your local day's bounds in ms, answered with `report`. */
     @Serializable

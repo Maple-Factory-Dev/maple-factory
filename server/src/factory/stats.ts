@@ -147,6 +147,8 @@ export interface SummarizeOptions {
   now?: number;
   /** Each factory session's spend (store.sessionCosts); rows outside the window or goal are left out here. */
   costs?: SessionCostRow[];
+  /** The viewer's IANA time zone for the weekday × hour cells; UTC when left out or unknown. */
+  tz?: string | null;
 }
 
 /** Totals, rates and medians over the last `days`, for one goal or all of them. */
@@ -275,7 +277,53 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     costByAgent: costRows(costs, (c) => (c.model ? `${c.agent} · ${c.model}` : c.agent)),
     findings: findingsBreakdown(rounds, byId),
     manualMerges: manualBreakdown(merges, scoped, byId),
+    ...hourCells(merges, hands, opts.tz),
   };
+}
+
+const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+const zoneFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** A cached formatter for `tz`'s weekday and hour, or null for a zone Intl doesn't know. */
+function zoneFormat(tz: string): Intl.DateTimeFormat | null {
+  let f = zoneFormats.get(tz);
+  if (f) return f;
+  try {
+    f = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23" });
+  } catch {
+    return null;
+  }
+  if (zoneFormats.size > 64) zoneFormats.clear();
+  zoneFormats.set(tz, f);
+  return f;
+}
+
+/** The weekday (0 Sunday) and hour an instant falls on in a zone, DST and all. */
+export function zonedSlot(ms: number, format: Intl.DateTimeFormat): { weekday: number; hour: number } {
+  let weekday = 0;
+  let hour = 0;
+  for (const p of format.formatToParts(ms)) {
+    if (p.type === "weekday") weekday = WEEKDAYS[p.value] ?? 0;
+    else if (p.type === "hour") hour = Number(p.value) % 24;
+  }
+  return { weekday, hour };
+}
+
+/** All 168 weekday × hour cells of the window's merges and hands, in `tz` (UTC when it's missing or unknown). */
+function hourCells(merges: StatEvent[], hands: StatEvent[], tz?: string | null) {
+  const asked = typeof tz === "string" ? tz.trim() : "";
+  const format = (asked && zoneFormat(asked)) || zoneFormat("UTC")!;
+  const timeZone = format.resolvedOptions().timeZone;
+  const hours = Array.from({ length: 168 }, (_, i) => ({ weekday: Math.floor(i / 24), hour: i % 24, merges: 0, hands: 0 }));
+  const add = (list: StatEvent[], field: "merges" | "hands") => {
+    for (const e of list) {
+      const { weekday, hour } = zonedSlot(e.at, format);
+      hours[weekday * 24 + hour][field]++;
+    }
+  };
+  add(merges, "merges");
+  add(hands, "hands");
+  return { hours, timeZone };
 }
 
 /**

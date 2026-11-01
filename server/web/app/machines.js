@@ -110,7 +110,12 @@ export function machineStatus(m, now, { time = clock } = {}) {
   }
   if (m.settings?.paused) {
     const until = m.settings.pausedUntil;
-    return { kind: "paused", label: "Paused", detail: [until && until > now ? `until ${time(until)}` : "until resumed", working].filter(Boolean).join(" · ") };
+    const newOnly = !!m.settings.pauseNew;
+    return {
+      kind: "paused",
+      label: newOnly ? "Paused for new work" : "Paused",
+      detail: [until && until > now ? `until ${time(until)}` : "until resumed", newOnly ? "tasks already here keep going" : null, working].filter(Boolean).join(" · "),
+    };
   }
   const capped = overCap(m, now);
   if (capped) return { kind: "limit", label: "At usage limit", detail: [capped, m.settings?.capsTeamOnly ? "teammates' work" : null, working].filter(Boolean).join(" · ") };
@@ -141,3 +146,35 @@ export function sortMachines(machines, me) {
   return [...machines].sort((a, b) =>
     (b.owner === me) - (a.owner === me) || b.online - a.online || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
+
+// ---- pausing ----
+
+/** Whether `me` (the snapshot's member) can change this machine's settings: its owner, or an admin. */
+export const canManage = (m, me) => !!me && (m.owner === me.login || me.role === "admin");
+
+/** When a pause of this length ends (ms), as the apps work it out: "hour" an hour on, "tomorrow" 8am next, "resume" none. */
+export function pauseUntil(length, now) {
+  if (length === "hour") return now + 3600_000;
+  if (length === "tomorrow") {
+    const d = new Date(now);
+    d.setHours(8, 0, 0, 0);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+  return null;
+}
+
+/** The server's defaults for a machine with no settings yet. */
+const DEFAULTS = { teamSlots: 0, lendIdle: false, loadCap: 0.85 };
+
+/** A whole MachineSettings: the machine's own (slots, caps and all), with the pause fields given. */
+const withPause = (m, pause) => ({ ...DEFAULTS, paused: false, ...(m.settings ?? {}), ...pause });
+
+/** The settings that pause it: `scope` "new" holds back new tasks only, "all" everything; `until` ms or null. */
+export const pauseSettings = (m, { scope, until }) => withPause(m, { paused: true, pausedUntil: until ?? null, pauseNew: scope === "new" });
+
+/** The settings that resume it. */
+export const resumeSettings = (m) => withPause(m, { paused: false, pausedUntil: null, pauseNew: false });
+
+/** Teammates' tasks working on this machine (not reviewers): what a full pause can hand off. */
+export const teammatesTasks = (m, tasks) => [...tasks].filter((t) => t.worker?.machine === m.id && t.worker?.role !== "reviewer" && t.owner !== m.owner);
