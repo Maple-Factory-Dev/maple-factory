@@ -857,6 +857,9 @@ struct ProofLightboxView: View {
                 if let player { VideoPlayer(player: player) } else { Color.black }
             }
             .frame(width: size.width, height: size.height)
+        case .page:
+            // Shown by PageViewerView instead.
+            EmptyView()
         }
     }
 
@@ -965,6 +968,8 @@ struct ProofLightboxView: View {
             player?.pause()
             FactoryClient.quarantine(file)
             NSWorkspace.shared.open(file)
+        case .page:
+            break
         }
     }
 

@@ -239,6 +239,12 @@ struct MockupsSection: View {
                 case .html(let html, let url):
                     BrowserFrame(url: url) { HTMLMock(html: html).frame(height: 380) }
                         .frame(maxWidth: 640)
+                        // MF-296: opened large, at Desktop, Tablet or Mobile width; a double-click does the same.
+                        .overlay(alignment: .topTrailing) { ExpandPageButton { openLarge(html, mockup) } }
+                        .onTapGesture(count: 2) { openLarge(html, mockup) }
+                        .onReceive(NotificationCenter.default.publisher(for: PageViewerView.demoOpen)) { _ in
+                            if state.lightbox == nil { openLarge(html, mockup) }
+                        }
                 case .screen(let screen, let url):
                     if isBuilt, view == .side {
                         HStack(alignment: .top, spacing: 14) {
@@ -259,6 +265,10 @@ struct MockupsSection: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+    }
+
+    private func openLarge(_ html: String, _ mockup: Mockup) {
+        state.showLightbox(.page(html: html, caption: mockup.title, scripts: false))
     }
 
     private func labelled<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {

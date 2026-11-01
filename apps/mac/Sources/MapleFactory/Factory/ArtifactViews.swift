@@ -89,6 +89,7 @@ struct ArtifactsSection: View {
 private struct ArtifactViewer: View {
     let artifact: TaskArtifact
     @Environment(FactoryClient.self) private var client: FactoryClient?
+    @Environment(AppState.self) private var state
     @State private var data: Data?
     @State private var failed: String?
 
@@ -111,6 +112,9 @@ private struct ArtifactViewer: View {
             footer
         }
         .task(id: artifact.file) { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: PageViewerView.demoOpen)) { _ in
+            if state.lightbox == nil, artifact.kind.isPage { openLarge() }
+        }
     }
 
     @ViewBuilder private func content(_ data: Data) -> some View {
@@ -118,6 +122,7 @@ private struct ArtifactViewer: View {
         case .html, .svg:
             SandboxedPage(html: ArtifactFiles.page(data, kind: artifact.kind))
                 .frame(height: 420)
+                .overlay(alignment: .topTrailing) { ExpandPageButton(action: openLarge) }
         case .image:
             if let image = NSImage(data: data) {
                 Image(nsImage: image)
@@ -163,12 +168,23 @@ private struct ArtifactViewer: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             }
             Spacer()
+            if artifact.kind.isPage {
+                Button("Open Large") { openLarge() }
+                    .disabled(data == nil)
+                    .help("Shows it at Desktop, Tablet or Mobile width, still sandboxed")
+            }
             Button(artifact.kind.isPage ? "Open in Browser…" : "Open…") { open() }
                 .disabled(data == nil)
                 .help(artifact.kind.isPage ? "Opens a copy that still can't reach the network" : "Opens it in its app")
             Button("Save…") { save() }.disabled(data == nil)
         }
         .controlSize(.small)
+    }
+
+    /// MF-296: the page shown large, with the same CSP and no-network sandbox as inline.
+    private func openLarge() {
+        guard let data, artifact.kind.isPage else { return }
+        state.showLightbox(.page(html: ArtifactFiles.page(data, kind: artifact.kind), caption: artifact.title, scripts: true))
     }
 
     private func load() async {
