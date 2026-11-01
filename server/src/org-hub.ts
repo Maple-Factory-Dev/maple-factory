@@ -102,6 +102,7 @@ export class OrgHub extends DurableObject<Env> {
     await this.engine.pollCI();
     await this.engine.mergeDue();
     await this.engine.checkBudgets();
+    await this.engine.runRecurring();
     await this.engine.pump();
     await this.engine.slack.sweep();
     await this.checkRunnerRelease();
@@ -701,6 +702,7 @@ export class OrgHub extends DurableObject<Env> {
           scripts: this.store.repoScripts(),
           setupRuns: this.engine.setupRuns(),
           scoutRuns: this.engine.scoutRuns(),
+          recurring: this.engine.recurring(),
           runnerLatest: await this.runnerLatest(),
           runnerReleases: await this.runnerReleases(),
           serverVersion: SERVER_VERSION,
