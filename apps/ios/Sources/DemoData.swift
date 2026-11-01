@@ -37,11 +37,27 @@ enum DemoData {
         feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
                                       autoMerge: ["low": true, "medium": false, "high": false], autoMerges: UserDefaults.standard.string(forKey: "demoAutoMerges") != "off")
         feed.acceptances = [Wire.RiskAcceptance(goal: "g-api", upTo: .low, by: "kit", at: ago(60 * 24 * 3))]
+        feed.recurring = Dictionary(uniqueKeysWithValues: recurring().map { ($0.id, $0) })
         feed.machines = machines()
         feed.runnerLatest = "0.65.0"
         feed.serverVersion = "0.51.0"
         feed.hasSnapshot = true
         return feed
+    }
+
+    /// Two on Mobile app (yours to change), one paused with a last run; one on Kit's Public API (read-only as a member).
+    private static func recurring() -> [Wire.Recurring] {
+        let week: UInt32 = 7 * 24 * 60
+        func ahead(_ minutes: Double) -> UInt64 { now + UInt64(minutes * 60_000) }
+        return [
+            Wire.Recurring(id: "rec-deps", goal: "g-app", title: "Check for dependency updates", brief: "Update the Swift packages and CocoaPods to their latest minor versions; fix anything that breaks.",
+                           agent: "claude", every: 2 * week, unit: .weeks, firstAt: ago(60 * 24 * 12), timeZone: "America/New_York", nextAt: ahead(60 * 26), paused: false, by: me),
+            Wire.Recurring(id: "rec-crash", goal: "g-app", title: "Triage new crash reports", brief: "Read this week's new Sentry issues and propose a task for each real crash.",
+                           repo: "acme/push", agent: "codex", every: 24 * 60, unit: .days, firstAt: ago(60 * 24 * 5), timeZone: "America/New_York", nextAt: ahead(60 * 5), paused: true,
+                           lastRunAt: ago(60 * 26), lastTask: "APP-9", by: me),
+            Wire.Recurring(id: "rec-spec", goal: "g-api", title: "Refresh the OpenAPI spec", brief: "Regenerate the OpenAPI spec from the routes and open a PR if it changed.",
+                           agent: "claude", every: week, unit: .weeks, firstAt: ago(60 * 24 * 3), timeZone: "Europe/London", nextAt: ahead(60 * 24 * 4), paused: false, by: "kit"),
+        ]
     }
 
     private static func task(_ id: String, goal: String, title: String, state: Wire.TaskState, owner: String = me, updated: Double,
