@@ -13,7 +13,7 @@ nonisolated(unsafe) let AppDefaults: UserDefaults = Headless.isOn ? Headless.def
 /// `-appearance light|dark|both`, `-settle 1.5` (seconds before the shot), `-frames N` and `-fps 10`
 /// (a frame sequence, for video), `-timeout 60`, `-height 1000`, `-instance` (the defaults suite's name),
 /// `-keep YES` (leave that suite as the last run left it, to show a setting surviving a relaunch),
-/// `-window sheet|settings|settings-sheet|about` (shoot the main window's sheet, the Settings window, its sheet, or the About window, instead).
+/// `-window sheet|settings|settings-sheet|about|riskpolicy` (shoot the main window's sheet, the Settings window, its sheet, the About window, or the Risk policy editor, instead).
 /// `-snapshot` makes it a demo launch, so a signed-out run shows the mockup; `-mock NO` shows what a
 /// fresh install does instead: the connect-to-a-factory screen.
 enum Headless {
@@ -288,6 +288,7 @@ enum Headless {
                 self.settingsWindow.orderBack(nil)
             }
             if AppDefaults.string(forKey: "window") == "about" { self.aboutWindow.orderBack(nil) }
+            if AppDefaults.string(forKey: "window") == "riskpolicy" { self.riskPolicyWindow.orderBack(nil) }
             let frames = Int(self.number("frames", 0))
             async let recording: Void = self.record(frames: frames)
             while !self.state.scriptFinished { try? await Task.sleep(for: .milliseconds(100)) }
@@ -382,6 +383,7 @@ enum Headless {
         case "settings": settingsWindow
         case "settings-sheet": settingsWindow.attachedSheet
         case "about": aboutWindow
+        case "riskpolicy": riskPolicyWindow
         default: window
         }
     }
@@ -396,6 +398,17 @@ enum Headless {
         settings.isExcludedFromWindowsMenu = true
         settings.setFrame(Headless.offscreenFrame(size: settings.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
         return settings
+    }()
+
+    /// The goal header's Risk policy popover in a window of its own: a background app shows no popover.
+    private lazy var riskPolicyWindow: NSWindow = {
+        let host = NSHostingController(rootView: RiskPolicyEditor().background(Theme.raised)
+            .environment(state).environment(client).defaultAppStorage(AppDefaults))
+        let editor = NSWindow(contentViewController: host)
+        editor.setContentSize(host.view.fittingSize)
+        editor.isExcludedFromWindowsMenu = true
+        editor.setFrame(Headless.offscreenFrame(size: editor.frame.size, screens: NSScreen.screens.map(\.frame)), display: false)
+        return editor
     }()
 
     /// The About window's content in a window of its own, kept off screen like Settings.

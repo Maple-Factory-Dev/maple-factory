@@ -2469,6 +2469,9 @@ final class AppState {
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
             case "opensession": destination = .machines; openingLiveSession = .init(machine: parts[1], id: parts[2])
             case "share": NotificationCenter.default.post(name: SessionSharePopover.demoOpen, object: nil)
+            // A press on one of the Risk policy editor's sign-off steppers (with `-window riskpolicy`):
+            // `riskstep:approvals:low:-` (row approvals or reviews, a level, + or -).
+            case "riskstep": NotificationCenter.default.post(name: RiskPolicyEditor.demoStep, object: Array(parts.dropFirst()).map { String($0) })
             case "recurring": NotificationCenter.default.post(name: RecurringButton.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
             case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))

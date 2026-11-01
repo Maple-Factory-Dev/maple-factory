@@ -263,6 +263,8 @@ struct BudgetMeter: View {
 
 /// Workspace risk rules, edited in place so the effect on every task's badge is immediate.
 struct RiskPolicyEditor: View {
+    /// A headless run's press on a sign-off stepper: object `[row, level, "+" | "-"]`, row `approvals` or `reviews`.
+    static let demoStep = Notification.Name("RiskPolicyEditor.demoStep")
     @Environment(AppState.self) private var state
 
     var body: some View {
@@ -387,13 +389,13 @@ struct RiskPolicyEditor: View {
                     GridRow {
                         Text("Plan approvals").foregroundStyle(Theme.textMuted)
                         ForEach(RiskLevel.allCases, id: \.self) { level in
-                            countStepper($state.policy.planApprovals, level, range: 0...4)
+                            countStepper($state.policy.planApprovals, level, range: 0...4, row: "approvals")
                         }
                     }
                     GridRow {
                         Text("Final reviews").foregroundStyle(Theme.textMuted)
                         ForEach(RiskLevel.allCases, id: \.self) { level in
-                            countStepper($state.policy.finalReviews, level, range: 0...4)
+                            countStepper($state.policy.finalReviews, level, range: 0...4, row: "reviews")
                         }
                     }
                     GridRow {
@@ -464,7 +466,7 @@ struct RiskPolicyEditor: View {
         m < 60 ? "\(m) min" : m % 60 == 0 ? "\(m / 60) h" : "\(m / 60) h \(m % 60) min"
     }
 
-    private func countStepper(_ binding: Binding<[RiskLevel: Int]>, _ level: RiskLevel, range: ClosedRange<Int>) -> some View {
+    private func countStepper(_ binding: Binding<[RiskLevel: Int]>, _ level: RiskLevel, range: ClosedRange<Int>, row: String) -> some View {
         let value = binding.wrappedValue[level, default: 0]
         return HStack(spacing: 6) {
             Image(systemName: "minus")
@@ -472,6 +474,11 @@ struct RiskPolicyEditor: View {
             Text("\(value)").monospacedDigit().fontWeight(.semibold).frame(minWidth: 10)
             Image(systemName: "plus")
                 .onTapGesture { binding.wrappedValue[level] = min(range.upperBound, value + 1) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoStep)) { note in
+            guard let args = note.object as? [String], args.count == 3, args[0] == row, args[1] == "\(level)" else { return }
+            let now = binding.wrappedValue[level, default: 0]
+            binding.wrappedValue[level] = args[2] == "-" ? max(range.lowerBound, now - 1) : min(range.upperBound, now + 1)
         }
         .font(.system(size: 11.5))
         .foregroundStyle(Theme.text)
