@@ -612,3 +612,16 @@ test("a third loss raises the keeps-ending hand instead of starting it again", a
   assert.match(task.hand?.text ?? JSON.stringify(task.hand), /keeps ending \(tmux went away\)/);
   assert.equal(opens().length, 0);
 });
+
+test("a pasted answer shows in the live status without Claude Code's <pasted_content> wrapper", async () => {
+  const f = building(1_000);
+  const activity = async (step: string) => {
+    await f.engine.fromRunner("mac", { type: "session.activity", id: f.session, activity: { state: "working", step, at: Date.now() } } as never);
+    return f.store.task("MF-1")!.liveLog;
+  };
+  assert.equal(await activity('<\\pasted_content id="a849">\nUse option B\n<\\/pasted_content>'), "Use option B");
+  assert.equal(await activity('<pasted_content id="b1">Ship it</pasted_content>'), "Ship it");
+  // An older runner cuts the step at 160 characters, sometimes partway through the closing tag.
+  assert.equal(await activity('<\\pasted_content id="c2">\nKeep going <\\/pasted_con…'), "Keep going");
+  assert.equal(await activity("Editing hub.ts"), "Editing hub.ts");
+});

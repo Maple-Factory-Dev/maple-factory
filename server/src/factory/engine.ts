@@ -85,6 +85,10 @@ const REVIEWS_WANTED = "GitHub wants an approving review";
 /** What a runner says while Claude Code waits on its folder-trust prompt (runner/src/trust.rs). */
 const TRUST_PROMPT = "Claude Code is asking whether to trust this folder";
 const TRUST_HAND = "Claude Code is asking whether to trust its folder";
+/** `<pasted_content id="…">Use option B</pasted_content>` (also `<\pasted_content …>`) → `Use option B`. */
+/** The runner cuts a step at 160 characters, which can leave half a closing tag (`<\/pasted_con…`) at the end. */
+const unwrapPasted = (s: string) =>
+  s.replace(/<\\?\/?\\?\/?pasted_content\b[^>]*>|<\\?\/\w*…$/g, " ").replace(/\s+/g, " ").trim();
 
 /** How often CI is read again while a pull request's checks are still running. */
 const CI_POLL_MS = 30_000;
@@ -1612,7 +1616,9 @@ export class Engine {
           this.event(task, s.role, "carried on once its folder was trusted");
           this.save(task);
         }
-        const line = msg.activity.state === "waiting" ? `Waiting: ${msg.activity.message ?? "a permission prompt"}` : (msg.activity.step ?? msg.activity.message);
+        const step = msg.activity.step ?? msg.activity.message;
+        // Older runners report a pasted answer with Claude Code's <pasted_content> wrapper around it.
+        const line = msg.activity.state === "waiting" ? `Waiting: ${msg.activity.message ?? "a permission prompt"}` : step && unwrapPasted(step);
         if (line && line !== task.liveLog) {
           task.liveLog = line;
           this.save(task, false);
