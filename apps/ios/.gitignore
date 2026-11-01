@@ -3,3 +3,6 @@
 build/
 # Written by xcodegen from project.yml.
 Info.plist
+# TestFlight credentials (scripts/testflight.sh; copy .env.testflight.example).
+.env.testflight
+*.p8

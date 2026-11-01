@@ -62,6 +62,7 @@ apps/ios/scripts/run-ios.sh -onboardingURL localhost:8788 -onboardingContinue YE
 Launch flags: `-demo YES`, `-tab goals|machines|settings`, `-goal <id>`, `-task <id>`, and the Mac app's
 `-onboardingURL`, `-onboardingContinue` and `-devAs`. `SIM` picks another simulator, `CONFIG=Release` a
 release build (which reports to Sentry; `-sentryTest YES` sends a test error).
+TestFlight: [apps/ios/TESTFLIGHT.md](apps/ios/TESTFLIGHT.md) (the one-time setup, then `apps/ios/scripts/testflight.sh`).
 
 ### The Android app
 
