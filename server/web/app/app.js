@@ -8,7 +8,7 @@
 
 import { markdown, taskResolver } from "./markdown.js";
 import { markdownEditor } from "./editor.js";
-import { loadCollapsed, toggleCollapsed } from "./sections.js";
+import { loadCollapsed, sectionOrder, toggleCollapsed } from "./sections.js";
 import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
@@ -788,6 +788,14 @@ function mount(next, keepCompose) {
 // ---- a task ----
 
 const taskTabs = new Map(); // id → "overview" | "diff"
+// The folded sections opened on each task this visit (id → Set of section keys), so a feed update's
+// re-render keeps them open, like AppState.sectionFolds on the Mac.
+const openedSections = new Map();
+function setOpened(id, key, open) {
+  const keys = openedSections.get(id) ?? new Set();
+  if (open) keys.add(key); else keys.delete(key);
+  openedSections.set(id, keys);
+}
 
 function taskView(id) {
   const t = state.tasks.get(id);
@@ -1200,22 +1208,71 @@ function draftEditor(t) {
 
 function overview(t) {
   const editing = (t.state === "drafting" || (t.state === "backlog" && !t.plan.length)) && t.owner === state.me?.login;
-  return h("div", {},
-    t.brief && !editing && [h("h2", {}, "Brief"), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))],
-    t.autoReview && t.autoReview.rounds.length > 0 && review(t),
-    t.pr && pull(t),
-    t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
-    (t.artifacts ?? []).length > 0 && [h("h2", {}, "Artifacts"), artifacts(t)],
-    t.plan.length > 0 && [h("h2", {}, `Plan · v${t.planVersion}`), h("div", { class: "card" },
-      h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
-        h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file))))))],
-    (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
+  const { order, folded } = sectionOrder(t.state);
+  // A folded section is a <details> with its one-line summary; open, it's the section as before.
+  const fold = (key, title, line, body) => folded.has(key)
+    ? h("details", { class: "fold", id: `s-${key}`, open: openedSections.get(t.id)?.has(key) ?? false,
+        ontoggle: (e) => setOpened(t.id, key, e.currentTarget.open) }, h("summary", {}, h("span", { class: "fold-title" }, title), " ", h("span", { class: "muted" }, line)), body)
+    : h("div", { id: `s-${key}` }, h("h2", {}, title), body);
+  const planDone = t.plan.filter((s) => s.progress === "done").length;
+  const sections = {
+    summary: () => readyStrip(t),
+    brief: () => t.brief && !editing && fold("brief", "Brief", firstSentence(t.brief), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))),
+    review: () => h("div", { id: "s-review" }, t.autoReview && t.autoReview.rounds.length > 0 && review(t), t.pr && pull(t)),
+    mockups: () => t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
+    artifacts: () => (t.artifacts ?? []).length > 0 && h("div", { id: "s-artifacts" }, h("h2", {}, "Artifacts"), artifacts(t)),
+    plan: () => [t.plan.length > 0 && fold("plan", `Plan · v${t.planVersion}`,
+      `${t.plan.length} ${t.plan.length === 1 ? "step" : "steps"}${planDone === t.plan.length ? ", all done" : planDone ? `, ${planDone} done` : ""}`,
+      h("div", { class: "card" },
+        h("ol", { class: "steps" }, t.plan.map((s) => h("li", { class: s.progress === "done" ? "done" : s.progress === "active" ? "active" : "" },
+          h("div", {}, s.text, s.file && h("div", { class: "mono muted" }, s.file)))))))],
+    followUps: () => (t.followUps ?? []).length > 0 && [h("h2", {}, "In the goal's other repos"), h("div", { class: "card" },
       t.followUps.map((f) => h("div", { class: "check" }, h("div", {},
         h("b", {}, f.title), h("div", { class: "mono muted" }, f.repo),
         f.task ? h("a", { href: `#/t/${f.task}` }, f.task) : h("span", { class: "faint" }, "A task of its own once the plan is approved")))))],
-    t.doneWhen.length > 0 && [h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))],
-    t.risk && riskCard(t.risk),
-    timeline(t));
+    doneWhen: () => t.doneWhen.length > 0 && h("div", { id: "s-doneWhen" }, h("h2", {}, "Done when"), h("div", { class: "card" }, t.doneWhen.map((d, i) => doneItem(t, d, i)))),
+    risk: () => t.risk && riskCard(t.risk),
+    timeline: () => timeline(t),
+  };
+  return h("div", {}, order.map((key) => sections[key]()));
+}
+
+/** The first sentence of a brief, without its markdown, for its folded line. */
+function firstSentence(text) {
+  const line = text.split("\n").map((l) => l.replace(/^[#>*\-_\s]+/, "").trim()).find(Boolean) ?? "";
+  const plain = line.replace(/\*\*|`/g, "");
+  const end = plain.search(/[.!?](\s|$)/);
+  return end >= 0 ? plain.slice(0, end + 1) : plain;
+}
+
+/** "Ready to review": the verdict, the proofs, the size of the change and the PR, with links down to each
+ *  section; checks that failed or have no proof yet are listed in red. */
+function readyStrip(t) {
+  const last = t.autoReview?.rounds.at(-1);
+  if (!t.doneWhen.length && !last && !t.pr && !t.diff) return null;
+  const verdict = last && { passed: ["Passed · ready for you", "ok"], changesRequested: ["Changes requested", "wait"], escalated: ["Handed to a person", "bad"], inProgress: ["Reviewing…", "muted"] }[last.verdict];
+  const proven = t.doneWhen.filter((d) => d.status === "proven").length;
+  const gaps = t.state === "merged" ? [] : t.doneWhen.filter((d) => d.status !== "proven");
+  const failing = (t.pr?.checks ?? []).filter((c) => c.status === "failed").length;
+  const jump = (key) => (e) => {
+    e.preventDefault();
+    const el = document.getElementById(`s-${key}`);
+    if (el?.tagName === "DETAILS") { setOpened(t.id, key, true); el.open = true; }
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const links = [["doneWhen", "Done when", t.doneWhen.length], ["review", "Review", t.autoReview || t.pr], ["artifacts", "Artifacts", (t.artifacts ?? []).length],
+    ["plan", "Plan", t.plan.length], ["brief", "Brief", t.brief]].filter(([, , has]) => has);
+  return [h("h2", {}, t.state === "reviewing" ? "Ready to review" : "Review"), h("div", { class: "card review-summary" },
+    h("div", { class: "row" },
+      verdict && h("span", { class: verdict[1] }, h("b", {}, verdict[0])),
+      last && h("span", { class: "muted" }, `round ${last.number} of ${t.autoReview.maxRounds}`),
+      t.doneWhen.length > 0 && h("span", { class: proven === t.doneWhen.length ? "ok" : "" }, `${proven} of ${t.doneWhen.length} proven`),
+      t.diff && h("a", { href: "#", onclick: (e) => { e.preventDefault(); taskTabs.set(t.id, "diff"); render(); } },
+        h("span", { class: "ok" }, `+${t.diff.added}`), " ", h("span", { class: "bad" }, `−${t.diff.removed}`)),
+      t.pr && (t.pr.url ? h("a", { href: t.pr.url, target: "_blank", rel: "noopener" }, `#${t.pr.number} ↗`) : h("b", {}, `#${t.pr.number}`)),
+      t.pr && t.pr.checks.length > 0 && h("span", { class: failing ? "bad" : "muted" }, failing ? `${failing} failing` : `${t.pr.checks.length} ${t.pr.checks.length === 1 ? "check" : "checks"}`)),
+    gaps.length > 0 && h("div", { style: "margin-top:8px" }, gaps.map((d) => h("div", { class: "bad" }, `${d.status === "failed" ? "Failed" : "No proof yet"}: ${d.text}`))),
+    links.length > 0 && h("div", { class: "row muted", style: "margin-top:8px" }, "Jump to", links.map(([key, label]) => h("a", { href: `#s-${key}`, onclick: jump(key) }, label))))];
 }
 
 /** The server's reasons for the risk level, highest first; older servers send none. */

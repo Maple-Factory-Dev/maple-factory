@@ -431,6 +431,22 @@ final class AppState {
     /// Change requests and comments sent from this session.
     var steering: [String: [ChangeRequest]] = [:]
     var postedComments: [String: [Comment]] = [:]
+    /// Task page sections opened from their folded line this session ("<task>#<section>"), or folded by hand ("<task>#<section>!").
+    var sectionFolds: Set<String> = []
+
+    /// Whether a task page section is folded: its stage's default, unless it was opened or closed this session.
+    func isFolded(_ task: String, _ section: TaskPageLayout.Section, byDefault: Bool) -> Bool {
+        let key = "\(task)#\(section.rawValue)"
+        if sectionFolds.contains(key) { return false }
+        if sectionFolds.contains(key + "!") { return true }
+        return byDefault
+    }
+
+    func setFolded(_ task: String, _ section: TaskPageLayout.Section, _ folded: Bool) {
+        let key = "\(task)#\(section.rawValue)"
+        sectionFolds.remove(folded ? key : key + "!")
+        sectionFolds.insert(folded ? key + "!" : key)
+    }
     /// Each task's review being drafted in its Changes tab.
     @ObservationIgnored private var reviewDrafts: [String: ReviewDraft] = [:]
     /// The risk policy and goals' accepted risk: the factory's when signed in (edits go to it).
@@ -2398,6 +2414,7 @@ final class AppState {
             // `diff:add`, `diff:summary:<text>`, `diff:submit`, `diff:commit:<n>|all`, `diff:next`, `diff:prev` (see DiffView.playDemo); `tab:overview` / `tab:diff` switches tabs.
             case "diff": NotificationCenter.default.post(name: DiffView.demo, object: Array(parts.dropFirst()))
             case "tab": NotificationCenter.default.post(name: TaskFocusView.demoTab, object: parts[1])
+            case "jump": NotificationCenter.default.post(name: TaskFocusView.demoJump, object: parts[1])
             // The Activity page: `activity:seed:2400` gives the mockup's tasks that many events, `activity:more` is Show 50 more,
             // `activity:bottom` and `activity:top` scroll to its footer and its header, `activity:filter:Agents` picks a filter.
             case "activity": NotificationCenter.default.post(name: ActivityView.demo, object: Array(parts.dropFirst()))

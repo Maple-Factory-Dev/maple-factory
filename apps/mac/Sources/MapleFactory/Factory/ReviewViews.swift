@@ -8,6 +8,11 @@ struct AutoReviewSection: View {
     let task: FactoryTask
     let review: AutoReview
     @State private var showResolved = false
+    @State private var showDetails = false
+
+    /// A passed review keeps to its verdict and summary; its checks and fixed findings wait behind "Show details".
+    private var passed: Bool { review.current?.verdict == .passed }
+    private var detailed: Bool { !passed || showDetails }
 
     var body: some View {
         TaskSection(title: "Automated review") {
@@ -24,17 +29,35 @@ struct AutoReviewSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(16)
 
-                Hairline()
+                if detailed {
+                    Hairline()
 
-                HStack(alignment: .top, spacing: 0) {
-                    checkColumn("Did it do the ask?", checks: review.ask)
-                    Hairline(vertical: true)
-                    checkColumn("Is it proven?", checks: review.proofs)
+                    HStack(alignment: .top, spacing: 0) {
+                        checkColumn("Did it do the ask?", checks: review.ask)
+                        Hairline(vertical: true)
+                        checkColumn("Is it proven?", checks: review.proofs)
+                    }
                 }
 
-                if !review.findings.isEmpty {
+                if !review.findings.isEmpty, detailed || !review.open.isEmpty {
                     Hairline()
                     findings.padding(16)
+                }
+
+                if passed {
+                    Hairline()
+                    HStack(spacing: 4) {
+                        Text(showDetails ? "Hide details" : "Show details")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(showDetails ? 180 : 0))
+                    }
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.snappy(duration: 0.2)) { showDetails.toggle() } }
                 }
             }
             .background(
@@ -146,7 +169,7 @@ struct AutoReviewSection: View {
                 }
             }
             ForEach(review.open) { FindingRow(finding: $0) }
-            if showResolved || review.open.isEmpty {
+            if showResolved || (review.open.isEmpty && detailed) {
                 ForEach(review.resolved) { FindingRow(finding: $0) }
             }
         }
@@ -761,5 +784,132 @@ extension FactoryTask {
     /// review is the reviewer: then there's no name to give.
     var authorName: String? {
         agent.flatMap { $0.name == FactoryData.reviewer.name ? nil : $0.name }
+    }
+}
+
+// MARK: Summary strip
+
+/// "Ready to review": the verdict, the proofs, the size of the change and the PR in one card at the
+/// top of a task that has changes, with links down to each section. Checks that failed or have no
+/// proof yet are listed in red, so a gap shows without scrolling.
+struct ReviewSummaryStrip: View {
+    let task: FactoryTask
+    let files: [DiffFile]
+    let sections: [TaskPageLayout.Section]
+    let onJump: (TaskPageLayout.Section) -> Void
+    let onOpenChanges: () -> Void
+
+    private var gaps: [DoneCriterion] { task.doneWhen.filter { $0.status != .proven } }
+    private var added: Int { files.map(\.added).reduce(0, +) }
+    private var removed: Int { files.map(\.removed).reduce(0, +) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                SectionLabel(title: task.state == .reviewing ? "Ready to review" : "Review")
+                if let review = task.autoReview {
+                    VerdictPill(verdict: review.current?.verdict ?? .inProgress)
+                    if let current = review.current {
+                        Text("round \(current.number) of \(review.maxRounds)")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textMuted)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 18) {
+                if !task.doneWhen.isEmpty {
+                    stat {
+                        ProofMeter(criteria: task.doneWhen)
+                        Text("\(task.proven) of \(task.doneWhen.count) proven")
+                            .foregroundStyle(task.proven == task.doneWhen.count ? Theme.State.merged : Theme.text)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { onJump(.doneWhen) }
+                }
+                if !files.isEmpty {
+                    stat {
+                        Text("+\(added)").foregroundStyle(Theme.State.merged)
+                        Text("−\(removed)").foregroundStyle(Theme.State.cancelled)
+                        Text("· \(files.count) \(files.count == 1 ? "file" : "files")").foregroundStyle(Theme.textMuted)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onOpenChanges)
+                    .help("Open the Changes tab")
+                }
+                if let pr = task.pr {
+                    let failed = pr.checks.filter { $0.status == .failed }.count
+                    let passed = pr.checks.filter { $0.status == .passed }.count
+                    stat {
+                        Image(systemName: "arrow.triangle.pull").font(.system(size: 10.5)).foregroundStyle(Theme.textMuted)
+                        if pr.isLocal {
+                            Text("#\(pr.number)")
+                        } else {
+                            Link("#\(pr.number)", destination: pr.url).foregroundStyle(Theme.text)
+                        }
+                        if !pr.checks.isEmpty {
+                            Text(failed > 0 ? "\(failed) failing" : "checks \(passed)/\(pr.checks.count)")
+                                .foregroundStyle(failed > 0 ? Theme.State.cancelled : passed == pr.checks.count ? Theme.State.merged : Theme.textMuted)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            if !gaps.isEmpty, task.state != .merged {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(gaps) { criterion in
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            Image(systemName: criterion.status == .failed ? "xmark.circle.fill" : "circle.dashed")
+                                .font(.system(size: 11))
+                            Text("\(criterion.status == .failed ? "Failed" : "No proof yet"): \(criterion.text)")
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.State.cancelled)
+                    }
+                }
+            }
+
+            if !sections.isEmpty {
+                HStack(spacing: 14) {
+                    Text("Jump to").foregroundStyle(Theme.textFaint)
+                    ForEach(sections, id: \.self) { section in
+                        Text(title(section))
+                            .foregroundStyle(Theme.accent)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onJump(section) }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 12))
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Theme.cardBG)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+        )
+    }
+
+    private func stat<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 6) { content() }
+            .font(.system(size: 12.5, weight: .medium).monospacedDigit())
+            .foregroundStyle(Theme.text)
+    }
+
+    private func title(_ section: TaskPageLayout.Section) -> String {
+        switch section {
+        case .doneWhen: "Done when"
+        case .autoReview: "Review"
+        case .artifacts: "Artifacts"
+        case .plan: "Plan"
+        case .brief: task.spec?.isEmpty == false ? "Spec" : "Brief"
+        case .mockups: "Mockups"
+        default: section.rawValue
+        }
     }
 }

@@ -240,10 +240,25 @@ enum FactoryData {
         FactoryTask(
             id: "ATL-141", title: "Replace jsonwebtoken with jose", state: .reviewing,
             agent: agents[1], owner: chris, detail: "12 checks passed", diff: (170, 128), span: 5...12, updated: "1h",
-            brief: "jsonwebtoken pulls in Node crypto and won't run on the edge runtime. Swap it for jose everywhere we sign or verify tokens.",
+            brief: """
+            jsonwebtoken pulls in Node crypto and won't run on the edge runtime. Swap it for jose everywhere we sign or verify tokens.
+
+            ## Why now
+            The middleware that checks sessions has to move to the edge for the latency budget, and it can't while token verification needs Node's crypto module. Every request currently pays a hop to the Node region just to read the cookie.
+
+            ## What changes
+            - `lib/auth/jwt.ts` becomes the one place that signs and verifies, on top of jose.
+            - jose's helpers are async, so every caller awaits them: the refresh route, the session middleware, the API key exchange and the WebSocket upgrade.
+            - Tokens already issued keep verifying: same algorithm (RS256), same key IDs, same claims.
+
+            ## Out of scope
+            Rotating the signing keys, and moving the refresh endpoint itself to the edge. Both follow once this lands.
+            """,
             plan: [
                 PlanStep(text: "Wrap sign and verify around jose", file: "lib/auth/jwt.ts", progress: .done),
                 PlanStep(text: "Await the new async helpers at every call site", file: "app/api/auth/refresh/route.ts", progress: .done),
+                PlanStep(text: "Verify sessions in the edge middleware", file: "middleware.ts", progress: .done),
+                PlanStep(text: "Await tokens in the WebSocket upgrade", file: "server/ws/upgrade.ts", progress: .done),
                 PlanStep(text: "Remove jsonwebtoken and add jose", file: "package.json", progress: .done),
                 PlanStep(text: "Update the auth tests for async tokens", file: "tests/auth/jwt.test.ts", progress: .done),
             ],
