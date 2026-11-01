@@ -26,6 +26,8 @@ final class FactoryStore {
     var pendingLink: FactoryLink?
     /// Each task's diff once loaded, keyed by the change it was loaded for.
     private(set) var diffs: [String: (key: String, files: [DiffFile])] = [:]
+    /// Each task's draft review: single-line notes on its diff, sent together as one `task.review`.
+    private(set) var reviewNotes: [String: [Wire.ReviewNote]] = [:]
     /// The last `stats` reply, for admins' Statistics (FeedState doesn't keep it).
     private(set) var stats: Wire.StatsSummary?
     /// CI check logs asked for (`task.checkLog`), keyed `<task>/<check>`. The server never broadcasts or keeps them.
@@ -278,6 +280,37 @@ final class FactoryStore {
         guard !items.isEmpty else { return }
         send(.taskFollowUp(.init(id: id, items: Array(items.prefix(Self.maxFollowUps)))))
     }
+    /// Keeps a note on one diff line in the task's draft review: a removed line is numbered on the old
+    /// side, any other on the new; the snippet is the line as the diff shows it, with its prefix.
+    func addReviewNote(task id: String, path: String, line: DiffLine, text: String) {
+        guard let note = Self.reviewNote(path: path, line: line, text: text) else { return }
+        reviewNotes[id, default: []].append(note)
+    }
+
+    func removeReviewNote(task id: String, at index: Int) {
+        guard reviewNotes[id]?.indices.contains(index) == true else { return }
+        reviewNotes[id]?.remove(at: index)
+        if reviewNotes[id]?.isEmpty == true { reviewNotes[id] = nil }
+    }
+
+    /// Sends the draft as one review: each note a comment, the batch one change request for the builder.
+    func submitReview(_ id: String) {
+        guard let notes = reviewNotes[id], !notes.isEmpty else { return }
+        send(.taskReview(.init(id: id, notes: notes, summary: nil)))
+        reviewNotes[id] = nil
+        notice = .toast("Review sent: \(notes.count) comment\(notes.count == 1 ? "" : "s")", taskId: id)
+    }
+
+    static func reviewNote(path: String, line: DiffLine, text: String) -> Wire.ReviewNote? {
+        let side: Wire.DiffSide = line.kind == .removed ? .old : .new
+        guard let number = (side == .old ? line.old : line.new) else { return nil }
+        let prefix = line.kind == .added ? "+" : line.kind == .removed ? "-" : " "
+        return .init(path: path, start: UInt32(number), end: UInt32(number), side: side, snippet: prefix + line.text, text: text)
+    }
+
+    /// Where a note sits, as the Mac's DiffReview anchors it: `path:L12`.
+    static func anchor(_ note: Wire.ReviewNote) -> String { "\(note.path):L\(note.start)" }
+
     func retryTask(_ id: String) { send(.taskRetry(.init(id: id))) }
 
     /// Reads a CI check's log from GitHub (again); the answer, or a refusal, lands in `checkLogs`.
@@ -552,6 +585,16 @@ final class FactoryStore {
             update(m.id) { $0.hand = nil; $0.events.append(.init(who: me, text: "resolved the hand: \(m.option ?? m.note)", at: DemoData.now)) }
         case .taskComment(let m):
             update(m.id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)) }
+        case .taskReview(let m):
+            // As the Mac's mockup does: a comment per note, then the batch as one queued change request.
+            guard !m.notes.isEmpty else { break }
+            update(m.id) { task in
+                for note in m.notes {
+                    task.comments.append(.init(id: UUID().uuidString, author: me, text: "```diff\n\(note.snippet)\n```\n\(note.text)", at: DemoData.now, anchor: Self.anchor(note)))
+                }
+                let text = m.notes.enumerated().map { "\($0.offset + 1). \(Self.anchor($0.element)): \($0.element.text)" }.joined(separator: "\n")
+                task.changes.append(.init(id: "C\(task.changes.count + 1)", author: me, text: text, at: DemoData.now, anchor: "Review · \(m.notes.count) comment\(m.notes.count == 1 ? "" : "s")", status: .queued))
+            }
         case .taskSteer(let m):
             update(m.id) { $0.changes.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now, status: .queued)) }
         case .taskPlan(let m):
