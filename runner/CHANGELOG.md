@@ -5,7 +5,7 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
-## Unreleased
+## 0.97.0 — 2026-11-01
 
 Weekly dependency refresh: the runner moves to reqwest 0.13, so it and Sentry share one HTTP stack (rustls with ring, system roots) instead of building two, and aws-lc is no longer compiled in.
 
