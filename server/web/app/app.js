@@ -500,7 +500,7 @@ function row(t, sub) {
   return h("a", { class: "item", href: `#/t/${t.id}` },
     h("span", { class: `dot bg-${t.state}` }),
     h("div", {},
-      h("div", { class: "title" }, priorityChip(t), t.title),
+      h("div", { class: "title" }, priorityChip(t), t.title, effortChip(t)),
       h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", t.followUpOf ? ` · Follow-up of ${t.followUpOf}` : "", " · ", sub)));
 }
 
@@ -508,6 +508,9 @@ function row(t, sub) {
 
 const PRIORITY_TITLE = { p0: "Do it right away", p1: "Next", p2: "Soon", p3: "When there's room" };
 const priorityChip = (t) => t.priority && h("span", { class: `prio ${t.priority}`, title: PRIORITY_TITLE[t.priority] }, t.priority.toUpperCase());
+/** The effort a task belongs to, as a small accent chip after its title on list rows; nothing when it has none. */
+const effortChip = (t) => t.effort && h("span", { class: "effort-chip", title: `Part of the ${t.effort} effort` },
+  icon("layers", { size: 11 }), h("span", {}, t.effort));
 /** A select of none and P0–P3; `onpick` gets the value, or null for none. */
 const prioritySelect = (value, onpick, attrs = {}) => h("select", { ...attrs, onchange: (e) => onpick(e.target.value || null) },
   h("option", { value: "", selected: !value }, "No priority"),
