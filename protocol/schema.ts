@@ -646,6 +646,11 @@ export const structs: Record<string, Struct> = {
     fields: { repo: "string", scripts: "WorktreeScripts", prompts: "PromptAdditions?", updatedBy: "string", updatedAt: "u64" },
     fieldDocs: { repo: "GitHub owner/name.", prompts: "The repo's own prompt additions, by role: after the org's and before the goal's. None: none, or an older server." },
   },
+  MergeHold: {
+    doc: "A hold on merges into one repo (an incident freeze across every goal): the factory starts no merges into it until someone lifts it.",
+    fields: { repo: "string", reason: "string", by: "string", at: "u64" },
+    fieldDocs: { repo: "GitHub owner/name.", reason: "Why, shown on every held task's merge card.", by: "Who put it on.", at: "When (ms)." },
+  },
   ServerUpdate: {
     doc: "A newer maple-server than the factory runs, and how this factory gets it.",
     fields: { version: "string", how: "string" },
@@ -1651,6 +1656,15 @@ export const unions: Record<string, Union> = {
         fields: { repo: "string", name: "string", value: "string" },
       },
       "secrets.delete": { doc: "Admins only.", fields: { repo: "string", name: "string" } },
+      "repos.holdMerges": {
+        doc: "Any member: hold merges into a repo across every goal (an incident freeze). Auto-merge countdowns stop and a person's Merge is refused until it's lifted.",
+        fields: { repo: "string", reason: "string" },
+        fieldDocs: { repo: "GitHub owner/name, one of the factory's repos.", reason: "Why, at most 200 characters." },
+      },
+      "repos.releaseMerges": {
+        doc: "Any member: lift a repo's merge hold. Its reviewing tasks are checked again, so the ones waiting merge on their own.",
+        fields: { repo: "string" },
+      },
       "repos.scripts.set": {
         doc: "Admins only: replace a repo's worktree scripts (and its prompt additions). Blank commands are cleared; all blank removes them.",
         fields: { repo: "string", scripts: "WorktreeScripts", prompts: "PromptAdditions?" },
@@ -1803,6 +1817,7 @@ export const unions: Record<string, Union> = {
           intake: "IntakeRequest[]",
           repos: "OrgRepo[]",
           repoOwners: "string[]?",
+          mergeHolds: "MergeHold[]?",
           githubApp: "GitHubAppInfo?",
           secrets: "RepoSecret[]",
           scripts: "RepoWorktreeScripts[]?",
@@ -1831,6 +1846,7 @@ export const unions: Record<string, Union> = {
           scoutRuns: "Each goal's latest Scout run. None: an older server.",
           recurring: "Every goal's recurring tasks. None: an older server.",
           repoOwners: "Other GitHub accounts an admin approved: the app's installations on them add repos. None: an older server.",
+          mergeHolds: "The repos whose merges are on hold. None: none, or an older server.",
           githubApp: "The factory's GitHub App. None: no app, or an older server.",
           connectors: "The factory's MCP connectors, secret values blank. None: an older server.",
           integrations: "Slack, Linear and Jira: their status, secret values blank. None: an older server.",
@@ -1887,6 +1903,7 @@ export const unions: Record<string, Union> = {
         fields: { repos: "OrgRepo[]", scripts: "RepoWorktreeScripts[]?", repoOwners: "string[]?" },
         fieldDocs: { scripts: "The repos that have worktree scripts. None: an older server.", repoOwners: "The approved other GitHub accounts. None: an older server." },
       },
+      "mergeHolds.updated": { doc: "Every merge hold again, after one was put on or lifted.", fields: { holds: "MergeHold[]" } },
       "secrets.updated": { doc: "Every repo's secrets again (names only), after one changed.", fields: { secrets: "RepoSecret[]" } },
       "runner.released": {
         doc: "A runner release came out (or the feed changed) since the snapshot.",

@@ -91,6 +91,8 @@ import Foundation
     private(set) var repoScripts: [Wire.RepoWorktreeScripts] = []
     /// Other GitHub accounts an admin approved, whose installations of the app add repos; empty from an older server.
     private(set) var repoOwners: [String] = []
+    /// Repos whose merges are on hold (an incident freeze across every goal); empty from an older server.
+    private(set) var mergeHolds: [Wire.MergeHold] = []
     /// The factory's GitHub App and its links; nil with no app, or from an older server.
     private(set) var githubApp: Wire.GitHubAppInfo?
     /// The newest released runner, when the factory has a release to offer.
@@ -336,6 +338,7 @@ import Foundation
         secrets = []
         repoScripts = []
         repoOwners = []
+        mergeHolds = []
         githubApp = nil
         runnerLatest = nil
         runnerReleases = []
@@ -479,6 +482,7 @@ import Foundation
             scoutRuns = Dictionary((snapshot.scoutRuns ?? []).map { ($0.goal, $0) }, uniquingKeysWith: { _, last in last })
             recurring = Dictionary((snapshot.recurring ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             repoOwners = snapshot.repoOwners ?? []
+            mergeHolds = snapshot.mergeHolds ?? []
             githubApp = snapshot.githubApp
             runnerLatest = snapshot.runnerLatest
             runnerReleases = snapshot.runnerReleases ?? []
@@ -581,6 +585,8 @@ import Foundation
             repos = update.repos
             if let scripts = update.scripts { repoScripts = scripts }
             if let owners = update.repoOwners { repoOwners = owners }
+        case .mergeHoldsUpdated(let update):
+            mergeHolds = update.holds
         case .secretsUpdated(let update):
             secrets = update.secrets
         case .runnerReleased(let update):
@@ -931,6 +937,20 @@ import Foundation
     /// Admins only: the other GitHub accounts whose installations of the app add repos; the server reads them again.
     func setRepoOwners(_ owners: [String]) {
         send(.reposOwnersSet(.init(owners: owners)))
+    }
+
+    /// The hold on merges into `repo`, if there is one.
+    func mergeHold(for repo: String?) -> Wire.MergeHold? {
+        guard let repo else { return nil }
+        return mergeHolds.first { $0.repo.lowercased() == repo.lowercased() }
+    }
+
+    func holdMerges(repo: String, reason: String) {
+        send(.reposHoldMerges(.init(repo: repo, reason: reason)))
+    }
+
+    func releaseMerges(repo: String) {
+        send(.reposReleaseMerges(.init(repo: repo)))
     }
 
     /// `repo`'s worktree scripts, if it has any.

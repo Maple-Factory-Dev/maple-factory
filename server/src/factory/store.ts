@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -651,6 +651,22 @@ export class Store {
 
   saveRepoOwners(owners: string[]) {
     this.set("repoOwners", JSON.stringify(owners));
+  }
+
+  /** Repos whose merges are on hold (an incident freeze), kept apart from the GitHub-refreshed repo list. */
+  mergeHolds(): MergeHold[] {
+    return JSON.parse(this.get("mergeHolds") ?? "[]");
+  }
+
+  saveMergeHolds(holds: MergeHold[]) {
+    this.set("mergeHolds", JSON.stringify(holds));
+  }
+
+  /** The hold on merges into `repo`, matched case-insensitively. */
+  mergeHold(repo: string | null | undefined): MergeHold | undefined {
+    if (!repo) return undefined;
+    const key = repo.toLowerCase();
+    return this.mergeHolds().find((h) => h.repo.toLowerCase() === key);
   }
 
   /** The factory's MCP connectors, secrets included: only for runners (apps get `redacted`). */

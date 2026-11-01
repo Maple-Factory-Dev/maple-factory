@@ -760,6 +760,7 @@ export class OrgHub extends DurableObject<Env> {
           secrets: this.secrets.list(),
           repos: this.store.repos(),
           repoOwners: this.store.repoOwners(),
+          mergeHolds: this.store.mergeHolds(),
           githubApp: githubAppInfo(this.env),
           scripts: this.store.repoScripts(),
           setupRuns: this.engine.setupRuns(),

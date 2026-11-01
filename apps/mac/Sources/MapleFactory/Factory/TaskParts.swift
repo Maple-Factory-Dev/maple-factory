@@ -821,7 +821,9 @@ struct ReviewActions: View {
                 }
             }
 
-            if let mergeAt = countdown(gate) {
+            let hold = task.state == .reviewing && !factoryMerging ? state.mergeHold(for: task) : nil
+            if let hold { MergeHoldNotice(hold: hold) }
+            if hold == nil, let mergeAt = countdown(gate) {
                 CountdownMergeButton(number: task.pr?.number ?? 0, mergeAt: mergeAt, from: task.mergeFrom,
                                      holding: state.isInFlight(task.id, .holdMerge),
                                      hold: { state.holdMerge(task.id) }, mergeNow: { state.merge(task.id) })
@@ -863,10 +865,11 @@ struct ReviewActions: View {
                             state.approveChanges(task.id)
                         }
                     } else {
-                        PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: gate.canMerge,
+                        PrimaryButton(title: "Merge", icon: "arrow.triangle.merge", enabled: gate.canMerge && hold == nil,
                                       busy: merging, busyTitle: "Merging #\(task.pr?.number ?? 0)…") {
                             state.merge(task.id)
                         }
+                        .help(hold.map { "Merges into \($0.repo) are on hold" } ?? "")
                     }
                     RequestChangesButton(enabled: !approving && !merging, action: onRequestChanges)
                 }
@@ -878,7 +881,9 @@ struct ReviewActions: View {
                 }
             }
 
-            if let mergeAt = countdown(gate) {
+            if hold != nil {
+                EmptyView()
+            } else if let mergeAt = countdown(gate) {
                 TimelineView(.everySecond(until: mergeAt)) { context in
                     let left = Int(max(0, mergeAt.timeIntervalSince(context.date)).rounded(.up))
                     statusRow("bolt.fill", left > 0 ? "Auto-merging in \(left)s — Hold to merge it yourself." : "Auto-merging now.", Theme.State.merged)
@@ -994,6 +999,25 @@ struct ReviewActions: View {
         }
         .font(.system(size: 11.5))
         .foregroundStyle(color)
+    }
+}
+
+/// In place of the countdown and Merge while merges into the task's repo are on hold.
+struct MergeHoldNotice: View {
+    let hold: Wire.MergeHold
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: "hand.raised.fill").foregroundStyle(GitHubColor.failed)
+            Text("Merges into \(hold.repo) are on hold — \(hold.reason) · \(hold.by), \(LiveAdapter.ago(hold.at) == "now" ? "just now" : "\(LiveAdapter.ago(hold.at)) ago")")
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(GitHubColor.failed.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(GitHubColor.failed.opacity(0.35)))
     }
 }
 
