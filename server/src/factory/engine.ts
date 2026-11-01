@@ -28,6 +28,7 @@ import { checkCommands, RepoSetup, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFI
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, validPolicy } from "./policy.ts";
 import { findingDetail, manualReason, type StatKind } from "./stats.ts";
+import { trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
@@ -85,6 +86,10 @@ const REVIEWS_WANTED = "GitHub wants an approving review";
 /** What a runner says while Claude Code waits on its folder-trust prompt (runner/src/trust.rs). */
 const TRUST_PROMPT = "Claude Code is asking whether to trust this folder";
 const TRUST_HAND = "Claude Code is asking whether to trust its folder";
+/** `<pasted_content id="…">Use option B</pasted_content>` (also `<\pasted_content …>`) → `Use option B`. */
+/** The runner cuts a step at 160 characters, which can leave half a closing tag (`<\/pasted_con…`) at the end. */
+const unwrapPasted = (s: string) =>
+  s.replace(/<\\?\/?\\?\/?pasted_content\b[^>]*>|<\\?\/\w*…$/g, " ").replace(/\s+/g, " ").trim();
 
 /** How often CI is read again while a pull request's checks are still running. */
 const CI_POLL_MS = 30_000;
@@ -638,6 +643,29 @@ export class Engine {
         await this.pump();
         return;
       }
+      case "task.requestReviewers": {
+        if (isFinished(task.state)) fail(`It's ${task.state}; there's nothing left to review.`);
+        const members = await this.hooks.members();
+        const login = (l: string) => {
+          const name = l.trim().replace(/^@/, "");
+          return members.find((m) => m.login.toLowerCase() === name.toLowerCase())?.login ?? fail(`${name} isn't in the org.`);
+        };
+        const add = [...new Set(msg.add.map(login))];
+        const remove = [...new Set(msg.remove.map(login))];
+        // Who already signed off on the stage it's in has nothing left to do.
+        const signedOff = task.state === "reviewing" ? task.reviews : task.state === "awaitingApproval" ? task.approvals : [];
+        task.requested ??= [];
+        const added = add.filter((l) => l !== task.owner && !signedOff.includes(l) && !task.requested.includes(l) && !remove.includes(l));
+        const removed = remove.filter((l) => task.requested.includes(l));
+        if (!added.length && !removed.length) return;
+        task.requested = [...task.requested.filter((l) => !removed.includes(l)), ...added];
+        for (const l of added) this.event(task, who, `requested a review from @${l}`);
+        for (const l of removed) this.event(task, who, `removed @${l}'s review request`);
+        await audit(this.env, who, "task.reviewersRequested", task.id, { added, removed });
+        this.save(task);
+        if (added.length && task.state === "reviewing") await this.requestOnGitHub(task.id, added);
+        return;
+      }
       case "task.moveGoal": {
         if (isFinished(task.state)) fail(`It's ${task.state}; it stays in its goal.`);
         if (msg.goal === task.goal) fail("It's already in that goal.");
@@ -728,6 +756,7 @@ export class Engine {
           this.event(task, who, "kept the title");
         }
         task.approvals.push(who);
+        task.requested = (task.requested ?? []).filter((l) => l !== who);
         for (const m of task.mockups) if (m.status === "proposed") m.status = "approved";
         this.event(task, who, "approved the plan");
         if (task.approvals.length >= task.approvalsNeeded) await this.approved(task, "queued it for building");
@@ -741,6 +770,7 @@ export class Engine {
         this.stat(task, "question.answered", { waitMs: now() - q.at }, who, q.role);
         task.comments.push(await this.comment(who, msg.text, { anchor: `Q: ${q.text}` }));
         this.event(task, who, `answered: ${msg.text}`);
+        this.noteAnswer(task, who, msg.text);
         this.save(task);
         if (!(await this.type(task, `${who} answered your question ("${q.text}"): ${msg.text}`))) await this.pump();
         return;
@@ -786,6 +816,7 @@ export class Engine {
         const use = granted ? this.budget(task) : null;
         this.store.savePrivate(task.id, {
           ...priv, restarts: 0, discard: false, cleaned: false,
+          ...(decision ? { lastAnswer: { who, text: decision, at: now() } } : {}),
           ...(use ? { budgetBase: { minutes: use.minutes, costUsd: use.costUsd }, budgetAskedAt: null } : {}),
         });
         this.save(task);
@@ -836,6 +867,7 @@ export class Engine {
         if (task.state !== "reviewing" || task.autoReview?.rounds.at(-1)?.verdict !== "passed") fail("It isn't ready for review yet.");
         if (task.reviews.includes(who)) fail("You've already approved it.");
         task.reviews.push(who);
+        task.requested = (task.requested ?? []).filter((l) => l !== who);
         this.event(task, who, "approved the changes");
         this.stat(task, "changes.approved", { reviews: task.reviews.length }, who);
         this.save(task);
@@ -1113,11 +1145,13 @@ export class Engine {
             doneWhen: [],
             approvals: [],
             reviews: [],
+            requested: [],
             comments: [],
             changes: [],
             events: [{ who, text: `split it off ${task.id}`, at: t }],
             mockups: [],
             artifacts: [],
+            stages: [],
             question: null,
             hand: null,
             worker: null,
@@ -1161,8 +1195,7 @@ export class Engine {
         const item = task.doneWhen[msg.item] ?? fail("There's no such Done when item.");
         if (task.state !== "building" && task.state !== "reviewing") fail("You can attest to it while it's building or in review.");
         const reason = msg.note?.trim() || null;
-        item.status = "proven";
-        item.evidence = { kind: item.proof, summary: `Attested by ${who}${reason ? `: ${reason}` : ""}`, output: [], by: who, at: now(), attested: true, reason };
+        attest(item, who, reason);
         this.event(task, who, `attested "${item.text}"${reason ? `: ${reason}` : ""}`);
         this.save(task);
         return;
@@ -1313,11 +1346,13 @@ export class Engine {
       approvalsNeeded: 1,
       reviews: [],
       reviewsNeeded: 1,
+      requested: [],
       comments: [],
       changes: [],
       events: [{ who, text: "created it", at: t }],
       mockups: [],
       artifacts: [],
+      stages: [],
       followUps: [],
       queueRank: t,
       draftRank: t,
@@ -1613,7 +1648,9 @@ export class Engine {
           this.event(task, s.role, "carried on once its folder was trusted");
           this.save(task);
         }
-        const line = msg.activity.state === "waiting" ? `Waiting: ${msg.activity.message ?? "a permission prompt"}` : (msg.activity.step ?? msg.activity.message);
+        const step = msg.activity.step ?? msg.activity.message;
+        // Older runners report a pasted answer with Claude Code's <pasted_content> wrapper around it.
+        const line = msg.activity.state === "waiting" ? `Waiting: ${msg.activity.message ?? "a permission prompt"}` : step && unwrapPasted(step);
         if (line && line !== task.liveLog) {
           task.liveLog = line;
           this.save(task, false);
@@ -1981,9 +2018,39 @@ export class Engine {
     } catch (e) {
       notes.push(`couldn't ask @${who} to review pull request #${number}: ${(e as Error).message}`);
     }
+    // Teammates requested before the pull request existed.
+    const asked = (task.requested ?? []).filter((l) => l !== who && !task.reviews.includes(l));
+    if (asked.length) {
+      try {
+        await requestReviewers(app, owner, repo, number, asked);
+        notes.push(`asked ${asked.map((l) => `@${l}`).join(", ")} to review pull request #${number}`);
+      } catch (e) {
+        notes.push(`couldn't ask ${asked.map((l) => `@${l}`).join(", ")} to review pull request #${number}: ${(e as Error).message}`);
+      }
+    }
     const t = this.store.task(id);
     if (!t) return;
     for (const n of notes) this.event(t, "factory", n);
+    this.save(t);
+  }
+
+  /** Asks `logins` to review the task's open pull request on GitHub. Best-effort: what GitHub refused goes on the timeline. */
+  private async requestOnGitHub(id: string, logins: string[]) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.number || !gh || task.pr.state !== "open") return;
+    const who = logins.map((l) => `@${l}`).join(", ");
+    let note: string;
+    try {
+      await requestReviewers(app, gh.owner, gh.repo, task.pr.number, logins);
+      note = `asked ${who} to review pull request #${task.pr.number} on GitHub`;
+    } catch (e) {
+      note = `couldn't ask ${who} to review pull request #${task.pr.number} on GitHub: ${(e as Error).message}`;
+    }
+    const t = this.store.task(id);
+    if (!t) return;
+    this.event(t, "factory", note);
     this.save(t);
   }
 
@@ -2595,6 +2662,7 @@ export class Engine {
 
       case "ask": {
         const question = str(a.question, "question");
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.question = { text: question, options: arr(a.options).map(String), role: s.role, at: now() };
         this.stat(task, "question.asked", {}, null, s.role);
         this.event(task, s.role, `asked: ${question}`);
@@ -2610,6 +2678,7 @@ export class Engine {
           return { title: str(x.title, "options[].title"), detail: String(x.detail ?? ""), recommended: x.recommended === true };
         });
         this.lowerHand(task, "factory");
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.hand = { reason, summary: str(a.summary, "summary"), at: now(), assignee: task.owner, options };
         this.event(task, s.role, "raised a hand");
         this.stat(task, "hand.raised", { reason }, null, s.role);
@@ -2662,6 +2731,20 @@ export class Engine {
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
         const left = task.doneWhen.filter((d) => d.status !== "proven").length;
         return { summary: left ? `Attached. ${left} item${left === 1 ? "" : "s"} left to prove.` : "Attached. Every item is proven." };
+      }
+
+      case "attest": {
+        if (task.state !== "building" && task.state !== "reviewing") fail("You can attest while it's building or in review.");
+        const answer = this.store.private(task.id).lastAnswer ?? fail("Nobody has answered you since you last asked. Ask with `ask` or `raise_hand` (offer \"Attest it for me\"), end your turn, and call `attest` once a person picks it.");
+        const nums = [...new Set(arr(a.items).map((n) => num(n)))];
+        if (!nums.length) fail("items: name at least one Done when item, from 1.");
+        const items = nums.map((n) => task.doneWhen[n - 1] ?? fail(`There's no item ${n}; Done when has ${task.doneWhen.length}.`));
+        const quoted = answer!.text.length > 300 ? `${answer!.text.slice(0, 299)}…` : answer!.text;
+        const why = `${str(a.reason, "reason").trim()} (confirmed in their answer: "${quoted}")`;
+        for (const item of items) attest(item, answer!.who, why);
+        this.event(task, s.role, `attested ${items.map((d) => `"${d.text}"`).join(", ")} for ${answer!.who}: ${why}`);
+        const left = task.doneWhen.filter((d) => d.status !== "proven").length;
+        return { summary: `Attested ${nums.length === 1 ? "it" : `${nums.length} items`} for ${answer!.who}. ${left ? `${left} item${left === 1 ? "" : "s"} left to prove.` : "Every item is proven."}` };
       }
 
       case "share_artifact": {
@@ -3177,6 +3260,11 @@ export class Engine {
     this.save(task);
   }
 
+  /** A person's answer reached the task's session: the builder may `attest` for them until it asks again. */
+  private noteAnswer(task: Task, who: string, text: string) {
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: { who, text, at: now() } });
+  }
+
   /** A person's comment, with the members it @mentions. */
   private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null; replyTo?: string | null } = {}): Promise<Comment> {
     const mentions = mentionsIn(text, await this.hooks.members(), author);
@@ -3190,7 +3278,10 @@ export class Engine {
     const root = comment.replyTo ?? comment.id;
     if (!threadTalksToAgent(task.comments, root)) return;
     const said = `${who} in comment thread ${root}: ${comment.text}\nAnswer with \`reply\` (thread ${root}). This is conversation, not a change request; use the steer flow only if they ask for a change, and carry on with your work after.`;
-    if (task.worker && (await this.type(task, said))) return;
+    if (task.worker && (await this.type(task, said))) {
+      this.noteAnswer(task, who, comment.text);
+      return;
+    }
     this.event(task, who, "left a comment in a thread; the next agent on it will see it");
   }
 
@@ -3526,6 +3617,7 @@ export class Engine {
   }
 
   private save(task: Task, touch = true) {
+    trackStage(task, now());
     if (touch) task.updatedAt = now();
     // An auto-merge counts down only while every gate still holds, on the head it started for.
     if (task.mergeAt != null) {
@@ -3590,6 +3682,11 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 };
 const str = (v: unknown, name: string): string => (typeof v === "string" && v.trim() ? v.trim() : fail(`${name} is required.`));
+/** A person's sign-off on a Done when item: `task.checkedIt` (they clicked it) and `attest` (the builder, for them). */
+function attest(item: Task["doneWhen"][number], by: string, reason: string | null) {
+  item.status = "proven";
+  item.evidence = { kind: item.proof, summary: `Attested by ${by}${reason ? `: ${reason}` : ""}`, output: [], by, at: now(), attested: true, reason };
+}
 const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "terminal", "tests"].includes(v as string) ? (v as Evidence["kind"]) : "terminal");
 
 /** The pull request's description: the brief, the plan, and what proves it's done, with attachment

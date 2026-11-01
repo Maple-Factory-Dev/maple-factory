@@ -29,6 +29,11 @@ pub fn cut(s: &str, max: usize) -> (String, bool) {
     (format!("{head}\n…\n{tail}"), true)
 }
 
+/// What you sent, without Claude Code's `<pasted_content>` wrapper around a pasted answer.
+fn unpaste(text: &str) -> String {
+    if text.contains("pasted_content") { crate::hooks::strip_pasted(text) } else { text.to_string() }
+}
+
 fn cut_input(v: &Value) -> Value {
     match v {
         Value::String(s) => Value::String(cut(s, INPUT_LIMIT).0),
@@ -241,13 +246,13 @@ pub fn parse_claude(line: &str, st: &mut ClaudeState) -> Vec<SessionEvent> {
                             message: None,
                         });
                     } else if !(text.starts_with("<local-command-") || text.starts_with("<command-message>")) {
-                        out.push(SessionEvent::User { id, session, seq: 0, at, agent: agent.into(), text: text.clone() });
+                        out.push(SessionEvent::User { id, session, seq: 0, at, agent: agent.into(), text: unpaste(text) });
                     }
                 }
                 Value::Array(blocks) => {
                     let texts: Vec<&str> = blocks.iter().filter(|b| s(b, "type") == Some("text")).filter_map(|b| s(b, "text")).collect();
                     if !texts.is_empty() && !meta {
-                        let text = texts.join("\n");
+                        let text = unpaste(&texts.join("\n"));
                         if text.starts_with("[Request interrupted") {
                             out.push(SessionEvent::Turn {
                                 id: id.clone(),
@@ -764,6 +769,25 @@ mod tests {
         assert!(matches!(&events[0], SessionEvent::Other { kind, id, .. } if kind == "response_item/teleport" && id == "tp_1"));
         assert!(matches!(&events[1], SessionEvent::Other { kind, .. } if kind == "invalid"));
         assert!(matches!(&events[2], SessionEvent::Turn { state: TurnState::Running, .. }));
+    }
+
+    #[test]
+    fn pasted_answers_come_out_as_what_was_sent() {
+        let session = Uuid::new_v4();
+        let mut st = ClaudeState::new(session);
+        let lines = [
+            r#"{"type":"user","uuid":"p1","timestamp":"2026-10-31T22:30:00.000Z","message":{"role":"user","content":"<\\pasted_content id=\"a849\">\nUse option B\nand keep the tests\n<\\/pasted_content>"}}"#,
+            r#"{"type":"user","uuid":"p2","timestamp":"2026-10-31T22:30:01.000Z","message":{"role":"user","content":[{"type":"text","text":"<pasted_content id=\"b1\">Ship it</pasted_content>"}]}}"#,
+        ];
+        let texts: Vec<_> = lines
+            .iter()
+            .flat_map(|l| parse_claude(l, &mut st))
+            .map(|e| match e {
+                SessionEvent::User { text, .. } => text,
+                other => panic!("expected a User event, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, ["Use option B\nand keep the tests", "Ship it"]);
     }
 
     #[test]

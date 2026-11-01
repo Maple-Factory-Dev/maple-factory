@@ -158,6 +158,19 @@ const TOOLS: Tool[] = [
     roles: ["builder"],
   },
   {
+    name: "attest",
+    description:
+      "Sign off Done when items for the person who just answered you, when their answer (to `ask`, a raised hand, or in a comment thread) asked for those items to be attested or skipped. It credits them and quotes their answer. Only after such an answer; never to get around a proof you could produce yourself.",
+    inputSchema: obj(
+      {
+        items: list({ type: "integer", minimum: 1 }, "The Done when items to attest, from 1."),
+        reason: str("Why, in one line (e.g. why the proof can't be produced here)."),
+      },
+      ["items", "reason"],
+    ),
+    roles: ["builder"],
+  },
+  {
     name: "share_artifact",
     description: "Share a file on the task for people to look at in the Mac app and on the web: a chart of results, a page that reproduces a bug, a visual walkthrough of a change. Not evidence for Done when (that's `prove`). Sharing again under the same title adds a new version of it.",
     inputSchema: obj(

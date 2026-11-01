@@ -429,6 +429,10 @@ export class OrgHub extends DurableObject<Env> {
         }
       }
       case "/commits": return Response.json(this.engine.commits(url.searchParams.get("task") ?? ""));
+      case "/task": {
+        const task = this.store.task(url.searchParams.get("task") ?? "");
+        return task ? Response.json(task) : new Response("No such task.", { status: 404 });
+      }
       case "/diff": {
         const patch = this.engine.patch(url.searchParams.get("task") ?? "", url.searchParams.get("commit"));
         return patch == null ? new Response("No diff yet.", { status: 404 }) : new Response(patch, { headers: { "content-type": "text/x-diff; charset=utf-8" } });

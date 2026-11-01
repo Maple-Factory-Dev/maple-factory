@@ -6,6 +6,7 @@ import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSett
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
+import { inferStages } from "./stages.ts";
 
 /// What the server knows about a task that the apps don't need.
 export interface TaskPrivate {
@@ -60,6 +61,9 @@ export interface TaskPrivate {
   budgetBase?: import("./policy.ts").BudgetBase | null;
   /** When the factory typed the over-budget nudge into its session; a hand still missing 10 minutes on is raised for it. */
   budgetAskedAt?: number | null;
+  /** The last answer a person gave its agent (to `ask`, a raised hand, or in a comment thread), since it last
+   *  asked; what lets the builder `attest` Done when items for them. Cleared by a new `ask` or `raise_hand`. */
+  lastAnswer?: { who: string; text: string; at: number } | null;
   /** Cancelled with its goal's archive, to have its worktree removed (when nothing would be lost). */
   discard?: boolean;
 }
@@ -156,6 +160,7 @@ export class Store {
       this.sql.exec("ALTER TABLE repo_scripts ADD COLUMN prompts TEXT");
     }
     this.backfillStats();
+    this.backfillStages();
   }
 
   // Statistics: an append-only log of touchpoints (stats.ts adds them up).
@@ -191,6 +196,17 @@ export class Store {
     if (this.get("stats:backfilled")) return;
     for (const task of this.tasks()) for (const e of inferEvents(task)) this.recordStat(e);
     this.set("stats:backfilled", String(Date.now()));
+  }
+
+  /** Once: estimated stage spans for tasks from before `stages`, worked out from their events. */
+  private backfillStages() {
+    if (this.get("stages:backfilled")) return;
+    for (const task of this.tasks()) {
+      if (task.stages?.length) continue;
+      task.stages = inferStages(task);
+      this.sql.exec("UPDATE tasks SET doc = ? WHERE id = ?", JSON.stringify(task), task.id);
+    }
+    this.set("stages:backfilled", String(Date.now()));
   }
 
   // Costs: one row per factory session, its highest totals so far.
@@ -721,7 +737,7 @@ function goalDoc(doc: string): Goal {
 /** A stored task, with fields added since it was saved. Tasks from before the queue keep their order. */
 function taskDoc(doc: string): Task {
   const task = JSON.parse(doc) as Task;
-  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], followUps: task.followUps ?? [], artifacts: task.artifacts ?? [], suggestedTitle: task.suggestedTitle ?? null, priority: task.priority ?? null, followUpOf: task.followUpOf ?? null, queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
+  return { ...task, model: task.model ?? null, repo: task.repo ?? null, after: task.after ?? [], requested: task.requested ?? [], followUps: task.followUps ?? [], artifacts: task.artifacts ?? [], stages: task.stages ?? [], suggestedTitle: task.suggestedTitle ?? null, priority: task.priority ?? null, followUpOf: task.followUpOf ?? null, queueRank: task.queueRank ?? task.createdAt, draftRank: task.draftRank ?? task.createdAt };
 }
 
 /** Front of the queue first; ties by age. */

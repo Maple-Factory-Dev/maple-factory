@@ -120,6 +120,22 @@ enum class TaskState(val raw: String) {
     object Serializer : WireEnumSerializer<TaskState>("TaskState", entries, { it.raw }, Unknown)
 }
 
+/** What a task stage span was waiting on, when it wasn't being worked. */
+@Serializable(with = StageWait.Serializer::class)
+enum class StageWait(val raw: String) {
+    /** Ready to run, waiting for a free slot (the task's `waiting`). */
+    Queued("queued"),
+    /** A hand was up for a person. */
+    Hand("hand"),
+    /** The agent's question waited for its answer. */
+    Question("question"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<StageWait>("StageWait", entries, { it.raw }, Unknown)
+}
+
 /** What a factory session is for. */
 @Serializable(with = Role.Serializer::class)
 enum class Role(val raw: String) {
@@ -1141,6 +1157,19 @@ data class TaskEvent(
     val at: Long,
 )
 
+/** A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes. */
+@Serializable
+data class StageSpan(
+    val stage: TaskState,
+    /** None: being worked (or, for awaitingApproval, waiting on its approvals). */
+    val wait: StageWait? = null,
+    val from: Long,
+    /** When it ended (ms); none: still open. Terminal states get a zero-length marker. */
+    val to: Long? = null,
+    /** Worked out after the fact from the task's events, so an estimate. */
+    val inferred: Boolean? = null,
+)
+
 /** An agent asking a person something it can't decide. */
 @Serializable
 data class Question(
@@ -1486,9 +1515,13 @@ data class Task(
     val approvalsNeeded: Long,
     val reviews: List<String> = emptyList(),
     val reviewsNeeded: Long,
+    /** Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks. */
+    val requested: List<String> = emptyList(),
     val comments: List<Comment> = emptyList(),
     val changes: List<ChangeRequest> = emptyList(),
     val events: List<TaskEvent> = emptyList(),
+    /** Its time, span by span: each stage and what it waited on. Empty on older servers. */
+    val stages: List<StageSpan> = emptyList(),
     val question: Question? = null,
     val hand: Hand? = null,
     val worker: Worker? = null,
@@ -3319,6 +3352,15 @@ sealed class ClientMessage {
         /** The member's login. */
         val owner: String,
     ) : ClientMessage()
+    /** Ask teammates to approve its plan or review its changes, or take a request back, like GitHub review requests. Refused once it's merged or cancelled, and for logins that aren't org members. Its owner and anyone who already approved the current stage are skipped. In review with a pull request, they're requested on GitHub too. */
+    @Serializable
+    data class TaskRequestReviewers(
+        val id: String,
+        /** Logins to request. */
+        val add: List<String> = emptyList(),
+        /** Logins whose request is taken back. */
+        val remove: List<String> = emptyList(),
+    ) : ClientMessage()
     /** Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort. */
     @Serializable
     data class TaskMoveGoal(
@@ -3569,6 +3611,7 @@ sealed class ClientMessage {
             "task.edit" -> json.decodeFromJsonElement(TaskEdit.serializer(), body)
             "task.followUp" -> json.decodeFromJsonElement(TaskFollowUp.serializer(), body)
             "task.assign" -> json.decodeFromJsonElement(TaskAssign.serializer(), body)
+            "task.requestReviewers" -> json.decodeFromJsonElement(TaskRequestReviewers.serializer(), body)
             "task.moveGoal" -> json.decodeFromJsonElement(TaskMoveGoal.serializer(), body)
             "task.plan" -> json.decodeFromJsonElement(TaskPlan.serializer(), body)
             "task.backlog" -> json.decodeFromJsonElement(TaskBacklog.serializer(), body)
@@ -3660,6 +3703,7 @@ sealed class ClientMessage {
             is TaskEdit -> "task.edit" to json.encodeToJsonElement(TaskEdit.serializer(), value)
             is TaskFollowUp -> "task.followUp" to json.encodeToJsonElement(TaskFollowUp.serializer(), value)
             is TaskAssign -> "task.assign" to json.encodeToJsonElement(TaskAssign.serializer(), value)
+            is TaskRequestReviewers -> "task.requestReviewers" to json.encodeToJsonElement(TaskRequestReviewers.serializer(), value)
             is TaskMoveGoal -> "task.moveGoal" to json.encodeToJsonElement(TaskMoveGoal.serializer(), value)
             is TaskPlan -> "task.plan" to json.encodeToJsonElement(TaskPlan.serializer(), value)
             is TaskBacklog -> "task.backlog" to json.encodeToJsonElement(TaskBacklog.serializer(), value)

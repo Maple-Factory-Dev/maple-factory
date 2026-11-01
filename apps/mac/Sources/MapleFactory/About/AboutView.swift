@@ -64,6 +64,7 @@ struct AboutView: View {
         VStack(spacing: 6) {
             Button("Check for Updates…") { Self.checkForUpdates() }
             .controlSize(.regular)
+            .help("Check for Updates (⇧⌘U)")
             .disabled((updater.available || updater.isDemo) && !updater.canCheckNow)
 
             Group {

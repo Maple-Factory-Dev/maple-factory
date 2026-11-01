@@ -258,6 +258,8 @@ struct FactoryTask: Identifiable {
     var plannedRisk: RiskLevel = .low
     /// Teammates who signed off on the finished change.
     var reviews: [Person] = []
+    /// Teammates asked to approve its plan or review its changes, like GitHub review requests.
+    var requested: [Person] = []
     var pr: PullRequest? = nil
     /// Set on tasks created by splitting an over-budget task.
     var splitFrom: String? = nil
@@ -292,6 +294,9 @@ struct FactoryTask: Identifiable {
     var mockups: [Mockup] = []
     /// Files its agents shared: charts, pages, images (MF-205).
     var artifacts: [Wire.Artifact] = []
+    /// Its time, span by span, and when it was made (ms): the Time card adds them up (MF-302, live only).
+    var stages: [Wire.StageSpan] = []
+    var createdAtMs: UInt64 = 0
     /// Waiting for its next session (to plan, build or review) with nobody on it: on the board's Queued column.
     var queued = false
     /// Its place in the queue: lower starts first.

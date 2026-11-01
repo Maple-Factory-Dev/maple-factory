@@ -63,6 +63,21 @@ pub enum TaskState {
     Other,
 }
 
+/// What a task stage span was waiting on, when it wasn't being worked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StageWait {
+    /// Ready to run, waiting for a free slot (the task's `waiting`).
+    Queued,
+    /// A hand was up for a person.
+    Hand,
+    /// The agent's question waited for its answer.
+    Question,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// What a factory session is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1170,6 +1185,23 @@ pub struct TaskEvent {
     pub at: u64,
 }
 
+/// A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageSpan {
+    pub stage: TaskState,
+    /// None: being worked (or, for awaitingApproval, waiting on its approvals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<StageWait>,
+    pub from: u64,
+    /// When it ended (ms); none: still open. Terminal states get a zero-length marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<u64>,
+    /// Worked out after the fact from the task's events, so an estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred: Option<bool>,
+}
+
 /// An agent asking a person something it can't decide.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1606,12 +1638,18 @@ pub struct Task {
     #[serde(default)]
     pub reviews: Vec<String>,
     pub reviews_needed: u32,
+    /// Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks.
+    #[serde(default)]
+    pub requested: Vec<String>,
     #[serde(default)]
     pub comments: Vec<Comment>,
     #[serde(default)]
     pub changes: Vec<ChangeRequest>,
     #[serde(default)]
     pub events: Vec<TaskEvent>,
+    /// Its time, span by span: each stage and what it waited on. Empty on older servers.
+    #[serde(default)]
+    pub stages: Vec<StageSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<Question>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3611,6 +3649,17 @@ pub enum ClientMessage {
         id: String,
         /// The member's login.
         owner: String,
+    },
+    /// Ask teammates to approve its plan or review its changes, or take a request back, like GitHub review requests. Refused once it's merged or cancelled, and for logins that aren't org members. Its owner and anyone who already approved the current stage are skipped. In review with a pull request, they're requested on GitHub too.
+    #[serde(rename = "task.requestReviewers")]
+    TaskRequestReviewers {
+        id: String,
+        /// Logins to request.
+        #[serde(default)]
+        add: Vec<String>,
+        /// Logins whose request is taken back.
+        #[serde(default)]
+        remove: Vec<String>,
     },
     /// Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.
     #[serde(rename = "task.moveGoal")]

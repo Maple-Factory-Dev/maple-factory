@@ -81,6 +81,7 @@ struct TaskDetailView: View {
         }
         if let hand = task.hand { HandCard(task: task, hand: hand) }
         if let question = task.question { QuestionCard(task: task, question: question) }
+        if !task.stages.isEmpty { TimeCard(task: task) }
         if !task.brief.isEmpty {
             Card("Brief", icon: "doc.text") {
                 Text(LocalizedStringKey(task.brief)).font(.callout)
@@ -109,6 +110,69 @@ struct TaskDetailView: View {
 }
 
 // MARK: - Cards
+
+/// How long the task has taken (MF-302): total, worked and waiting, a bar of its stages, and a row per stage.
+struct TimeCard: View {
+    let task: Wire.Task
+
+    var body: some View {
+        let finished = task.state == .merged || task.state == .cancelled || task.state == .closed
+        TimelineView(.periodic(from: .now, by: finished ? 3600 : 15)) { context in
+            let times = TaskTimes(task: task, now: context.date)
+            Card("Time", icon: "clock", accessory: times.estimated ? AnyView(Text("estimated").font(.caption).foregroundStyle(.secondary)) : nil) {
+                HStack(spacing: 18) {
+                    headline("Total", times.total)
+                    headline("Working", times.working)
+                    headline("Waiting", times.waiting)
+                }
+                bar(times)
+                ForEach(times.stages) { stage in
+                    HStack(spacing: 8) {
+                        Circle().fill(stage.stage.color).frame(width: 8, height: 8)
+                        Text(stage.stage.title)
+                        if stage.open { Text("now").font(.caption2.weight(.semibold)).foregroundStyle(stage.stage.color) }
+                        Spacer(minLength: 8)
+                        Text(Self.detail(stage)).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                    .font(.subheadline)
+                }
+            }
+            .accessibilityIdentifier("task.time")
+        }
+    }
+
+    private func headline(_ label: String, _ ms: UInt64) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(TaskTimes.format(ms)).font(.title3.weight(.semibold)).monospacedDigit()
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func bar(_ times: TaskTimes) -> some View {
+        let total = max(1, times.stages.reduce(0) { $0 + $1.total })
+        return GeometryReader { geo in
+            HStack(spacing: 0) {
+                ForEach(times.stages) { stage in
+                    let width = geo.size.width * CGFloat(stage.total) / CGFloat(total)
+                    let waitShare = stage.total == 0 ? 0 : CGFloat(stage.waiting) / CGFloat(stage.total)
+                    Rectangle().fill(stage.stage.color).frame(width: width * (1 - waitShare))
+                    Rectangle().fill(stage.stage.color.opacity(0.3)).frame(width: width * waitShare)
+                }
+            }
+        }
+        .frame(height: 8)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+
+    /// "1h 40m · 22m queued · 10m on a hand".
+    static func detail(_ stage: TaskTimes.Stage) -> String {
+        var parts = [TaskTimes.format(stage.total)]
+        if stage.queued > 0 { parts.append("\(TaskTimes.format(stage.queued)) queued") }
+        if stage.hand > 0 { parts.append("\(TaskTimes.format(stage.hand)) on a hand") }
+        if stage.question > 0 { parts.append("\(TaskTimes.format(stage.question)) on a question") }
+        return parts.joined(separator: " · ")
+    }
+}
 
 struct Card<Content: View>: View {
     let title: String

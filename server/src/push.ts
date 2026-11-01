@@ -96,14 +96,17 @@ export function pushReasons(old: Task | null, task: Task, logins: string[]): Arr
     if (seen.has(c.id)) continue;
     for (const m of c.mentions ?? []) if (m.toLowerCase() !== c.author.toLowerCase()) mentioned.add(m.toLowerCase());
   }
+  // Newly requested reviewers: needs() already counts everyone for an approval, so a request alone wouldn't push.
+  const wasRequested = new Set((old?.requested ?? []).map((l) => l.toLowerCase()));
+  const requested = new Set((task.requested ?? []).map((l) => l.toLowerCase()).filter((l) => !wasRequested.has(l)));
+  const requestReason: PushReason = task.state === "awaitingApproval" ? "approval" : task.state === "reviewing" ? "review" : "mention";
   for (const login of logins) {
     if (mentioned.has(login.toLowerCase())) out.push({ login, reason: "mention" });
     const now = needs(task, login);
-    if (!now) continue;
     const before = old ? needs(old, login) : null;
     const handRaised = !old?.hand && task.hand?.assignee === login;
-    if (before && !handRaised) continue;
-    out.push({ login, reason: now });
+    if (now && (!before || handRaised)) out.push({ login, reason: now });
+    else if (requested.has(login.toLowerCase()) && !(requestReason === "mention" && mentioned.has(login.toLowerCase()))) out.push({ login, reason: requestReason });
   }
   return out;
 }

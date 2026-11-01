@@ -64,8 +64,10 @@ struct MapleFactoryApp: App {
             // a group placed after .appInfo would hang off the one this replaces.
             CommandGroup(replacing: .appInfo) {
                 AboutMenuItem()
-                Button("Check for Updates…") { Updater.shared.checkForUpdates() }
-                    .disabled(!Updater.shared.canCheck)
+                // As the About window's button: a check, or maplefactory.dev for a build that can't update itself.
+                Button("Check for Updates…") { AboutView.checkForUpdates() }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                    .disabled((Updater.shared.available || Updater.shared.isDemo) && !Updater.shared.canCheckNow)
             }
             CommandGroup(after: .sidebar) {
                 // Jump to any task, goal or page, or run a common action.
@@ -325,7 +327,11 @@ struct ContentView: View {
         }
         // A proof shown large: above the sidebar, the slab and the toasts.
         .overlay {
-            if let lightbox = state.lightbox {
+            if case let .page(html, caption, scripts)? = state.lightbox {
+                PageViewerView(html: html, caption: caption, scripts: scripts)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    .zIndex(10)
+            } else if let lightbox = state.lightbox {
                 ProofLightboxView(lightbox: lightbox)
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
                     .zIndex(10)

@@ -234,6 +234,43 @@ fn is_injected(prompt: &str) -> bool {
     p.starts_with('<') && p[1..].chars().take_while(|c| *c != '>').all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Text the factory types into a session arrives as a bracketed paste, which Claude Code wraps in
+/// `<pasted_content id="…">…</pasted_content>` (sometimes written `<\pasted_content …>` /
+/// `<\/pasted_content>`). Drop the tags, keep what was pasted and anything around it. A block whose
+/// closing tag is missing still unwraps. Line breaks inside are kept; see [`unwrap_pasted`].
+pub(crate) fn strip_pasted(prompt: &str) -> String {
+    const TAG: &str = "pasted_content";
+    let mut out = String::with_capacity(prompt.len());
+    let mut rest = prompt;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let after = &rest[lt + 1..];
+        let name = after.trim_start_matches(['\\', '/']);
+        let is_tag = name.starts_with(TAG) && name[TAG.len()..].chars().next().is_none_or(|c| c == '>' || c.is_whitespace());
+        match (is_tag, after.find('>')) {
+            (true, Some(gt)) => {
+                // Two tags back to back stay apart; a newline only pads the paste, so it goes.
+                rest = after[gt + 1..].strip_prefix('\n').unwrap_or(&after[gt + 1..]);
+                if !out.is_empty() && !out.ends_with(char::is_whitespace) && !rest.starts_with(char::is_whitespace) {
+                    out.push(' ');
+                }
+            }
+            (true, None) => rest = "",
+            _ => {
+                out.push('<');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
+
+/// [`strip_pasted`] on one line, for the session's step.
+pub(crate) fn unwrap_pasted(prompt: &str) -> String {
+    strip_pasted(prompt).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn tool_name(payload: &Value) -> Option<&str> {
     payload.get("tool_name").and_then(Value::as_str)
 }
@@ -344,7 +381,7 @@ fn classify(agent: &str, payload: &Value) -> Option<Activity> {
     let text = |key: &str| payload.get(key).and_then(Value::as_str).map(|s| truncate(s, 280));
     match agent {
         "claude" => match payload.get("hook_event_name")?.as_str()? {
-            "UserPromptSubmit" => Some(match text("prompt") {
+            "UserPromptSubmit" => Some(match payload.get("prompt").and_then(Value::as_str).map(unwrap_pasted) {
                 // Claude also "submits" things you didn't type: background task results,
                 // slash-command expansions, reminders. They start with a tag; they're not a task.
                 Some(prompt) if !prompt.is_empty() && !is_injected(&prompt) => Activity::Started(truncate(&prompt, 160)),
@@ -707,6 +744,25 @@ mod tests {
         assert_eq!(state("claude", injected), Some(("working", None)));
         let real = json!({ "hook_event_name": "UserPromptSubmit", "prompt": "<- fix this arrow" });
         assert_eq!(state("claude", real), Some(("working", Some("<- fix this arrow".into()))));
+    }
+
+    #[test]
+    fn pasted_answers_show_without_their_wrapper() {
+        let prompt = |p: &str| state("claude", json!({ "hook_event_name": "UserPromptSubmit", "prompt": p }));
+        let working = |s: &str| Some(("working", Some(s.to_string())));
+        assert_eq!(prompt("<\\pasted_content id=\"a849\">\nUse option B\n<\\/pasted_content>"), working("Use option B"));
+        assert_eq!(prompt("<pasted_content id=\"a849\">Use option B</pasted_content>"), working("Use option B"));
+        assert_eq!(prompt("Answer: <pasted_content id=\"x\">B</pasted_content> thanks"), working("Answer: B thanks"));
+        assert_eq!(prompt("<pasted_content id=\"a\">one</pasted_content>\n<pasted_content id=\"b\">two</pasted_content>"), working("one two"));
+        // A paste past the truncation limit: the closing tag is far beyond it, and still goes.
+        let long = "word ".repeat(200);
+        let step = prompt(&format!("<\\pasted_content id=\"z\">\n{long}\n<\\/pasted_content>")).unwrap().1.unwrap();
+        assert!(!step.contains("pasted_content") && step.starts_with("word word") && step.ends_with('…'), "{step}");
+        // Unfinished block, empty paste, and other injected tags.
+        assert_eq!(prompt("<pasted_content id=\"q\">half an answer"), working("half an answer"));
+        assert_eq!(prompt("<pasted_content id=\"q\">\n</pasted_content>"), Some(("working", None)));
+        assert_eq!(prompt("<pasted_content id=\"q\"><task-notification> b1</pasted_content>"), Some(("working", None)));
+        assert_eq!(unwrap_pasted("a <pasted_contents> b"), "a <pasted_contents> b");
     }
 
     #[test]

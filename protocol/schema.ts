@@ -47,6 +47,14 @@ export const enums: Record<string, Enum> = {
       closed: "Finished without code to merge, e.g. its planner proposed tasks instead of a plan.",
     },
   },
+  StageWait: {
+    doc: "What a task stage span was waiting on, when it wasn't being worked.",
+    values: {
+      queued: "Ready to run, waiting for a free slot (the task's `waiting`).",
+      hand: "A hand was up for a person.",
+      question: "The agent's question waited for its answer.",
+    },
+  },
   Role: {
     doc: "What a factory session is for.",
     values: { planner: "Writes the plan.", builder: "Builds and proves it.", reviewer: "Reviews the change." },
@@ -491,6 +499,15 @@ export const structs: Record<string, Struct> = {
     fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", status: "ChangeStatus", timing: "string?" },
   },
   TaskEvent: { fields: { who: "string", text: "string", at: "u64" } },
+  StageSpan: {
+    doc: "A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.",
+    fields: { stage: "TaskState", wait: "StageWait?", from: "u64", to: "u64?", inferred: "bool?" },
+    fieldDocs: {
+      wait: "None: being worked (or, for awaitingApproval, waiting on its approvals).",
+      to: "When it ended (ms); none: still open. Terminal states get a zero-length marker.",
+      inferred: "Worked out after the fact from the task's events, so an estimate.",
+    },
+  },
   Question: {
     doc: "An agent asking a person something it can't decide.",
     fields: { text: "string", options: "string[]", role: "Role", at: "u64" },
@@ -701,9 +718,11 @@ export const structs: Record<string, Struct> = {
       approvalsNeeded: "u32",
       reviews: "string[]",
       reviewsNeeded: "u32",
+      requested: "string[]",
       comments: "Comment[]",
       changes: "ChangeRequest[]",
       events: "TaskEvent[]",
+      stages: "StageSpan[]",
       question: "Question?",
       hand: "Hand?",
       worker: "Worker?",
@@ -742,6 +761,7 @@ export const structs: Record<string, Struct> = {
     fieldDocs: {
       classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
       artifacts: "Files its agents shared: charts, images, pages. Empty on older tasks.",
+      stages: "Its time, span by span: each stage and what it waited on. Empty on older servers.",
       mergeForecast: "Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.",
       suggestedTitle: "The planner's proposed title, taken when the plan is approved.",
       mergeAt: "The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.",
@@ -757,6 +777,7 @@ export const structs: Record<string, Struct> = {
       priority: "How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).",
       followUpOf: "What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
+      requested: "Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks.",
       brief: "The Markdown spec it was composed from.",
       waiting: "Why it isn't running when it could be: \"Waiting for a free slot on your machines\".",
       agent: "claude or codex: what builds it.",
@@ -1658,6 +1679,11 @@ export const unions: Record<string, Union> = {
         doc: "Change who owns it: anyone can take a task for themselves; only its owner or an admin can hand it to someone else. Its open hand goes with it, and its next sessions prefer the new owner's machines (one already running keeps its machine, as a team slot).",
         fields: { id: "string", owner: "string" },
         fieldDocs: { owner: "The member's login." },
+      },
+      "task.requestReviewers": {
+        doc: "Ask teammates to approve its plan or review its changes, or take a request back, like GitHub review requests. Refused once it's merged or cancelled, and for logins that aren't org members. Its owner and anyone who already approved the current stage are skipped. In review with a pull request, they're requested on GitHub too.",
+        fields: { id: "string", add: "string[]", remove: "string[]" },
+        fieldDocs: { add: "Logins to request.", remove: "Logins whose request is taken back." },
       },
       "task.moveGoal": {
         doc: "Move a task to another goal. It keeps its id, branch and pull request. Refused once it's merged or cancelled, when the target is archived, and unless the target goal works in the task's repo. The target's risk acceptance applies from then on; it leaves its effort.",

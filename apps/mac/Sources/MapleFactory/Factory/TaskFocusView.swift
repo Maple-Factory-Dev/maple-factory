@@ -501,6 +501,7 @@ struct TaskFocusView: View {
             if !task.tickets.isEmpty || task.intakeID != nil { railCard { LinkedCard(task: task) } }
             if let risk { railCard { RiskBox(task: task, risk: risk) } }
 
+            if !task.stages.isEmpty { railCard { TaskTimeCard(task: task) }.id("time") }
             railCard { details }.id("details")
             if let effort = task.effort { railCard { EffortSection(task: task, effort: effort) }.id("effort") }
 
@@ -596,6 +597,7 @@ struct TaskFocusView: View {
                 }
             }
             detailRow("Owner") { OwnerMenu(task: task, avatarSize: 18) }
+            detailRow("Reviewers") { ReviewersRow(task: task) }
             agentRows
             if appState.isLive {
                 if let worker = task.worker {

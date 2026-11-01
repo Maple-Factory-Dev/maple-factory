@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.92.0 — 2026-11-01
+
+The runner keeps up with the factory's protocol for review requests and task time breakdowns, and shows the answer you sent instead of a `<pasted_content …>` tag.
+
 ## 0.91.0 — 2026-11-01
 
 The runner streams each session's Claude transcript or Codex rollout as native session events: messages, tool calls with their diffs and output, thinking, turns with what they used, and permission prompts (read off the pane when the agent's hook says one is showing). It tails the file from a byte cursor, follows Claude to a new transcript after `/clear` or `/compact`, waits for a Codex rollout that appears late, and passes records it doesn't know through as `other` events instead of breaking the stream. `session.events.subscribe` gets a backfill tagged with its nonce, then live events. It also takes `session.input` from the native composer: text is pasted and submitted, slash commands such as `/rc` are typed as a person would type them, and a prompt answer presses that option's key only while that prompt is still showing.

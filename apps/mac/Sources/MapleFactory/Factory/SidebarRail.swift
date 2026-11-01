@@ -76,9 +76,10 @@ struct SidebarRail: View {
 
                     ForEach(FactoryData.presence, id: \.person.id) { entry in
                         let isMe = entry.person.id == FactoryData.me.id
-                        item(isMe ? "\(entry.person.firstName) (you)" : entry.person.firstName,
-                             detail: entry.viewing.map { "Viewing \($0)" } ?? "Online") {
-                            AgentAvatar(agent: entry.person, size: 22, online: true)
+                        let status = FactoryData.status(for: entry.person)
+                        item(entry.person.firstName, titleNote: isMe ? "you" : nil,
+                             detail: FactorySidebar.statusLine(status) ?? entry.viewing.map { "Viewing \($0)" } ?? "Online") {
+                            AgentAvatar(agent: entry.person, size: 25, online: true, shape: .roundedSquare)
                         }
                         .onTapGesture {
                             if let viewing = entry.viewing { state.openTask(viewing) }
@@ -121,6 +122,8 @@ struct SidebarRail: View {
                 }
             }
             .scrollIndicators(.never)
+            // Rail tooltips float to the right of their item, past the rail's edge.
+            .scrollClipDisabled()
             .frame(maxHeight: .infinity, alignment: .top)
 
             updateItem
@@ -210,7 +213,7 @@ struct SidebarRail: View {
         }
     }
 
-    private func item<Content: View>(_ title: String, detail: String? = nil, selected: Bool = false,
+    private func item<Content: View>(_ title: String, titleNote: String? = nil, detail: String? = nil, selected: Bool = false,
                                      dot: Color? = nil, @ViewBuilder content: () -> Content) -> some View {
         content()
             .frame(width: 40, height: 36)
@@ -225,7 +228,7 @@ struct SidebarRail: View {
                 }
             }
             .contentShape(Rectangle())
-            .railTooltip(title, detail: detail)
+            .railTooltip(title, note: titleNote, detail: detail)
     }
 }
 
@@ -233,13 +236,17 @@ struct SidebarRail: View {
 
 extension View {
     /// A quick tooltip that floats to the right of a rail item, instead of the slow system one.
-    func railTooltip(_ title: String, detail: String? = nil) -> some View {
-        modifier(RailTooltip(title: title, detail: detail))
+    func railTooltip(_ title: String, note: String? = nil, detail: String? = nil) -> some View {
+        modifier(RailTooltip(title: title, note: note, detail: detail))
     }
 }
 
-private struct RailTooltip: ViewModifier {
+struct RailTooltip: ViewModifier {
+    static let demo = Notification.Name("RailTooltip.demo")
+
     let title: String
+    /// A muted word right after the title, like "you" on your own row.
+    var note: String? = nil
     let detail: String?
     @State private var hovering = false
     @State private var shown = false
@@ -257,6 +264,9 @@ private struct RailTooltip: ViewModifier {
                     withAnimation(.easeOut(duration: 0.08)) { shown = false }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+                shown = (note.userInfo?["title"] as? String)?.lowercased() == title.lowercased()
+            }
             .overlay(alignment: .leading) {
                 if shown {
                     tip
@@ -273,6 +283,12 @@ private struct RailTooltip: ViewModifier {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.tooltipText)
+            if let note {
+                Text(note)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.tooltipText.opacity(0.55))
+                    .padding(.leading, -3)
+            }
             if let detail {
                 Text(detail)
                     .font(.system(size: 11.5))

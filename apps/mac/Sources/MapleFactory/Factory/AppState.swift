@@ -5,10 +5,13 @@ enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
     /// `size`: the recording's own size (its track's, turned upright), which the lightbox fits by.
     case video(URL, poster: NSImage?, size: CGSize? = nil, caption: String, at: Double = 0)
+    /// An HTML page (a mockup, or an HTML/SVG artifact) shown at Desktop, Tablet or Mobile width.
+    /// `scripts`: false for mockups (no scripts at all), true for artifacts (scripts, but no network).
+    case page(html: String, caption: String, scripts: Bool)
 
     var caption: String {
         switch self {
-        case let .image(_, caption, _), let .video(_, _, _, caption, _): caption
+        case let .image(_, caption, _), let .video(_, _, _, caption, _), let .page(_, caption, _): caption
         }
     }
 }
@@ -259,7 +262,8 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks"]
+                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks",
+                                        "pageviewport", "mockup"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -767,7 +771,15 @@ final class AppState {
     /// Everything waiting on anyone, in every goal.
     var allInbox: [InboxItem] {
         if isLive { return liveInbox }
-        return FactoryData.seedInbox.filter { item in
+        // Reviews requested of you lead, in place of the seed's own row for that task.
+        let me = FactoryData.me
+        let asked = tasks.filter { task in
+            task.requested.contains { $0.id == me.id }
+                && (task.state == .awaitingApproval || task.state == .reviewing)
+                && !(task.state == .reviewing ? task.reviews : task.approvals).contains { $0.id == me.id }
+        }.map { InboxItem(kind: $0.state == .reviewing ? .review : .approval, taskID: $0.id, assignee: me, message: "Your review is requested", when: $0.updated) }
+        return asked + FactoryData.seedInbox.filter { item in
+            if [.approval, .review].contains(item.kind), asked.contains(where: { $0.taskID == item.taskID }) { return false }
             let task = task(item.taskID)
             switch item.kind {
             case .mention: return !dismissedMentions.contains(item.id)
@@ -790,15 +802,22 @@ final class AppState {
     static func liveInbox(_ tasks: [FactoryTask], me: Person, dismissed dismissedMentions: Set<String>,
                           mentions: (FactoryTask) -> [InboxItem]) -> [InboxItem] {
         var items: [InboxItem] = []
+        // Tasks someone asked you to sign off on lead their groups.
+        var requestedOfMe: [InboxItem] = []
         for task in tasks {
             let mine = task.owner.id == me.id
+            let asked = task.requested.contains { $0.id == me.id }
             if task.state == .awaitingApproval && !task.approvals.contains(where: { $0.id == me.id }) {
-                items.append(InboxItem(kind: .approval, taskID: task.id, assignee: me, message: "Plan v\(task.planVersion) is ready for your approval", when: task.updated))
+                let item = InboxItem(kind: .approval, taskID: task.id, assignee: me, message: asked ? "Your review is requested · plan v\(task.planVersion)" : "Plan v\(task.planVersion) is ready for your approval", when: task.updated)
+                if asked { requestedOfMe.append(item) } else { items.append(item) }
+            }
+            if task.state == .reviewing, asked, !task.reviews.contains(where: { $0.id == me.id }) {
+                requestedOfMe.append(InboxItem(kind: .review, taskID: task.id, assignee: me, message: "Your review is requested", when: task.updated))
             }
             if let question = task.question {
                 items.append(InboxItem(kind: .question, taskID: task.id, assignee: task.owner, message: question, when: task.updated))
             }
-            if task.state == .reviewing, task.autoReview?.current?.verdict == .passed, !task.reviews.contains(where: { $0.id == me.id }) {
+            if task.state == .reviewing, !asked, task.autoReview?.current?.verdict == .passed, !task.reviews.contains(where: { $0.id == me.id }) {
                 items.append(InboxItem(kind: .review, taskID: task.id, assignee: mine ? me : task.owner, message: "Passed automatic review; ready for yours", when: task.updated))
             }
             if task.state != .merged, task.pr?.checks.contains(where: { $0.status == .failed }) ?? false {
@@ -806,7 +825,7 @@ final class AppState {
             }
             items += mentions(task).filter { !dismissedMentions.contains($0.id) }
         }
-        return items
+        return requestedOfMe + items
     }
 
     /// A Mentions row for each comment in the task that @mentions you and isn't yours.
@@ -1587,6 +1606,26 @@ final class AppState {
         showToast(mine ? "You took over \(id)" : "Gave \(id) to \(person.firstName)", icon: "person.crop.circle.badge.checkmark")
     }
 
+    /// Asks teammates to approve its plan or review its changes, or takes a request back (GitHub-style review requests).
+    func requestReviewers(_ id: String, add: [String], remove: [String] = []) {
+        guard !add.isEmpty || !remove.isEmpty else { return }
+        let people = add.map { login in FactoryData.people.first { $0.github == login } ?? LiveAdapter.person(login, members: client?.members ?? []) }
+        let change: (inout FactoryTask) -> Void = { task in
+            task.requested.removeAll { remove.contains($0.github ?? "") }
+            task.requested += people.filter { p in !task.requested.contains { $0.github == p.github } }
+        }
+        if let client, isLive {
+            client.expect(id, change)
+            client.send(.taskRequestReviewers(.init(id: id, add: add, remove: remove)))
+        } else {
+            update(id) { task in
+                change(&task)
+                for p in people { task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Requested a review from @\(p.github ?? p.name)", when: "now"), at: 0) }
+                if task.requested.contains(where: { $0.id == FactoryData.me.id }) { task.needsYou = true; task.detail = "Your review is requested" }
+            }
+        }
+    }
+
     // MARK: Goal
 
     /// The goals `id` can move to (unarchived, not its own), each with why it can't when its goal doesn't work in the task's repo.
@@ -1881,6 +1920,7 @@ final class AppState {
                 if task.state == .backlog { task.state = .awaitingApproval }
                 if keepTitle { task.suggestedTitle = nil }
                 task.approvals.append(me)
+                task.requested.removeAll { $0.id == me.id }
                 task.activity.insert(ActivityItem(who: me.name, text: "Approved plan v\(task.planVersion)", when: "now"), at: 0)
                 if task.approvals.count >= needed {
                     if let title = task.suggestedTitle {
@@ -2416,6 +2456,9 @@ final class AppState {
             guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
+            // The Detail panel's Reviewers row: `request:<id>:<login>`, and `reviewersask:<id>` opens its picker.
+            case "request" where parts.count > 2: requestReviewers(parts[1], add: [parts[2]])
+            case "reviewersask": NotificationCenter.default.post(name: ReviewersRow.demoOpen, object: parts[1])
             case "backlog": sendToBacklog(parts[1])
             case "plan": plan(parts[1])
             case "review": approveChanges(parts[1])
@@ -2529,8 +2572,10 @@ final class AppState {
             case "native": NotificationCenter.default.post(name: NativeSessionView.demo, object: Array(parts.dropFirst()).map { String($0) })
             // A press on one of the Risk policy editor's sign-off steppers (with `-window riskpolicy`):
             // `riskstep:approvals:low:-` (row approvals or reviews, a level, + or -).
+            // Follow or unfollow a goal, as its header star would: `follow:Auth overhaul:off`.
+            case "follow": setFollowing(FactoryData.goal(named: parts[1]), parts.count > 2 ? parts[2] != "off" : true)
             case "riskstep": NotificationCenter.default.post(name: RiskPolicyEditor.demoStep, object: Array(parts.dropFirst()).map { String($0) })
-            case "recurring": NotificationCenter.default.post(name: RecurringButton.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
+            case "recurring": NotificationCenter.default.post(name: RecurringSheetDemo.demoOpen, object: parts.count > 1 ? String(parts[1]) : nil)
             case "requests": NotificationCenter.default.post(name: IntakeView.demo, object: Array(parts.dropFirst()))
             case "overview": NotificationCenter.default.post(name: GoalOverview.demo, object: Array(parts.dropFirst()))
             case "findings": NotificationCenter.default.post(name: AppState.demoFindings, object: Array(parts.dropFirst()))
@@ -2616,6 +2661,14 @@ final class AppState {
                 case "zoom", "pan": NotificationCenter.default.post(name: ProofLightboxView.demoZoom, object: Array(parts.dropFirst()))
                 default: NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1])
                 }
+            // MF-296: the first HTML mockup or artifact on screen, opened large (`pageviewer:open`), shown at a width
+            // (`pageviewer:desktop`, `:tablet`, `:mobile`, `:fit`) and put away (`pageviewer:close`).
+            case "pageviewer":
+                switch parts[1] {
+                case "close": closeLightbox()
+                case "open": NotificationCenter.default.post(name: PageViewerView.demoOpen, object: nil)
+                default: NotificationCenter.default.post(name: PageViewerView.demoPreset, object: parts[1])
+                }
             // A trackpad scroll at a point in the window, headless: `scroll:<x>:<y>:<dx>:<dy>`, with `:cmd` to hold ⌘.
             case "scroll" where parts.count > 4:
                 let n = parts[1...4].map { CGFloat(Double($0) ?? 0) }
@@ -2676,6 +2729,10 @@ final class AppState {
             case "post": NotificationCenter.default.post(name: TaskComposer.demoSend, object: nil)
             case "openref": NotificationCenter.default.post(name: TaskRefQuery.demoOpen, object: nil, userInfo: ["id": parts[1]])
             case "hoverref": NotificationCenter.default.post(name: TaskRefHover.demoHover, object: DemoClaim(), userInfo: ["id": parts[1]])
+            // A sidebar person's hover card, by first name (`hoverperson:chris`; `none` closes it).
+            // A collapsed-rail item's tooltip, by its title (`hoverrail:andrea`; `none` hides it).
+            case "hoverrail": NotificationCenter.default.post(name: RailTooltip.demo, object: nil, userInfo: ["title": parts[1]])
+            case "hoverperson": NotificationCenter.default.post(name: PersonHover.demoHover, object: nil, userInfo: ["name": parts[1]])
             // `ready:1` waits for a live factory's first snapshot, so a recording's timing starts there.
             case "ready": while !isLive || showOnboarding { try? await Task.sleep(for: .milliseconds(100)) }
             // The Timeline's "Show merged" pill, and moving to another goal or page.

@@ -71,7 +71,7 @@ import SwiftUI
         let start = day(t.createdAt)
 
         var task = FactoryTask(id: t.id, goal: goalName, title: t.title, state: state(t.state),
-                               detail: detail(t), span: start...max(start + 1, day(t.updatedAt) + 1), updated: ago(t.updatedAt))
+                               detail: detail(t, me: me), span: start...max(start + 1, day(t.updatedAt) + 1), updated: ago(t.updatedAt))
         // The stage owns an agent even between sessions, so a closed planner can still be steered into plan v2.
         task.agent = t.worker.map { role($0.role.rawValue) } ?? stageAgent(t.state, planned: !t.plan.isEmpty)
         task.worker = t.worker.map { FactoryTask.Worker(role: $0.role.rawValue, agent: $0.agent, machine: $0.machine, session: $0.session) }
@@ -108,6 +108,7 @@ import SwiftUI
         task.approvals = t.approvals.map(who)
         task.approvalsNeeded = t.approvalsNeeded.int
         task.reviews = t.reviews.map(who)
+        task.requested = t.requested.map(who)
         task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions, replyTo: $0.replyTo) }
         task.changeRequests = t.changes.map { change in
             var request = ChangeRequest(author: who(change.author), text: change.text, anchor: change.anchor,
@@ -146,6 +147,8 @@ import SwiftUI
         }
         task.mockups = t.mockups.map(mockup)
         task.artifacts = t.artifacts
+        task.stages = t.stages
+        task.createdAtMs = t.createdAt
         task.intakeID = t.intake
         task.needsYou = needsYou(t, me: me)
         task.queued = queued(t)
@@ -180,14 +183,25 @@ import SwiftUI
         guard let me else { return false }
         if t.hand?.assignee == me || (t.question != nil && t.owner == me) { return true }
         if t.state == .awaitingApproval && !t.approvals.contains(me) { return true }
+        if requestedOf(t, me: me) { return true }
         // Only while a person's review is still needed (the web inbox rule): a passed task that needs none is merging, not waiting.
         if t.state == .reviewing && t.autoReview?.rounds.last?.verdict == .passed && t.reviews.count < t.reviewsNeeded && !t.reviews.contains(me) { return true }
         return false
     }
 
-    private static func detail(_ t: Wire.Task) -> String {
+    /// Whether `me` was asked to sign off on the stage it's in: the plan waiting for approval, or the changes in review.
+    static func requestedOf(_ t: Wire.Task, me: String?) -> Bool {
+        guard let me, t.requested.contains(me) else { return false }
+        return t.state == .awaitingApproval || t.state == .reviewing
+    }
+
+    private static func detail(_ t: Wire.Task, me: String?) -> String {
         if t.hand != nil { return "Needs a hand" }
         if t.question != nil { return "Asked a question" }
+        if requestedOf(t, me: me) { return "Your review is requested" }
+        if (t.state == .awaitingApproval || t.state == .reviewing), t.owner == me, !t.requested.isEmpty {
+            return "Review requested by you · \(t.requested.map { "@\($0)" }.joined(separator: ", "))"
+        }
         // A schedule shows as its own badge; the server's line has the time in UTC.
         if let waiting = t.waiting { return waiting.hasPrefix("Scheduled") ? "Scheduled" : waiting }
         switch t.state {
