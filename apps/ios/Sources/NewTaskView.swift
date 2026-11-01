@@ -132,13 +132,18 @@ struct NewTaskView: View {
                 // Opened by `-newTask YES` for a screenshot, the keyboard would hide the form.
                 titleFocused = !UserDefaults.standard.bool(forKey: "newTask")
                 injectTestAttachments()
+                // `-newTaskEffort <name>` opens with a new effort typed in, for a screenshot.
+                if let name = UserDefaults.standard.string(forKey: "newTaskEffort"), !name.isEmpty {
+                    effort = Self.newEffort
+                    newEffort = name
+                }
             }
             .onChange(of: goalID) {
                 repo = goal?.repo ?? goal?.repos.first
                 effort = ""
                 newEffort = ""
             }
-            .onChange(of: effort) { effortFocused = effort == Self.newEffort }
+            .onChange(of: effort) { effortFocused = effort == Self.newEffort && !UserDefaults.standard.bool(forKey: "newTask") }
             .onChange(of: picks) {
                 let items = picks
                 picks = []
