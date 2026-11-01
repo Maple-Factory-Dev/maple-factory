@@ -71,15 +71,15 @@ export function parseCheck(line: string): { command: string; requires: string[] 
   return { command, requires: [...new Set(tags)].sort() };
 }
 
-/** A repo's checks split for a machine with these tags: the commands it runs (prefixes stripped), and those it skips with the tags it lacks. A line that can't be read runs as written, so the check fails loudly instead of vanishing. */
-export function checksFor(s: WorktreeScripts | null | undefined, tags: readonly string[]): { run: string[]; skipped: { command: string; missing: string[] }[] } {
-  const have = new Set(tags);
+/** A repo's checks split for a machine with these tags: the commands it runs (prefixes stripped), and those it skips with the tags it lacks. A line that can't be read runs as written, so the check fails loudly instead of vanishing. Tags of null (a machine the factory can't see) runs every check: one that can't run there fails loudly rather than being skipped unseen. */
+export function checksFor(s: WorktreeScripts | null | undefined, tags: readonly string[] | null): { run: string[]; skipped: { command: string; missing: string[] }[] } {
+  const have = new Set(tags ?? []);
   const run: string[] = [];
   const skipped: { command: string; missing: string[] }[] = [];
   for (const line of checkCommands(s)) {
     const c = parseCheck(line);
     if ("error" in c) { run.push(line); continue; }
-    const missing = c.requires.filter((t) => !have.has(t));
+    const missing = tags ? c.requires.filter((t) => !have.has(t)) : [];
     if (missing.length) skipped.push({ command: c.command, missing });
     else run.push(c.command);
   }

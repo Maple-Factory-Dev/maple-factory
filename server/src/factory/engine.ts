@@ -1526,6 +1526,10 @@ export class Engine {
       machine = machines.find((m) => m.id === task.machine);
       if (!machine) return `${task.machine} was removed; move it to start over elsewhere.`;
       if (!machine.online) return `Waiting for ${machine.name} to come back online.`;
+      // Approval moves a plan off a machine that lacks its tags, but a build reopened straight from
+      // cancelled skips approval: don't build Apple work on a machine without macos.
+      const lacks = task.state === "building" ? missingTags(task, machine) : [];
+      if (lacks.length) return `${machine.name}, where its worktree is, doesn't have ${lacks.join(" and ")}; move it to a machine that does.`;
       if (this.pause(machine.id) === "all") return `${machine.name} is paused.`;
       const capped = this.overCap(machine, task.agent, task.owner);
       if (capped) return capped;
@@ -2912,7 +2916,8 @@ export class Engine {
         if (!priv.worktree || !priv.repoDir) fail("The factory doesn't know where this worktree came from; raise a hand.");
         this.store.savePrivate(task.id, { ...priv, finishing: true });
         // Only the checks this machine can run: a `[macos] ` line is left to a Mac (or CI) when it's on Linux.
-        const { run: checks, skipped } = checksFor(this.store.scriptsFor(taskRepo(task, goal ?? null)), here?.tags ?? []);
+        // A machine the factory can't see (removed, or not loaded) runs them all rather than skipping on unknown tags.
+        const { run: checks, skipped } = checksFor(this.store.scriptsFor(taskRepo(task, goal ?? null)), here ? here.tags ?? [] : null);
         const skipNote = skipped.length ? ` ${skipped.length} check${skipped.length === 1 ? "" : "s"} skipped on this machine (${skipped.map((c) => `needs ${c.missing.join(", ")}`).join("; ")}).` : "";
         task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";
         task.comments.push({ id: crypto.randomUUID(), author: "builder", text: str(a.summary, "summary"), at: now(), anchor: "Summary", via: null });

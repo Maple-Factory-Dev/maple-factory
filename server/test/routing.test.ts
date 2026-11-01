@@ -219,6 +219,22 @@ test("finish on the droplet sends only npm test and says it skipped the macos ch
   assert.doesNotMatch(String(macReply.result?.summary), /skipped/);
 });
 
+test("finish on a machine the factory can't see runs every check instead of skipping on unknown tags", async () => {
+  const f = finishing("gone");
+  const reply = await f.finish();
+  await f.settle();
+  assert.equal(f.sent.find((s) => s.body.type === "task.finish")!.body.checks, "npm test\nxcodebuild test -scheme MapleFactory");
+  assert.doesNotMatch(String(reply.result?.summary), /skipped/);
+});
+
+test("a macos build pinned to the droplet (reopened from cancelled, skipping approval) waits instead of building there", async () => {
+  const f = factory({ machine: "droplet" });
+  f.store.savePrivate("MF-1", { worktree: "~/.worktrees/factory/mf-1", repoDir: "~/factory", base: "main", finishing: false, restarts: 0 } as never);
+  await f.pump();
+  assert.equal(f.opened().length, 0);
+  assert.equal(f.t().waiting, "droplet, where its worktree is, doesn't have macos; move it to a machine that does.");
+});
+
 test("the builder's prompt on the droplet lists the xcodebuild check as skipped (needs macos)", async () => {
   const f = factory({ requires: null });
   f.at("mac").online = false;
