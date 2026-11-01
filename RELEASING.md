@@ -128,6 +128,31 @@ With required reviewers on `release`, each of the three jobs waits for an approv
 Locally, `release-runner.mjs` with no subcommand still does both halves: it tags, builds every target into
 `runner/target/release-dist` (Linux in Docker unless it's this machine's own) and publishes from there.
 
+`.github/workflows/release-mac.yml` releases the Mac app as a hand `release.mjs ship` does: Actions › Release the
+Mac app › Run workflow (or `gh workflow run release-mac.yml -f channel=beta [-f version=0.4.0] [-f notes="…"]
+[-f ref=<sha>]`), or `uses: ./.github/workflows/release-mac.yml` with `secrets: inherit`. One `macos-15` job in
+`release`, one run at a time (`release-mac`). Inputs: `version` (blank: patch + 1 of `apps/mac/version.json`),
+`channel` (`beta`, the default, or `stable`), `notes` (markdown; blank: written from the commits) and `ref` (the
+commit to build; blank: `main`). It stops first if `mac-v<v>` is already on origin. Then:
+
+1. imports the Developer ID (`import-signing-cert.sh` with `APPLE_CERT_P12` / `APPLE_CERT_PASSWORD`; removed again
+   at the end, pass or fail), runs `swift build` and `swift test` in `apps/mac`;
+2. `release.mjs new <v> --channel <channel>`, then `scripts/ci/mac-release-notes.mjs <v>`: the `notes` input as
+   the body, or else Added / Changed / Fixed bullets from the commit subjects since the last `mac-v` tag
+   (release commits and merges left out, `MF-123:` and `(#n)` taken off). The frontmatter stays as `new` wrote it;
+3. one step per stage, each with `--yes`: `build --no-tag` (`SIGN_IDENTITY` var, `SENTRY_AUTH_TOKEN` for the
+   dSYMs), `notarize` and `dmg` (the API key: `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`, `NOTARY_KEY`), `sign`
+   (`SPARKLE_PRIVATE_KEY`), `appcast`, and `publish` (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets,
+   `R2_ACCOUNT_ID`, `R2_BUCKET` and `UPDATES_URL` vars). The DMG is also uploaded as the `maple-factory-<v>-dmg`
+   artifact;
+4. waits up to 2 minutes for `$UPDATES_URL/appcast.xml` to list `<v>` as its first item. Only then does it commit
+   `apps/mac/releases/<v>` and `version.json` as `Mac app <v> released: <the notes' first bullet>`, push it to
+   `main` as the release App (retrying on a race) and push `mac-v<v>` on that commit.
+
+A beta still takes a `mac-v<v>` tag, like the other two. `bundle.sh` builds the runner it bundles from the tree,
+so a workflow that releases both in one round passes release-runner.yml's `sha` output as `ref`:
+`with: { ref: "${{ needs.runner.outputs.sha }}" }`.
+
 ## Rehearsing
 
 - Feed: `--to dir:<scratch>/feed` writes a feed-shaped folder and tags nothing.

@@ -36,6 +36,9 @@ on:
     outputs:
       version:
         value: ${{ jobs.prepare.outputs.version }}
+      # The tagged bump commit: pass it as release-mac.yml's `ref` so the app bundles this runner.
+      sha:
+        value: ${{ jobs.prepare.outputs.sha }}
 
 permissions:
   contents: read
