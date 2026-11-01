@@ -84,10 +84,12 @@ struct TaskDetailView: View {
         if !task.stages.isEmpty { TimeCard(task: task) }
         if !task.brief.isEmpty {
             Card("Brief", icon: "doc.text") {
-                MarkdownText(source: task.brief)
+                let brief = BriefContent.parse(task.brief)
+                MarkdownText(source: brief.text)
                     .accessibilityElement(children: .contain)
                     // The brief as written (links and all), for the UI tests.
                     .accessibilityIdentifier("task.brief").accessibilityValue(task.brief)
+                if !brief.attachments.isEmpty { AttachmentGallery(attachments: brief.attachments) }
             }
         }
         if let effort = task.effort, !effort.isEmpty { EffortCard(task: task, effort: effort) }
@@ -929,7 +931,7 @@ struct TimelineSection: View {
                     Avatar(login: comment.author, size: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(comment.author).font(.caption.weight(.semibold))
-                        MarkdownText(source: comment.text)
+                        NoteWithAttachments(source: comment.text, compact: true)
                     }
                 case .change(let change):
                     Image(systemName: "arrow.uturn.right").foregroundStyle(Theme.warning).frame(width: 22)

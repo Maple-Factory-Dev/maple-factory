@@ -54,6 +54,9 @@ final class NewTaskTests: XCTestCase {
         XCTAssertTrue(value.hasPrefix("Made on the phone by the UI test."), value)
         XCTAssertNotNil(value.range(of: #"\n!\[screenshot-[0-9-]+\.png\]\(/attachments/demo/screenshot-[0-9-]+\.png\)$"#, options: .regularExpression),
                         "the brief doesn't end with the attachment link: \(value)")
+        // MF-326: the photo shows as a thumbnail, not as link text.
+        let thumb = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "attachment.image.screenshot-")).firstMatch
+        XCTAssertTrue(thumb.waitForExistence(timeout: 5), "the photo just sent isn't a thumbnail in the task view")
     }
 
     /// While an upload runs, Send waits.
