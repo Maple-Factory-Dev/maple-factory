@@ -3554,7 +3554,43 @@ export function pullBody(task: Task, opts: { base?: string | null; isPrivate: bo
   const body = [`Built by Maple Factory for **${task.id}**, owned by @${task.owner}.`, brief, steps && `## Plan\n\n${steps}`, proofs && `## Done when\n\n${proofs}`]
     .filter(Boolean)
     .join("\n\n");
-  return pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 60_000);
+  // Artifacts last, after attachment links are rewritten: the block is the factory's own and kept current.
+  const artifacts = pullArtifacts(task, opts);
+  return (pullAttachments(body, { ...opts, taskId: task.id }).slice(0, 55_000) + (artifacts ? `\n\n${artifacts}` : "")).slice(0, 60_000);
+}
+
+/** Around the pull request's Artifacts section: the factory swaps what's between them, nothing else. */
+export const ARTIFACTS_START = "<!-- maple:artifacts -->";
+export const ARTIFACTS_END = "<!-- /maple:artifacts -->";
+
+/** The pull request's Artifacts section, between its markers: each artifact the agents shared, linked to
+ *  the task page with it picked. On a public repo only titles and the members-only links (no summaries,
+ *  which can quote the brief), as with evidence. Empty with no artifacts. */
+export function pullArtifacts(task: Task, opts: { base?: string | null; isPrivate: boolean }): string {
+  const list = task.artifacts ?? [];
+  if (!list.length) return "";
+  const base = (opts.base ?? "").replace(/\/+$/, "");
+  const md = (t: string) => t.replace(/[\[\]\\`*_<>|]/g, (c) => `\\${c}`).replace(/\s+/g, " ");
+  const lines = [...list]
+    .sort((a, b) => a.at - b.at)
+    .map((x) => {
+      const title = base ? `[${md(x.title)}](${base}/t/${encodeURIComponent(task.id)}?artifact=${encodeURIComponent(x.id)})` : md(x.title);
+      const meta = `${x.kind}${x.version > 1 ? `, v${x.version}` : ""}, shared by the ${x.by}`;
+      const summary = opts.isPrivate && x.summary ? ` — ${md(x.summary)}` : "";
+      return `- ${title} (${meta})${summary}`;
+    });
+  const where = base ? (opts.isPrivate ? "" : " Links open in Maple Factory, for its members.") : " They're kept in Maple Factory.";
+  return `${ARTIFACTS_START}\n## Artifacts\n\nShared by the agents on ${task.id}.${where}\n\n${lines.join("\n")}\n${ARTIFACTS_END}`;
+}
+
+/** A pull request body with its Artifacts section swapped for \`block\` (appended when a person removed it),
+ *  leaving whatever people wrote around it as it was. An empty \`block\` drops the section. */
+export function swapArtifacts(body: string, block: string): string {
+  const start = body.indexOf(ARTIFACTS_START);
+  const end = start >= 0 ? body.indexOf(ARTIFACTS_END, start) : -1;
+  if (start >= 0 && end >= 0) return body.slice(0, start) + block + body.slice(end + ARTIFACTS_END.length);
+  if (!block) return body;
+  return `${body.replace(/\s+$/, "")}${body.trim() ? "\n\n" : ""}${block}`;
 }
 
 /** A runner's `task.merged` branch note (deleted, gone, moved or `failed: <why>`) as a timeline line,
