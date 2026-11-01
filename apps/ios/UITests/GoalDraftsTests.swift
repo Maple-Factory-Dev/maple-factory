@@ -1,6 +1,6 @@
 import XCTest
 
-/// A goal's drafts and backlog in the demo factory: swipe a draft to Plan or Backlog, swipe a backlog
+/// A goal's drafts and backlog in the demo factory, on its All tasks screen: swipe a draft to Plan or Backlog, swipe a backlog
 /// task to Plan, and drag drafts into order in Edit mode. Runs without a live factory.
 ///   xcodebuild test -scheme "Maple Factory" -only-testing:MapleFactoryUITests/GoalDraftsTests …
 final class GoalDraftsTests: XCTestCase {
@@ -18,6 +18,15 @@ final class GoalDraftsTests: XCTestCase {
         app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goal", goal]
         app.launch()
         XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 60), "the goal didn't open")
+        openAllTasks()
+    }
+
+    /// The stage-by-stage list, from the bottom of the goal's Overview.
+    private func openAllTasks() {
+        let all = app.buttons["goal-all-tasks"]
+        for _ in 0..<5 where !(all.exists && all.isHittable) { app.collectionViews.firstMatch.swipeUp() }
+        all.tap()
+        XCTAssertTrue(app.navigationBars["All tasks"].waitForExistence(timeout: 10), "All tasks didn't open")
     }
 
     private func header(_ text: String) -> XCUIElement { app.staticTexts[text] }
@@ -121,8 +130,11 @@ final class GoalDraftsTests: XCTestCase {
 
         // It stays put when you leave the goal and come back.
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
         app.staticTexts["Mobile app"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10))
+        openAllTasks()
         scrollToBottom()
         XCTAssertTrue(app.staticTexts[widget].waitForExistence(timeout: 10))
         XCTAssertLessThan(app.staticTexts[widget].frame.minY, app.staticTexts[ipad].frame.minY, "the order didn't survive leaving the goal")

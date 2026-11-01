@@ -91,8 +91,9 @@ final class GoalEditorTests: XCTestCase {
     func testLeadEditsNameAndPlannerInstructions() {
         launch("-goal", "g-app")
         XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 60))
+        app.buttons["goal-menu"].tap()
         let edit = app.buttons["editGoal"]
-        XCTAssertTrue(edit.exists, "the lead has no Edit button")
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "the lead has no Edit goal in the … menu")
         edit.tap()
 
         XCTAssertTrue(nameField.waitForExistence(timeout: 5))
@@ -108,6 +109,8 @@ final class GoalEditorTests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Mobile apps"].waitForExistence(timeout: 5), "the title didn't update")
         XCTAssertFalse(nameField.exists, "the sheet stayed open")
+        app.buttons["goal-menu"].tap()
+        XCTAssertTrue(app.buttons["editGoal"].waitForExistence(timeout: 5))
         app.buttons["editGoal"].tap()
         XCTAssertTrue(nameField.waitForExistence(timeout: 5))
         XCTAssertEqual(nameField.value as? String, "Mobile apps")
@@ -142,6 +145,8 @@ final class GoalEditorTests: XCTestCase {
         launch("-goal", "g-api", "-demoRole", "member")
         XCTAssertTrue(app.navigationBars["Public API"].waitForExistence(timeout: 60))
         XCTAssertTrue(app.buttons["newTask"].exists)
+        app.buttons["goal-menu"].tap()
+        XCTAssertTrue(app.buttons["goal-settings"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["editGoal"].exists, "a member who doesn't lead it can edit the goal")
     }
 }
