@@ -1255,6 +1255,25 @@ mod tests {
         std::fs::remove_dir_all(&home).unwrap();
     }
 
+    /// The prove path against a real control plane, with real files: `MAPLE_LIVE_BASE`, `MAPLE_LIVE_RUNNER`,
+    /// `MAPLE_LIVE_TOKEN` (an enrolled runner's), `MAPLE_LIVE_TASK` and `MAPLE_LIVE_FILES` (paths under
+    /// ~/.cache/maple-proof/<MAPLE_LIVE_BRANCH>/, comma-separated). Prints each stored key and size.
+    #[tokio::test]
+    #[ignore = "needs a running control plane (wrangler dev)"]
+    async fn live_prove_uploads_files_as_they_are() {
+        let env = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("set {k}"));
+        let home = PathBuf::from(env("HOME"));
+        let tag = TaskTag { id: env("MAPLE_LIVE_TASK"), branch: env("MAPLE_LIVE_BRANCH") };
+        let (base, runner, token) = (env("MAPLE_LIVE_BASE"), env("MAPLE_LIVE_RUNNER"), env("MAPLE_LIVE_TOKEN"));
+        for (i, file) in env("MAPLE_LIVE_FILES").split(',').enumerate() {
+            let size = std::fs::metadata(expand_home(file)).unwrap().len();
+            let args = json!({ "item": i + 1, "kind": "screenshot", "summary": "live", "file": file });
+            let out = prepare_with(args, &tag, &home, &home, Some((&base, &runner, &token))).await.unwrap();
+            println!("{file}: {size} bytes on disk -> {} {} {} bytes", out["file"]["key"], out["file"]["type"], out["file"]["bytes"]);
+            assert_eq!(out["file"]["bytes"], json!(size));
+        }
+    }
+
     #[test]
     fn sniffs_like_the_control_plane() {
         assert_eq!(sniff(PNG), Some("image/png"));
