@@ -147,8 +147,8 @@ struct SidebarRail: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// The sidebar footer's update, folded down to an icon: a ring fills while it downloads, and a
-    /// click does what the footer's button would.
+    /// The sidebar footer's update, folded down to an icon: the toast's ring fills while it downloads
+    /// (and spins while checking or when the size isn't known), and a click does what the footer's button would.
     @ViewBuilder private var updateItem: some View {
         let updater = Updater.shared
         let phase = updater.phase
@@ -156,7 +156,7 @@ struct SidebarRail: View {
             item(phase.title, detail: phase.detail) {
                 ZStack {
                     if phase.isBusy {
-                        ProgressRing(progress: phase.progress ?? 0, color: Theme.accent, size: 20)
+                        UpdateRing(fraction: phase.progress, size: 20)
                         Image(systemName: "arrow.down")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(Theme.text.opacity(0.75))
