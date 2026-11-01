@@ -310,12 +310,22 @@ enum DemoData {
             row("API-22", "Pagination for list endpoints", .code, .minor, "The cursor isn't signed, so clients can forge offsets.", "server/src/page.ts", "server/src", .fixed, 1, 900),
         ].filter { $0.at >= now - UInt64(days) * 24 * hour }
         let open = UInt32(recent.filter { $0.status == .open }.count)
+        // Typed lets keep the 25-argument initializer quick to type-check in Release.
+        let wide = days >= 3
+        let findingCount: UInt32 = max(UInt32(recent.count), n(112))
+        let cycle: UInt64 = UInt64(16 + days % 5) * hour
+        let activeCycle: UInt64 = UInt64(4 + days % 5) * hour
+        let handOpen: UInt64? = wide ? 42 * 60_000 : nil
+        let firstTry: Double = wide ? 0.71 : 1
+        let planVersionsAvg: Double = wide ? 1.4 : 1
+        let totals = Wire.StatsTotals(
+            merged: max(1, n(47)), autoMerged: n(12), cancelled: n(3), created: max(1, n(58)), tasksTouched: max(2, n(61)), handsRaised: n(16), handsOpen: 1,
+            questions: n(9), steers: n(34), prompts: n(11), restarts: n(4), reviewRounds: max(1, n(83)), findings: findingCount,
+            planVersions: n(74), approvals: n(52), cycleMedianMs: cycle, activeCycleMedianMs: activeCycle, idleMedianMs: 12 * hour, handOpenMedianMs: handOpen,
+            firstTryApproval: firstTry, avgPlanVersions: planVersionsAvg, reviewRoundsPerMerge: 1.7, steersPerTask: 0.56)
         return .init(
             days: UInt32(days), since: now - UInt64(days) * 86_400_000, generatedAt: now, inferred: 0,
-            totals: .init(merged: max(1, n(47)), autoMerged: n(12), cancelled: n(3), created: max(1, n(58)), tasksTouched: max(2, n(61)), handsRaised: n(16), handsOpen: 1,
-                          questions: n(9), steers: n(34), prompts: n(11), restarts: n(4), reviewRounds: max(1, n(83)), findings: max(UInt32(recent.count), n(112)),
-                          planVersions: n(74), approvals: n(52), cycleMedianMs: UInt64(16 + days % 5) * hour, activeCycleMedianMs: UInt64(4 + days % 5) * hour, idleMedianMs: 12 * hour, handOpenMedianMs: days >= 3 ? 42 * 60_000 : nil,
-                          firstTryApproval: days >= 3 ? 0.71 : 1, avgPlanVersions: days >= 3 ? 1.4 : 1, reviewRoundsPerMerge: 1.7, steersPerTask: 0.56),
+            totals: totals,
             costTotal: .init(key: "total", sessions: max(3, n(186)), costUsd: 412.6 * scale, tokens: UInt64(318_400_000 * scale), unpriced: n(31)),
             findings: .init(
                 areas: recent.isEmpty ? [] : [.init(key: "server/src", count: max(1, n(38)), tasks: max(1, n(14)), serious: n(22)),
