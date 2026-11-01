@@ -745,6 +745,7 @@ export class Engine {
         this.stat(task, "question.answered", { waitMs: now() - q.at }, who, q.role);
         task.comments.push(await this.comment(who, msg.text, { anchor: `Q: ${q.text}` }));
         this.event(task, who, `answered: ${msg.text}`);
+        this.noteAnswer(task, who, msg.text);
         this.save(task);
         if (!(await this.type(task, `${who} answered your question ("${q.text}"): ${msg.text}`))) await this.pump();
         return;
@@ -790,6 +791,7 @@ export class Engine {
         const use = granted ? this.budget(task) : null;
         this.store.savePrivate(task.id, {
           ...priv, restarts: 0, discard: false, cleaned: false,
+          ...(decision ? { lastAnswer: { who, text: decision, at: now() } } : {}),
           ...(use ? { budgetBase: { minutes: use.minutes, costUsd: use.costUsd }, budgetAskedAt: null } : {}),
         });
         this.save(task);
@@ -1164,8 +1166,7 @@ export class Engine {
         const item = task.doneWhen[msg.item] ?? fail("There's no such Done when item.");
         if (task.state !== "building" && task.state !== "reviewing") fail("You can attest to it while it's building or in review.");
         const reason = msg.note?.trim() || null;
-        item.status = "proven";
-        item.evidence = { kind: item.proof, summary: `Attested by ${who}${reason ? `: ${reason}` : ""}`, output: [], by: who, at: now(), attested: true, reason };
+        attest(item, who, reason);
         this.event(task, who, `attested "${item.text}"${reason ? `: ${reason}` : ""}`);
         this.save(task);
         return;
@@ -2594,6 +2595,7 @@ export class Engine {
 
       case "ask": {
         const question = str(a.question, "question");
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.question = { text: question, options: arr(a.options).map(String), role: s.role, at: now() };
         this.stat(task, "question.asked", {}, null, s.role);
         this.event(task, s.role, `asked: ${question}`);
@@ -2609,6 +2611,7 @@ export class Engine {
           return { title: str(x.title, "options[].title"), detail: String(x.detail ?? ""), recommended: x.recommended === true };
         });
         this.lowerHand(task, "factory");
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.hand = { reason, summary: str(a.summary, "summary"), at: now(), assignee: task.owner, options };
         this.event(task, s.role, "raised a hand");
         this.stat(task, "hand.raised", { reason }, null, s.role);
@@ -2661,6 +2664,20 @@ export class Engine {
         this.event(task, "builder", `${item.status === "proven" ? "proved" : "couldn't prove"} "${item.text}"`);
         const left = task.doneWhen.filter((d) => d.status !== "proven").length;
         return { summary: left ? `Attached. ${left} item${left === 1 ? "" : "s"} left to prove.` : "Attached. Every item is proven." };
+      }
+
+      case "attest": {
+        if (task.state !== "building" && task.state !== "reviewing") fail("You can attest while it's building or in review.");
+        const answer = this.store.private(task.id).lastAnswer ?? fail("Nobody has answered you since you last asked. Ask with `ask` or `raise_hand` (offer \"Attest it for me\"), end your turn, and call `attest` once a person picks it.");
+        const nums = [...new Set(arr(a.items).map((n) => num(n)))];
+        if (!nums.length) fail("items: name at least one Done when item, from 1.");
+        const items = nums.map((n) => task.doneWhen[n - 1] ?? fail(`There's no item ${n}; Done when has ${task.doneWhen.length}.`));
+        const quoted = answer!.text.length > 300 ? `${answer!.text.slice(0, 299)}…` : answer!.text;
+        const why = `${str(a.reason, "reason").trim()} (confirmed in their answer: "${quoted}")`;
+        for (const item of items) attest(item, answer!.who, why);
+        this.event(task, s.role, `attested ${items.map((d) => `"${d.text}"`).join(", ")} for ${answer!.who}: ${why}`);
+        const left = task.doneWhen.filter((d) => d.status !== "proven").length;
+        return { summary: `Attested ${nums.length === 1 ? "it" : `${nums.length} items`} for ${answer!.who}. ${left ? `${left} item${left === 1 ? "" : "s"} left to prove.` : "Every item is proven."}` };
       }
 
       case "share_artifact": {
@@ -3176,6 +3193,11 @@ export class Engine {
     this.save(task);
   }
 
+  /** A person's answer reached the task's session: the builder may `attest` for them until it asks again. */
+  private noteAnswer(task: Task, who: string, text: string) {
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: { who, text, at: now() } });
+  }
+
   /** A person's comment, with the members it @mentions. */
   private async comment(author: string, text: string, opts: { at?: number; anchor?: string | null; via?: string | null; replyTo?: string | null } = {}): Promise<Comment> {
     const mentions = mentionsIn(text, await this.hooks.members(), author);
@@ -3189,7 +3211,10 @@ export class Engine {
     const root = comment.replyTo ?? comment.id;
     if (!threadTalksToAgent(task.comments, root)) return;
     const said = `${who} in comment thread ${root}: ${comment.text}\nAnswer with \`reply\` (thread ${root}). This is conversation, not a change request; use the steer flow only if they ask for a change, and carry on with your work after.`;
-    if (task.worker && (await this.type(task, said))) return;
+    if (task.worker && (await this.type(task, said))) {
+      this.noteAnswer(task, who, comment.text);
+      return;
+    }
     this.event(task, who, "left a comment in a thread; the next agent on it will see it");
   }
 
@@ -3589,6 +3614,11 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 };
 const str = (v: unknown, name: string): string => (typeof v === "string" && v.trim() ? v.trim() : fail(`${name} is required.`));
+/** A person's sign-off on a Done when item: `task.checkedIt` (they clicked it) and `attest` (the builder, for them). */
+function attest(item: Task["doneWhen"][number], by: string, reason: string | null) {
+  item.status = "proven";
+  item.evidence = { kind: item.proof, summary: `Attested by ${by}${reason ? `: ${reason}` : ""}`, output: [], by, at: now(), attested: true, reason };
+}
 const proofKind = (v: unknown): Evidence["kind"] => (["screenshot", "video", "terminal", "tests"].includes(v as string) ? (v as Evidence["kind"]) : "terminal");
 
 /** The pull request's description: the brief, the plan, and what proves it's done, with attachment
