@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.89.0 — 2026-11-01
+
+The runner keeps up with the factory's protocol for the optional risk classifier.
+
 ## 0.88.0 — 2026-11-01
 
 The runner's libraries are brought up to date (uuid 1.29, rustls-native-certs, ureq and others); nothing changes in how it works.
