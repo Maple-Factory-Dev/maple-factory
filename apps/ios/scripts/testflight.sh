@@ -7,6 +7,9 @@
 #   BUILD_NUMBER                             optional; the default is a UTC timestamp, so every upload is new
 #   SENTRY_AUTH_TOKEN                        optional; uploads the dSYMs to the maple-ios Sentry project
 # The first-time setup, the steps only a person can do, is in apps/ios/TESTFLIGHT.md.
+# It archives a snapshot of the repo (HEAD plus uncommitted changes to tracked files, in a detached
+# worktree at build/src), so a `git pull` during the archive can't mix old and new sources.
+# Untracked files aren't in the snapshot: commit or `git add` them first.
 set -eu
 unset CDPATH
 
@@ -72,17 +75,37 @@ if [ -z "$missing" ]; then
 fi
 
 BUILD_NUMBER=${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M)}
-version=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' project.yml | head -1)
 archive=build/MapleFactory.xcarchive
 log=build/testflight.log
 mkdir -p build
 rm -rf "$archive" "build/Maple Factory.ipa"
 : >"$log"
+build=$(pwd)/build
 
+# Freeze the tree: `git stash create` makes a commit of HEAD plus the tracked changes without touching
+# the stash list (it prints nothing when the tree is clean), checked out detached at build/src.
+repo=$(git rev-parse --show-toplevel)
+ios=$(git rev-parse --show-prefix)
+snapshot=$build/src
+rev=$(git stash create)
+if [ -n "$rev" ]; then base=$(git rev-parse "$rev^1"); dirty=" + local changes"; else rev=$(git rev-parse HEAD); base=$rev; dirty=; fi
+drop_snapshot() {
+  git -C "$repo" worktree remove --force "$snapshot" 2>/dev/null || rm -rf "$snapshot"
+  git -C "$repo" worktree prune
+}
+drop_snapshot
+trap drop_snapshot EXIT
+trap 'exit 130' INT TERM
+git worktree add --quiet --detach "$snapshot" "$rev" >>"$log" 2>&1 ||
+  { echo "Couldn't check out the snapshot at apps/ios/build/src; the log is apps/ios/$log." >&2; exit 1; }
+src=$snapshot/${ios%/}
+echo "Snapshot: $(git log -1 --format='%h %s' "$base")$dirty"
+
+version=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$src/project.yml" | head -1)
 echo "Archiving Maple Factory $version ($BUILD_NUMBER)…"
-xcodegen generate --quiet
+(cd "$src" && xcodegen generate --quiet)
 # SwiftTerm's build-info plugin only stamps its version; skip Xcode's "trust this plugin" prompt.
-if ! xcodebuild -project MapleFactory.xcodeproj -scheme "Maple Factory" -configuration Release \
+if ! xcodebuild -project "$src/MapleFactory.xcodeproj" -scheme "Maple Factory" -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$archive" -derivedDataPath build/archive \
   -skipPackagePluginValidation -allowProvisioningUpdates "$@" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" archive >>"$log" 2>&1; then
