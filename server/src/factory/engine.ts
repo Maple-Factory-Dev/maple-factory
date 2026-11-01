@@ -760,6 +760,7 @@ export class Engine {
         if (task.reviews.includes(who)) fail("You've already approved it.");
         task.reviews.push(who);
         this.event(task, who, "approved the changes");
+        this.stat(task, "changes.approved", { reviews: task.reviews.length }, who);
         this.save(task);
         // On GitHub too, as them, before a merge that may need it; the Factory approval counts either way.
         await this.approveOnGitHub(task.id, who);
