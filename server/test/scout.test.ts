@@ -290,3 +290,21 @@ test("Drafts mayFetch: a repo-based goal still fetches only its repos", async ()
   assert.equal(drafts.mayFetch(run.id, "m1", "acme/app"), true);
   assert.equal(drafts.mayFetch(run.id, "m1", "acme/other"), false);
 });
+
+test("Scout still runs on a machine paused for new work only", async () => {
+  const f = factory();
+  f.store.saveSettings("m1", { ...f.store.settings("m1"), paused: true, pauseNew: true, pausedUntil: null });
+  await f.scout();
+  assert.deepEqual(f.sent.map((c) => c.type), ["draft.run"]);
+  assert.equal(f.runs().at(-1)!.state, "running");
+});
+
+test("Scout is refused on a fully paused machine", async () => {
+  const f = factory();
+  f.store.saveSettings("m1", { ...f.store.settings("m1"), paused: true, pauseNew: false, pausedUntil: null });
+  await f.scout();
+  assert.deepEqual(f.sent, []);
+  const run = f.runs().at(-1) as { state: string; error: string };
+  assert.equal(run.state, "failed");
+  assert.equal(run.error, "Scout runs on one of your machines, and none of them is online, unpaused and has an agent.");
+});

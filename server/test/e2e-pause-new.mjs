@@ -5,8 +5,9 @@
 // still lets that task's builder start there once its plan is approved, and its reviewer after it
 // finishes; a task created meanwhile waits with "<machine> is paused for new work."; under a full pause
 // an approved plan's builder doesn't start ("<machine> is paused."), and resuming starts it; a
-// teammate's task in a team slot isn't handed off by a new-work pause, and is by a full one.
-// task.move is refused while a task runs on a machine paused for new work, and allowed once it is fully paused.
+// teammate's task in a team slot isn't handed off by a new-work pause, and is by a full one; Maple's own
+// runs (Draft with AI) still go out to a machine paused for new work. task.move is refused while a task
+// runs on a machine paused for new work, and allowed once it is fully paused.
 
 const [base = "http://localhost:8788"] = process.argv.slice(2);
 const ws = base.replace(/^http/, "ws");
@@ -26,6 +27,7 @@ const runner = new WebSocket(`${ws}/runner/connect?runner=${runnerId}`, { header
 await new Promise((r, j) => { runner.onopen = r; runner.onerror = j; });
 const rsend = (m) => runner.send(JSON.stringify(m));
 const sessions = [];
+const draftRuns = [];
 const replies = new Map();
 runner.onmessage = (e) => {
   const m = JSON.parse(e.data);
@@ -35,6 +37,7 @@ runner.onmessage = (e) => {
     rsend({ type: "task.started", taskId: m.taskId, repo: null, repoDir: "/tmp/pause-new", base: "main", project: null });
     rsend({ type: "session.opened", session: { id: m.id, agent: "claude", cwd: `/tmp/pause-new/wt/${m.taskId}`, pid: 1, startedAt: Date.now(), taskId: m.taskId } });
   }
+  if (m.type === "draft.run") draftRuns.push(m);
   if (m.type === "task.finish") rsend({ type: "task.finished", taskId: m.taskId, ok: true, pushed: "fallback", owner: null, repo: null, branch: m.branch, base: "main", commit: "abc1234def", reason: null });
   if (m.type === "mcp.response") replies.get(m.reqId)?.(m);
   poke?.();
@@ -53,6 +56,7 @@ const tasks = new Map();
 let goals = [];
 let machines = [];
 let errors = [];
+const drafts = new Map();
 let poke = null;
 feed.onmessage = (e) => {
   const m = JSON.parse(e.data);
@@ -60,6 +64,7 @@ feed.onmessage = (e) => {
   if (m.type === "goal.updated") goals = [...goals.filter((g) => g.id !== m.goal.id), m.goal];
   if (m.type === "machine.updated") machines = [...machines.filter((x) => x.id !== m.machine.id), m.machine];
   if (m.type === "task.updated") tasks.set(m.task.id, m.task);
+  if (m.type === "draft.updated") drafts.set(m.draft.id, m.draft);
   if (m.type === "error") errors.push(m.message);
   poke?.();
 };
@@ -127,6 +132,15 @@ const b = create("New one");
 const waiting = await wait(`${b} waiting`, () => /paused for new work/.test(tasks.get(b)?.waiting ?? "") && tasks.get(b));
 if (waiting.worker || sessions.some((s) => s.taskId === b)) throw new Error(`${b} started on the paused machine`);
 step(`${b}: new, held back: "${waiting.waiting}"`);
+const draftId = crypto.randomUUID();
+send({ type: "draft.start", id: draftId, idea: "Add a dark mode", goal: goal.id, agent: "claude" });
+const drafted = await wait("the draft's run", () => draftRuns.find((r) => r.id === `draft-${draftId}`));
+const draft = await wait("the draft on the machine", () => drafts.get(draftId)?.machine === runnerId && drafts.get(draftId));
+if (draft.state === "failed") throw new Error(`Draft with AI failed: ${draft.error}`);
+step(`Draft with AI: ${drafted.type} went to ${runnerId} under the new-work pause (draft ${draft.state})`);
+send({ type: "draft.cancel", id: draftId });
+if (tasks.get(b).worker || sessions.some((s) => s.taskId === b)) throw new Error(`${b} started alongside the draft`);
+step(`${b}: still waiting: "${tasks.get(b).waiting}"`);
 send({ type: "task.approvePlan", id: a });
 const builder = await sessionOf(a, "builder");
 step(`${a}: plan approved, its builder started on ${runnerId} under the new-work pause`);
