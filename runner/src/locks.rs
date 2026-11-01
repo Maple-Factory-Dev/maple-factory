@@ -18,7 +18,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 /// Who holds or waits for a slot.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Holder {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,6 +29,7 @@ pub struct Holder {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     /// When it took the slot, or joined the queue (ms since the epoch).
+    #[serde(default)]
     pub since: u64,
 }
 
@@ -331,4 +332,126 @@ mod tests {
         assert_eq!(waiting_line("ios-simulator", 1, &[who("MF-327")]), "Waiting for ios-simulator · 1 ahead (MF-327 has it)");
         assert_eq!(waiting_line("demo", 2, &[terminal]), "Waiting for demo · 2 ahead (your terminal has it)");
     }
+}
+
+/// The child `lock` runs, for the signal handler to pass SIGINT/SIGTERM on to.
+static CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+extern "C" fn forward_signal(sig: libc::c_int) {
+    let pid = CHILD.load(std::sync::atomic::Ordering::SeqCst);
+    if pid > 0 {
+        unsafe { libc::kill(pid, sig) };
+    }
+}
+
+/// The hook socket to ask: the session's, or the runner's for this tmux server, if it's there.
+fn socket(tmux_socket: &str) -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var(crate::hooks::SOCKET_ENV) {
+        return Some(path.into());
+    }
+    let path = crate::config::dir().ok()?.join(format!("runner-{tmux_socket}.sock"));
+    path.exists().then_some(path)
+}
+
+/// `maple-runner lock <name> [--slots N] [--timeout SECS] -- <command…>`: waits for a slot, runs the
+/// command, and returns its exit code. With no runner to ask, it runs the command anyway.
+pub fn cli(name: &str, slots: u32, timeout: Option<u64>, command: &[String], tmux_socket: &str) -> anyhow::Result<i32> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+    let Some((program, args)) = command.split_first() else { anyhow::bail!("Nothing to run: give a command after `--`.") };
+    let connected = socket(tmux_socket).and_then(|path| UnixStream::connect(path).ok());
+    let held = match connected {
+        None => {
+            eprintln!("maple-runner lock: no runner here, so running without the {name} lock");
+            None
+        }
+        Some(mut stream) => {
+            let session = std::env::var(crate::hooks::SESSION_ENV).ok();
+            let mut line = serde_json::to_vec(&json!({ "lock": { "name": name, "slots": slots, "session": session } }))?;
+            line.push(b'\n');
+            stream.write_all(&line)?;
+            let deadline = timeout.map(|s| Instant::now() + Duration::from_secs(s));
+            let mut reader = BufReader::new(stream.try_clone()?);
+            loop {
+                if let Some(deadline) = deadline {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        anyhow::bail!("Gave up waiting for {name} after {}s.", timeout.unwrap_or_default());
+                    }
+                    stream.set_read_timeout(Some(left))?;
+                }
+                let mut answer = String::new();
+                match reader.read_line(&mut answer) {
+                    Ok(0) => anyhow::bail!("The runner closed the connection while waiting for {name}."),
+                    Ok(_) => {}
+                    Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                        anyhow::bail!("Gave up waiting for {name} after {}s.", timeout.unwrap_or_default())
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+                let Ok(answer) = serde_json::from_str::<Value>(&answer) else {
+                    anyhow::bail!("The runner didn't understand the lock request (is it older than this command?).")
+                };
+                if let Some(e) = answer.get("error").and_then(Value::as_str) {
+                    anyhow::bail!("{e}");
+                }
+                if answer.get("granted").is_some() {
+                    break;
+                }
+                if let Some(q) = answer.get("queued") {
+                    let holders: Vec<Holder> = q.get("holders").and_then(|h| serde_json::from_value(h.clone()).ok()).unwrap_or_default();
+                    let position = q.get("position").and_then(Value::as_u64).unwrap_or(0) as usize;
+                    eprintln!("maple-runner lock: {}", waiting_line(name, position, &holders).replacen("Waiting", "waiting", 1));
+                }
+            }
+            stream.set_read_timeout(None)?;
+            Some(stream)
+        }
+    };
+    // Ctrl-C reaches the command through the terminal's process group; SIGTERM sent to this
+    // wrapper alone is passed on. Either way the wrapper waits for the command, then lets go.
+    unsafe {
+        libc::signal(libc::SIGINT, forward_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, forward_signal as *const () as libc::sighandler_t);
+    }
+    let mut child = std::process::Command::new(program).args(args).spawn().map_err(|e| anyhow::anyhow!("couldn't run {program}: {e}"))?;
+    CHILD.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+    let status = child.wait()?;
+    drop(held); // frees the slot
+    use std::os::unix::process::ExitStatusExt;
+    Ok(status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(1)))
+}
+
+/// `maple-runner locks`: every lock on this machine, with its holders and waiters.
+pub fn list_cli(tmux_socket: &str) -> anyhow::Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    let Some(path) = socket(tmux_socket) else { anyhow::bail!("The runner isn't running here, so there are no locks.") };
+    let mut stream = std::os::unix::net::UnixStream::connect(path)?;
+    stream.write_all(b"{\"locks\":{}}\n")?;
+    let mut answer = String::new();
+    BufReader::new(stream).read_line(&mut answer)?;
+    let answer: Value = serde_json::from_str(&answer).map_err(|_| anyhow::anyhow!("The runner didn't answer (is it older than this command?)."))?;
+    let locks = answer["locks"].as_array().cloned().unwrap_or_default();
+    if locks.is_empty() {
+        println!("No locks held or waited for.");
+    }
+    let describe = |h: &Value| {
+        let who: Holder = serde_json::from_value(h.clone()).unwrap_or(Holder { session: None, task: None, pid: None, since: 0 });
+        let secs = crate::sessions::now_ms().saturating_sub(who.since) / 1000;
+        let pid = who.pid.map(|p| format!(" pid {p}")).unwrap_or_default();
+        format!("{}{pid}, {secs}s", who.label())
+    };
+    for lock in locks {
+        let holders = lock["holders"].as_array().cloned().unwrap_or_default();
+        let waiters = lock["waiters"].as_array().cloned().unwrap_or_default();
+        println!("{} ({} of {} slots held, {} waiting)", lock["name"].as_str().unwrap_or("?"), holders.len(), lock["slots"], waiters.len());
+        for h in &holders {
+            println!("  holds:   {}", describe(h));
+        }
+        for (i, w) in waiters.iter().enumerate() {
+            println!("  waits {}: {}", i + 1, describe(w));
+        }
+    }
+    Ok(())
 }

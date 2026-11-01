@@ -196,6 +196,28 @@ enum Cmd {
         #[command(subcommand)]
         command: SecretsCmd,
     },
+    /// Run a command holding a slot of a shared resource lock (e.g. ios-simulator, rails-test-db),
+    /// waiting in line first if others hold every slot. Without a runner, it runs the command unlocked.
+    Lock {
+        /// The resource, any name: everything that locks the same name takes turns.
+        name: String,
+        /// How many may hold it at once, unless ~/.config/maple/locks.toml sets this machine's count.
+        #[arg(long, default_value_t = 1)]
+        slots: u32,
+        /// Give up (exit 1) after waiting this many seconds.
+        #[arg(long)]
+        timeout: Option<u64>,
+        #[arg(long, env = "MAPLE_TMUX_SOCKET", default_value = "maple")]
+        tmux_socket: String,
+        /// The command, after `--`.
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    /// List shared resource locks on this machine, with who holds and waits for each.
+    Locks {
+        #[arg(long, env = "MAPLE_TMUX_SOCKET", default_value = "maple")]
+        tmux_socket: String,
+    },
     /// The `agents` MCP server over stdio. Claude Code and Codex sessions start it themselves;
     /// it only works inside a session (it needs MAPLE_SESSION_ID and MAPLE_HOOK_SOCKET).
     Mcp,
@@ -355,6 +377,8 @@ async fn command(cli: Cli) -> Result<()> {
         }
         Some(Cmd::Run(args)) => run(args).await,
         Some(Cmd::Mcp) => mcp::serve(),
+        Some(Cmd::Lock { name, slots, timeout, tmux_socket, command }) => std::process::exit(locks::cli(&name, slots, timeout, &command, &tmux_socket)?),
+        Some(Cmd::Locks { tmux_socket }) => locks::list_cli(&tmux_socket),
         Some(Cmd::Secrets { command: SecretsCmd::Pull { repo, out, force, tmux_socket } }) => secrets::cli(false, repo, out, force, &tmux_socket),
         Some(Cmd::Secrets { command: SecretsCmd::List { repo, tmux_socket } }) => secrets::cli(true, repo, None, false, &tmux_socket),
         Some(Cmd::Enroll { url, code, runner_id, test }) => enroll(&url, &code, runner_id, test).await,
@@ -1227,6 +1251,13 @@ mod tests {
         assert!(matches!(cli.command, Some(Cmd::Enroll { test: false, runner_id: None, .. })));
         assert!(matches!(Cli::try_parse_from(["maple-runner", "install", "--dry-run"]).unwrap().command, Some(Cmd::Install { dry_run: true })));
         assert!(Cli::try_parse_from(["maple-runner"]).unwrap().command.is_none());
+        assert!(matches!(
+            Cli::try_parse_from(["maple-runner", "lock", "ios-simulator", "--slots", "2", "--timeout", "60", "--", "xcodebuild", "-scheme", "App"]).unwrap().command,
+            Some(Cmd::Lock { ref name, slots: 2, timeout: Some(60), ref command, .. }) if name == "ios-simulator" && command == &["xcodebuild", "-scheme", "App"]
+        ));
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "lock", "db", "--", "rails", "test"]).unwrap().command, Some(Cmd::Lock { slots: 1, timeout: None, .. })));
+        assert!(Cli::try_parse_from(["maple-runner", "lock", "db"]).is_err());
+        assert!(matches!(Cli::try_parse_from(["maple-runner", "locks"]).unwrap().command, Some(Cmd::Locks { .. })));
         // Run flags belong to `run` now.
         assert!(Cli::try_parse_from(["maple-runner", "--runner-id", "x"]).is_err());
         assert!(matches!(Cli::try_parse_from(["maple-runner", "update", "--check"]).unwrap().command, Some(Cmd::Update { check: true, force: false, .. })));
