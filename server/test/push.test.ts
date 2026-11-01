@@ -4,7 +4,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { Push, payload, pushReasons, seal, sign, unseal } from "../src/push.ts";
+import { Push, get, payload, pushReasons, seal, set, sign, unseal } from "../src/push.ts";
 import { Store } from "../src/factory/store.ts";
 import type { Env } from "../src/env.ts";
 import type { Task } from "../src/wire.ts";
@@ -157,4 +157,25 @@ test("devices: each person's own, capped at 10, a token moves to whoever registe
   assert.equal(store.pushDevices("ada").length, 9);
   assert.equal(store.pushDevices("bob").length, 1);
   assert.equal(store.pushDeviceCount(), 10);
+});
+
+const put = (body: unknown) => new Request("https://f/api/push", { method: "PUT", body: JSON.stringify(body) });
+const nothing = async () => {};
+
+test("PUT /api/push: a non-admin gets 403 and nothing reaches the relay", async () => {
+  const res = await set(put({ on: true }), await envWith(null), { login: "bob", role: "member" } as never, async () => 0, nothing);
+  assert.equal(res.status, 403);
+  assert.equal(sent.length, 0);
+});
+
+test("PUSH_RELAY=off locks the toggle: GET says locked and off, PUT gets 409", async () => {
+  const env = await envWith(CRED, { PUSH_RELAY: "off" });
+  assert.deepEqual(await (await get(env, 3)).json(), { on: false, locked: true, enrolled: true, devices: 3 });
+  const res = await set(put({ on: true }), env, { login: "ada", role: "admin" } as never, async () => 0, nothing);
+  assert.equal(res.status, 409);
+  assert.equal(sent.length, 0);
+});
+
+test("off by default: GET says off and not enrolled", async () => {
+  assert.deepEqual(await (await get(await envWith(null), 0)).json(), { on: false, locked: false, enrolled: false, devices: 0 });
 });
