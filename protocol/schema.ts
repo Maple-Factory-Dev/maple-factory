@@ -1137,6 +1137,11 @@ export const structs: Record<string, Struct> = {
   },
   StatsCount: { fields: { key: "string", count: "u32", medianMs: "u64?" } },
   StatsDay: { fields: { day: "string", merges: "u32", hands: "u32" }, fieldDocs: { day: "YYYY-MM-DD, or YYYY-MM-DDTHH:00 for windows of 3 days or less (UTC)." } },
+  StatsHourCell: {
+    doc: "One weekday × hour of a window, in the summary's `timeZone`: how many merges and hands landed then.",
+    fields: { weekday: "u16", hour: "u16", merges: "u32", hands: "u32" },
+    fieldDocs: { weekday: "0 is Sunday … 6 Saturday.", hour: "0–23." },
+  },
   StatsGoalRow: {
     fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?" },
   },
@@ -1266,8 +1271,12 @@ export const structs: Record<string, Struct> = {
       costByAgent: "StatsCostRow[]",
       findings: "StatsFindings?",
       manualMerges: "StatsManualMerges?",
+      hours: "StatsHourCell[]?",
+      timeZone: "string?",
     },
     fieldDocs: {
+      hours: "All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it.",
+      timeZone: "The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.",
       manualMerges: "Merges people made, by reason; none from a server older than it.",
       costByRole: "planner, builder, reviewer, …",
       costByAgent: "Keyed \"agent · model\".",
@@ -1773,7 +1782,7 @@ export const unions: Record<string, Union> = {
       },
       "task.checkedIt": { doc: "Attest to a Done when item yourself, with an optional reason.", fields: { id: "string", item: "u32", note: "string?" } },
       "task.mockupChange": { fields: { id: "string", mockup: "string", text: "string" } },
-      "stats.get": { doc: "Admins only: the factory's statistics, answered with `stats`.", fields: { days: "u32", goal: "string?" } },
+      "stats.get": { doc: "Admins only: the factory's statistics, answered with `stats`.", fields: { days: "u32", goal: "string?", tz: "string?" }, fieldDocs: { tz: "The viewer's IANA time zone, for the weekday × hour chart; UTC when left out." } },
       "report.get": {
         doc: "Your day report for [since, until), your local day's bounds in ms, answered with `report`.",
         fields: { since: "u64", until: "u64" },

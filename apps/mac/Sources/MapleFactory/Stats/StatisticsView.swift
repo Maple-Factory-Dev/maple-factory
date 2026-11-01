@@ -118,6 +118,8 @@ struct StatisticsView: View {
             DailyBars(title: "Hands raised", window: Int(s.days), days: s.daily, value: \.hands, color: Theme.State.cancelled)
         }
 
+        if let hours = s.hours, hours.count == 168 { WhenWorkLands(cells: hours, timeZone: s.timeZone) }
+
         twoUp {
             BarList(title: "Hands by reason", note: "median time up", rows: s.handsByReason, label: handReason, trailing: { $0.medianMs.map(duration) })
             BarList(title: "Review findings by kind", note: counted(t.reviewRounds, "round"), rows: s.findingsByKind, label: { $0.capitalized }, trailing: { severities(s, kind: $0.key) },
@@ -656,6 +658,144 @@ private struct DailyBars: View {
     private static let hourParser = ISO8601DateFormatter()
 }
 
+/// The window's merges (or hands) by weekday × hour of day in the viewer's zone: a 7 × 24 heatmap,
+/// each cell's ink scaled to the busiest one; hover a cell for its count.
+struct WhenWorkLands: View {
+    let cells: [Wire.StatsHourCell]
+    /// The zone the server bucketed in (the one the app sent, or UTC); nil from a server that didn't say.
+    let timeZone: String?
+    @State private var series: Series = .merges
+    @State private var hovered: Int?
+
+    enum Series: String, CaseIterable { case merges = "Merges", hands = "Hands" }
+
+    /// Headless: hover a cell as the pointer would (`heat:<weekday>:<hour>`, `heat:hands` for the Hands series).
+    static let demo = Notification.Name("WhenWorkLands.demo")
+
+    private var color: Color { series == .merges ? Theme.State.merged : Theme.State.cancelled }
+    private func count(_ c: Wire.StatsHourCell) -> Int { Int(series == .merges ? c.merges : c.hands) }
+    private func cell(_ weekday: Int, _ hour: Int) -> Wire.StatsHourCell { cells[weekday * 24 + hour] }
+
+    /// Weekdays in the calendar's order (Sunday or Monday first).
+    private var weekdays: [Int] {
+        let first = Calendar.current.firstWeekday - 1
+        return (0..<7).map { (first + $0) % 7 }
+    }
+
+    var body: some View {
+        let top = max(1, cells.map(count).max() ?? 1)
+        let total = cells.map(count).reduce(0, +)
+        StatsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Text("When work lands")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Picker("", selection: $series) {
+                        ForEach(Series.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                    Text(readout(total: total))
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(hovered == nil ? Theme.textFaint : Theme.text)
+                }
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        ForEach(weekdays, id: \.self) { d in
+                            Text(Self.weekdayName(d))
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Theme.textFaint)
+                                .frame(height: 18)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        VStack(spacing: 3) {
+                            ForEach(weekdays, id: \.self) { d in
+                                HStack(spacing: 3) {
+                                    ForEach(0..<24, id: \.self) { h in
+                                        let n = count(cell(d, h))
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(n == 0 ? Theme.fill : color.opacity(0.18 + 0.82 * Double(n) / Double(top)))
+                                            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(hovered == d * 24 + h ? Theme.text.opacity(0.6) : .clear, lineWidth: 1))
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 18)
+                                            .contentShape(Rectangle())
+                                            .onHover { inside in
+                                                if inside { hovered = d * 24 + h } else if hovered == d * 24 + h { hovered = nil }
+                                            }
+                                            .help(describe(d, h))
+                                    }
+                                }
+                            }
+                        }
+                        HStack(spacing: 3) {
+                            ForEach(0..<24, id: \.self) { h in
+                                Text(h % 3 == 0 ? Self.hourName(h) : "")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Theme.textFaint)
+                                    .fixedSize()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+                Text(busiestNote(total: total))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            let parts = note.object as? [String] ?? []
+            if parts.first == "hands" { series = .hands } else if parts.count == 2, let d = Int(parts[0]), let h = Int(parts[1]), (0..<7).contains(d), (0..<24).contains(h) { hovered = d * 24 + h }
+        }
+    }
+
+    /// The hovered cell ("Tue 2 PM: 4 merges"), else the total and the zone.
+    private func readout(total: Int) -> String {
+        if let i = hovered { return describe(i / 24, i % 24) }
+        return "\(total) \(noun(total)) · \(zoneName)"
+    }
+
+    private func describe(_ weekday: Int, _ hour: Int) -> String {
+        let n = count(cell(weekday, hour))
+        return "\(Self.weekdayName(weekday)) \(Self.hourName(hour)): \(n) \(noun(n))"
+    }
+
+    private func noun(_ n: Int) -> String {
+        series == .merges ? (n == 1 ? "merge" : "merges") : (n == 1 ? "hand" : "hands")
+    }
+
+    private var zoneName: String {
+        guard let id = timeZone, let zone = TimeZone(identifier: id) else { return timeZone ?? "UTC" }
+        return zone.localizedName(for: .shortGeneric, locale: .current) ?? id
+    }
+
+    /// The busiest hour of day across the week, and the busiest single cell.
+    private func busiestNote(total: Int) -> String {
+        guard total > 0 else { return series == .merges ? "No merges in this window yet." : "No hands raised in this window." }
+        let byHour = (0..<24).map { h in (0..<7).reduce(0) { $0 + count(cell($1, h)) } }
+        let hour = byHour.indices.max { byHour[$0] < byHour[$1] } ?? 0
+        let best = cells.indices.max { count(cells[$0]) < count(cells[$1]) } ?? 0
+        let share = Int((Double(byHour[hour]) / Double(total) * 100).rounded())
+        let what = series == .merges ? "Most merges land" : "Most hands go up"
+        return "\(what) around \(Self.hourName(hour))–\(Self.hourName((hour + 1) % 24)) (\(share)% of them); the busiest slot is \(describe(best / 24, best % 24))."
+    }
+
+    private static func weekdayName(_ d: Int) -> String {
+        Calendar.current.shortWeekdaySymbols[d]
+    }
+
+    private static func hourName(_ h: Int) -> String {
+        var c = DateComponents()
+        c.hour = h
+        let date = Calendar.current.date(from: c) ?? Date()
+        return date.formatted(.dateTime.hour())
+    }
+}
+
 /// Counts as horizontal bars, largest first, each labelled in text ink.
 private struct BarList: View {
     let title: String
@@ -802,8 +942,25 @@ extension Wire.StatsSummary {
                           .init(key: "claude · claude-sonnet-5-5", sessions: 34, costUsd: 40.7, tokens: 41_400_000, unpriced: 0),
                           .init(key: "codex · gpt-6.1", sessions: 31, costUsd: 0, tokens: 41_000_000, unpriced: 31)],
             findings: .sample(now: now),
-            manualMerges: .sample(now: now)
+            manualMerges: .sample(now: now),
+            hours: Wire.StatsHourCell.sample(days: days),
+            timeZone: TimeZone.current.identifier
         )
+    }
+}
+
+extension Wire.StatsHourCell {
+    /// A working week's shape: merges through the afternoon on weekdays, a few hands after lunch, quiet weekends.
+    static func sample(days: Int) -> [Wire.StatsHourCell] {
+        let scale = Double(max(1, days)) / 30
+        return (0..<168).map { i in
+            let weekday = i / 24, hour = i % 24
+            let weekend = weekday == 0 || weekday == 6
+            let curve = max(0, 1 - abs(Double(hour) - 15) / 6) * (weekend ? 0.15 : 1) * (weekday == 2 ? 1.3 : 1)
+            let merges = (curve * 9 * scale + Double((i * 7) % 3) * curve).rounded()
+            let hands = (max(0, 1 - abs(Double(hour) - 13) / 4) * (weekend ? 0 : 2.5) * scale).rounded()
+            return .init(weekday: UInt16(weekday), hour: UInt16(hour), merges: UInt32(merges), hands: UInt32(hands))
+        }
     }
 }
 

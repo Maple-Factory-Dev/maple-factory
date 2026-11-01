@@ -452,3 +452,54 @@ test("the store hands summarize a merged task's earlier steers and review reques
   add("steer", "B-1", NOW - 40 * DAY);
   assert.deepEqual(store.statRoundsBefore(["A-1"], NOW - 30 * DAY).map((e) => e.kind), ["steer", "review.requested"]);
 });
+
+test("weekday × hour cells: UTC, New York across the DST change, Tokyo, and an unknown zone reads as UTC", () => {
+  const now = Date.UTC(2026, 10, 3, 12); // Tue 3 Nov 2026
+  const at = (iso: string) => Date.parse(iso);
+  const mk = (kind: StatEvent["kind"], iso: string): StatEvent => ({ id: String(n++), at: at(iso), kind, task: "T-1", goal: "g1", role: null, actor: null, detail: {} });
+  const list = [
+    mk("merged", "2026-10-31T14:00:00Z"), // Sat 14 UTC · Sat 10 EDT · Sat 23 JST
+    mk("merged", "2026-10-31T16:00:00Z"), // Sat 16 UTC · Sat 12 EDT · Sun 01 JST
+    mk("merged", "2026-11-02T15:00:00Z"), // Mon 15 UTC · Mon 10 EST (after US clocks went back on 1 Nov) · Tue 00 JST
+    mk("hand.raised", "2026-11-01T05:30:00Z"), // Sun 05 UTC · Sun 1:30 AM EDT · Sun 14 JST
+    mk("hand.raised", "2026-11-01T06:30:00Z"), // Sun 06 UTC · Sun 1:30 AM EST, the second 1 AM once clocks went back · Sun 15 JST
+  ];
+  const cell = (s: ReturnType<typeof summarize>, weekday: number, hour: number) => s.hours!.find((c) => c.weekday === weekday && c.hour === hour)!;
+  const nonZero = (s: ReturnType<typeof summarize>) => s.hours!.filter((c) => c.merges || c.hands).map((c) => `${c.weekday}:${c.hour}:${c.merges}/${c.hands}`).sort();
+
+  const utc = summarize(list, [], { days: 7, now, tz: "UTC" });
+  assert.equal(utc.timeZone, "UTC");
+  assert.deepEqual(nonZero(utc), ["0:5:0/1", "0:6:0/1", "1:15:1/0", "6:14:1/0", "6:16:1/0"]);
+
+  const ny = summarize(list, [], { days: 7, now, tz: "America/New_York" });
+  assert.equal(ny.timeZone, "America/New_York");
+  assert.equal(cell(ny, 6, 10).merges, 1); // EDT, UTC−4
+  assert.equal(cell(ny, 6, 12).merges, 1);
+  assert.equal(cell(ny, 1, 10).merges, 1); // EST, UTC−5: same local hour as Saturday's though five hours later in UTC
+  assert.equal(cell(ny, 0, 1).hands, 2); // 05:30Z and 06:30Z are both 1:30 AM local, either side of the change
+
+  const tokyo = summarize(list, [], { days: 7, now, tz: "Asia/Tokyo" });
+  assert.deepEqual(nonZero(tokyo), ["0:14:0/1", "0:15:0/1", "0:1:1/0", "2:0:1/0", "6:23:1/0"]);
+
+  for (const tz of ["Mars/Olympus", "", undefined, null]) {
+    const s = summarize(list, [], { days: 7, now, tz });
+    assert.equal(s.timeZone, "UTC");
+    assert.deepEqual(nonZero(s), nonZero(utc));
+  }
+
+  for (const s of [utc, ny, tokyo]) {
+    assert.equal(s.hours!.length, 168);
+    assert.equal(new Set(s.hours!.map((c) => c.weekday * 24 + c.hour)).size, 168);
+    assert.equal(s.hours!.reduce((a, c) => a + c.merges, 0), s.totals.merged);
+    assert.equal(s.hours!.reduce((a, c) => a + c.hands, 0), s.totals.handsRaised);
+  }
+});
+
+test("weekday × hour cells follow the window and add up to the 30-day totals", () => {
+  const s = summarize(events, [], { days: 30, now: NOW, tz: "Asia/Tokyo" });
+  assert.equal(s.hours!.length, 168);
+  assert.equal(s.hours!.reduce((a, c) => a + c.merges, 0), s.totals.merged);
+  assert.equal(s.hours!.reduce((a, c) => a + c.hands, 0), s.totals.handsRaised);
+  const week = summarize([...events, ev("merged", "OLD", 40 * DAY, { cycleMs: 1 })], [], { days: 7, now: NOW });
+  assert.equal(week.hours!.reduce((a, c) => a + c.merges, 0), week.totals.merged);
+});

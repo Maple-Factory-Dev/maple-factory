@@ -1372,6 +1372,16 @@ export interface StatsDay {
   hands: number;
 }
 
+/** One weekday × hour of a window, in the summary's `timeZone`: how many merges and hands landed then. */
+export interface StatsHourCell {
+  /** 0 is Sunday … 6 Saturday. */
+  weekday: number;
+  /** 0–23. */
+  hour: number;
+  merges: number;
+  hands: number;
+}
+
 export interface StatsGoalRow {
   goal: string;
   name: string;
@@ -1583,6 +1593,10 @@ export interface StatsSummary {
   findings?: StatsFindings | null;
   /** Merges people made, by reason; none from a server older than it. */
   manualMerges?: StatsManualMerges | null;
+  /** All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it. */
+  hours?: StatsHourCell[] | null;
+  /** The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one. */
+  timeZone?: string | null;
 }
 
 /** What the person (or the factory) typed. */
@@ -2813,6 +2827,8 @@ export interface ClientMessage_StatsGet {
   type: "stats.get";
   days: number;
   goal?: string | null;
+  /** The viewer's IANA time zone, for the weekday × hour chart; UTC when left out. */
+  tz?: string | null;
 }
 
 /** Your day report for [since, until), your local day's bounds in ms, answered with `report`. */
