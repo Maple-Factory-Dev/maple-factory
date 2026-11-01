@@ -619,8 +619,10 @@ import Foundation
             } else {
                 notice = error.message
             }
-        case .pushDevices, .unknown:
-            // push.devices is the phones' list (MF-231); the Mac has no use for it.
+        case .pushDevices:
+            // Phone push devices: only the iPhone and Android apps register or list them.
+            break
+        case .unknown:
             break
         }
     }

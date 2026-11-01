@@ -17,6 +17,23 @@ struct UpdatePhaseTests {
         #expect(UpdatePhase.downloading(received: 50, expected: 200).detail == "25%")
     }
 
+    /// The busy footer is one line: the ring draws `progress` (nil spins) and `detail` sits by the title.
+    @Test func busyFooterGetsItsRingAndPercentage() {
+        let known = UpdatePhase.downloading(received: 42, expected: 100)
+        #expect(known.isBusy)
+        #expect(known.progress == 0.42)
+        #expect(known.detail == "42%")
+
+        let unknown = UpdatePhase.downloading(received: 42, expected: 0)
+        #expect(unknown.isBusy)
+        #expect(unknown.progress == nil)
+        #expect(unknown.detail == nil)
+
+        #expect(UpdatePhase.checking.isBusy)
+        #expect(UpdatePhase.checking.progress == nil)
+        #expect(UpdatePhase.checking.detail == nil)
+    }
+
     @Test func moreBytesThanExpectedStopAtFull() {
         #expect(UpdatePhase.downloading(received: 300, expected: 200).progress == 1)
     }

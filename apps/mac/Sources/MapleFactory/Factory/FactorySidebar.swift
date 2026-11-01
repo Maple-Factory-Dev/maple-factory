@@ -468,14 +468,27 @@ struct UpdateFooter: View {
                 // (the version and its What's new link don't fit beside them).
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .center, spacing: 9) {
-                        Image(systemName: phase.icon)
-                            .font(.system(size: 13))
-                            .foregroundStyle(iconColor(phase))
-                            .frame(width: 16)
+                        // While it works, the toast's ring takes the icon's slot and the percentage
+                        // sits beside the title, so a busy footer is a single line.
+                        if phase.isBusy {
+                            UpdateRing(fraction: phase.progress)
+                        } else {
+                            Image(systemName: phase.icon)
+                                .font(.system(size: 13))
+                                .foregroundStyle(iconColor(phase))
+                                .frame(width: 16)
+                        }
                         Text(phase.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
+                        if phase.isBusy, let detail = phase.detail {
+                            Text(detail)
+                                .font(.system(size: 10.5).monospacedDigit())
+                                .foregroundStyle(Theme.textMuted)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                         Spacer(minLength: 0)
                         HStack(spacing: 4) {
                             if let action = phase.action, let label = phase.buttonLabel {
@@ -492,47 +505,30 @@ struct UpdateFooter: View {
                             }
                         }
                     }
-                    Group {
-                        if phase.isBusy {
-                            HStack(spacing: 6) {
-                                if let progress = phase.progress {
-                                    ProgressView(value: progress)
-                                    Text(phase.detail ?? "")
-                                        .font(.system(size: 10.5).monospacedDigit())
-                                        .foregroundStyle(Theme.textMuted)
-                                        .frame(width: 30, alignment: .trailing)
-                                } else {
-                                    ProgressView()
-                                }
-                            }
-                            .progressViewStyle(.linear)
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                        } else if let detail = phase.detail {
-                            HStack(spacing: 0) {
-                                Text(detail)
+                    if !phase.isBusy, let detail = phase.detail {
+                        HStack(spacing: 0) {
+                            Text(detail)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textMuted)
+                                .lineLimit(1)
+                                .help(detail)
+                            if phase.showsReleaseNotesLink, updater.releaseNotesURL != nil {
+                                Text(" · ")
                                     .font(.system(size: 11))
                                     .foregroundStyle(Theme.textMuted)
+                                Text(UpdatePhase.releaseNotesLinkLabel)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Theme.accent)
                                     .lineLimit(1)
-                                    .help(detail)
-                                if phase.showsReleaseNotesLink, updater.releaseNotesURL != nil {
-                                    Text(" · ")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(Theme.textMuted)
-                                    Text(UpdatePhase.releaseNotesLinkLabel)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(Theme.accent)
-                                        .lineLimit(1)
-                                        .fixedSize()
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { updater.openReleaseNotes() }
-                                        .pointerStyle(.link)
-                                        .help("Read the release notes")
-                                }
+                                    .fixedSize()
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { updater.openReleaseNotes() }
+                                    .pointerStyle(.link)
+                                    .help("Read the release notes")
                             }
                         }
+                        .padding(.leading, 25)
                     }
-                    .padding(.leading, 25)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)

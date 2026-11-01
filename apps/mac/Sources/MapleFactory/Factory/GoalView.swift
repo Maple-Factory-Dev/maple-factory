@@ -282,7 +282,7 @@ struct BoardColumns: View {
             case task(TaskState), queued, pendingMerge
 
             static var ordered: [Self] {
-                [.task(.drafting), .queued] + TaskState.allCases.filter { $0 != .drafting }.flatMap {
+                [.task(.backlog), .task(.drafting), .queued] + TaskState.allCases.filter { $0 != .drafting && $0 != .backlog }.flatMap {
                     $0 == .reviewing ? [.task($0), .pendingMerge] : [.task($0)]
                 }
             }
@@ -293,7 +293,8 @@ struct BoardColumns: View {
     }
 
     /// Assign each card exactly once before deciding visibility. Queue membership takes precedence
-    /// over merge readiness; Queued sorts cards by queue rank, Drafts by draft rank, and every column keeps its fixed place.
+    /// over merge readiness; Queued sorts cards by queue rank, Drafts by draft rank, and every column keeps its fixed place:
+    /// Backlog, Drafting, Queued, then the rest of the pipeline with Pending merge right after Reviewing.
     static func columns(tasks: [FactoryTask], hideEmpty: Bool, pendingMerge: (FactoryTask) -> Bool) -> [Column] {
         var members: [Column.ID: [FactoryTask]] = [:]
         for task in tasks {

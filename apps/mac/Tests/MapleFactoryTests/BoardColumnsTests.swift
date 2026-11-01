@@ -6,8 +6,8 @@ import Testing
 @MainActor
 struct BoardColumnsTests {
     private typealias ID = BoardColumns.Column.ID
-    private let order: [ID] = [.task(.drafting), .queued, .task(.planning), .task(.awaitingApproval),
-                               .task(.backlog), .task(.building), .task(.reviewing), .pendingMerge,
+    private let order: [ID] = [.task(.backlog), .task(.drafting), .queued, .task(.planning),
+                               .task(.awaitingApproval), .task(.building), .task(.reviewing), .pendingMerge,
                                .task(.merged), .task(.cancelled), .task(.closed)]
 
     private func task(_ id: String, state: TaskState = .building, queued: Bool = false, rank: Double = 0) -> FactoryTask {
@@ -77,6 +77,19 @@ struct BoardColumnsTests {
         let columns = BoardColumns.columns(tasks: tasks, hideEmpty: hideEmpty) { $0.id == "PENDING" }
         #expect(columns.map(\.id) == order)
         #expect(columns.allSatisfy { $0.tasks.count == 1 })
+    }
+
+    @Test(arguments: [false, true])
+    func backlogIsTheFirstColumn(hideEmpty: Bool) {
+        let tasks = [task("BUILD", state: .building), task("DRAFT", state: .drafting), task("LATER", state: .backlog)]
+        let columns = BoardColumns.columns(tasks: tasks, hideEmpty: hideEmpty) { _ in false }
+        #expect(columns.first?.id == .task(.backlog))
+        #expect(columns.first?.tasks.map(\.id) == ["LATER"])
+        if hideEmpty {
+            #expect(columns.map(\.id) == [.task(.backlog), .task(.drafting), .task(.building)])
+        } else {
+            #expect(columns.map(\.id) == order)
+        }
     }
 
     @Test(arguments: [false, true])
