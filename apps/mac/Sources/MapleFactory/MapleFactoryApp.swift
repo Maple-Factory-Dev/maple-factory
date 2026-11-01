@@ -327,7 +327,11 @@ struct ContentView: View {
         }
         // A proof shown large: above the sidebar, the slab and the toasts.
         .overlay {
-            if let lightbox = state.lightbox {
+            if case let .page(html, caption, scripts)? = state.lightbox {
+                PageViewerView(html: html, caption: caption, scripts: scripts)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    .zIndex(10)
+            } else if let lightbox = state.lightbox {
                 ProofLightboxView(lightbox: lightbox)
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
                     .zIndex(10)

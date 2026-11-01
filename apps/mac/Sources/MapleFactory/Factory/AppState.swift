@@ -5,10 +5,13 @@ enum ProofLightbox: Equatable {
     case image(NSImage, caption: String, attachment: String? = nil)
     /// `size`: the recording's own size (its track's, turned upright), which the lightbox fits by.
     case video(URL, poster: NSImage?, size: CGSize? = nil, caption: String, at: Double = 0)
+    /// An HTML page (a mockup, or an HTML/SVG artifact) shown at Desktop, Tablet or Mobile width.
+    /// `scripts`: false for mockups (no scripts at all), true for artifacts (scripts, but no network).
+    case page(html: String, caption: String, scripts: Bool)
 
     var caption: String {
         switch self {
-        case let .image(_, caption, _), let .video(_, _, _, caption, _): caption
+        case let .image(_, caption, _), let .video(_, _, _, caption, _), let .page(_, caption, _): caption
         }
     }
 }
@@ -259,7 +262,8 @@ final class AppState {
 
     /// Launch flags that drive the mockup, so a launch with any of them is a demo.
     nonisolated static let demoFlags = ["snapshot", "actions", "destination", "task", "focus", "compose", "layout",
-                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks"]
+                                        "timelineMerged", "mockview", "artifact", "onboardingStep", "goaltasks",
+                                        "pageviewport", "mockup"]
     /// Switches that make it a demo only when on: `-onboarding NO` is an ordinary launch.
     nonisolated static let demoSwitches = ["onboarding", "onboardingAuto", "onboardingFromWorkspace"]
 
@@ -2654,6 +2658,14 @@ final class AppState {
                 case "close": closeLightbox()
                 case "zoom", "pan": NotificationCenter.default.post(name: ProofLightboxView.demoZoom, object: Array(parts.dropFirst()))
                 default: NotificationCenter.default.post(name: ProofLightboxView.demoOpen, object: parts[1])
+                }
+            // MF-296: the first HTML mockup or artifact on screen, opened large (`pageviewer:open`), shown at a width
+            // (`pageviewer:desktop`, `:tablet`, `:mobile`, `:fit`) and put away (`pageviewer:close`).
+            case "pageviewer":
+                switch parts[1] {
+                case "close": closeLightbox()
+                case "open": NotificationCenter.default.post(name: PageViewerView.demoOpen, object: nil)
+                default: NotificationCenter.default.post(name: PageViewerView.demoPreset, object: parts[1])
                 }
             // A trackpad scroll at a point in the window, headless: `scroll:<x>:<y>:<dx>:<dy>`, with `:cmd` to hold ⌘.
             case "scroll" where parts.count > 4:
